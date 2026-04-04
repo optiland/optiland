@@ -1,0 +1,140 @@
+"""Extended source for Non-Sequential Raytracing.
+
+Uniform area source (rectangular or circular) with Lambertian or cone emission.
+
+Kramer Harrison, 2026
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import numpy as np
+
+from optiland.nonsequential.components.base import _get_transform
+from optiland.nonsequential.ray_bundle import NSQRayBundle
+from optiland.nonsequential.sources.base import BaseNSQSource, Spectrum
+
+if TYPE_CHECKING:
+    from optiland.coordinate_system import CoordinateSystem
+
+
+class ExtendedSource(BaseNSQSource):
+    """Uniform area emitter on a rectangular or circular surface.
+
+    The source surface lies in the local x-y plane (z=0). Emission
+    direction is either Lambertian (cosine-weighted hemisphere) or
+    confined to a cone around the local +z axis.
+
+    Attributes:
+        cs: Coordinate system (local z = emission axis).
+        spectrum: Wavelength distribution.
+        total_flux: Total emitted flux [W].
+        width: Source width [mm] (used for rectangular aperture).
+        height: Source height [mm] (used for rectangular aperture).
+        aperture_radius: Circular aperture radius [mm]. If set, overrides
+            width/height for a circular source.
+        half_angle_deg: Half-angle of emission cone [deg].
+            90 = Lambertian hemisphere.
+    """
+
+    def __init__(
+        self,
+        cs: CoordinateSystem,
+        spectrum: Spectrum,
+        total_flux: float = 1.0,
+        width: float = 1.0,
+        height: float = 1.0,
+        aperture_radius: float | None = None,
+        half_angle_deg: float = 90.0,
+    ) -> None:
+        """Initialize ExtendedSource.
+
+        Args:
+            cs: Coordinate system.
+            spectrum: Wavelength distribution.
+            total_flux: Total emitted flux [W].
+            width: Source width [mm] (rectangular aperture).
+            height: Source height [mm] (rectangular aperture).
+            aperture_radius: Circular aperture radius [mm]. Overrides
+                width/height if set.
+            half_angle_deg: Half-angle of emission cone [deg].
+        """
+        super().__init__(cs, spectrum, total_flux)
+        self.width = float(width)
+        self.height = float(height)
+        self.aperture_radius = (
+            float(aperture_radius) if aperture_radius is not None else None
+        )
+        self.half_angle_deg = float(half_angle_deg)
+
+    def generate(self, n_rays: int, rng: np.random.Generator) -> NSQRayBundle:
+        """Generate rays from the extended source in global coordinates.
+
+        Args:
+            n_rays: Number of rays to generate.
+            rng: NumPy random generator.
+
+        Returns:
+            NSQRayBundle with all rays alive.
+        """
+        translation, rot = _get_transform(self.cs)
+
+        # Sample positions on source surface (local x-y plane)
+        if self.aperture_radius is not None:
+            # Circular aperture: uniform disk sampling
+            u1 = rng.random(n_rays)
+            u2 = rng.random(n_rays)
+            r = self.aperture_radius * np.sqrt(u1)
+            phi_pos = 2.0 * np.pi * u2
+            lx = r * np.cos(phi_pos)
+            ly = r * np.sin(phi_pos)
+        else:
+            # Rectangular aperture
+            lx = (rng.random(n_rays) - 0.5) * self.width
+            ly = (rng.random(n_rays) - 0.5) * self.height
+
+        lz_pos = np.zeros(n_rays)
+
+        # Sample emission directions (Lambertian or cone)
+        cos_max = np.cos(np.radians(self.half_angle_deg))
+        u1d = rng.random(n_rays)
+        u2d = rng.random(n_rays)
+
+        if self.half_angle_deg >= 90.0:
+            # Cosine-weighted hemisphere (Lambertian)
+            cos_theta = np.sqrt(u1d)
+        else:
+            cos_theta = 1.0 - u1d * (1.0 - cos_max)
+
+        sin_theta = np.sqrt(np.maximum(1.0 - cos_theta**2, 0.0))
+        phi_dir = 2.0 * np.pi * u2d
+
+        dl_x = sin_theta * np.cos(phi_dir)
+        dl_y = sin_theta * np.sin(phi_dir)
+        dl_z = cos_theta
+
+        dirs_local = np.stack([dl_x, dl_y, dl_z], axis=1)
+        pos_local = np.stack([lx, ly, lz_pos], axis=1)
+
+        # Transform to global frame
+        # pos_global = pos_local @ R^T + t
+        pos_global = pos_local @ rot.T + translation
+        dirs_global = dirs_local @ rot.T
+
+        wavelengths = self.spectrum.sample(n_rays, rng)
+        flux_per_ray = self.total_flux / n_rays
+
+        return NSQRayBundle(
+            x=pos_global[:, 0].copy(),
+            y=pos_global[:, 1].copy(),
+            z=pos_global[:, 2].copy(),
+            dx=dirs_global[:, 0].copy(),
+            dy=dirs_global[:, 1].copy(),
+            dz=dirs_global[:, 2].copy(),
+            flux=np.full(n_rays, flux_per_ray),
+            wavelength=wavelengths,
+            n_current=np.ones(n_rays),
+            bounce=np.zeros(n_rays, dtype=np.int32),
+            alive=np.ones(n_rays, dtype=bool),
+        )

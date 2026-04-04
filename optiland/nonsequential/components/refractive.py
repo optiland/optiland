@@ -102,23 +102,20 @@ class RefractiveComponent(BaseComponent):
         # n1 = current medium, n2 = opposite medium
         # Determine which side: if dot < 0, ray comes from front side (normal faces ray)
         # → n1 = material_front, n2 = material_back
-        # If dot > 0, the geometry flipped the normal → n1 = material_back, n2 = material_front
+        # If dot > 0, geometry flipped normal → n1 = material_back, n2 = material_front
         # Use n_current to determine n1 (current medium index) already stored in ray
 
         n1 = rays.n_current  # shape (N,)
 
         # Evaluate n2 at each wavelength
-        wl_np = np.asarray(_to_numpy(xp, wl), dtype=float)
-        n2_front = np.array([self.material_front.n(w) for w in wl_np], dtype=float)
-        n2_back = np.array([self.material_back.n(w) for w in wl_np], dtype=float)
+        n2_front = self.material_front.n(wl)
+        n2_back = self.material_back.n(wl)
 
         # Determine which side the ray is coming from
         # dot < 0 → ray opposes normal → came from front
         from_front = dot < 0
         if xp is not np:
-            n2_front_xp = xp.array(n2_front)
-            n2_back_xp = xp.array(n2_back)
-            n2 = xp.where(from_front, n2_back_xp, n2_front_xp)
+            n2 = xp.where(from_front, n2_back, n2_front)
         else:
             n2 = np.where(from_front, n2_back, n2_front)
 

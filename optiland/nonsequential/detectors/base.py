@@ -98,6 +98,7 @@ class BaseDetector(ABC):
             A result object (IrradianceMap, FarFieldPattern, etc.).
         """
 
+    @abstractmethod
     def reset(self) -> None:
         """Clear accumulated data for reuse in a new simulation."""
 

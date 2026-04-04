@@ -116,9 +116,10 @@ class FinitePlaneGeometry(AnalyticGeometry):
         )
         t = xp.where(plane_valid & (t > 1e-9), t, xp.inf)
 
-        # Hit position in local frame
-        hx = origins[:, 0] + t * directions[:, 0]
-        hy = origins[:, 1] + t * directions[:, 1]
+        # Hit position in local frame — clamp t so inf*0 doesn't produce NaN
+        safe_t = xp.where(xp.isfinite(t), t, xp.zeros_like(t))
+        hx = origins[:, 0] + safe_t * directions[:, 0]
+        hy = origins[:, 1] + safe_t * directions[:, 1]
 
         # Aperture check
         if self.aperture_radius is not None:
