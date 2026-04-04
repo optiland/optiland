@@ -32,6 +32,30 @@ class NSQMaterial:
     bsdf: BaseBSDF | None = None
     absorption_coeff: float = 0.0
 
+    @classmethod
+    def from_glass(cls, name: str) -> NSQMaterial:
+        """Resolve a glass catalog name to an NSQMaterial.
+
+        Args:
+            name: Glass name (e.g. ``'N-BK7'``, ``'SF11'``).  Resolved via
+                :class:`optiland.materials.Material`.
+
+        Returns:
+            NSQMaterial wrapping the resolved BaseMaterial.
+
+        Raises:
+            ValueError: If the glass name is not found in the catalog.
+        """
+        from optiland.materials import Material  # noqa: PLC0415
+
+        try:
+            mat = Material(name)
+        except Exception as exc:
+            raise ValueError(
+                f"Glass '{name}' not found in the Optiland material catalog."
+            ) from exc
+        return cls(optiland_material=mat)
+
     def n(self, wavelength_nm: float | np.ndarray) -> float | np.ndarray:
         """Refractive index at the given wavelength(s).
 

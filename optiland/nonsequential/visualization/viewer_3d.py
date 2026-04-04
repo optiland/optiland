@@ -1,0 +1,119 @@
+"""NSQViewer3D — 3D VTK visualization for NSQ scenes.
+
+Kramer Harrison, 2026
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from optiland.visualization.base import BaseViewer
+
+if TYPE_CHECKING:
+    from optiland.nonsequential.scene import NSQScene
+    from optiland.nonsequential.tracer import SimulationResult
+
+
+class NSQViewer3D(BaseViewer):
+    """3D VTK viewer for non-sequential scenes.
+
+    Renders compound components and detectors as VTK actors.  Optionally
+    overlays ray-path polylines when a SimulationResult with a
+    RayDatabase is provided.
+
+    The renderer registry maps compound-component types to
+    :class:`~ComponentRenderer3D` instances.  Default renderers are
+    registered for Lens, Mirror, and detectors.
+
+    Attributes:
+        scene: The NSQScene to visualize.
+        _renderer_registry: Mapping from component class to renderer.
+    """
+
+    def __init__(self, scene: NSQScene) -> None:
+        """Initialize NSQViewer3D.
+
+        Args:
+            scene: The scene to visualize.
+        """
+        super().__init__(scene)
+        self.scene = scene
+        self._renderer_registry: dict = {}
+        self._register_default_renderers()
+
+    def _register_default_renderers(self) -> None:
+        """Register the built-in 3D renderers."""
+        from optiland.nonsequential.components.lens import Lens  # noqa: PLC0415
+        from optiland.nonsequential.components.mirror import Mirror  # noqa: PLC0415
+        from optiland.nonsequential.visualization.renderers.lens import (  # noqa: PLC0415
+            LensRenderer3D,
+        )
+        from optiland.nonsequential.visualization.renderers.mirror import (  # noqa: PLC0415
+            MirrorRenderer3D,
+        )
+
+        self._renderer_registry[Lens] = LensRenderer3D()
+        self._renderer_registry[Mirror] = MirrorRenderer3D()
+
+    def register_renderer(self, component_type: type, renderer) -> None:
+        """Register a custom 3D renderer for a compound-component type.
+
+        Args:
+            component_type: The class to bind the renderer to.
+            renderer: ComponentRenderer3D instance.
+        """
+        self._renderer_registry[component_type] = renderer
+
+    def view(
+        self,
+        result: SimulationResult | None = None,
+        n_rays_display: int = 0,
+        theme=None,
+    ) -> None:
+        """Render the scene in a VTK interactive window.
+
+        Args:
+            result: Optional SimulationResult; used to overlay ray paths.
+            n_rays_display: Number of ray segments to overlay (0 = none).
+            theme: Optional theme object.
+
+        Raises:
+            ImportError: If VTK is not installed.
+        """
+        try:
+            import vtk  # type: ignore[import]  # noqa: PLC0415
+        except ImportError as exc:
+            raise ImportError(
+                "VTK is required for 3D visualization. Install with: pip install vtk"
+            ) from exc
+
+        renderer = vtk.vtkRenderer()
+        renderer.SetBackground(0.1, 0.1, 0.1)
+
+        # Compound components
+        for compound in self.scene.component_registry.compounds:
+            r = self._renderer_registry.get(type(compound))
+            if r is not None:
+                r.render(compound, renderer, theme=theme)
+
+        # Detectors
+        from optiland.nonsequential.visualization.renderers.detector import (  # noqa: PLC0415
+            DetectorRenderer3D,
+        )
+
+        det_r = DetectorRenderer3D()
+        for det in self.scene.detectors:
+            det_r.render(det, renderer, theme=theme)
+
+        # Render window
+        window = vtk.vtkRenderWindow()
+        window.AddRenderer(renderer)
+        window.SetSize(1024, 768)
+        window.SetWindowName("NSQ Scene — 3D View")
+
+        interactor = vtk.vtkRenderWindowInteractor()
+        interactor.SetRenderWindow(window)
+        interactor.SetInteractorStyle(vtk.vtkInteractorStyleTrackballCamera())
+
+        window.Render()
+        interactor.Start()

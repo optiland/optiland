@@ -1,5 +1,8 @@
 """CuPy GPU backend for Non-Sequential Raytracing.
 
+Inherits the full Monte Carlo loop from NumpyBackend and overrides only the
+device-specific operations (intersection and random number generation).
+
 Kramer Harrison, 2026
 """
 
@@ -7,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from optiland.nonsequential.backends.base import TracerBackend
+from optiland.nonsequential.backends.numpy_backend import NumpyBackend
 
 if TYPE_CHECKING:
     import numpy as np
@@ -16,17 +19,22 @@ if TYPE_CHECKING:
     from optiland.nonsequential.ray_bundle import NSQRayBundle
 
 
-class CupyBackend(TracerBackend):
+class CupyBackend(NumpyBackend):
     """GPU backend using CuPy for analytic geometry intersection.
 
-    All ray data lives in device (GPU) memory. Analytic geometry
+    All ray data lives in device (GPU) memory.  Analytic geometry
     intersection is performed entirely on-device without CPU round-trips.
-    Mesh geometry (trimesh BVH) requires CPU transfer per intersection
-    step.
+    Mesh geometry (trimesh BVH) requires CPU transfer per intersection step.
+
+    The full Monte Carlo trace loop is inherited from
+    :class:`~optiland.nonsequential.backends.numpy_backend.NumpyBackend`.
+    Only :meth:`intersect_scene` and :meth:`random_uniform` are overridden
+    for GPU execution.
 
     Requires: ``pip install cupy-cudaXX`` matching your CUDA version.
 
     Attributes:
+        _cp: The ``cupy`` module.
         rng: CuPy random generator.
     """
 
@@ -49,6 +57,8 @@ class CupyBackend(TracerBackend):
             ) from e
         self._cp = cp
         cp.cuda.Device(device_id).use()
+        # Store seed for NumpyBackend; override rng with CuPy generator
+        self.seed = seed
         self.rng = cp.random.default_rng(seed)
 
     def intersect_scene(
@@ -56,9 +66,9 @@ class CupyBackend(TracerBackend):
         rays: NSQRayBundle,
         components: list[BaseComponent],
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Find nearest intersection on GPU.
+        """Find nearest intersection on the GPU.
 
-        Analytic components compute intersections entirely on the GPU.
+        Analytic components compute intersections entirely on-device.
         Mesh components require a CPU transfer for BVH traversal.
 
         Args:
@@ -66,7 +76,7 @@ class CupyBackend(TracerBackend):
             components: List of scene components.
 
         Returns:
-            (t_min, hit_normals, component_indices) as CuPy arrays.
+            ``(t_min, hit_normals, component_indices)`` as CuPy arrays.
         """
         cp = self._cp
         N = rays.n_rays
