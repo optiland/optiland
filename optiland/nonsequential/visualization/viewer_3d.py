@@ -7,14 +7,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from optiland.visualization.base import BaseViewer
+from optiland.visualization.base import BaseViewer3D
 
 if TYPE_CHECKING:
     from optiland.nonsequential.scene import NSQScene
     from optiland.nonsequential.tracer import SimulationResult
 
 
-class NSQViewer3D(BaseViewer):
+class NSQViewer3D(BaseViewer3D):
     """3D VTK viewer for non-sequential scenes.
 
     Renders compound components and detectors as VTK actors.  Optionally
@@ -67,34 +67,36 @@ class NSQViewer3D(BaseViewer):
     def view(
         self,
         result: SimulationResult | None = None,
-        n_rays_display: int = 0,
-        theme=None,
+        *,
+        n_rays_display: int = 100,
+        dark_mode: bool = False,
+        figsize: tuple[int, int] = (1200, 800),
     ) -> None:
         """Render the scene in a VTK interactive window.
 
         Args:
             result: Optional SimulationResult; used to overlay ray paths.
             n_rays_display: Number of ray segments to overlay (0 = none).
-            theme: Optional theme object.
+            dark_mode: Use dark background if True.
+            figsize: (width, height) of the VTK window in pixels.
 
         Raises:
             ImportError: If VTK is not installed.
         """
-        try:
-            import vtk  # type: ignore[import]  # noqa: PLC0415
-        except ImportError as exc:
+        import importlib.util  # noqa: PLC0415
+
+        if importlib.util.find_spec("vtk") is None:
             raise ImportError(
                 "VTK is required for 3D visualization. Install with: pip install vtk"
-            ) from exc
+            )
 
-        renderer = vtk.vtkRenderer()
-        renderer.SetBackground(0.1, 0.1, 0.1)
+        renderer = self._make_renderer(dark_mode)
 
         # Compound components
         for compound in self.scene.component_registry.compounds:
             r = self._renderer_registry.get(type(compound))
             if r is not None:
-                r.render(compound, renderer, theme=theme)
+                r.render(compound, renderer)
 
         # Detectors
         from optiland.nonsequential.visualization.renderers.detector import (  # noqa: PLC0415
@@ -103,7 +105,7 @@ class NSQViewer3D(BaseViewer):
 
         det_r = DetectorRenderer3D()
         for det in self.scene.detectors:
-            det_r.render(det, renderer, theme=theme)
+            det_r.render(det, renderer)
 
         if n_rays_display > 0:
             from optiland.nonsequential.visualization.rays import (
@@ -111,17 +113,9 @@ class NSQViewer3D(BaseViewer):
             )
 
             rays = NSQRays3D(self.scene)
-            rays.plot(renderer, n_rays=n_rays_display, theme=theme)
+            rays.plot(renderer, n_rays=n_rays_display)
 
-        # Render window
-        window = vtk.vtkRenderWindow()
-        window.AddRenderer(renderer)
-        window.SetSize(1024, 768)
-        window.SetWindowName("NSQ Scene — 3D View")
-
-        interactor = vtk.vtkRenderWindowInteractor()
-        interactor.SetRenderWindow(window)
-        interactor.SetInteractorStyle(vtk.vtkInteractorStyleTrackballCamera())
+        window, interactor = self._make_window(renderer, figsize, "NSQ Scene — 3D View")
 
         window.Render()
         interactor.Start()

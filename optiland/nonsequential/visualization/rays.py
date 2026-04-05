@@ -16,6 +16,7 @@ with contextlib.suppress(ImportError):
     import vtk
 
 from optiland.nonsequential.tracer import NSQTracer
+from optiland.visualization.system.utils import project_rays
 
 
 class NSQRays2D:
@@ -84,12 +85,8 @@ class NSQRays2D:
             if len(px) < 2:
                 continue
 
-            if projection == "XY":
-                ax.plot(px, py, color=color, linewidth=1, alpha=0.5)
-            elif projection == "XZ":
-                ax.plot(pz, px, color=color, linewidth=1, alpha=0.5)
-            else:  # YZ
-                ax.plot(pz, py, color=color, linewidth=1, alpha=0.5)
+            horiz, vert = project_rays(px, py, pz, projection)
+            ax.plot(horiz, vert, color=color, linewidth=1, alpha=0.5)
 
 
 class NSQRays3D(NSQRays2D):

@@ -81,6 +81,9 @@ from optiland.nonsequential.components.geometry.analytic import (
     CylindricalFrustumGeometry,
 )
 
+# Converter
+from optiland.nonsequential.convert import ConversionError, sequential_to_nonsequential
+
 # Detectors
 from optiland.nonsequential.detectors import (
     BaseDetector,
@@ -195,6 +198,9 @@ __all__ = [
     # Visualization
     "NSQViewer2D",
     "NSQViewer3D",
+    # Converter
+    "ConversionError",
+    "sequential_to_nonsequential",
 ]
 
 try:

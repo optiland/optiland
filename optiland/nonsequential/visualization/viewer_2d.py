@@ -7,16 +7,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from optiland.visualization.base import BaseViewer
+from optiland.visualization.base import BaseViewer2D
 
 if TYPE_CHECKING:
-    import matplotlib.figure
+    from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
 
     from optiland.nonsequential.scene import NSQScene
     from optiland.nonsequential.tracer import SimulationResult
 
 
-class NSQViewer2D(BaseViewer):
+class NSQViewer2D(BaseViewer2D):
     """2D cross-section viewer for non-sequential scenes.
 
     Renders compound components, sources (as markers), and detectors onto a
@@ -77,27 +78,38 @@ class NSQViewer2D(BaseViewer):
     def view(
         self,
         result: SimulationResult | None = None,
-        projection: str = "YZ",
-        n_rays_display: int = 0,
+        *,
         theme=None,
-    ) -> matplotlib.figure.Figure:
+        projection: str = "YZ",
+        n_rays_display: int = 100,
+        figsize: tuple[int, int] | None = None,
+        title: str | None = None,
+        xlim: tuple | None = None,
+        ylim: tuple | None = None,
+        ax: Axes | None = None,
+    ) -> tuple[Figure, Axes]:
         """Render the scene cross-section to a Matplotlib figure.
 
         Args:
             result: Optional SimulationResult; used to overlay ray paths
                 when ``n_rays_display > 0``.
+            theme: Optional theme object for colours and styles. If None,
+                the active theme is used.
             projection: Projection plane — ``'YZ'`` (default), ``'XZ'``,
                 or ``'XY'``.
             n_rays_display: Number of ray segments to sample and overlay.
-                0 means no ray overlay.
-            theme: Optional theme object for colours and styles.
+                Defaults to 100.
+            figsize: Figure size override (width, height). None → theme default.
+            title: Optional axes title. Defaults to "NSQ Scene — 2D Cross-Section".
+            xlim: Optional (xmin, xmax) axis limits.
+            ylim: Optional (ymin, ymax) axis limits.
+            ax: Optional existing axes to plot into.
 
         Returns:
-            The Matplotlib Figure.
+            (fig, ax) tuple.
         """
-        import matplotlib.pyplot as plt  # noqa: PLC0415
-
-        fig, ax = plt.subplots(figsize=(10, 6))
+        theme = self._resolve_theme(theme)
+        fig, ax = self._make_figure(theme, figsize, ax)
 
         # Render each compound component
         for compound in self.scene.component_registry.compounds:
@@ -123,29 +135,12 @@ class NSQViewer2D(BaseViewer):
             rays.plot(ax, n_rays=n_rays_display, theme=theme, projection=projection)
 
         ax.set_aspect("equal")
-        ax.set_xlabel(_axis_label(projection, 0))
-        ax.set_ylabel(_axis_label(projection, 1))
-        ax.set_title("NSQ Scene — 2D Cross-Section")
-        ax.grid(True, linestyle="--", alpha=0.4)
+        _title = title if title is not None else "NSQ Scene — 2D Cross-Section"
+        self._apply_axes_style(
+            ax, projection, theme, title=_title, xlim=xlim, ylim=ylim
+        )
+
+        import matplotlib.pyplot as plt  # noqa: PLC0415
 
         plt.tight_layout()
-        return fig
-
-
-def _axis_label(projection: str, idx: int) -> str:
-    """Return axis label string.
-
-    Args:
-        projection: Projection plane string.
-        idx: 0 for horizontal, 1 for vertical.
-
-    Returns:
-        Axis label.
-    """
-    labels = {
-        "YZ": ("Z [mm]", "Y [mm]"),
-        "XZ": ("Z [mm]", "X [mm]"),
-        "XY": ("X [mm]", "Y [mm]"),
-    }
-    pair = labels.get(projection.upper(), ("Z [mm]", "Y [mm]"))
-    return pair[idx]
+        return fig, ax
