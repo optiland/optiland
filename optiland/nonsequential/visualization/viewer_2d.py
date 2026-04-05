@@ -114,6 +114,14 @@ class NSQViewer2D(BaseViewer):
         for det in self.scene.detectors:
             det_renderer.render(det, ax, theme=theme, projection=projection)
 
+        if n_rays_display > 0:
+            from optiland.nonsequential.visualization.rays import (
+                NSQRays2D,  # noqa: PLC0415
+            )
+
+            rays = NSQRays2D(self.scene)
+            rays.plot(ax, n_rays=n_rays_display, theme=theme, projection=projection)
+
         ax.set_aspect("equal")
         ax.set_xlabel(_axis_label(projection, 0))
         ax.set_ylabel(_axis_label(projection, 1))

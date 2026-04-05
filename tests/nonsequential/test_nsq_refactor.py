@@ -423,3 +423,15 @@ class TestVisualizationSmoke:
 
         import matplotlib.pyplot as plt  # noqa: PLC0415
         plt.close("all")
+
+    def test_viewer_2d_with_rays_no_exception(self):
+        import matplotlib  # noqa: PLC0415
+        matplotlib.use("Agg")  # non-interactive backend
+
+        scene = self._build_minimal_scene()
+        viewer = NSQViewer2D(scene)
+        fig = viewer.view(n_rays_display=5)
+        assert fig is not None
+
+        import matplotlib.pyplot as plt  # noqa: PLC0415
+        plt.close("all")

@@ -39,6 +39,7 @@ class SimulationResult:
         flux_conservation_error:
             ``|flux_in - (detected + absorbed + escaped)| / flux_in``.
         trace_time_sec: Wall-clock time for the trace [s].
+        ray_paths: Optional dictionary containing ray history matrices.
     """
 
     detectors: dict[str, object] = field(default_factory=dict)
@@ -49,6 +50,7 @@ class SimulationResult:
     total_flux_detected: float = 0.0
     flux_conservation_error: float = 0.0
     trace_time_sec: float = 0.0
+    ray_paths: dict[str, list] | None = None
 
 
 class NSQTracer:
@@ -122,6 +124,7 @@ class NSQTracer:
         batch_size: int | None = None,
         seed: int | None = None,
         backend: TracerBackend | None = None,
+        record_paths: bool = False,
     ) -> SimulationResult:
         """Run the simulation and return results.
 
@@ -133,6 +136,7 @@ class NSQTracer:
             batch_size: Rays per batch.  Uses constructor value if not given.
             seed: RNG seed.  Uses constructor value if not given.
             backend: Backend override.  Uses constructor backend if not given.
+            record_paths: If True, tracks node points of bouncing rays.
 
         Returns:
             SimulationResult.
@@ -160,4 +164,5 @@ class NSQTracer:
             ),
             batch_size=batch_size if batch_size is not None else self.batch_size,
             seed=seed if seed is not None else self.seed,
+            record_paths=record_paths,
         )

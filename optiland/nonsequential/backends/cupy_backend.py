@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from optiland.nonsequential.backends.numpy_backend import NumpyBackend
+from optiland.nonsequential.backends.array_backend import ArrayBackend
 
 if TYPE_CHECKING:
     import numpy as np
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from optiland.nonsequential.ray_bundle import NSQRayBundle
 
 
-class CupyBackend(NumpyBackend):
+class CupyBackend(ArrayBackend):
     """GPU backend using CuPy for analytic geometry intersection.
 
     All ray data lives in device (GPU) memory.  Analytic geometry
@@ -27,7 +27,7 @@ class CupyBackend(NumpyBackend):
     Mesh geometry (trimesh BVH) requires CPU transfer per intersection step.
 
     The full Monte Carlo trace loop is inherited from
-    :class:`~optiland.nonsequential.backends.numpy_backend.NumpyBackend`.
+    :class:`~optiland.nonsequential.backends.array_backend.ArrayBackend`.
     Only :meth:`intersect_scene` and :meth:`random_uniform` are overridden
     for GPU execution.
 

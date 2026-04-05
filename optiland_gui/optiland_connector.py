@@ -15,11 +15,11 @@ import ast
 import json
 import os
 
-from optiland.fileio.zemax_handler import load_zemax_file
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QMessageBox
 
 import optiland.backend as be
+from optiland.fileio.zemax_handler import load_zemax_file
 from optiland.materials import IdealMaterial
 from optiland.materials import Material as OptilandMaterial
 from optiland.optic import Optic

@@ -105,6 +105,14 @@ class NSQViewer3D(BaseViewer):
         for det in self.scene.detectors:
             det_r.render(det, renderer, theme=theme)
 
+        if n_rays_display > 0:
+            from optiland.nonsequential.visualization.rays import (
+                NSQRays3D,  # noqa: PLC0415
+            )
+
+            rays = NSQRays3D(self.scene)
+            rays.plot(renderer, n_rays=n_rays_display, theme=theme)
+
         # Render window
         window = vtk.vtkRenderWindow()
         window.AddRenderer(renderer)

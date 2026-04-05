@@ -41,6 +41,7 @@ class TracerBackend(ABC):
         min_flux_fraction: float = 1e-6,
         batch_size: int = 1_000_000,
         seed: int | None = None,
+        record_paths: bool = False,
     ) -> SimulationResult:
         """Run the full simulation and return results.
 
@@ -55,6 +56,8 @@ class TracerBackend(ABC):
                 ``min_flux_fraction * (total_flux / n_rays)`` are killed.
             batch_size: Number of rays per processing batch.
             seed: RNG seed for reproducibility.
+            record_paths: If True, record the full phase-space path of
+                every ray, bounce-by-bounce, for visualization.
 
         Returns:
             :class:`~optiland.nonsequential.tracer.SimulationResult` with
