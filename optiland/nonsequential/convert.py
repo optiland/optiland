@@ -83,7 +83,7 @@ def sequential_to_nonsequential(
         _check_geometry(surf, i)
 
         if _is_reflective(surf):
-            _add_mirror(scene, surf, elem_idx)
+            _add_mirror(scene, optic, surf, i)
             elem_idx += 1
             i += 1
             continue
@@ -93,20 +93,23 @@ def sequential_to_nonsequential(
             # element_surfaces collects the glass-entry surfaces;
             # the loop advances j until we find the glass→air boundary.
             element_surfaces = [surf]
+            element_indices = [i]
             j = i + 1
             while j < n - 1 and _is_glass(surfs[j]):
                 _check_geometry(surfs[j], j)
                 element_surfaces.append(surfs[j])
+                element_indices.append(j)
                 j += 1
             # surfs[j] is the last surface of the element (exits to air / image)
             if j < n - 1:
                 _check_geometry(surfs[j], j)
                 element_surfaces.append(surfs[j])
+                element_indices.append(j)
 
             if len(element_surfaces) == 2:
-                _add_lens(scene, element_surfaces, elem_idx)
+                _add_lens(scene, optic, element_surfaces, element_indices)
             elif len(element_surfaces) == 3:
-                _add_doublet(scene, element_surfaces, elem_idx)
+                _add_doublet(scene, optic, element_surfaces, element_indices)
             else:
                 raise ConversionError(
                     f"Lens element starting at surface index {i} has "
@@ -296,7 +299,7 @@ def _surface_conic(surf) -> float:
         return 0.0
 
 
-def _surface_semi_diameter(surf) -> float:
+def _surface_semi_diameter(surf, optic=None, idx: int | None = None) -> float:
     """Return the semi-diameter (aperture radius) of a surface.
 
     Args:
@@ -317,6 +320,24 @@ def _surface_semi_diameter(surf) -> float:
             return float(surf.semi_aperture.item())
         except AttributeError:
             return float(surf.semi_aperture)
+
+    # Use paraxial rays from optic if available
+    if optic is not None and idx is not None:
+        try:
+            yb, _ = optic.paraxial.marginal_ray()
+            yc, _ = optic.paraxial.chief_ray()
+
+            import optiland.backend as be
+
+            ybi = be.to_numpy(yb[idx]).item()
+            yci = be.to_numpy(yc[idx]).item()
+            r_ext = abs(ybi) + abs(yci)
+
+            if r_ext > 0.0:
+                return float(r_ext)
+        except Exception:
+            pass
+
     return 10.0  # Default if not set
 
 
@@ -325,7 +346,7 @@ def _surface_semi_diameter(surf) -> float:
 # ---------------------------------------------------------------------------
 
 
-def _add_mirror(scene, surf, elem_idx: int) -> None:
+def _add_mirror(scene, optic, surf, elem_idx: int) -> None:
     """Add a Mirror component to the scene.
 
     Args:
@@ -339,14 +360,14 @@ def _add_mirror(scene, surf, elem_idx: int) -> None:
     z = _surface_z(surf)
     radius = _surface_radius(surf)
     conic = _surface_conic(surf)
-    ap_r = _surface_semi_diameter(surf)
+    ap_r = _surface_semi_diameter(surf, optic, elem_idx)
 
     cs = CoordinateSystem(z=z)
     config = MirrorConfig(radius=radius, conic=conic, aperture_radius=ap_r)
     scene.add_mirror(f"M{elem_idx}", cs, config)
 
 
-def _add_lens(scene, element_surfaces: list, elem_idx: int) -> None:
+def _add_lens(scene, optic, element_surfaces: list, elem_indices: list) -> None:
     """Add a singlet Lens component to the scene.
 
     Args:
@@ -359,6 +380,7 @@ def _add_lens(scene, element_surfaces: list, elem_idx: int) -> None:
     from optiland.nonsequential.components.configs import LensConfig  # noqa: PLC0415
 
     s_front, s_back = element_surfaces
+    idx_front, idx_back = elem_indices
     z_front = _surface_z(s_front)
     z_back = _surface_z(s_back)
     thickness = z_back - z_front
@@ -369,15 +391,15 @@ def _add_lens(scene, element_surfaces: list, elem_idx: int) -> None:
         r2=_surface_radius(s_back),
         thickness=thickness,
         material=_material_name(s_front),
-        front_aperture_radius=_surface_semi_diameter(s_front),
-        back_aperture_radius=_surface_semi_diameter(s_back),
+        front_aperture_radius=_surface_semi_diameter(s_front, optic, idx_front),
+        back_aperture_radius=_surface_semi_diameter(s_back, optic, idx_back),
         conic1=_surface_conic(s_front),
         conic2=_surface_conic(s_back),
     )
-    scene.add_lens(f"L{elem_idx}", cs, config)
+    scene.add_lens(f"L{idx_front}", cs, config)
 
 
-def _add_doublet(scene, element_surfaces: list, elem_idx: int) -> None:
+def _add_doublet(scene, optic, element_surfaces: list, elem_indices: list) -> None:
     """Add a cemented Doublet component to the scene.
 
     Args:
@@ -389,6 +411,7 @@ def _add_doublet(scene, element_surfaces: list, elem_idx: int) -> None:
     from optiland.nonsequential.components.configs import DoubletConfig  # noqa: PLC0415
 
     s_front, s_cement, s_back = element_surfaces
+    idx_front, idx_cement, idx_back = elem_indices
     z_front = _surface_z(s_front)
     z_cement = _surface_z(s_cement)
     z_back = _surface_z(s_back)
@@ -397,9 +420,9 @@ def _add_doublet(scene, element_surfaces: list, elem_idx: int) -> None:
     thickness2 = z_back - z_cement
 
     ap_r = max(
-        _surface_semi_diameter(s_front),
-        _surface_semi_diameter(s_cement),
-        _surface_semi_diameter(s_back),
+        _surface_semi_diameter(s_front, optic, idx_front),
+        _surface_semi_diameter(s_cement, optic, idx_cement),
+        _surface_semi_diameter(s_back, optic, idx_back),
     )
 
     cs = CoordinateSystem(z=z_front)
@@ -416,7 +439,7 @@ def _add_doublet(scene, element_surfaces: list, elem_idx: int) -> None:
         conic2=_surface_conic(s_cement),
         conic3=_surface_conic(s_back),
     )
-    scene.add_doublet(f"D{elem_idx}", cs, config)
+    scene.add_doublet(f"D{elem_indices[0]}", cs, config)
 
 
 # ---------------------------------------------------------------------------

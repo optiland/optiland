@@ -65,7 +65,10 @@ class MirrorRenderer2D(ComponentRenderer2D):
         ph = pts_global[:, h_idx]
         pv = pts_global[:, v_idx]
 
-        color = "silver" if theme is None else getattr(theme, "mirror_color", "silver")
+        color = (0.5, 0.5, 0.5)
+        if theme is not None:
+            color = theme.parameters.get("axes.edgecolor", color)
+
         ax.plot(ph, pv, color=color, linewidth=2.0, zorder=3)
 
 
@@ -112,4 +115,19 @@ class MirrorRenderer3D(ComponentRenderer3D):
         pts_global = pts_local @ rot.T + translation
 
         actor = revolve_contour(pts_global[:, 0], pts_global[:, 1], pts_global[:, 2])
+
+        # Style matching Sequential Mirror3D
+        color = (0.75, 0.75, 0.75)
+        if theme is not None:
+            from matplotlib.colors import to_rgb  # noqa: PLC0415
+
+            color_hex = theme.parameters.get("axes.edgecolor", "#BFBFBF")
+            color = to_rgb(color_hex)
+
+        prop = actor.GetProperty()
+        prop.SetColor(color)
+        prop.SetSpecular(1.0)
+        prop.SetSpecularPower(100.0)  # Metallic
+        prop.SetOpacity(1.0)
+
         renderer.AddActor(actor)

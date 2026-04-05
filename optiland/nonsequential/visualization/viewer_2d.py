@@ -50,9 +50,11 @@ class NSQViewer2D(BaseViewer2D):
 
     def _register_default_renderers(self) -> None:
         """Register the built-in renderers for Lens and Mirror."""
+        from optiland.nonsequential.components.doublet import Doublet  # noqa: PLC0415
         from optiland.nonsequential.components.lens import Lens  # noqa: PLC0415
         from optiland.nonsequential.components.mirror import Mirror  # noqa: PLC0415
         from optiland.nonsequential.visualization.renderers.lens import (  # noqa: PLC0415
+            DoubletRenderer2D,
             LensRenderer2D,
         )
         from optiland.nonsequential.visualization.renderers.mirror import (  # noqa: PLC0415
@@ -60,6 +62,7 @@ class NSQViewer2D(BaseViewer2D):
         )
 
         self._renderer_registry[Lens] = LensRenderer2D()
+        self._renderer_registry[Doublet] = DoubletRenderer2D()
         self._renderer_registry[Mirror] = MirrorRenderer2D()
 
     def register_renderer(self, component_type: type, renderer) -> None:
@@ -87,6 +90,7 @@ class NSQViewer2D(BaseViewer2D):
         xlim: tuple | None = None,
         ylim: tuple | None = None,
         ax: Axes | None = None,
+        color_by: str = "source",
     ) -> tuple[Figure, Axes]:
         """Render the scene cross-section to a Matplotlib figure.
 
@@ -132,7 +136,13 @@ class NSQViewer2D(BaseViewer2D):
             )
 
             rays = NSQRays2D(self.scene)
-            rays.plot(ax, n_rays=n_rays_display, theme=theme, projection=projection)
+            rays.plot(
+                ax,
+                n_rays=n_rays_display,
+                theme=theme,
+                projection=projection,
+                color_by=color_by,
+            )
 
         ax.set_aspect("equal")
         _title = title if title is not None else "NSQ Scene — 2D Cross-Section"

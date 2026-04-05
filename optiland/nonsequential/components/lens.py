@@ -138,13 +138,32 @@ class Lens(CompoundComponent):
         )
 
         # 3. Edge (cylindrical frustum, absorbing by default)
+        # 3. Edge (cylindrical frustum, absorbing by default)
         sag_front = _sag_at_rim(cfg.r1, cfg.conic1, front_r)
         sag_back = _sag_at_rim(cfg.r2, cfg.conic2, back_r)
+
+        wider_r = max(front_r, back_r)
+        narrower_r = min(front_r, back_r)
+
+        if front_r > back_r:
+            z_front_edge = sag_front
+            z_back_edge = cfg.thickness + sag_back
+            cs_rim = cs_back
+            rim_z = sag_back
+        elif back_r > front_r:
+            z_front_edge = sag_front
+            z_back_edge = cfg.thickness + sag_back
+            cs_rim = cs_front
+            rim_z = sag_front
+        else:
+            z_front_edge = sag_front
+            z_back_edge = cfg.thickness + sag_back
+
         edge_geom = CylindricalFrustumGeometry(
-            r_front=front_r,
-            r_back=back_r,
-            z_front=sag_front,
-            z_back=cfg.thickness + sag_back,
+            r_front=wider_r,
+            r_back=wider_r,
+            z_front=z_front_edge,
+            z_back=z_back_edge,
         )
         surfaces.append(
             _make_surface(
@@ -159,14 +178,6 @@ class Lens(CompoundComponent):
 
         # 4. Rim annulus (only when aperture radii differ)
         if not _approx_equal(front_r, back_r):
-            wider_r = max(front_r, back_r)
-            narrower_r = min(front_r, back_r)
-            if front_r > back_r:
-                cs_rim = cs_front
-                rim_z = _sag_at_rim(cfg.r1, cfg.conic1, narrower_r)
-            else:
-                cs_rim = cs_back
-                rim_z = _sag_at_rim(cfg.r2, cfg.conic2, narrower_r)
             rim_geom = AnnularPlaneGeometry(
                 inner_radius=narrower_r,
                 outer_radius=wider_r,

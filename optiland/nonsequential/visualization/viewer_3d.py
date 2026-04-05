@@ -43,9 +43,11 @@ class NSQViewer3D(BaseViewer3D):
 
     def _register_default_renderers(self) -> None:
         """Register the built-in 3D renderers."""
+        from optiland.nonsequential.components.doublet import Doublet  # noqa: PLC0415
         from optiland.nonsequential.components.lens import Lens  # noqa: PLC0415
         from optiland.nonsequential.components.mirror import Mirror  # noqa: PLC0415
         from optiland.nonsequential.visualization.renderers.lens import (  # noqa: PLC0415
+            DoubletRenderer3D,
             LensRenderer3D,
         )
         from optiland.nonsequential.visualization.renderers.mirror import (  # noqa: PLC0415
@@ -53,6 +55,7 @@ class NSQViewer3D(BaseViewer3D):
         )
 
         self._renderer_registry[Lens] = LensRenderer3D()
+        self._renderer_registry[Doublet] = DoubletRenderer3D()
         self._renderer_registry[Mirror] = MirrorRenderer3D()
 
     def register_renderer(self, component_type: type, renderer) -> None:
@@ -71,6 +74,7 @@ class NSQViewer3D(BaseViewer3D):
         n_rays_display: int = 100,
         dark_mode: bool = False,
         figsize: tuple[int, int] = (1200, 800),
+        color_by: str = "source",
     ) -> None:
         """Render the scene in a VTK interactive window.
 
@@ -113,7 +117,7 @@ class NSQViewer3D(BaseViewer3D):
             )
 
             rays = NSQRays3D(self.scene)
-            rays.plot(renderer, n_rays=n_rays_display)
+            rays.plot(renderer, n_rays=n_rays_display, color_by=color_by)
 
         window, interactor = self._make_window(renderer, figsize, "NSQ Scene — 3D View")
 

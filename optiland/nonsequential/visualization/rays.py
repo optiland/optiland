@@ -30,7 +30,15 @@ class NSQRays2D:
         self.scene = scene
         self.recorded_paths = None
 
-    def plot(self, ax, n_rays=100, theme=None, projection="YZ", rng_seed=42):
+    def plot(
+        self,
+        ax,
+        n_rays=100,
+        theme=None,
+        projection="YZ",
+        rng_seed=42,
+        color_by: str = "source",
+    ):
         """Plots the rays.
 
         Args:
@@ -39,24 +47,27 @@ class NSQRays2D:
             theme (Theme, optional): The theme to apply.
             projection (str): Projection plane.
             rng_seed (int): Seed for reproducibility.
+            color_by (str): How to color rays ("source" or "bounce" or "segment").
         """
         self._trace(n_rays, rng_seed)
         if not self.recorded_paths:
             return
 
-        self._plot_lines(ax, theme, projection)
+        self._plot_lines(ax, theme, projection, color_by)
 
     def _trace(self, n_rays, seed):
         tracer = NSQTracer(self.scene)
         res = tracer.trace(n_rays=n_rays, seed=seed, record_paths=True)
         self.recorded_paths = res.ray_paths
 
-    def _plot_lines(self, ax, theme=None, projection="YZ"):
-        if theme:
-            ray_cycle = theme.parameters.get("ray_cycle")
-            color = ray_cycle[0 % len(ray_cycle)]
-        else:
+    def _plot_lines(self, ax, theme=None, projection="YZ", color_by="source"):
+        ray_cycle = theme.parameters.get("ray_cycle") if theme else None
+
+        if ray_cycle is None:
             color = "C0"
+            ray_cycle = [color]
+        else:
+            color = ray_cycle[0]
 
         xs = self.recorded_paths["x"]
         ys = self.recorded_paths["y"]
@@ -85,8 +96,19 @@ class NSQRays2D:
             if len(px) < 2:
                 continue
 
-            horiz, vert = project_rays(px, py, pz, projection)
-            ax.plot(horiz, vert, color=color, linewidth=1, alpha=0.5)
+            if color_by in ("bounce", "segment"):
+                for b_idx in range(1, len(px)):
+                    horiz, vert = project_rays(
+                        px[b_idx - 1 : b_idx + 1],
+                        py[b_idx - 1 : b_idx + 1],
+                        pz[b_idx - 1 : b_idx + 1],
+                        projection,
+                    )
+                    c = ray_cycle[b_idx % len(ray_cycle)]
+                    ax.plot(horiz, vert, color=c, linewidth=1, alpha=0.5)
+            else:
+                horiz, vert = project_rays(px, py, pz, projection)
+                ax.plot(horiz, vert, color=color, linewidth=1, alpha=0.5)
 
 
 class NSQRays3D(NSQRays2D):
@@ -98,7 +120,7 @@ class NSQRays3D(NSQRays2D):
             (0.122, 0.467, 0.706),
         ]
 
-    def plot(self, ax, n_rays=100, theme=None, rng_seed=42):
+    def plot(self, ax, n_rays=100, theme=None, rng_seed=42, color_by: str = "source"):
         """Plots the rays in 3D.
 
         Args:
@@ -106,21 +128,25 @@ class NSQRays3D(NSQRays2D):
             n_rays: Number of rays.
             theme: The theme.
             rng_seed: Seed.
+            color_by (str): How to color rays ("source" or "bounce" or "segment").
         """
         self._trace(n_rays, rng_seed)
         if not self.recorded_paths:
             return
 
-        self._plot_lines(ax, theme)
+        self._plot_lines(ax, theme, color_by=color_by)
 
-    def _plot_lines(self, renderer, theme=None, projection=None):
-        if theme:
+    def _plot_lines(self, renderer, theme=None, projection=None, color_by="source"):
+        ray_cycle = theme.parameters.get("ray_cycle") if theme else None
+
+        if ray_cycle is None:
+            color = self._rgb_colors[0]
+            ray_cycle = [color]
+        else:
             from matplotlib.colors import to_rgb
 
-            ray_cycle = theme.parameters.get("ray_cycle")
-            color = to_rgb(ray_cycle[0])
-        else:
-            color = self._rgb_colors[0]
+            ray_cycle = [to_rgb(rc) for rc in ray_cycle]
+            color = ray_cycle[0]
 
         xs = self.recorded_paths["x"]
         ys = self.recorded_paths["y"]
@@ -162,7 +188,13 @@ class NSQRays3D(NSQRays2D):
                 line_actor = vtk.vtkActor()
                 line_actor.SetMapper(line_mapper)
                 line_actor.GetProperty().SetLineWidth(1)
-                line_actor.GetProperty().SetColor(color)
+
+                c = (
+                    ray_cycle[b % len(ray_cycle)]
+                    if color_by in ("bounce", "segment")
+                    else color
+                )
+                line_actor.GetProperty().SetColor(c)
                 line_actor.GetProperty().SetOpacity(0.5)
 
                 renderer.AddActor(line_actor)
