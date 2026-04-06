@@ -95,7 +95,7 @@ class ComponentGeometry(ABC):
         Args:
             transform: Tuple (translation, rotation_matrix) defining the
                 local-to-global transformation. rotation_matrix is (3, 3),
-                transforming column vectors local→global.
+                transforming column vectors local->global.
 
         Returns:
             AABB in global coordinates.

@@ -22,8 +22,8 @@ if TYPE_CHECKING:
 class TracerBackend(ABC):
     """Abstract backend for the NSQ Monte Carlo trace loop.
 
-    The full simulation loop — ray generation, intersection, interaction,
-    detection — is delegated to the backend implementation.
+    The full simulation loop -- ray generation, intersection, interaction,
+    detection -- is delegated to the backend implementation.
     ``NumpyBackend`` provides the default CPU implementation.  A future
     ``OptiXBackend`` from ``optiland-rt`` would replace the entire loop
     with NVIDIA OptiX kernel dispatch.
@@ -36,7 +36,7 @@ class TracerBackend(ABC):
     def trace(
         self,
         scene: NSQScene,
-        n_rays: int,
+        num_rays: int,
         max_bounces: int = 200,
         min_flux_fraction: float = 1e-6,
         batch_size: int = 1_000_000,
@@ -49,11 +49,11 @@ class TracerBackend(ABC):
             scene: The NSQScene to trace (provides flat surface/source/detector
                 lists via :attr:`~NSQScene.surfaces`,
                 :attr:`~NSQScene.sources`, :attr:`~NSQScene.detectors`).
-            n_rays: Total number of rays to launch.
+            num_rays: Total number of rays to launch.
             max_bounces: Maximum surface interactions per ray before
                 termination.
             min_flux_fraction: Rays whose flux drops below
-                ``min_flux_fraction * (total_flux / n_rays)`` are killed.
+                ``min_flux_fraction * (total_flux / num_rays)`` are killed.
             batch_size: Number of rays per processing batch.
             seed: RNG seed for reproducibility.
             record_paths: If True, record the full phase-space path of
@@ -63,10 +63,6 @@ class TracerBackend(ABC):
             :class:`~optiland.nonsequential.tracer.SimulationResult` with
             per-detector results and global statistics.
         """
-
-    # ------------------------------------------------------------------
-    # Optional helper — subclasses may override for device-specific logic
-    # ------------------------------------------------------------------
 
     def intersect_scene(
         self,
@@ -84,8 +80,8 @@ class TracerBackend(ABC):
             components: List of BaseComponent surfaces.
 
         Returns:
-            ``(t_min, hit_normals, component_indices)`` — distances, normals,
-            and per-ray nearest-hit component index (−1 if no hit).
+            ``(t_min, hit_normals, component_indices)`` -- distances, normals,
+            and per-ray nearest-hit component index (-1 if no hit).
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not implement intersect_scene()."

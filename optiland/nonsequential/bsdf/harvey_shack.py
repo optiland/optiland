@@ -43,7 +43,7 @@ class HarveyShackBSDF(BaseBSDF):
 
     def sample(
         self,
-        n_rays: int,
+        num_rays: int,
         incident_dirs: np.ndarray,
         normals: np.ndarray,
         wavelengths: np.ndarray,
@@ -52,7 +52,7 @@ class HarveyShackBSDF(BaseBSDF):
         """Sample scattered directions using ABg model via rejection sampling.
 
         Args:
-            n_rays: Number of rays.
+            num_rays: Number of rays.
             incident_dirs: Incident directions, shape (N, 3).
             normals: Surface normals, shape (N, 3).
             wavelengths: Wavelengths [nm], shape (N,).
@@ -80,8 +80,8 @@ class HarveyShackBSDF(BaseBSDF):
             _orthonormal_basis,  # noqa: PLC0415
         )
 
-        r1 = rng.random(n_rays)
-        r2 = rng.random(n_rays)
+        r1 = rng.random(num_rays)
+        r2 = rng.random(num_rays)
         phi = 2.0 * np.pi * r1
         cos_theta = np.sqrt(r2)
         sin_theta = np.sqrt(1.0 - r2)
@@ -132,7 +132,7 @@ class HarveyShackBSDF(BaseBSDF):
         # For simplicity use the b0-based limit
         xp = _get_xp(incident_dirs)
         n = incident_dirs.shape[0]
-        # Total scatter ≈ pi * b0 * l0^s / (s - 1) for s > 1 (truncated)
+        # Total scatter ~ pi * b0 * l0^s / (s - 1) for s > 1 (truncated)
         estimate = min(float(np.pi * self.b0 * self.l0), 1.0)
         return xp.full(n, estimate, dtype=incident_dirs.dtype)
 

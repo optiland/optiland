@@ -53,21 +53,21 @@ class Spectrum:
             weights=np.array([1.0]),
         )
 
-    def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
+    def sample(self, num: int, rng: np.random.Generator) -> np.ndarray:
         """Sample n wavelengths from the spectrum.
 
         Uses inverse-CDF (quantile) sampling.
 
         Args:
-            n: Number of wavelengths to sample.
+            num: Number of wavelengths to sample.
             rng: NumPy random generator.
 
         Returns:
             Sampled wavelengths [nm], shape (n,).
         """
         if len(self.wavelengths) == 1:
-            return np.full(n, self.wavelengths[0])
-        u = rng.random(n)
+            return np.full(num, self.wavelengths[0])
+        u = rng.random(num)
         indices = np.searchsorted(self._cdf, u)
         indices = np.clip(indices, 0, len(self.wavelengths) - 1)
         return self.wavelengths[indices]
@@ -100,19 +100,19 @@ class BaseNSQSource(ABC):
         self.total_flux = float(total_flux)
 
     @abstractmethod
-    def generate(self, n_rays: int, rng: np.random.Generator) -> NSQRayBundle:
-        """Generate n_rays rays in global coordinates.
+    def generate(self, num_rays: int, rng: np.random.Generator) -> NSQRayBundle:
+        """Generate num_rays rays in global coordinates.
 
         Each ray carries:
           - position sampled from source geometry
           - direction sampled from source emission pattern
           - wavelength sampled from spectrum (Monte Carlo)
-          - initial flux = total_flux / n_rays
+          - initial flux = total_flux / num_rays
 
         Args:
-            n_rays: Number of rays to generate.
+            num_rays: Number of rays to generate.
             rng: NumPy random generator.
 
         Returns:
-            NSQRayBundle with all rays alive and flux = total_flux / n_rays.
+            NSQRayBundle with all rays alive and flux = total_flux / num_rays.
         """

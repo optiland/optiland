@@ -8,11 +8,11 @@ The conic surface is defined as:
 where r^2 = x^2 + y^2, R is the radius of curvature, and K is the conic constant.
 
 Special cases:
-    K = 0  → sphere
-    K = -1 → paraboloid
-    K < -1 → hyperboloid
-    -1 < K < 0 → prolate ellipsoid
-    K > 0  → oblate ellipsoid
+    K = 0  -> sphere
+    K = -1 -> paraboloid
+    K < -1 -> hyperboloid
+    -1 < K < 0 -> prolate ellipsoid
+    K > 0  -> oblate ellipsoid
 
 Kramer Harrison, 2026
 """
@@ -120,9 +120,9 @@ class ConicGeometry(AnalyticGeometry):
         t = xp.where(xp.abs(dz) > 1e-12, -oz / (dz + 1e-30), xp.zeros_like(oz))
 
         # Newton-Raphson: f(t) = oz + t*dz - sag(ox + t*dx, oy + t*dy) = 0
-        n_iters = 10
+        num_iters = 10
         eps = 1e-9
-        for _ in range(n_iters):
+        for _ in range(num_iters):
             px = ox + t * dx
             py = oy + t * dy
             pz = oz + t * dz

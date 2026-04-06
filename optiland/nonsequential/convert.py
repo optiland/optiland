@@ -1,4 +1,4 @@
-"""Sequential → Non-Sequential Converter.
+"""Sequential -> Non-Sequential Converter.
 
 Provides :func:`sequential_to_nonsequential` to convert an
 :class:`~optiland.optic.Optic` instance into a fully-populated
@@ -25,7 +25,7 @@ class ConversionError(Exception):
 def sequential_to_nonsequential(
     optic: Optic,
     *,
-    n_rays: int = 1_000,
+    num_rays: int = 1_000,
     detector_width: float | None = None,
     detector_height: float | None = None,
     detector_pixels: tuple[int, int] = (512, 512),
@@ -41,13 +41,13 @@ def sequential_to_nonsequential(
 
     Args:
         optic: Sequential optical system to convert.
-        n_rays: Default ray count for visualization sources. Does not affect
-            scene.trace() — pass n_rays there directly.
+        num_rays: Default ray count for visualization sources. Does not affect
+            scene.trace() -- pass num_rays there directly.
         detector_width: Semi-width of the image detector [mm]. Defaults to
-            2× the paraxial image height.
+            2x the paraxial image height.
         detector_height: Semi-height of the image detector [mm]. Defaults to
             detector_width.
-        detector_pixels: (n_pixels_x, n_pixels_y) for the irradiance detector.
+        detector_pixels: (num_pixels_x, num_pixels_y) for the irradiance detector.
         beam_diameter: Override entrance pupil diameter for collimated sources
             [mm]. Defaults to paraxial EPD.
         half_angle_deg: Override cone half-angle for point sources [degrees].
@@ -73,9 +73,6 @@ def sequential_to_nonsequential(
     surfs = optic.surfaces.surfaces  # list of all surfaces including obj and img
     n = len(surfs)
 
-    # -------------------------------------------------------------------
-    # Build optical elements (surfaces 1 .. n-2)
-    # -------------------------------------------------------------------
     i = 1
     elem_idx = 0
     while i < n - 1:
@@ -91,7 +88,7 @@ def sequential_to_nonsequential(
         if _is_glass(surf):
             # Gather all surfaces that start or continue a glass element.
             # element_surfaces collects the glass-entry surfaces;
-            # the loop advances j until we find the glass→air boundary.
+            # the loop advances j until we find the glass->air boundary.
             element_surfaces = [surf]
             element_indices = [i]
             j = i + 1
@@ -113,7 +110,7 @@ def sequential_to_nonsequential(
             else:
                 raise ConversionError(
                     f"Lens element starting at surface index {i} has "
-                    f"{len(element_surfaces)} surfaces — only singlets (2) "
+                    f"{len(element_surfaces)} surfaces -- only singlets (2) "
                     f"and cemented doublets (3) are supported."
                 )
 
@@ -129,19 +126,10 @@ def sequential_to_nonsequential(
             "Move the stop to a glass surface or remove it before converting."
         )
 
-    # -------------------------------------------------------------------
-    # Sources — one per sequential field
-    # -------------------------------------------------------------------
     _add_sources(scene, optic, beam_diameter, half_angle_deg)
 
-    # -------------------------------------------------------------------
-    # Detector — image surface
-    # -------------------------------------------------------------------
     _add_detector(scene, optic, detector_width, detector_height, detector_pixels)
 
-    # -------------------------------------------------------------------
-    # Fresnel warning
-    # -------------------------------------------------------------------
     warnings.warn(
         "The converted NSQ scene uses Fresnel reflections at all uncoated interfaces. "
         "In sequential mode, uncoated surfaces always transmit. "
@@ -152,11 +140,6 @@ def sequential_to_nonsequential(
     )
 
     return scene
-
-
-# ---------------------------------------------------------------------------
-# Private helpers — geometry / material checks
-# ---------------------------------------------------------------------------
 
 
 def _check_geometry(surf, index: int) -> None:
@@ -341,11 +324,6 @@ def _surface_semi_diameter(surf, optic=None, idx: int | None = None) -> float:
     return 10.0  # Default if not set
 
 
-# ---------------------------------------------------------------------------
-# Private helpers — element builders
-# ---------------------------------------------------------------------------
-
-
 def _add_mirror(scene, optic, surf, elem_idx: int) -> None:
     """Add a Mirror component to the scene.
 
@@ -372,7 +350,7 @@ def _add_lens(scene, optic, element_surfaces: list, elem_indices: list) -> None:
 
     Args:
         scene: NSQScene to add to.
-        element_surfaces: [front_surf, back_surf] — front is glass entry,
+        element_surfaces: [front_surf, back_surf] -- front is glass entry,
             back exits to air.
         elem_idx: Element index (used for naming).
     """
@@ -442,11 +420,6 @@ def _add_doublet(scene, optic, element_surfaces: list, elem_indices: list) -> No
     scene.add_doublet(f"D{elem_indices[0]}", cs, config)
 
 
-# ---------------------------------------------------------------------------
-# Private helpers — sources
-# ---------------------------------------------------------------------------
-
-
 def _build_spectrum(optic) -> object:
     """Build an NSQ Spectrum from the optic's wavelength group.
 
@@ -482,7 +455,7 @@ def _collimated_source_cs(y_angle_deg: float, x_angle_deg: float, epd: float):
     Args:
         y_angle_deg: Field angle in the Y direction [degrees].
         x_angle_deg: Field angle in the X direction [degrees].
-        epd: Entrance pupil diameter [mm] — used to set the upstream offset.
+        epd: Entrance pupil diameter [mm] -- used to set the upstream offset.
 
     Returns:
         CoordinateSystem for the source.
@@ -602,11 +575,6 @@ def _add_sources(
             )
 
 
-# ---------------------------------------------------------------------------
-# Private helpers — detector
-# ---------------------------------------------------------------------------
-
-
 def _add_detector(
     scene,
     optic,
@@ -621,7 +589,7 @@ def _add_detector(
         optic: Sequential Optic.
         detector_width: Semi-width override [mm] or None.
         detector_height: Semi-height override [mm] or None.
-        detector_pixels: (n_pixels_x, n_pixels_y).
+        detector_pixels: (num_pixels_x, num_pixels_y).
     """
     from optiland.coordinate_system import CoordinateSystem  # noqa: PLC0415
     from optiland.nonsequential.detectors.configs import (  # noqa: PLC0415
@@ -634,7 +602,7 @@ def _add_detector(
     if detector_width is not None:
         width = detector_width
     else:
-        # Use paraxial chief ray height at image plane × 2 as the full width
+        # Use paraxial chief ray height at image plane x 2 as the full width
         try:
             yb, _ub = optic.paraxial.chief_ray()
             try:
@@ -652,7 +620,7 @@ def _add_detector(
     config = IrradianceDetectorConfig(
         width=width,
         height=height,
-        n_pixels_x=nx,
-        n_pixels_y=ny,
+        num_pixels_x=nx,
+        num_pixels_y=ny,
     )
     scene.add_detector("D1", cs, config)

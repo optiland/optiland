@@ -22,7 +22,7 @@ class BaseBSDF(ABC):
     @abstractmethod
     def sample(
         self,
-        n_rays: int,
+        num_rays: int,
         incident_dirs: np.ndarray,
         normals: np.ndarray,
         wavelengths: np.ndarray,
@@ -31,7 +31,7 @@ class BaseBSDF(ABC):
         """Sample scattered ray directions and relative flux weights.
 
         Args:
-            n_rays: Number of rays to scatter.
+            num_rays: Number of rays to scatter.
             incident_dirs: Incident ray directions, shape (N, 3), unit vectors.
             normals: Surface normals at hit points, shape (N, 3), unit vectors
                 pointing toward the incoming ray side.

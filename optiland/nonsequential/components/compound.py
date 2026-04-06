@@ -2,7 +2,7 @@
 
 A compound component manages a group of sub-surfaces that together represent
 a single optical element (e.g. a lens with front face, back face, and edge).
-The tracer never sees compound objects — it works on the flat list of
+The tracer never sees compound objects -- it works on the flat list of
 BaseComponent surfaces exposed by each compound.
 
 Kramer Harrison, 2026

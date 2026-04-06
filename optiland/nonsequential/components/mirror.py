@@ -52,10 +52,6 @@ class Mirror(CompoundComponent):
         self._config = config
         self._surfaces: list[BaseComponent] = self._build()
 
-    # ------------------------------------------------------------------
-    # CompoundComponent interface
-    # ------------------------------------------------------------------
-
     @property
     def name(self) -> str:
         """Registry name of this mirror."""
@@ -70,10 +66,6 @@ class Mirror(CompoundComponent):
     def coordinate_system(self) -> CoordinateSystem:
         """Mirror surface coordinate system."""
         return self._cs
-
-    # ------------------------------------------------------------------
-    # Build
-    # ------------------------------------------------------------------
 
     def _build(self) -> list[BaseComponent]:
         """Construct the reflective surface.

@@ -1,4 +1,4 @@
-"""ArrayBackend — base class for array-based tracing backends.
+"""ArrayBackend -- base class for array-based tracing backends.
 
 Provides the shared Monte Carlo trace loop for Numpy, Cupy, and other
 similar array-based backends. Extracts paths bounce-by-bounce when
@@ -39,7 +39,7 @@ class ArrayBackend(TracerBackend):
     def trace(
         self,
         scene: NSQScene,
-        n_rays: int,
+        num_rays: int,
         max_bounces: int = 200,
         min_flux_fraction: float = 1e-6,
         batch_size: int = 1_000_000,
@@ -50,7 +50,7 @@ class ArrayBackend(TracerBackend):
 
         Args:
             scene: The NSQScene to simulate.
-            n_rays: Total rays to launch.
+            num_rays: Total rays to launch.
             max_bounces: Maximum surface hits per ray.
             min_flux_fraction: Kill threshold relative to per-ray initial flux.
             batch_size: Rays per processing batch.
@@ -70,12 +70,12 @@ class ArrayBackend(TracerBackend):
 
         sources = scene.sources
         total_flux_in = sum(s.total_flux for s in sources)
-        n_rays_total = int(n_rays)
-        n_rays_remaining = n_rays_total
-        n_rays_absorbed = 0
-        n_rays_escaped = 0
+        num_rays_total = int(num_rays)
+        num_rays_remaining = num_rays_total
+        num_rays_absorbed = 0
+        num_rays_escaped = 0
 
-        flux_per_ray = total_flux_in / n_rays_total if n_rays_total > 0 else 1.0
+        flux_per_ray = total_flux_in / num_rays_total if num_rays_total > 0 else 1.0
         min_flux = min_flux_fraction * flux_per_ray
 
         source = sources[0]  # MVP: single source
@@ -85,8 +85,8 @@ class ArrayBackend(TracerBackend):
         if record_paths:
             recorded_paths = {"x": [], "y": [], "z": []}
 
-        while n_rays_remaining > 0:
-            batch = min(batch_size, n_rays_remaining)
+        while num_rays_remaining > 0:
+            batch = min(batch_size, num_rays_remaining)
             rays = source.generate(batch, self.rng)
             xp = _get_xp(rays.x)
 
@@ -95,7 +95,7 @@ class ArrayBackend(TracerBackend):
                 recorded_paths["y"].append(self._to_numpy(rays.y).copy())
                 recorded_paths["z"].append(self._to_numpy(rays.z).copy())
 
-            while rays.n_alive > 0:
+            while rays.num_rays_alive > 0:
                 # Component intersections
                 t_min, hit_normals, comp_idx = self.intersect_scene(
                     rays, scene.surfaces
@@ -137,7 +137,7 @@ class ArrayBackend(TracerBackend):
                 # Kill rays with no hit (escaped)
                 no_hit = ~any_comp_hit & ~any_det_hit
                 escaped_now = no_hit & rays.alive
-                n_rays_escaped += int(escaped_now.sum())
+                num_rays_escaped += int(escaped_now.sum())
 
                 if record_paths and escaped_now.any():
                     bounding_scale = self._estimate_bounding_scale(scene)
@@ -165,11 +165,14 @@ class ArrayBackend(TracerBackend):
                     recorded_paths["z"].append(self._to_numpy(rays.z).copy())
                 else:
                     # Compact when >50% rays are dead, only if NOT recording paths!
-                    if rays.n_alive > 0 and rays.n_alive < rays.n_rays // 2:
+                    if (
+                        rays.num_rays_alive > 0
+                        and rays.num_rays_alive < rays.num_rays // 2
+                    ):
                         rays = rays.compact()
 
-            n_rays_absorbed += batch - int(rays.n_rays)
-            n_rays_remaining -= batch
+            num_rays_absorbed += batch - int(rays.num_rays)
+            num_rays_remaining -= batch
 
         t_end = time.perf_counter()
 
@@ -194,9 +197,9 @@ class ArrayBackend(TracerBackend):
 
         return SimulationResult(
             detectors=detector_results,
-            n_rays_total=n_rays_total,
-            n_rays_absorbed=n_rays_absorbed,
-            n_rays_escaped=n_rays_escaped,
+            num_rays_total=num_rays_total,
+            num_rays_absorbed=num_rays_absorbed,
+            num_rays_escaped=num_rays_escaped,
             total_flux_in=total_flux_in,
             total_flux_detected=total_flux_detected,
             flux_conservation_error=flux_err,
@@ -219,7 +222,7 @@ class ArrayBackend(TracerBackend):
             ``(t_min, hit_normals, detector_indices)``
         """
         xp = _get_xp(rays.x)
-        N = rays.n_rays
+        N = rays.num_rays
         t_min = xp.full(N, xp.inf, dtype=xp.float64)
         hit_normals = xp.zeros((N, 3), dtype=xp.float64)
         det_indices = xp.full(N, -1, dtype=xp.int32)

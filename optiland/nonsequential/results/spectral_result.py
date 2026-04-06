@@ -17,12 +17,12 @@ class SpectralResult:
     """Per-wavelength irradiance on a planar detector.
 
     Attributes:
-        irradiance: Irradiance [W/mm²/nm], shape (ny, nx, n_lambda).
+        irradiance: Irradiance [W/mm^2/nm], shape (ny, nx, n_lambda).
         x_coords: Bin centre x-coordinates [mm].
         y_coords: Bin centre y-coordinates [mm].
         wavelengths: Wavelength bin centres [nm].
         total_flux: Total flux recorded [W].
-        n_rays_hit: Number of rays recorded.
+        num_rays_hit: Number of rays recorded.
     """
 
     def __init__(
@@ -32,24 +32,24 @@ class SpectralResult:
         y_coords: np.ndarray,
         wavelengths: np.ndarray,
         total_flux: float,
-        n_rays_hit: int,
+        num_rays_hit: int,
     ) -> None:
         """Initialize SpectralResult.
 
         Args:
-            irradiance: 3D irradiance array [W/mm²], shape (ny, nx, n_lambda).
+            irradiance: 3D irradiance array [W/mm^2], shape (ny, nx, n_lambda).
             x_coords: Bin centre x-coordinates [mm].
             y_coords: Bin centre y-coordinates [mm].
             wavelengths: Wavelength bin centres [nm].
             total_flux: Total detected flux [W].
-            n_rays_hit: Number of rays that contributed.
+            num_rays_hit: Number of rays that contributed.
         """
         self.irradiance = irradiance
         self.x_coords = x_coords
         self.y_coords = y_coords
         self.wavelengths = wavelengths
         self.total_flux = float(total_flux)
-        self.n_rays_hit = int(n_rays_hit)
+        self.num_rays_hit = int(num_rays_hit)
 
     def plot_at_wavelength(self, wl: float, ax=None, **kwargs):
         """Plot the irradiance map at the wavelength closest to wl.
@@ -85,8 +85,8 @@ class SpectralResult:
             aspect="equal",
             **kwargs,
         )
-        plt.colorbar(im, ax=ax, label="Irradiance [W/mm²]")
-        ax.set_title(f"Irradiance at λ={actual_wl:.1f} nm")
+        plt.colorbar(im, ax=ax, label="Irradiance [W/mm^2]")
+        ax.set_title(f"Irradiance at wl={actual_wl:.1f} nm")
         return fig
 
     def save(self, path: str | Path) -> None:
@@ -102,5 +102,5 @@ class SpectralResult:
             y_coords=self.y_coords,
             wavelengths=self.wavelengths,
             total_flux=self.total_flux,
-            n_rays_hit=self.n_rays_hit,
+            num_rays_hit=self.num_rays_hit,
         )

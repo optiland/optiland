@@ -83,5 +83,5 @@ class NSQMaterial:
             return np.asarray(result, dtype=float)
 
 
-# Module-level vacuum constant — refractive index 1.0, no scatter, lossless.
+# Module-level vacuum constant -- refractive index 1.0, no scatter, lossless.
 VACUUM: NSQMaterial = NSQMaterial(optiland_material=None)

@@ -1,6 +1,6 @@
 """Annular plane geometry for Non-Sequential Raytracing.
 
-AnnularPlaneGeometry — a flat ring (annulus) at a fixed axial offset, with
+AnnularPlaneGeometry -- a flat ring (annulus) at a fixed axial offset, with
 inner and outer radii.  Used as the rim surface of a lens whose front and
 back apertures differ.
 
@@ -76,7 +76,7 @@ class AnnularPlaneGeometry(AnalyticGeometry):
         )
 
         # Compute hit position; for parallel rays t=inf so hx/hy may be
-        # inf or nan — this is intentional: those values fail the r² check.
+        # inf or nan -- this is intentional: those values fail the r^2 check.
         with np.errstate(invalid="ignore"):
             hx = origins[:, 0] + t * directions[:, 0]
             hy = origins[:, 1] + t * directions[:, 1]
@@ -88,7 +88,7 @@ class AnnularPlaneGeometry(AnalyticGeometry):
 
         t_out = xp.where(hit_mask, t, xp.full(N, xp.inf))
 
-        # Normal is (0, 0, ±1) — flip to face incoming ray
+        # Normal is (0, 0, +/-1) -- flip to face incoming ray
         nz_sign = xp.where(dz > 0, -1.0, 1.0)
         normals = xp.stack([xp.zeros(N), xp.zeros(N), nz_sign * xp.ones(N)], axis=1)
 

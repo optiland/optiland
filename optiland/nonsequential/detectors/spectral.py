@@ -26,14 +26,14 @@ if TYPE_CHECKING:
 class SpectralDetector(BaseDetector):
     """Per-wavelength irradiance detector on a planar rectangular surface.
 
-    Records flux in a 3D (x, y, λ) grid.
+    Records flux in a 3D (x, y, wl) grid.
 
     Attributes:
         cs: Coordinate system.
         width: Detector width [mm].
         height: Detector height [mm].
-        n_pixels_x: Number of pixels along x.
-        n_pixels_y: Number of pixels along y.
+        num_pixels_x: Number of pixels along x.
+        num_pixels_y: Number of pixels along y.
         wavelength_bins: Wavelength bin edges [nm].
     """
 
@@ -42,8 +42,8 @@ class SpectralDetector(BaseDetector):
         cs: CoordinateSystem,
         width: float,
         height: float,
-        n_pixels_x: int,
-        n_pixels_y: int,
+        num_pixels_x: int,
+        num_pixels_y: int,
         wavelength_bins: np.ndarray,
         name: str = "",
     ) -> None:
@@ -53,8 +53,8 @@ class SpectralDetector(BaseDetector):
             cs: Coordinate system for detector position/orientation.
             width: Detector width [mm].
             height: Detector height [mm].
-            n_pixels_x: Number of pixels along x.
-            n_pixels_y: Number of pixels along y.
+            num_pixels_x: Number of pixels along x.
+            num_pixels_y: Number of pixels along y.
             wavelength_bins: Wavelength bin edges [nm], shape (n_lambda + 1,).
             name: Optional label.
         """
@@ -62,16 +62,18 @@ class SpectralDetector(BaseDetector):
         super().__init__(cs, geometry, name=name)
         self.width = float(width)
         self.height = float(height)
-        self.n_pixels_x = int(n_pixels_x)
-        self.n_pixels_y = int(n_pixels_y)
+        self.num_pixels_x = int(num_pixels_x)
+        self.num_pixels_y = int(num_pixels_y)
         self.wavelength_bins = np.asarray(wavelength_bins, dtype=np.float64)
         n_lambda = len(wavelength_bins) - 1
 
-        self._flux_map = np.zeros((n_pixels_y, n_pixels_x, n_lambda), dtype=np.float64)
-        self._n_rays_hit = 0
+        self._flux_map = np.zeros(
+            (num_pixels_y, num_pixels_x, n_lambda), dtype=np.float64
+        )
+        self._num_rays_hit = 0
 
-        self._x_edges = np.linspace(-width / 2.0, width / 2.0, n_pixels_x + 1)
-        self._y_edges = np.linspace(-height / 2.0, height / 2.0, n_pixels_y + 1)
+        self._x_edges = np.linspace(-width / 2.0, width / 2.0, num_pixels_x + 1)
+        self._y_edges = np.linspace(-height / 2.0, height / 2.0, num_pixels_y + 1)
 
     def record(self, rays: NSQRayBundle, t: np.ndarray, hit_mask: np.ndarray) -> None:
         """Accumulate per-wavelength flux from hit rays.
@@ -117,12 +119,12 @@ class SpectralDetector(BaseDetector):
         ix = np.clip(
             np.searchsorted(self._x_edges, hx_l, side="right") - 1,
             0,
-            self.n_pixels_x - 1,
+            self.num_pixels_x - 1,
         )
         iy = np.clip(
             np.searchsorted(self._y_edges, hy_l, side="right") - 1,
             0,
-            self.n_pixels_y - 1,
+            self.num_pixels_y - 1,
         )
         iwl = np.clip(
             np.searchsorted(self.wavelength_bins, wl_hit, side="right") - 1,
@@ -131,15 +133,17 @@ class SpectralDetector(BaseDetector):
         )
 
         np.add.at(self._flux_map, (iy, ix, iwl), flux_hit)
-        self._n_rays_hit += hit_mask_np.sum()
+        self._num_rays_hit += hit_mask_np.sum()
 
     def get_result(self) -> SpectralResult:
         """Return accumulated spectral result.
 
         Returns:
-            SpectralResult with irradiance [W/mm²] per pixel per wavelength bin.
+            SpectralResult with irradiance [W/mm^2] per pixel per wavelength bin.
         """
-        pixel_area = (self.width / self.n_pixels_x) * (self.height / self.n_pixels_y)
+        pixel_area = (self.width / self.num_pixels_x) * (
+            self.height / self.num_pixels_y
+        )
         irradiance = self._flux_map / pixel_area
 
         x_centres = 0.5 * (self._x_edges[:-1] + self._x_edges[1:])
@@ -152,13 +156,13 @@ class SpectralDetector(BaseDetector):
             y_coords=y_centres,
             wavelengths=wl_centres,
             total_flux=float(self._flux_map.sum()),
-            n_rays_hit=self._n_rays_hit,
+            num_rays_hit=self._num_rays_hit,
         )
 
     def reset(self) -> None:
         """Clear accumulated data."""
         self._flux_map[:] = 0.0
-        self._n_rays_hit = 0
+        self._num_rays_hit = 0
 
 
 def _to_numpy(xp, arr):

@@ -1,4 +1,4 @@
-"""NSQViewer2D — 2D matplotlib visualization for NSQ scenes.
+"""NSQViewer2D -- 2D matplotlib visualization for NSQ scenes.
 
 Kramer Harrison, 2026
 """
@@ -44,10 +44,6 @@ class NSQViewer2D(BaseViewer2D):
         self._renderer_registry: dict = {}
         self._register_default_renderers()
 
-    # ------------------------------------------------------------------
-    # Renderer registration
-    # ------------------------------------------------------------------
-
     def _register_default_renderers(self) -> None:
         """Register the built-in renderers for Lens and Mirror."""
         from optiland.nonsequential.components.doublet import Doublet  # noqa: PLC0415
@@ -74,17 +70,13 @@ class NSQViewer2D(BaseViewer2D):
         """
         self._renderer_registry[component_type] = renderer
 
-    # ------------------------------------------------------------------
-    # View
-    # ------------------------------------------------------------------
-
     def view(
         self,
         result: SimulationResult | None = None,
         *,
         theme=None,
         projection: str = "YZ",
-        n_rays_display: int = 100,
+        num_rays: int = 100,
         figsize: tuple[int, int] | None = None,
         title: str | None = None,
         xlim: tuple | None = None,
@@ -96,15 +88,15 @@ class NSQViewer2D(BaseViewer2D):
 
         Args:
             result: Optional SimulationResult; used to overlay ray paths
-                when ``n_rays_display > 0``.
+                when ``num_rays > 0``.
             theme: Optional theme object for colours and styles. If None,
                 the active theme is used.
-            projection: Projection plane — ``'YZ'`` (default), ``'XZ'``,
+            projection: Projection plane -- ``'YZ'`` (default), ``'XZ'``,
                 or ``'XY'``.
-            n_rays_display: Number of ray segments to sample and overlay.
+            num_rays: Number of ray segments to sample and overlay.
                 Defaults to 100.
-            figsize: Figure size override (width, height). None → theme default.
-            title: Optional axes title. Defaults to "NSQ Scene — 2D Cross-Section".
+            figsize: Figure size override (width, height). None -> theme default.
+            title: Optional axes title. Defaults to "NSQ Scene -- 2D Cross-Section".
             xlim: Optional (xmin, xmax) axis limits.
             ylim: Optional (ymin, ymax) axis limits.
             ax: Optional existing axes to plot into.
@@ -130,7 +122,7 @@ class NSQViewer2D(BaseViewer2D):
         for det in self.scene.detectors:
             det_renderer.render(det, ax, theme=theme, projection=projection)
 
-        if n_rays_display > 0:
+        if num_rays > 0:
             from optiland.nonsequential.visualization.rays import (
                 NSQRays2D,  # noqa: PLC0415
             )
@@ -138,14 +130,14 @@ class NSQViewer2D(BaseViewer2D):
             rays = NSQRays2D(self.scene)
             rays.plot(
                 ax,
-                n_rays=n_rays_display,
+                num_rays=num_rays,
                 theme=theme,
                 projection=projection,
                 color_by=color_by,
             )
 
         ax.set_aspect("equal")
-        _title = title if title is not None else "NSQ Scene — 2D Cross-Section"
+        _title = title if title is not None else "NSQ Scene -- 2D Cross-Section"
         self._apply_axes_style(
             ax, projection, theme, title=_title, xlim=xlim, ylim=ylim
         )

@@ -32,8 +32,8 @@ class IrradianceDetector(BaseDetector):
         cs: Coordinate system.
         width: Detector width [mm].
         height: Detector height [mm].
-        n_pixels_x: Number of pixels along x.
-        n_pixels_y: Number of pixels along y.
+        num_pixels_x: Number of pixels along x.
+        num_pixels_y: Number of pixels along y.
     """
 
     def __init__(
@@ -41,8 +41,8 @@ class IrradianceDetector(BaseDetector):
         cs: CoordinateSystem,
         width: float,
         height: float,
-        n_pixels_x: int,
-        n_pixels_y: int,
+        num_pixels_x: int,
+        num_pixels_y: int,
         name: str = "",
     ) -> None:
         """Initialize IrradianceDetector.
@@ -51,24 +51,24 @@ class IrradianceDetector(BaseDetector):
             cs: Coordinate system for detector position/orientation.
             width: Detector width [mm].
             height: Detector height [mm].
-            n_pixels_x: Number of pixels along x.
-            n_pixels_y: Number of pixels along y.
+            num_pixels_x: Number of pixels along x.
+            num_pixels_y: Number of pixels along y.
             name: Optional label.
         """
         geometry = FinitePlaneGeometry(width=width, height=height)
         super().__init__(cs, geometry, name=name)
         self.width = float(width)
         self.height = float(height)
-        self.n_pixels_x = int(n_pixels_x)
-        self.n_pixels_y = int(n_pixels_y)
+        self.num_pixels_x = int(num_pixels_x)
+        self.num_pixels_y = int(num_pixels_y)
 
         # Accumulation buffer: shape (ny, nx)
-        self._flux_map = np.zeros((n_pixels_y, n_pixels_x), dtype=np.float64)
-        self._n_rays_hit = 0
+        self._flux_map = np.zeros((num_pixels_y, num_pixels_x), dtype=np.float64)
+        self._num_rays_hit = 0
 
         # Pixel bin edges
-        self._x_edges = np.linspace(-width / 2.0, width / 2.0, n_pixels_x + 1)
-        self._y_edges = np.linspace(-height / 2.0, height / 2.0, n_pixels_y + 1)
+        self._x_edges = np.linspace(-width / 2.0, width / 2.0, num_pixels_x + 1)
+        self._y_edges = np.linspace(-height / 2.0, height / 2.0, num_pixels_y + 1)
 
     def record(self, rays: NSQRayBundle, t: np.ndarray, hit_mask: np.ndarray) -> None:
         """Accumulate flux from hit rays into the pixel grid.
@@ -109,7 +109,7 @@ class IrradianceDetector(BaseDetector):
         pos_g = np.stack([hx_g, hy_g, hz_g], axis=1)
         t_vec = np.array(translation, dtype=float)
         R = np.array(rot, dtype=float)
-        pos_l = (pos_g - t_vec) @ R  # global → local
+        pos_l = (pos_g - t_vec) @ R  # global -> local
 
         hx_l = pos_l[:, 0]
         hy_l = pos_l[:, 1]
@@ -120,20 +120,22 @@ class IrradianceDetector(BaseDetector):
         iy = np.searchsorted(self._y_edges, hy_l, side="right") - 1
 
         # Clamp to valid pixel indices
-        ix = np.clip(ix, 0, self.n_pixels_x - 1)
-        iy = np.clip(iy, 0, self.n_pixels_y - 1)
+        ix = np.clip(ix, 0, self.num_pixels_x - 1)
+        iy = np.clip(iy, 0, self.num_pixels_y - 1)
 
         # Scatter-add (np.add.at is unbuffered)
         np.add.at(self._flux_map, (iy, ix), flux_hit)
-        self._n_rays_hit += hit_mask_np.sum()
+        self._num_rays_hit += hit_mask_np.sum()
 
     def get_result(self) -> IrradianceMap:
         """Return the accumulated irradiance map.
 
         Returns:
-            IrradianceMap with irradiance [W/mm²] computed from stored flux.
+            IrradianceMap with irradiance [W/mm^2] computed from stored flux.
         """
-        pixel_area = (self.width / self.n_pixels_x) * (self.height / self.n_pixels_y)
+        pixel_area = (self.width / self.num_pixels_x) * (
+            self.height / self.num_pixels_y
+        )
         irradiance = self._flux_map / pixel_area
 
         x_centres = 0.5 * (self._x_edges[:-1] + self._x_edges[1:])
@@ -144,13 +146,13 @@ class IrradianceDetector(BaseDetector):
             x_coords=x_centres,
             y_coords=y_centres,
             total_flux=float(self._flux_map.sum()),
-            n_rays_hit=self._n_rays_hit,
+            num_rays_hit=self._num_rays_hit,
         )
 
     def reset(self) -> None:
         """Clear accumulated data."""
         self._flux_map[:] = 0.0
-        self._n_rays_hit = 0
+        self._num_rays_hit = 0
 
 
 def _to_numpy(xp, arr):

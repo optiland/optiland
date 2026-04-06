@@ -23,7 +23,7 @@ class ComponentRegistry:
     :class:`~optiland.nonsequential.components.base.BaseComponent` surfaces.
 
     Attributes:
-        _registry: Ordered dict mapping name → CompoundComponent.
+        _registry: Ordered dict mapping name -> CompoundComponent.
     """
 
     def __init__(self) -> None:

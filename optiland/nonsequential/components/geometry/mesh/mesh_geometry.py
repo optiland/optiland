@@ -76,7 +76,7 @@ class MeshGeometry(AnalyticGeometry):
         if len(ray_indices) > 0:
             # Compute t for each hit
             hit_vecs = locations - o_np[ray_indices]
-            # t = dot(hit_vec, direction) / |direction|^2 ≈ dot for unit vectors
+            # t = dot(hit_vec, direction) / |direction|^2 ~ dot for unit vectors
             t_vals = (hit_vecs * d_np[ray_indices]).sum(axis=1)
             # Keep nearest positive hit per ray
             order = np.argsort(ray_indices)

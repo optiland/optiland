@@ -67,7 +67,7 @@ class RayDatabaseDetector(BaseDetector):
         self._flux: list[np.ndarray] = []
         self._wavelength: list[np.ndarray] = []
         self._total_flux: float = 0.0
-        self._n_rays_hit: int = 0
+        self._num_rays_hit: int = 0
 
     def record(self, rays: NSQRayBundle, t: np.ndarray, hit_mask: np.ndarray) -> None:
         """Record hit ray data.
@@ -103,7 +103,7 @@ class RayDatabaseDetector(BaseDetector):
         hwl = wl_np[hit_mask_np]
 
         self._total_flux += float(hflux.sum())
-        self._n_rays_hit += len(hx)
+        self._num_rays_hit += len(hx)
 
         if self.store_rays:
             self._x.append(hx)
@@ -177,7 +177,7 @@ class RayDatabaseDetector(BaseDetector):
         self._flux.clear()
         self._wavelength.clear()
         self._total_flux = 0.0
-        self._n_rays_hit = 0
+        self._num_rays_hit = 0
 
 
 def _to_numpy(xp, arr):

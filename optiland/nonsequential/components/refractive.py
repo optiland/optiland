@@ -96,14 +96,8 @@ class RefractiveComponent(BaseComponent):
         # Determine n1 and n2 for each ray (based on side of the surface)
         dot = (dirs * normals).sum(axis=1)  # cos_theta_i (signed)
         # Normal points toward incoming ray (guaranteed by geometry), so dot <= 0
-        # If dot > 0, the normal was not flipped correctly — handle both cases
+        # If dot > 0, the normal was not flipped correctly. Handle both cases.
         cos_theta_i = xp.abs(dot)
-
-        # n1 = current medium, n2 = opposite medium
-        # Determine which side: if dot < 0, ray comes from front side (normal faces ray)
-        # → n1 = material_front, n2 = material_back
-        # If dot > 0, geometry flipped normal → n1 = material_back, n2 = material_front
-        # Use n_current to determine n1 (current medium index) already stored in ray
 
         n1 = rays.n_current  # shape (N,)
 
@@ -112,7 +106,7 @@ class RefractiveComponent(BaseComponent):
         n2_back = self.material_back.n(wl)
 
         # Determine which side the ray is coming from
-        # dot < 0 → ray opposes normal → came from front
+        # dot < 0 -> ray opposes normal -> came from front
         from_front = dot < 0
         if xp is not np:
             n2 = xp.where(from_front, n2_back, n2_front)
@@ -136,7 +130,7 @@ class RefractiveComponent(BaseComponent):
         R_fresnel = xp.where(tir, xp.ones_like(rs), 0.5 * (rs**2 + rp**2))
 
         # Russian roulette
-        u_np = rng.random(rays.n_rays)
+        u_np = rng.random(rays.num_rays)
         if xp is not np:
             u = xp.array(u_np, dtype=R_fresnel.dtype)
         else:

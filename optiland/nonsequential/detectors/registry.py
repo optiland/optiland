@@ -15,7 +15,7 @@ class DetectorRegistry:
     """Named registry of NSQ detectors.
 
     Attributes:
-        _registry: Ordered dict mapping name → BaseDetector.
+        _registry: Ordered dict mapping name -> BaseDetector.
     """
 
     def __init__(self) -> None:

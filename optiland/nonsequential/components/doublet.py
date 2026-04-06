@@ -34,10 +34,10 @@ class Doublet(CompoundComponent):
 
     Assembles four physical surfaces:
 
-    1. **Front face** — refractive, conic (crown element).
-    2. **Cemented interface** — refractive, conic (crown→flint).
-    3. **Back face** — refractive, conic (flint element).
-    4. **Edge** — cylindrical frustum, absorbing.
+    1. **Front face** -- refractive, conic (crown element).
+    2. **Cemented interface** -- refractive, conic (crown->flint).
+    3. **Back face** -- refractive, conic (flint element).
+    4. **Edge** -- cylindrical frustum, absorbing.
 
     Attributes:
         _name: Registry name.
@@ -64,10 +64,6 @@ class Doublet(CompoundComponent):
         self._config = config
         self._surfaces: list[BaseComponent] = self._build()
 
-    # ------------------------------------------------------------------
-    # CompoundComponent interface
-    # ------------------------------------------------------------------
-
     @property
     def name(self) -> str:
         """Registry name."""
@@ -82,10 +78,6 @@ class Doublet(CompoundComponent):
     def coordinate_system(self) -> CoordinateSystem:
         """Front-vertex coordinate system."""
         return self._cs
-
-    # ------------------------------------------------------------------
-    # Build
-    # ------------------------------------------------------------------
 
     def _build(self) -> list[BaseComponent]:
         """Construct all four sub-surfaces from the config.
@@ -104,7 +96,7 @@ class Doublet(CompoundComponent):
 
         surfaces: list[BaseComponent] = []
 
-        # 1. Front face (vacuum → crown)
+        # 1. Front face (vacuum -> crown)
         surfaces.append(
             _make_surface(
                 cs_front,
@@ -116,7 +108,7 @@ class Doublet(CompoundComponent):
             )
         )
 
-        # 2. Cemented interface (crown → flint)
+        # 2. Cemented interface (crown -> flint)
         surfaces.append(
             _make_surface(
                 cs_cemented,
@@ -128,7 +120,7 @@ class Doublet(CompoundComponent):
             )
         )
 
-        # 3. Back face (flint → vacuum)
+        # 3. Back face (flint -> vacuum)
         surfaces.append(
             _make_surface(
                 cs_back,

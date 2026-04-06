@@ -62,7 +62,7 @@ def test_singlet_trace_receives_flux():
     with pytest.warns(UserWarning, match="Fresnel"):
         scene = sequential_to_nonsequential(optic)
 
-    result = scene.trace(n_rays=5_000, seed=0)
+    result = scene.trace(num_rays=5_000, seed=0)
     assert result.detectors["D1"].total_flux > 0
 
 
@@ -72,5 +72,5 @@ def test_doublet_trace_receives_flux():
     with pytest.warns(UserWarning, match="Fresnel"):
         scene = sequential_to_nonsequential(optic)
 
-    result = scene.trace(n_rays=5_000, seed=0)
+    result = scene.trace(num_rays=5_000, seed=0)
     assert result.detectors["D1"].total_flux > 0

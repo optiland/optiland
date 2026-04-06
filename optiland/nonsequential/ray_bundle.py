@@ -31,7 +31,7 @@ class NSQRayBundle:
         wavelength: Wavelength [nm], shape (N,).
         n_current: Refractive index of current medium, shape (N,).
         bounce: Number of surface hits, shape (N,).
-        alive: Boolean mask — False for dead/terminated rays, shape (N,).
+        alive: Boolean mask -- False for dead/terminated rays, shape (N,).
         s0: Stokes S0 parameter, shape (N,). None if polarization disabled.
         s1: Stokes S1 parameter, shape (N,). None if polarization disabled.
         s2: Stokes S2 parameter, shape (N,). None if polarization disabled.
@@ -55,12 +55,12 @@ class NSQRayBundle:
     s3: np.ndarray | None = None
 
     @property
-    def n_rays(self) -> int:
+    def num_rays(self) -> int:
         """Total number of rays (alive + dead)."""
         return int(self.x.shape[0])
 
     @property
-    def n_alive(self) -> int:
+    def num_rays_alive(self) -> int:
         """Number of alive rays."""
         xp = _get_xp(self.x)
         return int(xp.sum(self.alive))

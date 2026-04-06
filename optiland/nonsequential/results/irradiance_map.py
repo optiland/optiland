@@ -17,11 +17,11 @@ class IrradianceMap:
     """2D irradiance distribution on a planar detector.
 
     Attributes:
-        irradiance: Irradiance [W/mm²], shape (ny, nx).
+        irradiance: Irradiance [W/mm^2], shape (ny, nx).
         x_coords: Bin centre x-coordinates [mm], shape (nx,).
         y_coords: Bin centre y-coordinates [mm], shape (ny,).
         total_flux: Total flux recorded [W].
-        n_rays_hit: Number of rays recorded on this detector.
+        num_rays_hit: Number of rays recorded on this detector.
     """
 
     def __init__(
@@ -30,22 +30,22 @@ class IrradianceMap:
         x_coords: np.ndarray,
         y_coords: np.ndarray,
         total_flux: float,
-        n_rays_hit: int,
+        num_rays_hit: int,
     ) -> None:
         """Initialize IrradianceMap.
 
         Args:
-            irradiance: 2D irradiance array [W/mm²], shape (ny, nx).
+            irradiance: 2D irradiance array [W/mm^2], shape (ny, nx).
             x_coords: Bin centre x-coordinates [mm], shape (nx,).
             y_coords: Bin centre y-coordinates [mm], shape (ny,).
             total_flux: Total detected flux [W].
-            n_rays_hit: Number of rays that contributed.
+            num_rays_hit: Number of rays that contributed.
         """
         self.irradiance = irradiance
         self.x_coords = x_coords
         self.y_coords = y_coords
         self.total_flux = float(total_flux)
-        self.n_rays_hit = int(n_rays_hit)
+        self.num_rays_hit = int(num_rays_hit)
 
     def plot(self, ax=None, **kwargs):
         """Plot the irradiance map.
@@ -77,11 +77,11 @@ class IrradianceMap:
             aspect="equal",
             **kwargs,
         )
-        plt.colorbar(im, ax=ax, label="Irradiance [W/mm²]")
+        plt.colorbar(im, ax=ax, label="Irradiance [W/mm^2]")
         ax.set_xlabel("x [mm]")
         ax.set_ylabel("y [mm]")
         ax.set_title(
-            f"Irradiance Map — {self.n_rays_hit} rays, {self.total_flux:.3g} W"
+            f"Irradiance Map -- {self.num_rays_hit} rays, {self.total_flux:.3g} W"
         )
         return fig
 
@@ -97,7 +97,7 @@ class IrradianceMap:
             x_coords=self.x_coords,
             y_coords=self.y_coords,
             total_flux=self.total_flux,
-            n_rays_hit=self.n_rays_hit,
+            num_rays_hit=self.num_rays_hit,
         )
 
     def to_numpy(self) -> np.ndarray:

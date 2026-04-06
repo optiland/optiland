@@ -33,7 +33,7 @@ class NSQRays2D:
     def plot(
         self,
         ax,
-        n_rays=100,
+        num_rays=100,
         theme=None,
         projection="YZ",
         rng_seed=42,
@@ -43,21 +43,21 @@ class NSQRays2D:
 
         Args:
             ax: The matplotlib axis to plot on.
-            n_rays: Number of rays to trace.
+            num_rays: Number of rays to trace.
             theme (Theme, optional): The theme to apply.
             projection (str): Projection plane.
             rng_seed (int): Seed for reproducibility.
             color_by (str): How to color rays ("source" or "bounce" or "segment").
         """
-        self._trace(n_rays, rng_seed)
+        self._trace(num_rays, rng_seed)
         if not self.recorded_paths:
             return
 
         self._plot_lines(ax, theme, projection, color_by)
 
-    def _trace(self, n_rays, seed):
+    def _trace(self, num_rays, seed):
         tracer = NSQTracer(self.scene)
-        res = tracer.trace(n_rays=n_rays, seed=seed, record_paths=True)
+        res = tracer.trace(num_rays=num_rays, seed=seed, record_paths=True)
         self.recorded_paths = res.ray_paths
 
     def _plot_lines(self, ax, theme=None, projection="YZ", color_by="source"):
@@ -120,17 +120,17 @@ class NSQRays3D(NSQRays2D):
             (0.122, 0.467, 0.706),
         ]
 
-    def plot(self, ax, n_rays=100, theme=None, rng_seed=42, color_by: str = "source"):
+    def plot(self, ax, num_rays=100, theme=None, rng_seed=42, color_by: str = "source"):
         """Plots the rays in 3D.
 
         Args:
             ax: The VTK renderer to plot on.
-            n_rays: Number of rays.
+            num_rays: Number of rays.
             theme: The theme.
             rng_seed: Seed.
             color_by (str): How to color rays ("source" or "bounce" or "segment").
         """
-        self._trace(n_rays, rng_seed)
+        self._trace(num_rays, rng_seed)
         if not self.recorded_paths:
             return
 

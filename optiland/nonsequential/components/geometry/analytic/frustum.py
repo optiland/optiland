@@ -1,6 +1,6 @@
 """Cylindrical frustum geometry for Non-Sequential Raytracing.
 
-CylindricalFrustumGeometry — a truncated cone (frustum) defined by front
+CylindricalFrustumGeometry -- a truncated cone (frustum) defined by front
 and back radii and axial positions. Used as the edge surface of a lens.
 
 All operations in LOCAL coordinates.
@@ -20,7 +20,7 @@ class CylindricalFrustumGeometry(AnalyticGeometry):
 
     The frustum connects a circle of radius ``r_front`` at ``z = z_front``
     to a circle of radius ``r_back`` at ``z = z_back``.  Only the lateral
-    (barrel) surface is modelled — the two end-caps are handled by separate
+    (barrel) surface is modelled -- the two end-caps are handled by separate
     geometry objects (e.g. ConicGeometry for lens faces).
 
     Attributes:
@@ -56,7 +56,7 @@ class CylindricalFrustumGeometry(AnalyticGeometry):
         """Intersect rays with the frustum lateral surface.
 
         The frustum surface satisfies:
-            x² + y² = r(z)²
+            x^2 + y^2 = r(z)^2
         where r(z) = r_front + slope*(z - z_front),
         slope = (r_back - r_front)/(z_back - z_front).
 
@@ -78,7 +78,7 @@ class CylindricalFrustumGeometry(AnalyticGeometry):
 
         h = self.z_back - self.z_front  # axial height [mm]
         if abs(h) < 1e-15:
-            # Degenerate frustum (zero height) — no lateral surface to hit
+            # Degenerate frustum (zero height) -- no lateral surface to hit
             N = origins.shape[0]
             return (
                 xp.full(N, xp.inf),
@@ -93,8 +93,8 @@ class CylindricalFrustumGeometry(AnalyticGeometry):
         # rate of change of r with t: rv = slope * dz
         rv = slope * dz
 
-        # Quadratic coefficients: (dx² + dy² - rv²)*t² + 2*(ox*dx + oy*dy - rz*rv)*t
-        #                          + (ox² + oy² - rz²) = 0
+        # Quadratic coefficients: (dx^2 + dy^2 - rv^2)*t^2 + 2*(ox*dx + oy*dy - rz*rv)*t
+        #                          + (ox^2 + oy^2 - rz^2) = 0
         a = dx * dx + dy * dy - rv * rv
         b = 2.0 * (ox * dx + oy * dy - rz * rv)
         c = ox * ox + oy * oy - rz * rz
@@ -140,7 +140,7 @@ class CylindricalFrustumGeometry(AnalyticGeometry):
         hz = oz + t_nrm * dz
         rz_hit = self.r_front + slope * (hz - self.z_front)
 
-        # Gradient of f(x,y,z) = x² + y² - r(z)²:
+        # Gradient of f(x,y,z) = x^2 + y^2 - r(z)^2:
         #   (2x, 2y, -2*r(z)*slope)
         nx = hx
         ny = hy

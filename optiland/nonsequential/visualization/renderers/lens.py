@@ -143,7 +143,7 @@ class LensRenderer2D(ComponentRenderer2D):
                 )
             )
 
-        # Contour: front (bottom→top) → rim top → back (top→bottom) → rim bottom
+        # Contour: front (bottom->top) -> rim top -> back (top->bottom) -> rim bottom
         contour_h = np.concatenate([fh, rts_h, bh[::-1], rbs_h])
         contour_v = np.concatenate([fv, rts_v, bv[::-1], rbs_v])
 

@@ -15,7 +15,7 @@ class SourceRegistry:
     """Named registry of NSQ sources.
 
     Attributes:
-        _registry: Ordered dict mapping name → BaseNSQSource.
+        _registry: Ordered dict mapping name -> BaseNSQSource.
     """
 
     def __init__(self) -> None:

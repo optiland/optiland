@@ -78,7 +78,7 @@ class BaseComponent(ABC):
         """
         xp = _get_xp(rays.x)
         translation, rot = _get_transform(self.cs)
-        # R transforms column vectors local→global, so:
+        # R transforms column vectors local->global, so:
         # local = R^T @ (global - t), i.e., for row vectors: (global - t) @ R
 
         # Global ray data as (N, 3) arrays
@@ -92,7 +92,7 @@ class BaseComponent(ABC):
         positions_l = (positions_g - t_np) @ R_np
         directions_l = directions_g @ R_np
 
-        # Only intersect alive rays — mask others with inf
+        # Only intersect alive rays -- mask others with inf
         t_hit, normals_l, hit_mask = self.geometry.ray_intersect(
             positions_l, directions_l
         )
@@ -150,7 +150,7 @@ def _get_transform(cs: CoordinateSystem) -> tuple[np.ndarray, np.ndarray]:
 
     Returns:
         Tuple (translation [mm], rotation_matrix) as numpy float64 arrays.
-        rotation_matrix is (3, 3) and transforms column vectors local→global.
+        rotation_matrix is (3, 3) and transforms column vectors local->global.
     """
     from optiland.backend.utils import to_numpy  # noqa: PLC0415
 

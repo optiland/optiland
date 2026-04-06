@@ -49,8 +49,8 @@ from optiland.nonsequential.bsdf import (
     TabulatedBSDF,
 )
 
-# Components — raw
-# Components — compound
+# Components -- raw
+# Components -- compound
 from optiland.nonsequential.components import (
     AbsorbingComponent,
     ComponentRegistry,
@@ -144,11 +144,11 @@ __all__ = [
     "PointSourceConfig",
     "SourceRegistry",
     "Spectrum",
-    # Components — raw
+    # Components -- raw
     "AbsorbingComponent",
     "RefractiveComponent",
     "ReflectiveComponent",
-    # Components — compound
+    # Components -- compound
     "CompoundComponent",
     "ComponentRegistry",
     "Doublet",

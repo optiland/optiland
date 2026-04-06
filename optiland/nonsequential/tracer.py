@@ -1,11 +1,11 @@
-"""NSQTracer — thin coordinator for Non-Sequential Raytracing.
+"""NSQTracer -- thin coordinator for Non-Sequential Raytracing.
 
 NSQTracer holds backend configuration and delegates the full simulation loop
-to the backend.  The Monte Carlo loop has moved to
+to the backend. The Monte Carlo loop has moved to
 :class:`~optiland.nonsequential.backends.numpy_backend.NumpyBackend`.
 
 Backward compatibility: the old constructor signature
-``NSQTracer(scene, n_rays, max_bounces, ..., seed)`` with
+``NSQTracer(scene, num_rays, max_bounces, ..., seed)`` with
 ``tracer.trace(backend=None)`` is preserved.
 
 Kramer Harrison, 2026
@@ -30,9 +30,9 @@ class SimulationResult:
     Attributes:
         detectors: Per-detector result objects, keyed by detector name
             (or ``'detector_N'`` if unnamed).
-        n_rays_total: Total number of rays launched.
-        n_rays_absorbed: Rays terminated by absorbing components.
-        n_rays_escaped: Rays that ran out of bounces or fell below flux
+        num_rays_total: Total number of rays launched.
+        num_rays_absorbed: Rays terminated by absorbing components.
+        num_rays_escaped: Rays that ran out of bounces or fell below flux
             threshold.
         total_flux_in: Total flux launched by all sources [W].
         total_flux_detected: Total flux recorded on all detectors [W].
@@ -43,9 +43,9 @@ class SimulationResult:
     """
 
     detectors: dict[str, object] = field(default_factory=dict)
-    n_rays_total: int = 0
-    n_rays_absorbed: int = 0
-    n_rays_escaped: int = 0
+    num_rays_total: int = 0
+    num_rays_absorbed: int = 0
+    num_rays_escaped: int = 0
     total_flux_in: float = 0.0
     total_flux_detected: float = 0.0
     flux_conservation_error: float = 0.0
@@ -64,17 +64,17 @@ class NSQTracer:
     **New (preferred)**::
 
         tracer = NSQTracer(scene)
-        result = tracer.trace(n_rays=1_000_000, seed=42)
+        result = tracer.trace(num_rays=1_000_000, seed=42)
 
     **Legacy (backward-compatible)**::
 
-        tracer = NSQTracer(scene, n_rays=1_000_000, seed=42)
+        tracer = NSQTracer(scene, num_rays=1_000_000, seed=42)
         result = tracer.trace()
 
     Attributes:
         scene: The NSQScene to simulate.
         backend: TracerBackend instance (defaults to NumpyBackend).
-        n_rays: Total rays (legacy constructor only).
+        num_rays: Total rays (legacy constructor only).
         max_bounces: Max surface hits per ray (legacy constructor only).
         min_flux_fraction: Kill threshold (legacy constructor only).
         batch_size: Rays per batch (legacy constructor only).
@@ -84,7 +84,7 @@ class NSQTracer:
     def __init__(
         self,
         scene: NSQScene,
-        n_rays: int | None = None,
+        num_rays: int | None = None,
         max_bounces: int = 200,
         min_flux_fraction: float = 1e-6,
         batch_size: int = 1_000_000,
@@ -96,9 +96,9 @@ class NSQTracer:
 
         Args:
             scene: The NSQScene to trace.
-            n_rays: Total rays to launch.  Stored for legacy
-                ``tracer.trace()`` call.  Not needed when calling
-                ``tracer.trace(n_rays=...)``.
+            num_rays: Total rays to launch. Stored for legacy
+                ``tracer.trace()`` call. Not needed when calling
+                ``tracer.trace(num_rays=...)``.
             max_bounces: Maximum surface hits per ray (legacy path).
             min_flux_fraction: Kill threshold (legacy path).
             batch_size: Rays per processing batch (legacy path).
@@ -108,7 +108,7 @@ class NSQTracer:
         """
         self.scene = scene
         # Legacy constructor params (kept for backward compat)
-        self.n_rays = int(n_rays) if n_rays is not None else None
+        self.num_rays = int(num_rays) if num_rays is not None else None
         self.max_bounces = int(max_bounces)
         self.min_flux_fraction = float(min_flux_fraction)
         self.batch_size = int(batch_size)
@@ -118,7 +118,7 @@ class NSQTracer:
 
     def trace(
         self,
-        n_rays: int | None = None,
+        num_rays: int | None = None,
         max_bounces: int | None = None,
         min_flux_fraction: float | None = None,
         batch_size: int | None = None,
@@ -129,25 +129,25 @@ class NSQTracer:
         """Run the simulation and return results.
 
         Args:
-            n_rays: Total rays.  Uses constructor value if not given.
-            max_bounces: Max bounces.  Uses constructor value if not given.
-            min_flux_fraction: Kill threshold.  Uses constructor value if
+            num_rays: Total rays. Uses constructor value if not given.
+            max_bounces: Max bounces. Uses constructor value if not given.
+            min_flux_fraction: Kill threshold. Uses constructor value if
                 not given.
-            batch_size: Rays per batch.  Uses constructor value if not given.
-            seed: RNG seed.  Uses constructor value if not given.
-            backend: Backend override.  Uses constructor backend if not given.
+            batch_size: Rays per batch. Uses constructor value if not given.
+            seed: RNG seed. Uses constructor value if not given.
+            backend: Backend override. Uses constructor backend if not given.
             record_paths: If True, tracks node points of bouncing rays.
 
         Returns:
             SimulationResult.
 
         Raises:
-            ValueError: If n_rays is not available from any source.
+            ValueError: If num_rays is not available from any source.
         """
-        resolved_n = n_rays if n_rays is not None else self.n_rays
+        resolved_n = num_rays if num_rays is not None else self.num_rays
         if resolved_n is None:
             raise ValueError(
-                "n_rays must be supplied either to NSQTracer() or to trace()."
+                "num_rays must be supplied either to NSQTracer() or to trace()."
             )
 
         resolved_seed = seed if seed is not None else self.seed
@@ -155,7 +155,7 @@ class NSQTracer:
 
         return resolved_backend.trace(
             self.scene,
-            n_rays=int(resolved_n),
+            num_rays=int(resolved_n),
             max_bounces=max_bounces if max_bounces is not None else self.max_bounces,
             min_flux_fraction=(
                 min_flux_fraction

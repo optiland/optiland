@@ -41,10 +41,6 @@ class NumpyBackend(ArrayBackend):
         self.seed = seed
         self.rng = np.random.default_rng(seed)
 
-    # ------------------------------------------------------------------
-    # intersect_scene — used internally by trace()
-    # ------------------------------------------------------------------
-
     def intersect_scene(
         self,
         rays: NSQRayBundle,
@@ -62,7 +58,7 @@ class NumpyBackend(ArrayBackend):
         Returns:
             ``(t_min, hit_normals, component_indices)``.
         """
-        N = rays.n_rays
+        N = rays.num_rays
         t_min = np.full(N, np.inf)
         hit_normals = np.zeros((N, 3))
         comp_indices = np.full(N, -1, dtype=np.int32)
@@ -86,8 +82,6 @@ class NumpyBackend(ArrayBackend):
             NumPy array of uniform random numbers in [0, 1).
         """
         return self.rng.random(shape)
-
-    # ------------------------------------------------------------------
 
 
 def _get_detector_names(scene) -> list[str]:

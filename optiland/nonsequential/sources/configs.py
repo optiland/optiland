@@ -36,7 +36,7 @@ class CollimatedSourceConfig:
         spectrum: Wavelength distribution.
         total_flux: Total emitted flux [W].
         aperture_radius: Beam semi-diameter [mm].
-        profile: Spatial profile — ``'tophat'`` or ``'gaussian'``.
+        profile: Spatial profile -- ``'tophat'`` or ``'gaussian'``.
     """
 
     spectrum: Spectrum

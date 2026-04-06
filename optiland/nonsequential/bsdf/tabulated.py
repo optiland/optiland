@@ -56,7 +56,7 @@ class TabulatedBSDF(BaseBSDF):
 
     def sample(
         self,
-        n_rays: int,
+        num_rays: int,
         incident_dirs: np.ndarray,
         normals: np.ndarray,
         wavelengths: np.ndarray,
@@ -67,7 +67,7 @@ class TabulatedBSDF(BaseBSDF):
         Uses importance sampling via Lambertian hemisphere + BSDF weighting.
 
         Args:
-            n_rays: Number of rays.
+            num_rays: Number of rays.
             incident_dirs: Incident directions, shape (N, 3).
             normals: Surface normals, shape (N, 3).
             wavelengths: Wavelengths [nm], shape (N,).
@@ -92,8 +92,8 @@ class TabulatedBSDF(BaseBSDF):
             _orthonormal_basis,  # noqa: PLC0415
         )
 
-        r1 = rng.random(n_rays)
-        r2 = rng.random(n_rays)
+        r1 = rng.random(num_rays)
+        r2 = rng.random(num_rays)
         phi = 2.0 * np.pi * r1
         cos_theta = np.sqrt(r2)
         sin_theta = np.sqrt(1.0 - r2)

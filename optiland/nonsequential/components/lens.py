@@ -38,10 +38,10 @@ class Lens(CompoundComponent):
 
     Assembles up to four physical surfaces:
 
-    1. **Front face** — refractive, conic.
-    2. **Back face** — refractive, conic.
-    3. **Edge** — cylindrical frustum, absorbing by default.
-    4. **Rim** — annular plane, absorbing; only when
+    1. **Front face** -- refractive, conic.
+    2. **Back face** -- refractive, conic.
+    3. **Edge** -- cylindrical frustum, absorbing by default.
+    4. **Rim** -- annular plane, absorbing; only when
        ``front_aperture_radius != back_aperture_radius``.
 
     Attributes:
@@ -69,10 +69,6 @@ class Lens(CompoundComponent):
         self._config = config
         self._surfaces: list[BaseComponent] = self._build()
 
-    # ------------------------------------------------------------------
-    # CompoundComponent interface
-    # ------------------------------------------------------------------
-
     @property
     def name(self) -> str:
         """Registry name of this lens."""
@@ -87,10 +83,6 @@ class Lens(CompoundComponent):
     def coordinate_system(self) -> CoordinateSystem:
         """Front-vertex coordinate system."""
         return self._cs
-
-    # ------------------------------------------------------------------
-    # Build
-    # ------------------------------------------------------------------
 
     def _build(self) -> list[BaseComponent]:
         """Construct all sub-surfaces from the config.
@@ -137,7 +129,6 @@ class Lens(CompoundComponent):
             )
         )
 
-        # 3. Edge (cylindrical frustum, absorbing by default)
         # 3. Edge (cylindrical frustum, absorbing by default)
         sag_front = _sag_at_rim(cfg.r1, cfg.conic1, front_r)
         sag_back = _sag_at_rim(cfg.r2, cfg.conic2, back_r)
@@ -197,11 +188,6 @@ class Lens(CompoundComponent):
         return surfaces
 
 
-# ---------------------------------------------------------------------------
-# Private helpers
-# ---------------------------------------------------------------------------
-
-
 def _resolve_material(mat: str | NSQMaterial) -> NSQMaterial:
     """Resolve a glass name or NSQMaterial to NSQMaterial.
 
@@ -235,7 +221,7 @@ def _sag_at_rim(radius: float, conic: float, aperture_radius: float) -> float:
     """Compute the sag of a conic surface at the aperture rim.
 
     Args:
-        radius: Vertex radius of curvature [mm].  0 → flat (sag = 0).
+        radius: Vertex radius of curvature [mm].  0 -> flat (sag = 0).
         conic: Conic constant K.
         aperture_radius: Semi-aperture radius [mm].
 

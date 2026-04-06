@@ -79,10 +79,10 @@ class CupyBackend(ArrayBackend):
             ``(t_min, hit_normals, component_indices)`` as CuPy arrays.
         """
         cp = self._cp
-        N = rays.n_rays
-        t_min = cp.full(N, cp.inf, dtype=cp.float64)
-        hit_normals = cp.zeros((N, 3), dtype=cp.float64)
-        comp_indices = cp.full(N, -1, dtype=cp.int32)
+        num_rays = rays.num_rays
+        t_min = cp.full(num_rays, cp.inf, dtype=cp.float64)
+        hit_normals = cp.zeros((num_rays, 3), dtype=cp.float64)
+        comp_indices = cp.full(num_rays, -1, dtype=cp.int32)
 
         for i, comp in enumerate(components):
             t_c, normals_c, hit_c = comp.intersect(rays)

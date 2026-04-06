@@ -75,14 +75,14 @@ class TestSpectrum:
 
 
 class TestPointSource:
-    def test_generates_correct_n_rays(self):
+    def test_generates_correct_num_rays(self):
         cs = CoordinateSystem(x=0, y=0, z=0)
         spec = Spectrum.monochromatic(550.0)
         src = PointSource(cs=cs, spectrum=spec, total_flux=1.0, half_angle_deg=90.0)
         rng = np.random.default_rng(0)
         rays = src.generate(1000, rng)
-        assert rays.n_rays == 1000
-        assert rays.n_alive == 1000
+        assert rays.num_rays == 1000
+        assert rays.num_rays_alive == 1000
 
     def test_total_flux_conservation(self):
         cs = CoordinateSystem(x=0, y=0, z=0)
@@ -231,8 +231,8 @@ class TestFlatMirrorReflection:
             cs=det_cs,
             width=10.0,
             height=10.0,
-            n_pixels_x=64,
-            n_pixels_y=64,
+            num_pixels_x=64,
+            num_pixels_y=64,
         )
 
         scene = NSQScene()
@@ -240,12 +240,12 @@ class TestFlatMirrorReflection:
         scene.add_source(src)
         scene.add_detector(det)
 
-        tracer = NSQTracer(scene, n_rays=10_000, max_bounces=5, seed=42)
+        tracer = NSQTracer(scene, num_rays=10_000, max_bounces=5, seed=42)
         result = tracer.trace()
 
         irr = result.detectors["detector_0"]
         # Should detect most flux (some geometric clipping expected)
-        assert irr.n_rays_hit > 8000
+        assert irr.num_rays_hit > 8000
 
 
 # ---------------------------------------------------------------------------
@@ -279,20 +279,20 @@ class TestFluxConservation:
             cs=det_cs,
             width=30.0,
             height=30.0,
-            n_pixels_x=32,
-            n_pixels_y=32,
+            num_pixels_x=32,
+            num_pixels_y=32,
         )
 
         scene = NSQScene()
         scene.add_source(src)
         scene.add_detector(det)
 
-        tracer = NSQTracer(scene, n_rays=10_000, max_bounces=5, seed=0)
+        tracer = NSQTracer(scene, num_rays=10_000, max_bounces=5, seed=0)
         result = tracer.trace()
 
         irr = result.detectors["detector_0"]
         # All rays should reach the detector (beam r=5mm, detector 30mm wide)
-        assert irr.n_rays_hit == 10_000
+        assert irr.num_rays_hit == 10_000
         # Total detected flux should equal total source flux
         np.testing.assert_allclose(
             irr.total_flux, 1.0, rtol=1e-6
@@ -329,8 +329,8 @@ class TestFluxConservation:
             cs=det_cs,
             width=200.0,
             height=200.0,
-            n_pixels_x=64,
-            n_pixels_y=64,
+            num_pixels_x=64,
+            num_pixels_y=64,
         )
 
         scene = NSQScene()
@@ -338,12 +338,12 @@ class TestFluxConservation:
         scene.add_source(src)
         scene.add_detector(det)
 
-        tracer = NSQTracer(scene, n_rays=20_000, max_bounces=5, seed=0)
+        tracer = NSQTracer(scene, num_rays=20_000, max_bounces=5, seed=0)
         result = tracer.trace()
 
         # Some rays should be detected; tracer should complete without error
         assert result.trace_time_sec > 0.0
-        assert result.n_rays_total == 20_000
+        assert result.num_rays_total == 20_000
 
 
 # ---------------------------------------------------------------------------
@@ -385,7 +385,7 @@ class TestNSQScene:
         cs = CoordinateSystem(x=0, y=0, z=0)
         from optiland.nonsequential.components.geometry.analytic.plane import FinitePlaneGeometry  # noqa: PLC0415
 
-        det = IrradianceDetector(cs=cs, width=10.0, height=10.0, n_pixels_x=32, n_pixels_y=32)
+        det = IrradianceDetector(cs=cs, width=10.0, height=10.0, num_pixels_x=32, num_pixels_y=32)
         scene.add_detector(det)
         with pytest.raises(ValueError, match="no sources"):
             scene.validate()

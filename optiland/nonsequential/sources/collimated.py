@@ -64,14 +64,14 @@ class CollimatedSource(BaseNSQSource):
             else aperture_radius / 2.0
         )
 
-    def generate(self, n_rays: int, rng: np.random.Generator) -> NSQRayBundle:
+    def generate(self, num_rays: int, rng: np.random.Generator) -> NSQRayBundle:
         """Generate collimated rays in global coordinates.
 
         Positions are sampled within the circular aperture. All directions
         are along the local +z axis.
 
         Args:
-            n_rays: Number of rays to generate.
+            num_rays: Number of rays to generate.
             rng: NumPy random generator.
 
         Returns:
@@ -81,20 +81,20 @@ class CollimatedSource(BaseNSQSource):
 
         if self.profile == "gaussian":
             # Sample truncated Gaussian on disk
-            lx, ly = self._sample_gaussian_disk(n_rays, rng)
+            lx, ly = self._sample_gaussian_disk(num_rays, rng)
         else:
             # Uniform disk sampling
-            u1 = rng.random(n_rays)
-            u2 = rng.random(n_rays)
+            u1 = rng.random(num_rays)
+            u2 = rng.random(num_rays)
             r = self.aperture_radius * np.sqrt(u1)
             phi = 2.0 * np.pi * u2
             lx = r * np.cos(phi)
             ly = r * np.sin(phi)
 
-        lz_pos = np.zeros(n_rays)
+        lz_pos = np.zeros(num_rays)
 
         # All rays point in local +z direction
-        dirs_local = np.zeros((n_rays, 3))
+        dirs_local = np.zeros((num_rays, 3))
         dirs_local[:, 2] = 1.0
 
         pos_local = np.stack([lx, ly, lz_pos], axis=1)
@@ -103,8 +103,8 @@ class CollimatedSource(BaseNSQSource):
         pos_global = pos_local @ rot.T + translation
         dirs_global = dirs_local @ rot.T
 
-        wavelengths = self.spectrum.sample(n_rays, rng)
-        flux_per_ray = self.total_flux / n_rays
+        wavelengths = self.spectrum.sample(num_rays, rng)
+        flux_per_ray = self.total_flux / num_rays
 
         return NSQRayBundle(
             x=pos_global[:, 0].copy(),
@@ -113,39 +113,39 @@ class CollimatedSource(BaseNSQSource):
             dx=dirs_global[:, 0].copy(),
             dy=dirs_global[:, 1].copy(),
             dz=dirs_global[:, 2].copy(),
-            flux=np.full(n_rays, flux_per_ray),
+            flux=np.full(num_rays, flux_per_ray),
             wavelength=wavelengths,
-            n_current=np.ones(n_rays),
-            bounce=np.zeros(n_rays, dtype=np.int32),
-            alive=np.ones(n_rays, dtype=bool),
+            n_current=np.ones(num_rays),
+            bounce=np.zeros(num_rays, dtype=np.int32),
+            alive=np.ones(num_rays, dtype=bool),
         )
 
     def _sample_gaussian_disk(
-        self, n_rays: int, rng: np.random.Generator
+        self, num_rays: int, rng: np.random.Generator
     ) -> tuple[np.ndarray, np.ndarray]:
         """Sample positions from a truncated Gaussian disk (rejection sampling).
 
         Args:
-            n_rays: Number of samples required.
+            num_rays: Number of samples required.
             rng: NumPy random generator.
 
         Returns:
-            Tuple (x, y) of position arrays, each shape (n_rays,).
+            Tuple (x, y) of position arrays, each shape (num_rays,).
         """
         x_list: list[np.ndarray] = []
         y_list: list[np.ndarray] = []
-        n_collected = 0
+        num_collected = 0
         max_r2 = self.aperture_radius**2
 
-        while n_collected < n_rays:
-            n_sample = max(n_rays * 2, 1000)
-            x = rng.normal(0.0, self.gaussian_sigma, n_sample)
-            y = rng.normal(0.0, self.gaussian_sigma, n_sample)
+        while num_collected < num_rays:
+            num_sample = max(num_rays * 2, 1000)
+            x = rng.normal(0.0, self.gaussian_sigma, num_sample)
+            y = rng.normal(0.0, self.gaussian_sigma, num_sample)
             mask = x**2 + y**2 <= max_r2
             x_list.append(x[mask])
             y_list.append(y[mask])
-            n_collected += mask.sum()
+            num_collected += mask.sum()
 
-        lx = np.concatenate(x_list)[:n_rays]
-        ly = np.concatenate(y_list)[:n_rays]
+        lx = np.concatenate(x_list)[:num_rays]
+        ly = np.concatenate(y_list)[:num_rays]
         return lx, ly

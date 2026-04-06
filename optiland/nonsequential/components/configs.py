@@ -40,14 +40,14 @@ class SurfaceConfig:
     Attributes:
         bsdf: Custom BSDF for this surface.  Overrides the default specular
             behaviour.
-        coating: Thin-film coating model (deferred — not yet implemented).
+        coating: Thin-film coating model (deferred -- not yet implemented).
         aperture_radius: Semi-diameter override [mm].  Overrides the aperture
             computed from the compound config.
         interaction: Force a specific interaction type on this surface.
     """
 
     bsdf: BaseBSDF | None = None
-    coating: object | None = None  # BaseCoating — deferred
+    coating: object | None = None  # BaseCoating -- deferred
     aperture_radius: float | None = None
     interaction: InteractionType | None = None
 
@@ -58,10 +58,10 @@ class LensConfig:
 
     The lens assembles up to four physical surfaces:
 
-    1. **Front face** — refractive, conic.
-    2. **Back face** — refractive, conic.
-    3. **Edge** — cylindrical frustum, absorbing by default.
-    4. **Rim** — annular plane, absorbing; only created when
+    1. **Front face** -- refractive, conic.
+    2. **Back face** -- refractive, conic.
+    3. **Edge** -- cylindrical frustum, absorbing by default.
+    4. **Rim** -- annular plane, absorbing; only created when
        ``front_aperture_radius != back_aperture_radius``.
 
     Attributes:
@@ -101,7 +101,7 @@ class LensConfig:
 class DoubletConfig:
     """Configuration for a cemented achromatic doublet.
 
-    Surfaces in order (front → back): front face, cemented interface, back
+    Surfaces in order (front -> back): front face, cemented interface, back
     face, edge.
 
     Attributes:
@@ -146,7 +146,7 @@ class MirrorConfig:
     Attributes:
         radius: Vertex radius of curvature [mm].  Negative = concave when
             oriented with the normal pointing toward +z.
-        conic: Conic constant (0 = sphere, −1 = paraboloid, etc.).
+        conic: Conic constant (0 = sphere, -1 = paraboloid, etc.).
         aperture_radius: Semi-diameter [mm].
         surface: Per-surface overrides (e.g. to attach a scatter BSDF).
     """

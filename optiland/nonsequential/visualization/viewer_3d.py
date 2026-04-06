@@ -1,4 +1,4 @@
-"""NSQViewer3D — 3D VTK visualization for NSQ scenes.
+"""NSQViewer3D -- 3D VTK visualization for NSQ scenes.
 
 Kramer Harrison, 2026
 """
@@ -71,7 +71,7 @@ class NSQViewer3D(BaseViewer3D):
         self,
         result: SimulationResult | None = None,
         *,
-        n_rays_display: int = 100,
+        num_rays: int = 100,
         dark_mode: bool = False,
         figsize: tuple[int, int] = (1200, 800),
         color_by: str = "source",
@@ -80,7 +80,7 @@ class NSQViewer3D(BaseViewer3D):
 
         Args:
             result: Optional SimulationResult; used to overlay ray paths.
-            n_rays_display: Number of ray segments to overlay (0 = none).
+            num_rays: Number of ray segments to overlay (0 = none).
             dark_mode: Use dark background if True.
             figsize: (width, height) of the VTK window in pixels.
 
@@ -111,15 +111,17 @@ class NSQViewer3D(BaseViewer3D):
         for det in self.scene.detectors:
             det_r.render(det, renderer)
 
-        if n_rays_display > 0:
+        if num_rays > 0:
             from optiland.nonsequential.visualization.rays import (
                 NSQRays3D,  # noqa: PLC0415
             )
 
             rays = NSQRays3D(self.scene)
-            rays.plot(renderer, n_rays=n_rays_display, color_by=color_by)
+            rays.plot(renderer, num_rays=num_rays, color_by=color_by)
 
-        window, interactor = self._make_window(renderer, figsize, "NSQ Scene — 3D View")
+        window, interactor = self._make_window(
+            renderer, figsize, "NSQ Scene -- 3D View"
+        )
 
         window.Render()
         interactor.Start()

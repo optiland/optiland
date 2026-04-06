@@ -63,7 +63,7 @@ class PlaneGeometry(AnalyticGeometry):
 class FinitePlaneGeometry(AnalyticGeometry):
     """Finite planar surface at z=0 in local coordinates.
 
-    Supports rectangular (width × height) or circular (aperture_radius)
+    Supports rectangular (width x height) or circular (aperture_radius)
     apertures. If aperture_radius is set, it takes precedence.
 
     Attributes:
@@ -116,7 +116,7 @@ class FinitePlaneGeometry(AnalyticGeometry):
         )
         t = xp.where(plane_valid & (t > 1e-9), t, xp.inf)
 
-        # Hit position in local frame — clamp t so inf*0 doesn't produce NaN
+        # Hit position in local frame -- clamp t so inf*0 doesn't produce NaN
         safe_t = xp.where(xp.isfinite(t), t, xp.zeros_like(t))
         hx = origins[:, 0] + safe_t * directions[:, 0]
         hy = origins[:, 1] + safe_t * directions[:, 1]
@@ -174,7 +174,7 @@ class FinitePlaneGeometry(AnalyticGeometry):
                 dtype=float,
             )
 
-        # local→global: g = R @ l + t  (column convention: R transforms col vectors)
+        # local->global: g = R @ l + t  (column convention: R transforms col vectors)
         # For row vectors: g_row = l_row @ R^T + t
         corners_global = corners_local @ R.T + t
         return AABB(corners_global.min(axis=0), corners_global.max(axis=0))

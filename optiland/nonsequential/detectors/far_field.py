@@ -27,21 +27,21 @@ class FarFieldDetector(BaseDetector):
     """Accumulates angular flux distribution in the far field.
 
     Records ray directions at the detector surface and bins them into a
-    polar (θ, φ) histogram.
+    polar (theta, phi) histogram.
 
     Attributes:
         cs: Coordinate system.
         theta_max_deg: Maximum polar angle to record [deg].
-        n_bins_theta: Number of polar angle bins.
-        n_bins_phi: Number of azimuthal angle bins.
+        num_bins_theta: Number of polar angle bins.
+        num_bins_phi: Number of azimuthal angle bins.
     """
 
     def __init__(
         self,
         cs: CoordinateSystem,
         theta_max_deg: float,
-        n_bins_theta: int,
-        n_bins_phi: int,
+        num_bins_theta: int,
+        num_bins_phi: int,
         aperture_radius: float = 1e6,
         name: str = "",
     ) -> None:
@@ -50,27 +50,26 @@ class FarFieldDetector(BaseDetector):
         Args:
             cs: Coordinate system for detector position/orientation.
             theta_max_deg: Maximum polar half-angle to record [deg].
-            n_bins_theta: Number of polar angle bins.
-            n_bins_phi: Number of azimuthal angle bins.
+            num_bins_theta: Number of polar angle bins.
+            num_bins_phi: Number of azimuthal angle bins.
             aperture_radius: Detector aperture radius [mm] (default: very large).
             name: Optional label.
         """
         geometry = FinitePlaneGeometry(aperture_radius=aperture_radius)
         super().__init__(cs, geometry, name=name)
-        self.theta_max_deg = float(theta_max_deg)
-        self.n_bins_theta = int(n_bins_theta)
-        self.n_bins_phi = int(n_bins_phi)
+        self.num_bins_theta = int(num_bins_theta)
+        self.num_bins_phi = int(num_bins_phi)
 
-        self._intensity = np.zeros((n_bins_theta, n_bins_phi), dtype=np.float64)
-        self._n_rays_hit = 0
+        self._intensity = np.zeros((num_bins_theta, num_bins_phi), dtype=np.float64)
+        self._num_rays_hit = 0
 
-        self._theta_edges = np.linspace(0.0, theta_max_deg, n_bins_theta + 1)
-        self._phi_edges = np.linspace(-180.0, 180.0, n_bins_phi + 1)
+        self._theta_edges = np.linspace(0.0, theta_max_deg, num_bins_theta + 1)
+        self._phi_edges = np.linspace(-180.0, 180.0, num_bins_phi + 1)
 
     def record(self, rays: NSQRayBundle, t: np.ndarray, hit_mask: np.ndarray) -> None:
         """Accumulate angular flux from hit rays.
 
-        Converts ray directions to (θ, φ) in local detector frame and bins.
+        Converts ray directions to (theta, phi) in local detector frame and bins.
 
         Args:
             rays: Current ray bundle.
@@ -91,13 +90,13 @@ class FarFieldDetector(BaseDetector):
         flux_np = _to_numpy(xp, rays.flux)
 
         dirs_g = np.stack([dx_g, dy_g, dz_g], axis=1)
-        dirs_l = dirs_g @ R  # global → local
+        dirs_l = dirs_g @ R  # global -> local
 
         dirs_hit = dirs_l[hit_mask_np]
         flux_hit = flux_np[hit_mask_np]
 
         # Compute polar angles in local frame
-        # θ is angle from local +z axis
+        # theta is angle from local +z axis
         cos_theta = np.clip(np.abs(dirs_hit[:, 2]), 0.0, 1.0)
         theta_deg = np.degrees(np.arccos(cos_theta))
         phi_deg = np.degrees(np.arctan2(dirs_hit[:, 1], dirs_hit[:, 0]))
@@ -105,8 +104,8 @@ class FarFieldDetector(BaseDetector):
         # Bin into 2D histogram
         i_theta = np.searchsorted(self._theta_edges, theta_deg, side="right") - 1
         i_phi = np.searchsorted(self._phi_edges, phi_deg, side="right") - 1
-        i_theta = np.clip(i_theta, 0, self.n_bins_theta - 1)
-        i_phi = np.clip(i_phi, 0, self.n_bins_phi - 1)
+        i_theta = np.clip(i_theta, 0, self.num_bins_theta - 1)
+        i_phi = np.clip(i_phi, 0, self.num_bins_phi - 1)
 
         # Solid-angle normalisation per bin (W/sr)
         d_theta = np.radians(self._theta_edges[1] - self._theta_edges[0])
@@ -118,7 +117,7 @@ class FarFieldDetector(BaseDetector):
         solid_angle = np.where(solid_angle > 0, solid_angle, 1.0)
 
         np.add.at(self._intensity, (i_theta, i_phi), flux_hit / solid_angle)
-        self._n_rays_hit += hit_mask_np.sum()
+        self._num_rays_hit += hit_mask_np.sum()
 
     def get_result(self) -> FarFieldPattern:
         """Return the accumulated far-field pattern.
@@ -133,13 +132,13 @@ class FarFieldDetector(BaseDetector):
             theta=theta_centres,
             phi=phi_centres,
             total_flux=float(self._intensity.sum()),
-            n_rays_hit=self._n_rays_hit,
+            num_rays_hit=self._num_rays_hit,
         )
 
     def reset(self) -> None:
         """Clear accumulated data."""
         self._intensity[:] = 0.0
-        self._n_rays_hit = 0
+        self._num_rays_hit = 0
 
 
 def _to_numpy(xp, arr):

@@ -51,7 +51,7 @@ class PointSource(BaseNSQSource):
         super().__init__(cs, spectrum, total_flux)
         self.half_angle_deg = float(half_angle_deg)
 
-    def generate(self, n_rays: int, rng: np.random.Generator) -> NSQRayBundle:
+    def generate(self, num_rays: int, rng: np.random.Generator) -> NSQRayBundle:
         """Generate rays from a point source in global coordinates.
 
         Directions are sampled uniformly within the emission cone using
@@ -59,7 +59,7 @@ class PointSource(BaseNSQSource):
         the spectrum.
 
         Args:
-            n_rays: Number of rays to generate.
+            num_rays: Number of rays to generate.
             rng: NumPy random generator.
 
         Returns:
@@ -70,8 +70,8 @@ class PointSource(BaseNSQSource):
         # Sample directions in local frame (cone around +z)
         cos_max = np.cos(np.radians(self.half_angle_deg))
         # Uniform sampling on spherical cap
-        u1 = rng.random(n_rays)
-        u2 = rng.random(n_rays)
+        u1 = rng.random(num_rays)
+        u2 = rng.random(num_rays)
         cos_theta = 1.0 - u1 * (1.0 - cos_max)
         sin_theta = np.sqrt(np.maximum(1.0 - cos_theta**2, 0.0))
         phi = 2.0 * np.pi * u2
@@ -90,20 +90,20 @@ class PointSource(BaseNSQSource):
         pos = translation  # shape (3,)
 
         # Sample wavelengths
-        wavelengths = self.spectrum.sample(n_rays, rng)
+        wavelengths = self.spectrum.sample(num_rays, rng)
 
-        flux_per_ray = self.total_flux / n_rays
+        flux_per_ray = self.total_flux / num_rays
 
         return NSQRayBundle(
-            x=np.full(n_rays, pos[0]),
-            y=np.full(n_rays, pos[1]),
-            z=np.full(n_rays, pos[2]),
+            x=np.full(num_rays, pos[0]),
+            y=np.full(num_rays, pos[1]),
+            z=np.full(num_rays, pos[2]),
             dx=dirs_global[:, 0].copy(),
             dy=dirs_global[:, 1].copy(),
             dz=dirs_global[:, 2].copy(),
-            flux=np.full(n_rays, flux_per_ray),
+            flux=np.full(num_rays, flux_per_ray),
             wavelength=wavelengths,
-            n_current=np.ones(n_rays),
-            bounce=np.zeros(n_rays, dtype=np.int32),
-            alive=np.ones(n_rays, dtype=bool),
+            n_current=np.ones(num_rays),
+            bounce=np.zeros(num_rays, dtype=np.int32),
+            alive=np.ones(num_rays, dtype=bool),
         )

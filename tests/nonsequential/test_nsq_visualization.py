@@ -42,7 +42,7 @@ def _make_minimal_scene():
     scene.add_detector(
         "D1",
         CoordinateSystem(z=60.0),
-        IrradianceDetectorConfig(width=5.0, height=5.0, n_pixels_x=64, n_pixels_y=64),
+        IrradianceDetectorConfig(width=5.0, height=5.0, num_pixels_x=64, num_pixels_y=64),
     )
     return scene
 
@@ -156,7 +156,7 @@ def test_nsq_viewer_2d_view_returns_fig_ax(minimal_scene):
     from optiland.nonsequential.visualization import NSQViewer2D
 
     viewer = NSQViewer2D(minimal_scene)
-    result = viewer.view(n_rays_display=0)
+    result = viewer.view(num_rays=0)
     assert len(result) == 2
     fig, ax = result
     import matplotlib.figure
@@ -171,7 +171,7 @@ def test_nsq_viewer_2d_view_accepts_figsize(minimal_scene):
     from optiland.nonsequential.visualization import NSQViewer2D
 
     viewer = NSQViewer2D(minimal_scene)
-    fig, ax = viewer.view(n_rays_display=0, figsize=(8, 4))
+    fig, ax = viewer.view(num_rays=0, figsize=(8, 4))
     plt.close(fig)
 
 
@@ -182,7 +182,7 @@ def test_nsq_viewer_2d_view_accepts_title(minimal_scene):
     from optiland.nonsequential.visualization import NSQViewer2D
 
     viewer = NSQViewer2D(minimal_scene)
-    fig, ax = viewer.view(n_rays_display=0, title="Custom Title")
+    fig, ax = viewer.view(num_rays=0, title="Custom Title")
     assert ax.get_title() == "Custom Title"
     plt.close(fig)
 
@@ -194,7 +194,7 @@ def test_nsq_viewer_2d_default_title(minimal_scene):
     from optiland.nonsequential.visualization import NSQViewer2D
 
     viewer = NSQViewer2D(minimal_scene)
-    fig, ax = viewer.view(n_rays_display=0)
+    fig, ax = viewer.view(num_rays=0)
     assert "NSQ" in ax.get_title() or ax.get_title() != ""
     plt.close(fig)
 

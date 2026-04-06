@@ -1,4 +1,4 @@
-"""NSQScene — single user-facing entry point for Non-Sequential Raytracing.
+"""NSQScene -- single user-facing entry point for Non-Sequential Raytracing.
 
 NSQScene owns three typed registries (components, sources, detectors) and
 exposes builder methods, a .trace() shortcut, and .view()/.view3d() for
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import optiland.backend as be
 from optiland.nonsequential.components.registry import ComponentRegistry
 from optiland.nonsequential.detectors.registry import DetectorRegistry
 from optiland.nonsequential.sources.registry import SourceRegistry
@@ -47,7 +48,7 @@ class NSQScene:
         scene.add_source('S1', cs, PointSourceConfig(...))
         scene.add_lens('L1', cs, LensConfig(...))
         scene.add_detector('D1', cs, IrradianceDetectorConfig(...))
-        result = scene.trace(n_rays=1_000_000, seed=42)
+        result = scene.trace(num_rays=1_000_000, seed=42)
 
     The old flat-list API is still supported for backward compatibility::
 
@@ -71,10 +72,6 @@ class NSQScene:
         self._auto_src_count = 0
         self._auto_det_count = 0
 
-    # ------------------------------------------------------------------
-    # Flat-list properties (used by the tracer backend)
-    # ------------------------------------------------------------------
-
     @property
     def surfaces(self) -> list[BaseComponent]:
         """Flat list of all component sub-surfaces in registration order."""
@@ -89,10 +86,6 @@ class NSQScene:
     def detectors(self) -> list[BaseDetector]:
         """Ordered list of all registered detectors."""
         return self.detector_registry.detectors
-
-    # ------------------------------------------------------------------
-    # Component builder methods
-    # ------------------------------------------------------------------
 
     def add_lens(
         self,
@@ -178,10 +171,6 @@ class NSQScene:
 
         self.component_registry.add(name, _SingleSurface(name, component))
 
-    # ------------------------------------------------------------------
-    # Source builder methods
-    # ------------------------------------------------------------------
-
     def add_source(
         self,
         name_or_source: str | BaseNSQSource,
@@ -220,10 +209,6 @@ class NSQScene:
         source = _build_source(cs, config)
         self.source_registry.add(name, source)
 
-    # ------------------------------------------------------------------
-    # Detector builder methods
-    # ------------------------------------------------------------------
-
     def add_detector(
         self,
         name_or_detector: str | BaseDetector,
@@ -260,10 +245,6 @@ class NSQScene:
         detector = _build_detector(cs, config)
         self.detector_registry.add(name, detector)
 
-    # ------------------------------------------------------------------
-    # Removal
-    # ------------------------------------------------------------------
-
     def remove_component(self, name: str) -> None:
         """Remove a compound component by name.
 
@@ -288,10 +269,6 @@ class NSQScene:
         """
         self.detector_registry.remove(name)
 
-    # ------------------------------------------------------------------
-    # Backward-compat shims (old flat-list API)
-    # ------------------------------------------------------------------
-
     def add_component(self, component: BaseComponent) -> None:
         """Add a raw component (backward-compatible shim).
 
@@ -305,13 +282,9 @@ class NSQScene:
         self._auto_comp_count += 1
         self.add_raw_component(name, component)
 
-    # ------------------------------------------------------------------
-    # Simulation shortcut
-    # ------------------------------------------------------------------
-
     def trace(
         self,
-        n_rays: int,
+        num_rays: int,
         max_bounces: int = 200,
         min_flux_fraction: float = 1e-6,
         batch_size: int = 1_000_000,
@@ -322,15 +295,15 @@ class NSQScene:
 
         This is a one-liner shortcut equivalent to::
 
-            NSQTracer(self, backend=backend).trace(n_rays, ...)
+            NSQTracer(self, backend=backend).trace(num_rays, ...)
 
         Args:
-            n_rays: Total rays to launch.
+            num_rays: Total rays to launch.
             max_bounces: Maximum surface hits per ray.
             min_flux_fraction: Kill threshold relative to per-ray initial flux.
             batch_size: Rays per processing batch.
             seed: RNG seed.
-            backend: TracerBackend to use.  Defaults to NumpyBackend.
+            backend: TracerBackend to use. Defaults to NumpyBackend.
 
         Returns:
             SimulationResult with per-detector results and statistics.
@@ -340,16 +313,12 @@ class NSQScene:
         self.validate()
         tracer = NSQTracer(self, backend=backend)
         return tracer.trace(
-            n_rays,
+            num_rays,
             max_bounces=max_bounces,
             min_flux_fraction=min_flux_fraction,
             batch_size=batch_size,
             seed=seed,
         )
-
-    # ------------------------------------------------------------------
-    # Visualization shortcuts
-    # ------------------------------------------------------------------
 
     def view(
         self,
@@ -381,10 +350,6 @@ class NSQScene:
 
         NSQViewer3D(self).view(result, **kwargs)
 
-    # ------------------------------------------------------------------
-    # Validation
-    # ------------------------------------------------------------------
-
     def validate(self) -> None:
         """Validate the scene for common configuration errors.
 
@@ -395,11 +360,6 @@ class NSQScene:
             raise ValueError("Scene has no sources. Add at least one source.")
         if not self.detector_registry.detectors:
             raise ValueError("Scene has no detectors. Add at least one detector.")
-
-
-# ---------------------------------------------------------------------------
-# Private builder helpers
-# ---------------------------------------------------------------------------
 
 
 def _build_source(cs: CoordinateSystem, config) -> BaseNSQSource:
@@ -494,23 +454,25 @@ def _build_detector(cs: CoordinateSystem, config) -> BaseDetector:
             cs=cs,
             width=config.width,
             height=config.height,
-            n_pixels_x=config.n_pixels_x,
-            n_pixels_y=config.n_pixels_y,
+            num_pixels_x=config.num_pixels_x,
+            num_pixels_y=config.num_pixels_y,
         )
     if isinstance(config, SpectralDetectorConfig):
+        wl_bins = be.linspace(config.wl_min, config.wl_max, config.num_bins + 1)
         return SpectralDetector(
             cs=cs,
             width=config.width,
             height=config.height,
-            wl_min=config.wl_min,
-            wl_max=config.wl_max,
-            n_bins=config.n_bins,
+            num_pixels_x=config.num_pixels_x,
+            num_pixels_y=config.num_pixels_y,
+            wavelength_bins=wl_bins,
         )
     if isinstance(config, FarFieldDetectorConfig):
         return FarFieldDetector(
             cs=cs,
-            n_theta=config.n_theta,
-            n_phi=config.n_phi,
+            theta_max_deg=90.0,  # Default to hemisphere
+            num_bins_theta=config.num_theta,
+            num_bins_phi=config.num_phi,
         )
     if isinstance(config, RayDatabaseConfig):
         return RayDatabaseDetector(

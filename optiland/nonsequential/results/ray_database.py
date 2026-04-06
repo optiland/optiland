@@ -60,7 +60,7 @@ class RayDatabase:
         self.wavelength = wavelength
 
     @property
-    def n_rays(self) -> int:
+    def num_rays(self) -> int:
         """Number of stored rays."""
         return len(self.x)
 

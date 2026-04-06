@@ -21,7 +21,7 @@ class FarFieldPattern:
         theta: Polar angle bin centres [deg], shape (n_theta,).
         phi: Azimuthal angle bin centres [deg], shape (n_phi,).
         total_flux: Total flux recorded [W].
-        n_rays_hit: Number of rays recorded.
+        num_rays_hit: Number of rays recorded.
     """
 
     def __init__(
@@ -30,7 +30,7 @@ class FarFieldPattern:
         theta: np.ndarray,
         phi: np.ndarray,
         total_flux: float,
-        n_rays_hit: int,
+        num_rays_hit: int,
     ) -> None:
         """Initialize FarFieldPattern.
 
@@ -39,13 +39,13 @@ class FarFieldPattern:
             theta: Polar angle centres [deg].
             phi: Azimuthal angle centres [deg].
             total_flux: Total detected flux [W].
-            n_rays_hit: Number of rays that contributed.
+            num_rays_hit: Number of rays that contributed.
         """
         self.intensity = intensity
         self.theta = theta
         self.phi = phi
         self.total_flux = float(total_flux)
-        self.n_rays_hit = int(n_rays_hit)
+        self.num_rays_hit = int(num_rays_hit)
 
     def plot(self, ax=None, projection: str = "polar", **kwargs):
         """Plot the far-field pattern.
@@ -68,9 +68,9 @@ class FarFieldPattern:
         # Sum over phi for 1D polar plot
         intensity_1d = self.intensity.sum(axis=1)
         ax.plot(self.theta, intensity_1d, **kwargs)
-        ax.set_xlabel("θ [deg]")
-        ax.set_ylabel("Intensity [W/sr] (integrated over φ)")
-        ax.set_title(f"Far-Field Pattern — {self.n_rays_hit} rays")
+        ax.set_xlabel("theta [deg]")
+        ax.set_ylabel("Intensity [W/sr] (integrated over phi)")
+        ax.set_title(f"Far-Field Pattern -- {self.num_rays_hit} rays")
         return fig
 
     def save(self, path: str | Path) -> None:
@@ -85,5 +85,5 @@ class FarFieldPattern:
             theta=self.theta,
             phi=self.phi,
             total_flux=self.total_flux,
-            n_rays_hit=self.n_rays_hit,
+            num_rays_hit=self.num_rays_hit,
         )

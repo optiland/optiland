@@ -29,7 +29,7 @@ class LambertianBSDF(BaseBSDF):
 
     def sample(
         self,
-        n_rays: int,
+        num_rays: int,
         incident_dirs: np.ndarray,
         normals: np.ndarray,
         wavelengths: np.ndarray,
@@ -40,7 +40,7 @@ class LambertianBSDF(BaseBSDF):
         Uses Malley's method: sample uniform disk, project to hemisphere.
 
         Args:
-            n_rays: Number of rays.
+            num_rays: Number of rays.
             incident_dirs: Incident directions, shape (N, 3). Unused for
                 Lambertian scatter but kept for API consistency.
             normals: Surface normals, shape (N, 3), pointing toward ray side.
@@ -56,8 +56,8 @@ class LambertianBSDF(BaseBSDF):
 
         # Sample cosine-weighted hemisphere in local frame
         # Using rejection sampling of unit sphere + normalisation
-        r1 = np.asarray(rng.random(n_rays), dtype=np.float64)
-        r2 = np.asarray(rng.random(n_rays), dtype=np.float64)
+        r1 = np.asarray(rng.random(num_rays), dtype=np.float64)
+        r2 = np.asarray(rng.random(num_rays), dtype=np.float64)
 
         # Malley's method
         phi = 2.0 * np.pi * r1
@@ -83,7 +83,7 @@ class LambertianBSDF(BaseBSDF):
         if xp is not np:
             scattered = xp.array(scattered)
 
-        weights = xp.full(n_rays, self.reflectance_value, dtype=incident_dirs.dtype)
+        weights = xp.full(num_rays, self.reflectance_value, dtype=incident_dirs.dtype)
         return scattered, weights
 
     def reflectance(

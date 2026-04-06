@@ -35,7 +35,7 @@ class ComponentRenderer2D(ABC):
             component: The compound component to render.
             ax: Matplotlib axes to draw on.
             theme: Optional theme object (colours, line-width, etc.).
-            projection: Projection plane — ``'YZ'``, ``'XZ'``, or ``'XY'``.
+            projection: Projection plane -- ``'YZ'``, ``'XZ'``, or ``'XY'``.
         """
 
 

@@ -340,7 +340,7 @@ class TestBackwardCompat:
 
     def test_old_add_detector(self):
         cs = CoordinateSystem(z=100)
-        det = IrradianceDetector(cs=cs, width=10, height=10, n_pixels_x=16, n_pixels_y=16)
+        det = IrradianceDetector(cs=cs, width=10, height=10, num_pixels_x=16, num_pixels_y=16)
         scene = NSQScene()
         scene.add_detector(det)
         assert len(scene.detectors) == 1
@@ -377,9 +377,9 @@ class TestLensIntegration:
         det_cs = CoordinateSystem(z=200)
         scene.add_detector("D1", det_cs,
                            IrradianceDetectorConfig(width=50, height=50,
-                                                     n_pixels_x=64, n_pixels_y=64))
+                                                     num_pixels_x=64, num_pixels_y=64))
 
-        result = scene.trace(n_rays=10_000, max_bounces=10, seed=42)
+        result = scene.trace(num_rays=10_000, max_bounces=10, seed=42)
 
         irr = result.detectors["D1"]
         assert result.total_flux_in == pytest.approx(1.0, rel=1e-6)
@@ -430,7 +430,7 @@ class TestVisualizationSmoke:
 
         scene = self._build_minimal_scene()
         viewer = NSQViewer2D(scene)
-        fig = viewer.view(n_rays_display=5)
+        fig = viewer.view(num_rays=5)
         assert fig is not None
 
         import matplotlib.pyplot as plt  # noqa: PLC0415

@@ -68,11 +68,11 @@ class ExtendedSource(BaseNSQSource):
         )
         self.half_angle_deg = float(half_angle_deg)
 
-    def generate(self, n_rays: int, rng: np.random.Generator) -> NSQRayBundle:
+    def generate(self, num_rays: int, rng: np.random.Generator) -> NSQRayBundle:
         """Generate rays from the extended source in global coordinates.
 
         Args:
-            n_rays: Number of rays to generate.
+            num_rays: Number of rays to generate.
             rng: NumPy random generator.
 
         Returns:
@@ -83,23 +83,23 @@ class ExtendedSource(BaseNSQSource):
         # Sample positions on source surface (local x-y plane)
         if self.aperture_radius is not None:
             # Circular aperture: uniform disk sampling
-            u1 = rng.random(n_rays)
-            u2 = rng.random(n_rays)
+            u1 = rng.random(num_rays)
+            u2 = rng.random(num_rays)
             r = self.aperture_radius * np.sqrt(u1)
             phi_pos = 2.0 * np.pi * u2
             lx = r * np.cos(phi_pos)
             ly = r * np.sin(phi_pos)
         else:
             # Rectangular aperture
-            lx = (rng.random(n_rays) - 0.5) * self.width
-            ly = (rng.random(n_rays) - 0.5) * self.height
+            lx = (rng.random(num_rays) - 0.5) * self.width
+            ly = (rng.random(num_rays) - 0.5) * self.height
 
-        lz_pos = np.zeros(n_rays)
+        lz_pos = np.zeros(num_rays)
 
         # Sample emission directions (Lambertian or cone)
         cos_max = np.cos(np.radians(self.half_angle_deg))
-        u1d = rng.random(n_rays)
-        u2d = rng.random(n_rays)
+        u1d = rng.random(num_rays)
+        u2d = rng.random(num_rays)
 
         if self.half_angle_deg >= 90.0:
             # Cosine-weighted hemisphere (Lambertian)
@@ -122,8 +122,8 @@ class ExtendedSource(BaseNSQSource):
         pos_global = pos_local @ rot.T + translation
         dirs_global = dirs_local @ rot.T
 
-        wavelengths = self.spectrum.sample(n_rays, rng)
-        flux_per_ray = self.total_flux / n_rays
+        wavelengths = self.spectrum.sample(num_rays, rng)
+        flux_per_ray = self.total_flux / num_rays
 
         return NSQRayBundle(
             x=pos_global[:, 0].copy(),
@@ -132,9 +132,9 @@ class ExtendedSource(BaseNSQSource):
             dx=dirs_global[:, 0].copy(),
             dy=dirs_global[:, 1].copy(),
             dz=dirs_global[:, 2].copy(),
-            flux=np.full(n_rays, flux_per_ray),
+            flux=np.full(num_rays, flux_per_ray),
             wavelength=wavelengths,
-            n_current=np.ones(n_rays),
-            bounce=np.zeros(n_rays, dtype=np.int32),
-            alive=np.ones(n_rays, dtype=bool),
+            n_current=np.ones(num_rays),
+            bounce=np.zeros(num_rays, dtype=np.int32),
+            alive=np.ones(num_rays, dtype=bool),
         )

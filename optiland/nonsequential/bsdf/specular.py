@@ -22,7 +22,7 @@ class SpecularBRDF(BaseBSDF):
 
     def sample(
         self,
-        n_rays: int,
+        num_rays: int,
         incident_dirs: np.ndarray,
         normals: np.ndarray,
         wavelengths: np.ndarray,
@@ -31,14 +31,14 @@ class SpecularBRDF(BaseBSDF):
         """Sample specular reflection directions.
 
         Args:
-            n_rays: Number of rays.
+            num_rays: Number of rays.
             incident_dirs: Incident directions, shape (N, 3).
             normals: Surface normals, shape (N, 3).
             wavelengths: Wavelengths [nm], shape (N,).
             rng: Unused for specular BRDF.
 
         Returns:
-            (reflected_dirs, ones) — reflected unit vectors and unit weights.
+            (reflected_dirs, ones) -- reflected unit vectors and unit weights.
         """
         # d_r = d - 2 * (d . n) * n
         cos_theta = (incident_dirs * normals).sum(axis=1, keepdims=True)
@@ -47,7 +47,7 @@ class SpecularBRDF(BaseBSDF):
         norms = (reflected * reflected).sum(axis=1, keepdims=True) ** 0.5
         reflected = reflected / norms
         xp = _get_xp(incident_dirs)
-        return reflected, xp.ones(n_rays, dtype=incident_dirs.dtype)
+        return reflected, xp.ones(num_rays, dtype=incident_dirs.dtype)
 
     def reflectance(
         self,
