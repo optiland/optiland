@@ -85,7 +85,8 @@ class BaseMaterial(ABC):
 
     @staticmethod
     def _array_metadata_key(value) -> tuple:
-        """Build an O(1) hash key for large arrays without materializing all elements."""
+        """Build an O(1) hash key for large arrays without
+        materializing all elements."""
         # Torch tensors expose stable storage metadata and a version counter
         # that changes on in-place writes.
         if hasattr(value, "data_ptr"):
@@ -95,7 +96,9 @@ class BaseMaterial(ABC):
                     int(value.data_ptr()),
                     tuple(value.shape),
                     tuple(value.stride()) if hasattr(value, "stride") else None,
-                    int(value.storage_offset()) if hasattr(value, "storage_offset") else 0,
+                    int(value.storage_offset())
+                    if hasattr(value, "storage_offset")
+                    else 0,
                     str(value.dtype),
                     str(value.device) if hasattr(value, "device") else None,
                     int(getattr(value, "_version", 0)),
