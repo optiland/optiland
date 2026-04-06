@@ -46,6 +46,7 @@ class BaseMaterial(ABC):
     """
 
     _registry = {}
+    _MAX_VALUE_KEY_ARRAY_SIZE = 64
 
     def __init__(self, propagation_model: BasePropagationModel | None = None):
         """Initializes the material and its caches.
@@ -70,10 +71,62 @@ class BaseMaterial(ABC):
     def __eq__(self, value: object) -> bool:
         return isinstance(value, type(self)) and value.to_dict() == self.to_dict()
 
+    @classmethod
+    def _array_size(cls, value) -> int | None:
+        """Return the total element count for array-like values if available."""
+        shape = getattr(value, "shape", None)
+        if shape is None:
+            return None
+
+        try:
+            return int(np.prod(shape, dtype=np.int64))
+        except Exception:
+            return None
+
+    @staticmethod
+    def _array_metadata_key(value) -> tuple:
+        """Build an O(1) hash key for large arrays without materializing all elements."""
+        # Torch tensors expose stable storage metadata and a version counter
+        # that changes on in-place writes.
+        if hasattr(value, "data_ptr"):
+            try:
+                return (
+                    "tensor-meta",
+                    int(value.data_ptr()),
+                    tuple(value.shape),
+                    tuple(value.stride()) if hasattr(value, "stride") else None,
+                    int(value.storage_offset()) if hasattr(value, "storage_offset") else 0,
+                    str(value.dtype),
+                    str(value.device) if hasattr(value, "device") else None,
+                    int(getattr(value, "_version", 0)),
+                )
+            except Exception:
+                pass
+
+        if isinstance(value, np.ndarray):
+            return (
+                "ndarray-meta",
+                int(value.__array_interface__["data"][0]),
+                tuple(value.shape),
+                tuple(value.strides),
+                str(value.dtype),
+            )
+
+        return (
+            "array-meta",
+            id(value),
+            tuple(getattr(value, "shape", ())),
+            str(getattr(value, "dtype", type(value))),
+        )
+
     def _create_cache_key(self, wavelength: float | be.ndarray, **kwargs) -> tuple:
         """Creates a hashable cache key from wavelength and kwargs."""
         if be.is_array_like(wavelength):
-            wavelength_key = tuple(np.ravel(be.to_numpy(wavelength)))
+            size = self._array_size(wavelength)
+            if size is not None and size <= self._MAX_VALUE_KEY_ARRAY_SIZE:
+                wavelength_key = tuple(np.ravel(be.to_numpy(wavelength)))
+            else:
+                wavelength_key = self._array_metadata_key(wavelength)
         else:
             wavelength_key = wavelength
         return (wavelength_key,) + tuple(sorted(kwargs.items()))
