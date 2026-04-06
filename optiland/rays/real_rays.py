@@ -109,6 +109,24 @@ class RealRays(BaseRays):
         """
         surface._record_real(self)
 
+    def apply_rotation_matrix(self, R: BEArray) -> None:
+        """Apply a 3x3 rotation matrix to positions and directions in one pass.
+
+        This is equivalent to calling rotate_x / rotate_y / rotate_z
+        sequentially, but replaces the three pairs of element-wise operations
+        with two batched matrix multiplications, which is significantly faster
+        for large ray counts.
+
+        Args:
+            R: A (3, 3) rotation matrix compatible with the current backend.
+        """
+        pos = be.stack([self.x, self.y, self.z])  # (3, N)
+        dir_ = be.stack([self.L, self.M, self.N])  # (3, N)
+        pos = be.matmul(R, pos)
+        dir_ = be.matmul(R, dir_)
+        self.x, self.y, self.z = pos[0], pos[1], pos[2]
+        self.L, self.M, self.N = dir_[0], dir_[1], dir_[2]
+
     def rotate_x(self, rx: ScalarOrArray):
         """Rotate the rays about the x-axis.
 

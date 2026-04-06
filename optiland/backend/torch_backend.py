@@ -364,7 +364,7 @@ class TorchBackend(AbstractBackend):
         if isinstance(x, torch.Tensor):
             return x
 
-        if isinstance(x, (list, tuple)) and len(x) > 0:
+        if isinstance(x, list | tuple) and len(x) > 0:
             # Check if any element is a Tensor
             if any(isinstance(v, torch.Tensor) for v in x):
                 # Ensure all are tensors and stack them to preserve gradients
@@ -1755,6 +1755,39 @@ class TorchBackend(AbstractBackend):
         vals = values.view(points.shape[0], -1)
         out = vals[idx].view(*Hx.shape, -1)
         return out.squeeze(-1) if out.shape[-1] == 1 else out
+
+    def build_nearest_nd_interpolator(self, points: Tensor, values: Tensor):
+        """Build a reusable nearest-neighbour interpolator (Torch backend).
+
+        Pre-converts ``points`` and ``values`` to tensors so repeated queries
+        skip that conversion step.
+
+        Args:
+            points: Known sample points of shape ``(N, D)``.
+            values: Values at the sample points.
+
+        Returns:
+            A callable ``f(x, y)`` that uses ``torch.cdist`` for lookup.
+        """
+        points_t = self.array(points)
+        values_t = self.array(values)
+        n_pts = points_t.shape[0]
+
+        def _query(Hx, Hy):
+            hx = self.array(Hx)
+            hy = self.array(Hy)
+            hx, hy = torch.broadcast_tensors(hx, hy)
+            q_flat = torch.stack([hx, hy], dim=-1).reshape(-1, 2)
+            d = torch.cdist(
+                q_flat,
+                points_t.to(dtype=q_flat.dtype, device=q_flat.device),
+            )
+            idx = d.argmin(dim=1)
+            vals = values_t.view(n_pts, -1)
+            out = vals[idx].view(*hx.shape, -1)
+            return out.squeeze(-1) if out.shape[-1] == 1 else out
+
+        return _query
 
     def grid_sample(
         self,

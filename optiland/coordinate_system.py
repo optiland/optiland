@@ -64,11 +64,61 @@ class CoordinateSystem:
         self.y = be.array(y)
         self.z = be.array(z)
 
+        # rx, ry, rz go through property setters that maintain the cache
         self.rx = be.array(rx)
         self.ry = be.array(ry)
         self.rz = be.array(rz)
 
         self.reference_cs = reference_cs
+
+    @property
+    def rx(self) -> ScalarOrArray:
+        """Rotation angle about the x-axis in radians."""
+        return self._rx
+
+    @rx.setter
+    def rx(self, value) -> None:
+        self._rx = value
+        self._R_glob = None  # invalidate cached rotation matrix
+
+    @property
+    def ry(self) -> ScalarOrArray:
+        """Rotation angle about the y-axis in radians."""
+        return self._ry
+
+    @ry.setter
+    def ry(self, value) -> None:
+        self._ry = value
+        self._R_glob = None
+
+    @property
+    def rz(self) -> ScalarOrArray:
+        """Rotation angle about the z-axis in radians."""
+        return self._rz
+
+    @rz.setter
+    def rz(self, value) -> None:
+        self._rz = value
+        self._R_glob = None
+
+    def _build_R_glob(self) -> BEArray:
+        """Build and cache the combined forward rotation matrix Rz @ Ry @ Rx."""
+        rx, ry, rz = self._rx, self._ry, self._rz
+        Rx = be.array(
+            [[1, 0, 0], [0, be.cos(rx), -be.sin(rx)], [0, be.sin(rx), be.cos(rx)]]
+        )
+        Ry = be.array(
+            [[be.cos(ry), 0, be.sin(ry)], [0, 1, 0], [-be.sin(ry), 0, be.cos(ry)]]
+        )
+        Rz = be.array(
+            [[be.cos(rz), -be.sin(rz), 0], [be.sin(rz), be.cos(rz), 0], [0, 0, 1]]
+        )
+        self._R_glob = Rz @ Ry @ Rx
+        return self._R_glob
+
+    def _has_rotation(self) -> bool:
+        """Return True if any rotation angle is non-zero."""
+        return bool(self._rx) or bool(self._ry) or bool(self._rz)
 
     def localize(self, rays: RealRays):
         """Localizes the rays in the coordinate system.
@@ -81,12 +131,10 @@ class CoordinateSystem:
             self.reference_cs.localize(rays)
 
         rays.translate(-self.x, -self.y, -self.z)
-        if self.rz:
-            rays.rotate_z(-self.rz)
-        if self.ry:
-            rays.rotate_y(-self.ry)
-        if self.rx:
-            rays.rotate_x(-self.rx)
+        if self._has_rotation():
+            R_glob = self._R_glob if self._R_glob is not None else self._build_R_glob()
+            # Localize uses the transpose (= inverse) of the forward rotation
+            rays.apply_rotation_matrix(R_glob.T)
 
     def globalize(self, rays: RealRays):
         """Globalizes the rays from the coordinate system.
@@ -95,12 +143,9 @@ class CoordinateSystem:
             rays: The rays to be globalized.
 
         """
-        if self.rx:
-            rays.rotate_x(self.rx)
-        if self.ry:
-            rays.rotate_y(self.ry)
-        if self.rz:
-            rays.rotate_z(self.rz)
+        if self._has_rotation():
+            R_glob = self._R_glob if self._R_glob is not None else self._build_R_glob()
+            rays.apply_rotation_matrix(R_glob)
         rays.translate(self.x, self.y, self.z)
 
         if self.reference_cs:
@@ -119,28 +164,14 @@ class CoordinateSystem:
         return vector.x, vector.y, vector.z
 
     def get_rotation_matrix(self) -> BEArray:
-        """Get the rotation matrix of the coordinate system
+        """Get the rotation matrix of the coordinate system.
 
         Returns:
-            The rotation matrix of the coordinate system.
+            The rotation matrix of the coordinate system (Rz @ Ry @ Rx).
         """
-        rx, ry, rz = self.rx, self.ry, self.rz
-
-        Rx = be.array(
-            [[1, 0, 0], [0, be.cos(rx), -be.sin(rx)], [0, be.sin(rx), be.cos(rx)]]
-        )
-
-        Ry = be.array(
-            [[be.cos(ry), 0, be.sin(ry)], [0, 1, 0], [-be.sin(ry), 0, be.cos(ry)]]
-        )
-
-        Rz = be.array(
-            [[be.cos(rz), -be.sin(rz), 0], [be.sin(rz), be.cos(rz), 0], [0, 0, 1]]
-        )
-
-        R = Rz @ Ry @ Rx
-
-        return R
+        if self._R_glob is not None:
+            return self._R_glob
+        return self._build_R_glob()
 
     def get_effective_transform(self) -> tuple[BEArray, BEArray]:
         """Get the effective translation and rotation matrix of the CS
@@ -175,9 +206,6 @@ class CoordinateSystem:
                 the use of SciPy for the conversion.
         """
         _, eff_rot_mat = self.get_effective_transform()
-        # Convert the effective rotation matrix back to Euler angles
-        # detach & convert to plain numpy so SciPy won’t try to call .numpy()
-        # on a grad model
         matrix = be.to_numpy(eff_rot_mat)
         return R.from_matrix(matrix).as_euler("xyz")
 

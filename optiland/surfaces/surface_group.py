@@ -48,6 +48,9 @@ class SurfaceGroup:
             self._update_surface_links()
 
         self.surface_factory = SurfaceFactory(self)
+        # Cache for stacked ray-data arrays (x, y, z, …).  Cleared by
+        # reset() so the next property access rebuilds from per-surface data.
+        self._ray_data_cache: dict[str, be.ndarray] = {}
 
     def _update_surface_links(self):
         with suppress(KeyError):
@@ -105,52 +108,67 @@ class SurfaceGroup:
         self._surfaces = []
         self._update_surface_links()
 
+    def _ray_array(self, name: str) -> be.ndarray:
+        """Return the cached stacked ray-data array for *name*.
+
+        On a cache miss the array is built once from per-surface data and
+        stored.  The cache is invalidated by :meth:`reset` so every trace
+        call produces a fresh result.
+        """
+        if name not in self._ray_data_cache:
+            self._ray_data_cache[name] = be.stack(
+                [
+                    getattr(surf, name)
+                    for surf in self.surfaces
+                    if be.size(getattr(surf, name)) > 0
+                ]
+            )
+        return self._ray_data_cache[name]
+
     @property
     def x(self):
         """np.array: x intersection points on all surfaces"""
-        return be.stack([surf.x for surf in self.surfaces if be.size(surf.x) > 0])
+        return self._ray_array("x")
 
     @property
     def y(self):
         """np.array: y intersection points on all surfaces"""
-        return be.stack([surf.y for surf in self.surfaces if be.size(surf.y) > 0])
+        return self._ray_array("y")
 
     @property
     def z(self):
         """np.array: z intersection points on all surfaces"""
-        return be.stack([surf.z for surf in self.surfaces if be.size(surf.z) > 0])
+        return self._ray_array("z")
 
     @property
     def L(self):
         """np.array: x direction cosines on all surfaces"""
-        return be.stack([surf.L for surf in self.surfaces if be.size(surf.L) > 0])
+        return self._ray_array("L")
 
     @property
     def M(self):
         """np.array: y direction cosines on all surfaces"""
-        return be.stack([surf.M for surf in self.surfaces if be.size(surf.M) > 0])
+        return self._ray_array("M")
 
     @property
     def N(self):
         """np.array: z direction cosines on all surfaces"""
-        return be.stack([surf.N for surf in self.surfaces if be.size(surf.N) > 0])
+        return self._ray_array("N")
 
     @property
     def opd(self):
         """np.array: optical path difference recorded on all surfaces"""
-        return be.stack([surf.opd for surf in self.surfaces if be.size(surf.opd) > 0])
+        return self._ray_array("opd")
 
     @property
     def u(self):
         """np.array: paraxial ray angles on all surfaces"""
-        return be.stack([surf.u for surf in self.surfaces if be.size(surf.u) > 0])
+        return self._ray_array("u")
 
     @property
     def intensity(self):
         """np.array: ray intensities on all surfaces"""
-        return be.stack(
-            [surf.intensity for surf in self.surfaces if be.size(surf.intensity) > 0]
-        )
+        return self._ray_array("intensity")
 
     @property
     def positions(self):
@@ -374,8 +392,10 @@ class SurfaceGroup:
         """Resets all the surfaces in the collection.
 
         This method iterates over each surface in the collection and calls
-            its `reset` method.
+            its `reset` method.  The ray-data cache is also cleared so that
+            the next property access (x, y, z, …) rebuilds from fresh data.
         """
+        self._ray_data_cache.clear()
         for surface in self.surfaces:
             surface.reset()
 

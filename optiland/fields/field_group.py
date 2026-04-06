@@ -38,6 +38,7 @@ class FieldGroup:
         self.fields = []
         self.field_definition: BaseFieldDefinition | None = None
         self.telecentric = False
+        self._vig_interp = None  # cached vignetting interpolator
 
     @property
     def x_fields(self):
@@ -90,6 +91,19 @@ class FieldGroup:
         """be.ndarray: Vignetting factors in y for each field."""
         return be.array([field.vy for field in self.fields])
 
+    def _build_vig_interpolator(self):
+        """Build and cache the vignetting interpolator."""
+        max_field = self.max_field
+        if max_field == 0:
+            x_fields = self.x_fields
+            y_fields = self.y_fields
+        else:
+            x_fields = self.x_fields / max_field
+            y_fields = self.y_fields / max_field
+        fields = be.stack((x_fields, y_fields), axis=-1)
+        v_data = be.stack((self.vx, self.vy), axis=-1)
+        self._vig_interp = be.build_nearest_nd_interpolator(fields, v_data)
+
     def get_vig_factor(self, Hx, Hy):
         """Calculates the vignetting factors for a given field position.
 
@@ -107,16 +121,9 @@ class FieldGroup:
                 vignetting factor.
 
         """
-        max_field = self.max_field
-        if max_field == 0:
-            x_fields = self.x_fields
-            y_fields = self.y_fields
-        else:
-            x_fields = self.x_fields / max_field
-            y_fields = self.y_fields / max_field
-        fields = be.stack((x_fields, y_fields), axis=-1)
-        v_data = be.stack((self.vx, self.vy), axis=-1)
-        result = be.nearest_nd_interpolator(fields, v_data, Hx, Hy)
+        if self._vig_interp is None:
+            self._build_vig_interpolator()
+        result = self._vig_interp(Hx, Hy)
         vx_new = result[..., 0]
         vy_new = result[..., 1]
         return vx_new, vy_new
@@ -172,6 +179,7 @@ class FieldGroup:
         """
         new_field = Field(x, y, vx, vy, weight)
         self.fields.append(new_field)
+        self._vig_interp = None
 
     def set_type(self, field_type: str) -> None:
         """Set the type of field used in the optical system.
@@ -208,6 +216,7 @@ class FieldGroup:
 
         """
         self.fields.pop(field_number)
+        self._vig_interp = None
 
     def set_telecentric(self, is_telecentric):
         """Specify whether the system is telecentric in object space.

@@ -55,9 +55,40 @@ class StandardGeometry(BaseGeometry):
 
     def __init__(self, coordinate_system, radius, conic=0.0):
         super().__init__(coordinate_system)
-        self.radius = be.array(radius)
-        self.k = be.array(conic)
+        # Store raw values first, then build cached constants once.
+        self._radius = be.array(radius)
+        self._k = be.array(conic)
         self.is_symmetric = True
+        self._update_cached_constants()
+
+    @property
+    def radius(self):
+        """Radius of curvature."""
+        return self._radius
+
+    @radius.setter
+    def radius(self, value):
+        self._radius = value
+        self._update_cached_constants()
+
+    @property
+    def k(self):
+        """Conic constant."""
+        return self._k
+
+    @k.setter
+    def k(self, value):
+        self._k = value
+        self._update_cached_constants()
+
+    def _update_cached_constants(self):
+        """Pre-compute per-instance scalar constants used in every ray call."""
+        self._is_plane = _is_radius_infinite(self._radius)
+        self._one_plus_k = 1.0 + self._k
+        r = be.array(self._radius)
+        inv = be.array(1.0) / r
+        self._inv_R = inv
+        self._inv_R2 = inv * inv
 
     def __str__(self):
         return "Standard"
@@ -68,7 +99,7 @@ class StandardGeometry(BaseGeometry):
         Changes the sign of the radius of curvature.
         The conic constant remains unchanged.
         """
-        self.radius = -self.radius
+        self.radius = -self._radius
 
     def scale(self, scale_factor: float):
         """Scale the geometry parameters.
@@ -76,7 +107,7 @@ class StandardGeometry(BaseGeometry):
         Args:
             scale_factor (float): The factor by which to scale the geometry.
         """
-        self.radius = self.radius * scale_factor
+        self.radius = self._radius * scale_factor
 
     def sag(self, x=0, y=0):
         """Calculate the surface sag of the geometry at the given coordinates.
@@ -91,7 +122,7 @@ class StandardGeometry(BaseGeometry):
         """
         r2 = x**2 + y**2
         return r2 / (
-            self.radius * (1 + be.sqrt(1 - (1 + self.k) * r2 / self.radius**2))
+            self._radius * (1 + be.sqrt(1 - self._one_plus_k * r2 * self._inv_R2))
         )
 
     def distance(self, rays):
@@ -105,21 +136,22 @@ class StandardGeometry(BaseGeometry):
             to its intersection point with the geometry.
 
         """
-        if _is_radius_infinite(self.radius):
+        if self._is_plane:
             # intersection with the plane z=0 is z0 + t*Nz = 0
             N_safe = be.where(be.abs(rays.N) > 1e-14, rays.N, 1e-14)
             return -rays.z / N_safe
-        a = self.k * rays.N**2 + rays.L**2 + rays.M**2 + rays.N**2
+        k = self._k
+        a = k * rays.N**2 + rays.L**2 + rays.M**2 + rays.N**2
         b = (
-            2 * self.k * rays.N * rays.z
+            2 * k * rays.N * rays.z
             + 2 * rays.L * rays.x
             + 2 * rays.M * rays.y
-            - 2 * rays.N * self.radius
+            - 2 * rays.N * self._radius
             + 2 * rays.N * rays.z
         )
         c = (
-            self.k * rays.z**2
-            - 2 * self.radius * rays.z
+            k * rays.z**2
+            - 2 * self._radius * rays.z
             + rays.x**2
             + rays.y**2
             + rays.z**2
@@ -161,7 +193,7 @@ class StandardGeometry(BaseGeometry):
         """
         r2 = rays.x**2 + rays.y**2
 
-        denom = self.radius * be.sqrt(1 - (1 + self.k) * r2 / self.radius**2)
+        denom = self._radius * be.sqrt(1 - self._one_plus_k * r2 * self._inv_R2)
         dfdx = rays.x / denom
         dfdy = rays.y / denom
         dfdz = -1
@@ -182,7 +214,7 @@ class StandardGeometry(BaseGeometry):
 
         """
         geometry_dict = super().to_dict()
-        geometry_dict.update({"radius": float(self.radius), "conic": float(self.k)})
+        geometry_dict.update({"radius": float(self._radius), "conic": float(self._k)})
         return geometry_dict
 
     @classmethod

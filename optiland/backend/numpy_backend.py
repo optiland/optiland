@@ -315,7 +315,9 @@ class NumpyBackend(AbstractBackend):
         Returns:
             NDArray: Array with at least 1 dimension, cast to float.
         """
-        return np.atleast_1d(x).astype(float)
+        arr = np.atleast_1d(x)
+        # Skip the copy when the array is already float64
+        return arr if arr.dtype == np.float64 else arr.astype(float)
 
     def atleast_2d(self, x: ArrayLike) -> NDArray:
         """Convert x to an array with at least two dimensions.
@@ -863,6 +865,25 @@ class NumpyBackend(AbstractBackend):
         """
         interpolator = NearestNDInterpolator(points, values)
         return interpolator(x, y)
+
+    def build_nearest_nd_interpolator(
+        self,
+        points: NDArray,
+        values: NDArray,
+    ):
+        """Build a reusable nearest-neighbour interpolator (NumPy backend).
+
+        Constructs the KDTree once so repeated queries avoid redundant work.
+
+        Args:
+            points: Known sample points of shape ``(N, D)``.
+            values: Values at the sample points.
+
+        Returns:
+            A callable ``f(x, y)`` backed by ``NearestNDInterpolator``.
+        """
+        interp = NearestNDInterpolator(points, values)
+        return interp
 
     def interp(self, x: ArrayLike, xp: ArrayLike, fp: ArrayLike) -> NDArray:
         """1-D linear interpolation.

@@ -533,6 +533,24 @@ class AbstractBackend(ABC):
         """Nearest-neighbour interpolation on an N-D dataset."""
 
     @abstractmethod
+    def build_nearest_nd_interpolator(self, points: Any, values: Any) -> Any:
+        """Build and return a reusable nearest-neighbour interpolator.
+
+        Returns a callable ``f(x, y)`` that queries the interpolator built
+        from ``points`` and ``values``.  Building the interpolator once and
+        calling the returned object repeatedly is significantly cheaper than
+        calling :meth:`nearest_nd_interpolator` (which reconstructs the
+        internal data structure on every call).
+
+        Args:
+            points: Known sample points of shape ``(N, D)``.
+            values: Values at the sample points of shape ``(N, ...)``.
+
+        Returns:
+            A callable ``f(x, y)`` that returns interpolated values.
+        """
+
+    @abstractmethod
     def interp(self, x: Any, xp: Any, fp: Any) -> Any:
         """1-D linear interpolation."""
 

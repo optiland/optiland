@@ -251,7 +251,7 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
             tuple[be.ndarray, be.ndarray, be.ndarray]: The x, y, and z
             coordinates of the initial intersection points.
         """
-        if _is_radius_infinite(self.radius):
+        if self._is_plane:
             return self._intersection_plane(rays)
         else:
             return self._intersection_sphere(rays)

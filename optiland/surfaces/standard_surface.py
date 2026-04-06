@@ -264,14 +264,14 @@ class Surface:
             rays (RealRays): The real rays.
 
         """
-        self.x = be.copy(be.atleast_1d(rays.x))
-        self.y = be.copy(be.atleast_1d(rays.y))
-        self.z = be.copy(be.atleast_1d(rays.z))
-        self.L = be.copy(be.atleast_1d(rays.L))
-        self.M = be.copy(be.atleast_1d(rays.M))
-        self.N = be.copy(be.atleast_1d(rays.N))
-        self.intensity = be.copy(be.atleast_1d(rays.i))
-        self.opd = be.copy(be.atleast_1d(rays.opd))
+        self.x = be.copy(rays.x)
+        self.y = be.copy(rays.y)
+        self.z = be.copy(rays.z)
+        self.L = be.copy(rays.L)
+        self.M = be.copy(rays.M)
+        self.N = be.copy(rays.N)
+        self.intensity = be.copy(rays.i)
+        self.opd = be.copy(rays.opd)
 
     def set_semi_aperture(self, r_max: float):
         """Sets the physical semi-aperture of the surface.

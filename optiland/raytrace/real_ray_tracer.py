@@ -38,6 +38,7 @@ class RealRayTracer:
             "max_iter": 10,
             "tol": 1e-6,
         }
+        self._dist_cache: dict[tuple, object] = {}
 
     def set_aiming(self, mode: str, max_iter: int = 10, tol: float = 1e-6, **kwargs):
         """Configure the ray aiming strategy.
@@ -80,8 +81,12 @@ class RealRayTracer:
         self._validate_normalized_coordinates(Hx, Hy, "field")
 
         if isinstance(distribution, str):
-            distribution = create_distribution(distribution)
-            distribution.generate_points(num_rays)
+            cache_key = (distribution, num_rays)
+            if cache_key not in self._dist_cache:
+                dist = create_distribution(distribution)
+                dist.generate_points(num_rays)
+                self._dist_cache[cache_key] = dist
+            distribution = self._dist_cache[cache_key]
         Px = distribution.x
         Py = distribution.y
 
