@@ -1,7 +1,7 @@
 """Zemax Data Model
 
 Defines ZemaxDataModel, the shared intermediate representation used by both
-the Zemax reader (parser → model) and writer (optic → model) paths.
+the Zemax reader (parser -> model) and writer (optic -> model) paths.
 
 Kramer Harrison, 2024
 """

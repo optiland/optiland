@@ -410,7 +410,7 @@ class ToroidalSurfaceHandler(BaseSurfaceHandler):
         r_yz = float(geom.R_yz)
         r_rot = float(geom.R_rot)
 
-        # R_rot == inf → PARM 1 = 0 in Zemax convention
+        # R_rot == inf -> PARM 1 = 0 in Zemax convention
         parm1 = 0.0 if (math.isinf(r_rot) or r_rot == 0.0) else (1.0 / r_rot)
 
         raw_coeffs = geom.coeffs_poly_y

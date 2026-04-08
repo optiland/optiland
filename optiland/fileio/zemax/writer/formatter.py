@@ -24,7 +24,7 @@ from optiland.materials.material import Material
 if TYPE_CHECKING:
     from optiland.optic import Optic
 
-# CIE standard wavelengths for Abbe number calculation (µm)
+# CIE standard wavelengths for Abbe number calculation (um)
 _WL_d = 0.5876  # helium d-line
 _WL_F = 0.4861  # hydrogen F-line
 _WL_C = 0.6563  # hydrogen C-line
@@ -91,7 +91,7 @@ class OpticToZemaxConverter:
     """Converts an Optic object to a ZemaxDataModel.
 
     This is the mirror of ZemaxToOpticConverter and constitutes the first
-    stage of the write pipeline (Optic → ZemaxDataModel → text lines).
+    stage of the write pipeline (Optic -> ZemaxDataModel -> text lines).
 
     Args:
         optic: The Optic to convert.
@@ -349,7 +349,7 @@ class OpticToZemaxConverter:
         if isinstance(mat, Material):
             return {"name": mat.name.upper()}
 
-        # AbbeMaterial or any other material → MODEL glass
+        # AbbeMaterial or any other material -> MODEL glass
         try:
             primary_wl = float(self._optic.primary_wavelength)
             n_d = float(be.atleast_1d(be.array(mat.n(primary_wl))).ravel()[0])

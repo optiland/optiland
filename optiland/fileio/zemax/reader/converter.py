@@ -23,7 +23,7 @@ class ZemaxToOpticConverter(BaseOpticReader):
     """Converts a ZemaxDataModel into an Optic object.
 
     Also implements BaseOpticReader so that the full pipeline (source
-    resolution → parsing → conversion) can be triggered via ``read()``.
+    resolution -> parsing -> conversion) can be triggered via ``read()``.
 
     Args:
         zemax_data: A plain dict (legacy) or ZemaxDataModel containing the
