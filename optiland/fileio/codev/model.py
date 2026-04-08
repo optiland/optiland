@@ -1,7 +1,7 @@
 """CODE V Data Model
 
 Defines CodeVDataModel, the shared intermediate representation used by both
-the CODE V reader (parser → model) and writer (optic → model) paths.
+the CODE V reader (parser -> model) and writer (optic -> model) paths.
 
 Kramer Harrison, 2026
 """

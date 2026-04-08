@@ -6,8 +6,6 @@ import inspect
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
-
 
 class TestFileServiceNoQMessageBox:
     """Verify file_service.py no longer calls QMessageBox directly."""
@@ -68,7 +66,6 @@ class TestFileServiceNoQMessageBox:
         conn.toast_manager.notify.assert_called()
         severity = conn.toast_manager.notify.call_args[0][1]
         assert severity == "error"
-
 
 
 class TestSidebarNoQMessageBox:

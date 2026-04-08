@@ -17,7 +17,6 @@ from optiland.fileio.optiland_handler import load_obj_from_json, save_obj_to_jso
 from optiland.materials import Material
 from optiland.optic import Optic
 from optiland.samples.objectives import HeliarLens
-
 from tests.utils import assert_allclose
 
 
@@ -86,13 +85,19 @@ def test_save_load_optiland_file_with_tensor(set_test_backend):
     if has_torch:
         lens.surfaces[1].thickness = torch.tensor(1.23)
         lens.surfaces[1].geometry.radius = torch.tensor(1.23)
-        lens.surfaces[2].geometry.coefficients = [torch.tensor(1.23), torch.tensor(1.23)]
+        lens.surfaces[2].geometry.coefficients = [
+            torch.tensor(1.23),
+            torch.tensor(1.23),
+        ]
     else:
+
         class MockTensor:
             def __init__(self, val):
                 self.val = val
+
             def tolist(self):
                 return self.val if isinstance(self.val, list) else [self.val]
+
             def item(self):
                 return self.val
 
@@ -117,7 +122,11 @@ def test_remove_surface_after_load(set_test_backend, tmp_path):
         index=1, surface_type="standard", material="Air", thickness=10, radius=150
     )
     lens.surfaces.add(
-        index=2, surface_type="standard", material="N-BK7", thickness=10, radius=150,
+        index=2,
+        surface_type="standard",
+        material="N-BK7",
+        thickness=10,
+        radius=150,
         is_stop=True,
     )
     lens.surfaces.add(
@@ -137,7 +146,11 @@ def test_remove_surface_after_load(set_test_backend, tmp_path):
 
 
 def test_zemax_to_optic_converter_shim():
-    from optiland.fileio import _make_deprecated_ztoc, ZemaxToOpticConverter
-    with pytest.warns(DeprecationWarning, match="Import ZemaxToOpticConverter from optiland.fileio.zemax"):
+    from optiland.fileio import ZemaxToOpticConverter, _make_deprecated_ztoc
+
+    with pytest.warns(
+        DeprecationWarning,
+        match="Import ZemaxToOpticConverter from optiland.fileio.zemax",
+    ):
         conv = _make_deprecated_ztoc({})
         assert isinstance(conv, ZemaxToOpticConverter)

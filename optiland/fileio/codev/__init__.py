@@ -2,11 +2,11 @@
 
 Provides reader and writer for CODE V Sequential (.seq) files.
 
-Reader pipeline: .seq file → CodeVDataParser → CodeVDataModel
-                 → CodeVToOpticConverter → Optic
+Reader pipeline: .seq file -> CodeVDataParser -> CodeVDataModel
+                 -> CodeVToOpticConverter -> Optic
 
-Writer pipeline: Optic → OpticToCodeVConverter → CodeVDataModel
-                 → CodeVFileEncoder → .seq file
+Writer pipeline: Optic -> OpticToCodeVConverter -> CodeVDataModel
+                 -> CodeVFileEncoder -> .seq file
 """
 
 from __future__ import annotations

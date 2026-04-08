@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from importlib import resources
 import time
+from importlib import resources
 from unittest.mock import MagicMock
 
 import numpy as np

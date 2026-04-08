@@ -18,16 +18,17 @@ import optiland.backend as be
 from optiland.fileio import load_zemax_file, save_zemax_file
 from optiland.fileio.zemax.writer.formatter import OpticToZemaxConverter
 from optiland.optic import Optic
-
 from tests.utils import assert_allclose
 
-_ZEMAX_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                           "zemax_files")
+_ZEMAX_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "zemax_files"
+)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _zemax(filename: str) -> str:
     return os.path.join(_ZEMAX_DIR, filename)
@@ -67,6 +68,7 @@ def _surfaces_match(orig: Optic, reloaded: Optic, rtol: float = 1e-5) -> None:
 # Round-trip: standard spherical lens (Cooke-style triplet)
 # ---------------------------------------------------------------------------
 
+
 class TestRoundTripStandard:
     def test_surfaces(self, tmp_path, set_test_backend):
         orig, reloaded = _round_trip("lens1.zmx", tmp_path)
@@ -84,7 +86,7 @@ class TestRoundTripStandard:
     def test_wavelengths(self, tmp_path, set_test_backend):
         orig, reloaded = _round_trip("lens1.zmx", tmp_path)
         assert orig.wavelengths.num_wavelengths == reloaded.wavelengths.num_wavelengths
-        for w1, w2 in zip(orig.wavelengths, reloaded.wavelengths):
+        for w1, w2 in zip(orig.wavelengths, reloaded.wavelengths, strict=False):
             assert_allclose(w1.value, w2.value, rtol=1e-6)
 
     def test_stop_surface(self, tmp_path, set_test_backend):
@@ -98,6 +100,7 @@ class TestRoundTripStandard:
 # Round-trip: even asphere
 # ---------------------------------------------------------------------------
 
+
 class TestRoundTripAsphere:
     def test_roundtrip(self, tmp_path, set_test_backend):
         orig, reloaded = _round_trip("lens2.zmx", tmp_path)
@@ -107,13 +110,14 @@ class TestRoundTripAsphere:
         orig, reloaded = _round_trip("lens2.zmx", tmp_path)
         # Find the first even_asphere surface and compare coefficients
         from optiland.geometries import EvenAsphere
+
         for i in range(orig.surfaces.num_surfaces):
             s1 = orig.surfaces[i]
             s2 = reloaded.surfaces[i]
             if isinstance(s1.geometry, EvenAsphere):
                 c1 = list(s1.geometry.coefficients)
                 c2 = list(s2.geometry.coefficients)
-                for a, b in zip(c1, c2):
+                for a, b in zip(c1, c2, strict=False):
                     assert_allclose(float(a), float(b), rtol=1e-5)
                 break
 
@@ -121,6 +125,7 @@ class TestRoundTripAsphere:
 # ---------------------------------------------------------------------------
 # Round-trip: toroidal surface
 # ---------------------------------------------------------------------------
+
 
 class TestRoundTripToroidal:
     def test_roundtrip(self, tmp_path, set_test_backend):
@@ -130,6 +135,7 @@ class TestRoundTripToroidal:
     def test_toroidal_radii(self, tmp_path, set_test_backend):
         orig, reloaded = _round_trip("thorlabs_lj1598l1.zmx", tmp_path)
         from optiland.geometries import ToroidalGeometry
+
         for i in range(orig.surfaces.num_surfaces):
             s1 = orig.surfaces[i]
             s2 = reloaded.surfaces[i]
@@ -140,6 +146,7 @@ class TestRoundTripToroidal:
 # ---------------------------------------------------------------------------
 # Round-trip: floating stop aperture
 # ---------------------------------------------------------------------------
+
 
 class TestRoundTripFloaAperture:
     def test_aperture_type(self, tmp_path, set_test_backend):
@@ -154,6 +161,7 @@ class TestRoundTripFloaAperture:
 # ---------------------------------------------------------------------------
 # Warning: MODEL glass
 # ---------------------------------------------------------------------------
+
 
 class TestModelGlassWarning:
     def test_abbe_material_warns(self, tmp_path, set_test_backend):
@@ -191,6 +199,7 @@ class TestModelGlassWarning:
 # Warning: pickups
 # ---------------------------------------------------------------------------
 
+
 class TestPickupWarning:
     def test_pickup_warns(self, tmp_path, set_test_backend):
         """A pickup on the optic must trigger a warning during export."""
@@ -214,10 +223,10 @@ class TestPickupWarning:
 # NotImplementedError: unsupported surface type
 # ---------------------------------------------------------------------------
 
+
 class TestUnsupportedSurface:
     def test_unsupported_geometry_raises(self, tmp_path, set_test_backend):
         """A surface with a Zernike or NURBS geometry must raise NotImplementedError."""
-        from optiland.geometries import ZernikePolynomialGeometry
 
         optic = Optic(name="test_unsupported")
         optic.surfaces.add(index=0, thickness=be.inf, material="Air")
@@ -241,19 +250,23 @@ class TestUnsupportedSurface:
 # OpticToZemaxConverter Extended
 # ---------------------------------------------------------------------------
 
+
 class TestOpticToZemaxConverterExtended:
     def test_field_type_string_none(self):
         from optiland.fileio.zemax.writer.formatter import _field_type_string
+
         optic = Optic()
         # No fields added
         assert _field_type_string(optic) == "angle"
 
     def test_warn_unknown_aperture(self):
         optic = Optic()
+
         # Mock an unknown aperture type
         class UnknownAp:
             ap_type = "unknown"
             value = 0.0
+
         optic.aperture = UnknownAp()
         conv = OpticToZemaxConverter(optic)
         with pytest.warns(UserWarning, match="Unknown aperture type"):
@@ -276,10 +289,13 @@ class TestOpticToZemaxConverterExtended:
 
     def test_format_glass_model(self):
         from optiland.materials import IdealMaterial
+
         optic = Optic()
         optic.surfaces.add(index=0, thickness=0.0)
         # Use an IdealMaterial to trigger the MODEL glass branch
-        optic.surfaces.add(index=1, radius=50.0, thickness=5.0, material=IdealMaterial(1.6))
+        optic.surfaces.add(
+            index=1, radius=50.0, thickness=5.0, material=IdealMaterial(1.6)
+        )
         optic.surfaces.add(index=2, thickness=0.0)
         optic.add_wavelength(0.5876, is_primary=True)
         conv = OpticToZemaxConverter(optic)
@@ -288,7 +304,8 @@ class TestOpticToZemaxConverterExtended:
         assert model.surfaces[1]["GLAS"]["name"] == "MODEL"
 
     def test_is_air_ideal(self):
-        from optiland.materials import IdealMaterial
         from optiland.fileio.zemax.writer.formatter import _is_air
+        from optiland.materials import IdealMaterial
+
         assert _is_air(IdealMaterial(1.0)) is True
         assert _is_air(IdealMaterial(1.5)) is False

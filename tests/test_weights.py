@@ -7,17 +7,13 @@ Kramer Harrison, 2026
 
 from __future__ import annotations
 
-import json
-import os
-import tempfile
-
 import pytest
 
 import optiland.backend as be
 from optiland.fields.field import Field
 from optiland.optic import Optic
-from optiland.optimization.operand.operand import Operand
 from optiland.optimization import OptimizationProblem
+from optiland.optimization.operand.operand import Operand
 from optiland.samples.objectives import CookeTriplet
 from optiland.utils import (
     FieldPoint,
@@ -30,16 +26,18 @@ from optiland.utils import (
 )
 from optiland.wavelength import Wavelength
 
-
 # ---------------------------------------------------------------------------
 # Helper: build a minimal optic with known field/wavelength weights
 # ---------------------------------------------------------------------------
+
 
 def _make_weighted_optic():
     """Return an Optic with custom field and wavelength weights."""
     lens = Optic()
     lens.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
-    lens.surfaces.add(index=1, radius=50.0, thickness=5.0, material="N-BK7", is_stop=True)
+    lens.surfaces.add(
+        index=1, radius=50.0, thickness=5.0, material="N-BK7", is_stop=True
+    )
     lens.surfaces.add(index=2, radius=-50.0, thickness=45.0)
     lens.surfaces.add(index=3)
 
@@ -60,6 +58,7 @@ def _make_weighted_optic():
 # Unit Test 1: Field rejects negative weight
 # ---------------------------------------------------------------------------
 
+
 class TestFieldNegativeWeight:
     def test_field_constructor_rejects_negative_weight(self):
         with pytest.raises(ValueError, match="non-negative"):
@@ -74,6 +73,7 @@ class TestFieldNegativeWeight:
 # ---------------------------------------------------------------------------
 # Unit Test 2: Wavelength rejects negative weight
 # ---------------------------------------------------------------------------
+
 
 class TestWavelengthNegativeWeight:
     def test_wavelength_constructor_rejects_negative_weight(self):
@@ -90,6 +90,7 @@ class TestWavelengthNegativeWeight:
 # Unit Test 3: FieldGroup.weights returns correct tuple
 # ---------------------------------------------------------------------------
 
+
 class TestFieldGroupWeights:
     def test_field_group_weights_tuple(self):
         optic = _make_weighted_optic()
@@ -100,6 +101,7 @@ class TestFieldGroupWeights:
 # Unit Test 4: WavelengthGroup.weights returns correct tuple
 # ---------------------------------------------------------------------------
 
+
 class TestWavelengthGroupWeights:
     def test_wavelength_group_weights_tuple(self):
         optic = _make_weighted_optic()
@@ -109,6 +111,7 @@ class TestWavelengthGroupWeights:
 # ---------------------------------------------------------------------------
 # Unit Test 5: resolve_fields("all") returns FieldPoint objects with correct weights
 # ---------------------------------------------------------------------------
+
 
 class TestResolveFieldsAll:
     def test_resolve_fields_all_returns_field_points(self):
@@ -135,6 +138,7 @@ class TestResolveFieldsAll:
 # Unit Test 6: resolve_fields([(0,0)]) returns FieldPoint with weight=1.0
 # ---------------------------------------------------------------------------
 
+
 class TestResolveFieldsRawList:
     def test_raw_list_returns_field_point_weight_one(self):
         optic = _make_weighted_optic()
@@ -148,6 +152,7 @@ class TestResolveFieldsRawList:
 # ---------------------------------------------------------------------------
 # Unit Test 7: resolve_wavelengths("all") returns WavelengthPoint with correct weights
 # ---------------------------------------------------------------------------
+
 
 class TestResolveWavelengthsAll:
     def test_resolve_wavelengths_all_returns_wavelength_points(self):
@@ -166,6 +171,7 @@ class TestResolveWavelengthsAll:
 # ---------------------------------------------------------------------------
 # Unit Test 8: resolve_wavelengths("primary") returns single WavelengthPoint
 # ---------------------------------------------------------------------------
+
 
 class TestResolveWavelengthsPrimary:
     def test_resolve_wavelengths_primary_returns_single_point(self):
@@ -186,6 +192,7 @@ class TestResolveWavelengthsPrimary:
 # Unit Test 9: active_fields filters zero-weight items
 # ---------------------------------------------------------------------------
 
+
 class TestActiveFields:
     def test_active_fields_removes_zero_weight(self):
         optic = _make_weighted_optic()
@@ -203,6 +210,7 @@ class TestActiveFields:
 # Unit Test 10: active_wavelengths filters zero-weight items
 # ---------------------------------------------------------------------------
 
+
 class TestActiveWavelengths:
     def test_active_wavelengths_removes_zero_weight(self):
         optic = _make_weighted_optic()
@@ -219,6 +227,7 @@ class TestActiveWavelengths:
 # ---------------------------------------------------------------------------
 # Unit Test 11: weighted_average computes correct result, raises on all-zero
 # ---------------------------------------------------------------------------
+
 
 class TestWeightedAverage:
     def test_weighted_average_correct_result(self):
@@ -242,6 +251,7 @@ class TestWeightedAverage:
 # ---------------------------------------------------------------------------
 # Unit Test 12: Operand.effective_weight returns correct product
 # ---------------------------------------------------------------------------
+
 
 class TestOperandEffectiveWeight:
     def test_effective_weight_with_field_and_wavelength_index(self):
@@ -298,6 +308,7 @@ class TestOperandEffectiveWeight:
 # Integration Test 13: Zemax FWGN → field weight transfer
 # ---------------------------------------------------------------------------
 
+
 class TestZemaxFieldWeightImport:
     def test_fwgn_transfers_field_weights(self, tmp_path):
         zmx_content = """MODE SEQ
@@ -331,6 +342,7 @@ SURF 3
         zmx_path.write_text(zmx_content, encoding="utf-8")
 
         from optiland.fileio import load_zemax_file
+
         optic = load_zemax_file(str(zmx_path))
 
         assert optic.fields.fields[0].weight == pytest.approx(3.0)
@@ -341,6 +353,7 @@ SURF 3
 # ---------------------------------------------------------------------------
 # Integration Test 14: Zemax WAVM weight token transfer
 # ---------------------------------------------------------------------------
+
 
 class TestZemaxWavelengthWeightImport:
     def test_wavm_transfers_wavelength_weights(self, tmp_path):
@@ -375,6 +388,7 @@ SURF 3
         zmx_path.write_text(zmx_content, encoding="utf-8")
 
         from optiland.fileio import load_zemax_file
+
         optic = load_zemax_file(str(zmx_path))
 
         # First WAVM line (0.55) should have weight=2.0
@@ -388,6 +402,7 @@ SURF 3
 # ---------------------------------------------------------------------------
 # Integration Test 15: JSON round-trip for field with weight=2.5
 # ---------------------------------------------------------------------------
+
 
 class TestFieldJsonRoundTrip:
     def test_field_weight_survives_json_roundtrip(self):
@@ -415,6 +430,7 @@ class TestFieldJsonRoundTrip:
 # Integration Test 16: JSON round-trip for wavelength with weight=0.5
 # ---------------------------------------------------------------------------
 
+
 class TestWavelengthJsonRoundTrip:
     def test_wavelength_weight_survives_json_roundtrip(self):
         wl = Wavelength(value=0.55, weight=0.5)
@@ -440,6 +456,7 @@ class TestWavelengthJsonRoundTrip:
 # ---------------------------------------------------------------------------
 # Integration Test 17: Optimizer skips zero-weight field operand
 # ---------------------------------------------------------------------------
+
 
 class TestOptimizerZeroWeightSkip:
     def test_zero_weight_field_operand_excluded_from_merit(self):
@@ -480,6 +497,7 @@ class TestOptimizerZeroWeightSkip:
 # ---------------------------------------------------------------------------
 # Integration Test 18: weight_breakdown returns correct effective weights
 # ---------------------------------------------------------------------------
+
 
 class TestWeightBreakdown:
     def test_weight_breakdown_returns_list_of_dicts(self):
@@ -539,13 +557,14 @@ class TestWeightBreakdown:
 # Integration Test 19: Polychromatic PSF weighted average (manual verification)
 # ---------------------------------------------------------------------------
 
+
 class TestPolychromaticWeightedAverageFormula:
     """Verifies the weighted average helper can be used for polychromatic aggregation."""
 
     def test_weighted_psf_average_formula(self):
         # Simulate two PSF "scalars" representing peak values at two wavelengths
         psf_values = [0.8, 0.6]  # monochromatic PSF peak values
-        weights = [1.0, 3.0]     # wavelength weights (3× emphasis on second)
+        weights = [1.0, 3.0]  # wavelength weights (3× emphasis on second)
         # Expected: (1*0.8 + 3*0.6) / (1+3) = (0.8 + 1.8) / 4 = 2.6/4 = 0.65
         result = weighted_average(psf_values, weights)
         assert abs(result - 0.65) < 1e-12
@@ -555,7 +574,7 @@ class TestPolychromaticWeightedAverageFormula:
         psf_values = [0.8, 0.6, 0.999]  # third wavelength has zero weight
         weights = [1.0, 3.0, 0.0]
         result = weighted_average(
-            [v for v, w in zip(psf_values, weights) if w > 0.0],
+            [v for v, w in zip(psf_values, weights, strict=False) if w > 0.0],
             [w for w in weights if w > 0.0],
         )
         # Only first two contribute: (1*0.8 + 3*0.6) / 4 = 0.65
@@ -565,6 +584,7 @@ class TestPolychromaticWeightedAverageFormula:
 # ---------------------------------------------------------------------------
 # Integration Test 20: Backward compatibility — all-weights-1.0 system
 # ---------------------------------------------------------------------------
+
 
 class TestBackwardCompatibility:
     def test_resolve_fields_all_weight_one_for_default_optic(self):
@@ -607,4 +627,4 @@ class TestBackwardCompatibility:
         delta = float(be.to_numpy(be.array(op.delta())))
         values = problem.fun_array()
         computed = float(be.to_numpy(values[0]))
-        assert computed == pytest.approx(delta ** 2)
+        assert computed == pytest.approx(delta**2)

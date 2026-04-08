@@ -23,6 +23,7 @@ from optiland.samples.objectives import CookeTriplet
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_problem_with_ray_operands(lens=None):
     """Create a problem with several trace_generic ray operands."""
     if lens is None:
@@ -709,7 +710,10 @@ class TestEvaluatorStructure:
 
         # Add an operand without going through the problem
         problem.operands.add(
-            "f2", target=50.0, weight=1.0, input_data={"optic": CookeTriplet()},
+            "f2",
+            target=50.0,
+            weight=1.0,
+            input_data={"optic": CookeTriplet()},
         )
 
         evaluator.refresh()
@@ -802,7 +806,11 @@ class TestScipyWithBatching:
         lens = Microscope20x()
         problem = optimization.OptimizationProblem()
         problem.add_variable(
-            lens, "radius", surface_number=1, min_val=10, max_val=100,
+            lens,
+            "radius",
+            surface_number=1,
+            min_val=10,
+            max_val=100,
         )
         problem.add_operand(
             operand_type="f2",
@@ -822,7 +830,11 @@ class TestScipyWithBatching:
         lens = CookeTriplet()
         problem = optimization.OptimizationProblem()
         problem.add_variable(
-            lens, "radius", surface_number=1, min_val=10, max_val=100,
+            lens,
+            "radius",
+            surface_number=1,
+            min_val=10,
+            max_val=100,
         )
 
         problem.add_operand(
@@ -866,10 +878,12 @@ class TestScipyWithBatching:
 # Torch autograd compatibility
 # ---------------------------------------------------------------------------
 
+
 def _torch_available():
     """Check whether the torch backend is available."""
     try:
         import torch  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -898,7 +912,11 @@ class TestTorchAutograd:
 
         # Variable: radius of surface 1
         problem.add_variable(
-            lens, "radius", surface_number=1, min_val=10, max_val=100,
+            lens,
+            "radius",
+            surface_number=1,
+            min_val=10,
+            max_val=100,
         )
 
         # Operand: y-intercept on image surface
@@ -909,8 +927,10 @@ class TestTorchAutograd:
             input_data={
                 "optic": lens,
                 "surface_number": -1,
-                "Hx": 0.0, "Hy": 0.0,
-                "Px": 0.0, "Py": 1.0,
+                "Hx": 0.0,
+                "Hy": 0.0,
+                "Px": 0.0,
+                "Py": 1.0,
                 "wavelength": 0.55,
             },
         )
@@ -918,9 +938,7 @@ class TestTorchAutograd:
         problem.enable_batching()
 
         # Make the variable a torch.nn.Parameter so we can track grads
-        param = torch.nn.Parameter(
-            be.array(problem.variables[0].variable.get_value())
-        )
+        param = torch.nn.Parameter(be.array(problem.variables[0].variable.get_value()))
         problem.variables[0].variable.update_value(param)
         problem.update_optics()
 
@@ -955,7 +973,11 @@ class TestTorchAutograd:
         problem = optimization.OptimizationProblem()
 
         problem.add_variable(
-            lens, "radius", surface_number=1, min_val=1.0, max_val=10.0,
+            lens,
+            "radius",
+            surface_number=1,
+            min_val=1.0,
+            max_val=10.0,
         )
 
         # Paraxial operand — the existing torch tests also use f2
@@ -985,7 +1007,11 @@ class TestTorchAutograd:
         problem = optimization.OptimizationProblem()
 
         problem.add_variable(
-            lens, "radius", surface_number=1, min_val=10, max_val=100,
+            lens,
+            "radius",
+            surface_number=1,
+            min_val=10,
+            max_val=100,
         )
 
         # Two operands to make batching meaningful
@@ -997,17 +1023,17 @@ class TestTorchAutograd:
                 input_data={
                     "optic": lens,
                     "surface_number": -1,
-                    "Hx": 0.0, "Hy": 0.0,
-                    "Px": 0.0, "Py": py_val,
+                    "Hx": 0.0,
+                    "Hy": 0.0,
+                    "Px": 0.0,
+                    "Py": py_val,
                     "wavelength": 0.55,
                 },
             )
 
         problem.enable_batching()
 
-        param = torch.nn.Parameter(
-            be.array(problem.variables[0].variable.get_value())
-        )
+        param = torch.nn.Parameter(be.array(problem.variables[0].variable.get_value()))
         problem.variables[0].variable.update_value(param)
         problem.update_optics()
 
@@ -1025,12 +1051,15 @@ class TestTorchAutograd:
         p_std = optimization.OptimizationProblem()
         p_std.add_operand(
             operand_type="real_y_intercept",
-            target=0.0, weight=1.0,
+            target=0.0,
+            weight=1.0,
             input_data={
                 "optic": lens,
                 "surface_number": -1,
-                "Hx": 0.0, "Hy": 0.0,
-                "Px": 0.0, "Py": 1.0,
+                "Hx": 0.0,
+                "Hy": 0.0,
+                "Px": 0.0,
+                "Py": 1.0,
                 "wavelength": 0.55,
             },
         )
@@ -1040,12 +1069,15 @@ class TestTorchAutograd:
         p_bat = optimization.OptimizationProblem()
         p_bat.add_operand(
             operand_type="real_y_intercept",
-            target=0.0, weight=1.0,
+            target=0.0,
+            weight=1.0,
             input_data={
                 "optic": lens,
                 "surface_number": -1,
-                "Hx": 0.0, "Hy": 0.0,
-                "Px": 0.0, "Py": 1.0,
+                "Hx": 0.0,
+                "Hy": 0.0,
+                "Px": 0.0,
+                "Py": 1.0,
                 "wavelength": 0.55,
             },
         )

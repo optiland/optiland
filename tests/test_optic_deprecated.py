@@ -153,9 +153,7 @@ class TestDeprecatedAddSurface:
     def test_matches_new_api(self, set_test_backend):
         optic_old = Optic()
         with pytest.warns(DeprecationWarning):
-            optic_old.add_surface(
-                index=0, material="N-BK7", thickness=5, radius=50.0
-            )
+            optic_old.add_surface(index=0, material="N-BK7", thickness=5, radius=50.0)
 
         optic_new = Optic()
         optic_new.surfaces.add(index=0, material="N-BK7", thickness=5, radius=50.0)
@@ -537,9 +535,9 @@ class TestDeprecatedSetAsphereCoeff:
         with pytest.warns(DeprecationWarning):
             self.optic.set_asphere_coeff(0.1, 0, 0)
         optic_new.updater.set_asphere_coeff(0.1, 0, 0)
-        assert self.optic.surfaces[0].geometry.coefficients[
-            0
-        ] == pytest.approx(optic_new.surfaces[0].geometry.coefficients[0])
+        assert self.optic.surfaces[0].geometry.coefficients[0] == pytest.approx(
+            optic_new.surfaces[0].geometry.coefficients[0]
+        )
 
 
 # ===========================================================================

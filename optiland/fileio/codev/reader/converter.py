@@ -20,7 +20,7 @@ from optiland.optic import Optic
 _APERTURE_KEY_MAP: dict[str, str] = {
     "EPD": "EPD",
     "FNO": "imageFNO",
-    "NA": "imageFNO",  # approximate — Optiland uses imageFNO
+    "NA": "imageFNO",  # approximate - Optiland uses imageFNO
     "NAO": "objectNA",
 }
 
@@ -28,8 +28,8 @@ _APERTURE_KEY_MAP: dict[str, str] = {
 class CodeVToOpticConverter(BaseOpticReader):
     """Converts a CodeVDataModel into an Optic object.
 
-    Also implements BaseOpticReader so that the full pipeline (file load →
-    parsing → conversion) can be triggered via ``read()``.
+    Also implements BaseOpticReader so that the full pipeline (file load ->
+    parsing -> conversion) can be triggered via ``read()``.
 
     Args:
         codev_data: A plain dict or CodeVDataModel containing the CODE V

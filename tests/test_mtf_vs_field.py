@@ -32,7 +32,9 @@ class TestMTFvsField:
         assert mtf_vf.frequencies == [10.0, 20.0]
         assert mtf_vf.num_fields == 32
         assert mtf_vf.num_rays == 128
-        assert [wp.value for wp in mtf_vf.wavelengths] == [w.value for w in optic.wavelengths.wavelengths]
+        assert [wp.value for wp in mtf_vf.wavelengths] == [
+            w.value for w in optic.wavelengths.wavelengths
+        ]
 
         # Check results structure
         assert len(mtf_vf.data) == len(mtf_vf.wavelengths)

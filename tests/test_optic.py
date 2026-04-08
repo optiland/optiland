@@ -7,7 +7,7 @@ import pytest
 import optiland.backend as be
 from optiland.aperture import BaseSystemAperture
 from optiland.apodization import GaussianApodization
-from optiland.fields import AngleField, FieldGroup, ParaxialImageHeightField
+from optiland.fields import FieldGroup, ParaxialImageHeightField
 from optiland.optic import Optic
 from optiland.rays import create_polarization
 from optiland.samples.objectives import HeliarLens
@@ -106,9 +106,7 @@ class TestOptic:
 
     def test_set_field_type(self, set_test_backend):
         self.optic.fields.set_type("paraxial_image_height")
-        assert isinstance(
-            self.optic.fields.field_definition, ParaxialImageHeightField
-        )
+        assert isinstance(self.optic.fields.field_definition, ParaxialImageHeightField)
 
     def test_set_comment(self, set_test_backend):
         self.optic.surfaces.add(

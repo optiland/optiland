@@ -155,7 +155,9 @@ class TestBackendContract:
 
     # ---- Checks ----
 
-    def test_isnan_isinf_isfinite(self, backend_name: str, set_test_backend: None) -> None:
+    def test_isnan_isinf_isfinite(
+        self, backend_name: str, set_test_backend: None
+    ) -> None:
         # Scalar inputs
         assert be.isnan(float("nan"))
         assert not be.isnan(1.0)
@@ -179,7 +181,9 @@ class TestBackendContract:
         assert_allclose(be.linspace(0.0, 1.0, 5), np.linspace(0, 1, 5), atol=1e-6)
         assert_allclose(be.arange(0, 5), np.arange(5), atol=0)
 
-    def test_zeros_ones_full_like(self, backend_name: str, set_test_backend: None) -> None:
+    def test_zeros_ones_full_like(
+        self, backend_name: str, set_test_backend: None
+    ) -> None:
         ref = be.array([1.0, 2.0, 3.0])
         assert_allclose(be.zeros_like(ref), np.zeros(3), atol=0)
         assert_allclose(be.ones_like(ref), np.ones(3), atol=0)
@@ -309,7 +313,9 @@ class TestBackendContract:
         arr = be.to_numpy(x)
         assert arr.shape in ((10,), (1, 10))  # torch returns (1, 10)
 
-    def test_random_uniform_bounds(self, backend_name: str, set_test_backend: None) -> None:
+    def test_random_uniform_bounds(
+        self, backend_name: str, set_test_backend: None
+    ) -> None:
         x = be.random_uniform(0.0, 1.0, size=100)
         arr = be.to_numpy(x)
         assert arr.min() >= 0.0

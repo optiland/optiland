@@ -591,10 +591,9 @@ class TestTelescopeTripletFieldCurvature:
     def test_field_curvature_init(self, set_test_backend, telescope_objective):
         field_curvature = analysis.FieldCurvature(telescope_objective)
         assert field_curvature.optic == telescope_objective
-        assert (
-            [wp.value for wp in field_curvature.wavelengths]
-            == telescope_objective.wavelengths.get_wavelengths()
-        )
+        assert [
+            wp.value for wp in field_curvature.wavelengths
+        ] == telescope_objective.wavelengths.get_wavelengths()
         assert field_curvature.num_points == 128
 
     def test_field_curvature_init_with_wavelength(
@@ -617,10 +616,9 @@ class TestTelescopeTripletFieldCurvature:
             num_points=num_points,
         )
         assert field_curvature.optic == telescope_objective
-        assert (
-            [wp.value for wp in field_curvature.wavelengths]
-            == telescope_objective.wavelengths.get_wavelengths()
-        )
+        assert [
+            wp.value for wp in field_curvature.wavelengths
+        ] == telescope_objective.wavelengths.get_wavelengths()
         assert field_curvature.num_points == num_points
 
     def test_field_curvature_init_with_all_parameters(
@@ -764,7 +762,11 @@ class TestPupilAberration:
     def test_initialization(self, set_test_backend, telescope_objective):
         pupil_ab = analysis.PupilAberration(telescope_objective)
         assert pupil_ab.optic == telescope_objective
-        assert [fp.coord for fp in pupil_ab.fields] == [(0.0, 0.0), (0.0, 0.7), (0.0, 1.0)]
+        assert [fp.coord for fp in pupil_ab.fields] == [
+            (0.0, 0.0),
+            (0.0, 0.7),
+            (0.0, 1.0),
+        ]
         assert [wp.value for wp in pupil_ab.wavelengths] == [0.4861, 0.5876, 0.6563]
         assert pupil_ab.num_points == 257  # num_points is forced to be odd
 

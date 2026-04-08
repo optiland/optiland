@@ -31,9 +31,7 @@ class TestParaxialToThickLensConverter:
         lens.surfaces.add(index=0, thickness=be.inf)
         lens.surfaces.add(index=1, surface_type="paraxial", f=50)
         lens.wavelengths.add(0.55, is_primary=True)
-        conv = ParaxialToThickLensConverter(
-            lens.surfaces[1], lens, "N-BK7"
-        )
+        conv = ParaxialToThickLensConverter(lens.surfaces[1], lens, "N-BK7")
         lens.surfaces.remove(index=1)
         with pytest.raises(RuntimeError):
             conv.convert()
@@ -43,9 +41,7 @@ class TestParaxialToThickLensConverter:
         lens.surfaces.add(index=0, thickness=be.inf)
         lens.surfaces.add(index=1, surface_type="paraxial", f=50)
         lens.wavelengths.add(0.55, is_primary=True)
-        conv = ParaxialToThickLensConverter(
-            lens.surfaces[1], lens, "N-BK7"
-        )
+        conv = ParaxialToThickLensConverter(lens.surfaces[1], lens, "N-BK7")
         assert hasattr(conv._material_instance, "n")
 
     def test_resolve_material_string_failure(self, set_test_backend):
@@ -54,9 +50,7 @@ class TestParaxialToThickLensConverter:
         lens.surfaces.add(index=1, surface_type="paraxial", f=50)
         lens.wavelengths.add(0.55, is_primary=True)
         with pytest.raises(ValueError):
-            ParaxialToThickLensConverter(
-                lens.surfaces[1], lens, "NOT_A_MATERIAL"
-            )
+            ParaxialToThickLensConverter(lens.surfaces[1], lens, "NOT_A_MATERIAL")
 
     def test_resolve_material_float(self, set_test_backend):
         lens = Optic()
@@ -83,9 +77,7 @@ class TestParaxialToThickLensConverter:
         lens.surfaces.add(index=1, surface_type="paraxial", f=50)
         lens.wavelengths.add(0.55, is_primary=True)
         with pytest.raises(TypeError):
-            ParaxialToThickLensConverter(
-                lens.surfaces[1], lens, [1, 2, 3]
-            )
+            ParaxialToThickLensConverter(lens.surfaces[1], lens, [1, 2, 3])
 
     def test_get_paraxial_surface_index_found(self, set_test_backend):
         lens = Optic()
@@ -129,9 +121,7 @@ class TestParaxialToThickLensConverter:
         lens2.surfaces.add(index=0, thickness=be.inf)
         lens2.surfaces.add(index=1, surface_type="paraxial", f=-100.0)
         lens2.wavelengths.add(0.55, is_primary=True)
-        conv2 = ParaxialToThickLensConverter(
-            lens2.surfaces[1], lens2, 1.5
-        )
+        conv2 = ParaxialToThickLensConverter(lens2.surfaces[1], lens2, 1.5)
         r1n, r2n = conv2._calculate_radii()
         assert r1n < 0 and r2n > 0
 

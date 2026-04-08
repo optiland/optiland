@@ -18,13 +18,12 @@ from optiland.fileio.zemax.reader.source import ZemaxFileSourceHandler
 from optiland.geometries import ToroidalGeometry
 from optiland.materials import Material
 from optiland.optic import Optic
-
 from tests.utils import assert_allclose
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def zemax_file():
@@ -34,13 +33,15 @@ def zemax_file():
 
 @pytest.fixture
 def zemax_dir():
-    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                        "zemax_files")
+    return os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "zemax_files"
+    )
 
 
 # ---------------------------------------------------------------------------
 # ZemaxFileSourceHandler
 # ---------------------------------------------------------------------------
+
 
 class TestZemaxFileSourceHandler:
     def test_is_url(self):
@@ -85,6 +86,7 @@ class TestZemaxFileSourceHandler:
 # ---------------------------------------------------------------------------
 # ZemaxDataParser
 # ---------------------------------------------------------------------------
+
 
 class TestZemaxDataParser:
     def setup_method(self):
@@ -139,6 +141,7 @@ class TestZemaxDataParser:
 # End-to-end reader tests
 # ---------------------------------------------------------------------------
 
+
 class TestEndToEnd:
     def test_load_zemax_file(self, zemax_file):
         optic = load_zemax_file(zemax_file)
@@ -172,6 +175,7 @@ class TestEndToEnd:
 # ZemaxToOpticConverter extended tests
 # ---------------------------------------------------------------------------
 
+
 class TestZemaxToOpticConverterExtended:
     def test_configure_aperture_floating_stop_no_diameter(self):
         zemax_data = {
@@ -193,7 +197,8 @@ class TestZemaxToOpticConverterExtended:
         converter.optic = Optic()
         converter._configure_surfaces()
         with pytest.raises(
-            ValueError, match="Floating stop aperture specified but no stop diameter found"
+            ValueError,
+            match="Floating stop aperture specified but no stop diameter found",
         ):
             converter._configure_aperture()
 
@@ -210,14 +215,18 @@ class TestZemaxToOpticConverterExtended:
             converter._configure_aperture()
 
     def test_configure_surface_coefficients_unsupported_type(self):
-        converter = ZemaxToOpticConverter({
-            "surfaces": {},
-            "aperture": {"EPD": 10},
-            "fields": {"type": "angle", "x": [0], "y": [0]},
-            "wavelengths": {"primary_index": 0, "data": [0.55]},
-        })
+        converter = ZemaxToOpticConverter(
+            {
+                "surfaces": {},
+                "aperture": {"EPD": 10},
+                "fields": {"type": "angle", "x": [0], "y": [0]},
+                "wavelengths": {"primary_index": 0, "data": [0.55]},
+            }
+        )
         with pytest.raises(ValueError, match="Unsupported Zemax surface type"):
-            converter._configure_surface_coefficients({"type": "unsupported_surface_type"})
+            converter._configure_surface_coefficients(
+                {"type": "unsupported_surface_type"}
+            )
 
     def test_configure_fields_vignette_warning(self, capsys):
         zemax_data = {
@@ -269,8 +278,12 @@ class TestZemaxToOpticConverterExtended:
         assert surf.geometry.radius == 100.0
         cs = surf.geometry.cs
         assert (
-            cs.x != 0 or cs.y != 0 or cs.z != 0
-            or cs.rx != 0 or cs.ry != 0 or cs.rz != 0
+            cs.x != 0
+            or cs.y != 0
+            or cs.z != 0
+            or cs.rx != 0
+            or cs.ry != 0
+            or cs.rz != 0
         )
 
     def test_configure_surfaces_toroidal(self):
@@ -319,24 +332,31 @@ class TestZemaxToOpticConverterExtended:
 # Zemax Surfaces
 # ---------------------------------------------------------------------------
 
+
 class TestZemaxSurfaces:
     def test_get_handler_error(self):
         from optiland.fileio.zemax.surfaces import get_handler
-        with pytest.raises(NotImplementedError, match="Zemax surface type 'NON_EXISTENT_SURFACE' is not supported"):
+
+        with pytest.raises(
+            NotImplementedError,
+            match="Zemax surface type 'NON_EXISTENT_SURFACE' is not supported",
+        ):
             get_handler("NON_EXISTENT_SURFACE")
 
     def test_base_surface_handler_radius(self):
-        from optiland.fileio.zemax.surfaces import _radius, _curvature
+        from optiland.fileio.zemax.surfaces import _curvature, _radius
+
         # Test _radius helper (Zemax CURV → Optiland RAD)
         assert _radius(0.0) == float(be.inf)
         assert _radius(0.02) == 50.0
-        
+
         # Test _curvature helper (Optiland RAD → Zemax CURV)
         assert _curvature(float(be.inf)) == 0.0
         assert _curvature(50.0) == 0.02
 
     def test_standard_surface_handler_defaults(self):
         from optiland.fileio.zemax.surfaces import StandardSurfaceHandler
+
         handler = StandardSurfaceHandler()
         data = {"radius": 100.0, "conic": 0.0}
         params = handler.parse(data)

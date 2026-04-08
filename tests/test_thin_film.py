@@ -1,14 +1,17 @@
-import optiland.backend as be
-import pytest
-import numpy as np
-import matplotlib.pyplot as plt
+from __future__ import annotations
 
-from optiland.thin_film import Layer, ThinFilmStack, SpectralAnalyzer
-from optiland.materials import Material, IdealMaterial
-from .utils import assert_allclose
+import matplotlib.pyplot as plt
+import numpy as np
+import pytest
+
+import optiland.backend as be
+from optiland.materials import IdealMaterial, Material
+from optiland.thin_film import Layer, SpectralAnalyzer, ThinFilmStack
 
 # Import physical constants for testing unit conversions
-from optiland.thin_film.analysis import SPEED_OF_LIGHT, PLANCK_EV
+from optiland.thin_film.analysis import PLANCK_EV, SPEED_OF_LIGHT
+
+from .utils import assert_allclose
 
 
 @pytest.fixture(autouse=True)
