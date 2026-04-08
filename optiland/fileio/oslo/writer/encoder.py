@@ -1,0 +1,143 @@
+"""OSLO File Encoder
+
+Converts an Optic object into an OsloDataModel.
+
+Kramer Harrison, 2026
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from optiland.fileio.oslo.model import OsloDataModel
+from optiland.fileio.oslo.surfaces import get_handler_for_optiland_type
+from optiland.materials import AbbeMaterial, IdealMaterial, Material
+from optiland.physical_apertures import RadialAperture
+
+if TYPE_CHECKING:
+    from optiland.optic import Optic
+
+
+class OpticToOsloEncoder:
+    """Encodes an Optic object into an OsloDataModel.
+
+    Args:
+        optic: The Optic instance to encode.
+    """
+
+    def __init__(self, optic: Optic):
+        self.optic = optic
+        self.data_model = OsloDataModel()
+
+    def encode(self) -> OsloDataModel:
+        """Perform the encoding.
+
+        Returns:
+            The populated OsloDataModel.
+        """
+        self.data_model.name = self.optic.name or "LENS"
+        self.data_model.num_surfaces = len(self.optic.surfaces) - 1  # Excluding object
+
+        # Scaling (use EFL if available)
+        try:
+            self.data_model.scaling = self.optic.paraxial.efl()
+        except Exception:
+            self.data_model.scaling = 1.0
+
+        self._encode_aperture()
+        self._encode_fields()
+        self._encode_wavelengths()
+        self._encode_surfaces()
+
+        return self.data_model
+
+    def _encode_aperture(self) -> None:
+        if self.optic.aperture:
+            ap_type = self.optic.aperture.aperture_type
+            value = self.optic.aperture.value
+            if ap_type == "EPD":
+                self.data_model.aperture["EPD"] = value
+            elif ap_type == "imageFNO":
+                self.data_model.aperture["FNO"] = value
+            elif ap_type == "objectNA":
+                self.data_model.aperture["NAO"] = value
+
+    def _encode_fields(self) -> None:
+        if self.optic.fields:
+            self.data_model.fields["type"] = self.optic.fields.field_type
+            self.data_model.fields["y"] = [f.y for f in self.optic.fields]
+
+    def _encode_wavelengths(self) -> None:
+        if self.optic.wavelengths:
+            self.data_model.wavelengths["values"] = [
+                w.value for w in self.optic.wavelengths
+            ]
+            self.data_model.wavelengths["weights"] = [
+                w.weight for w in self.optic.wavelengths
+            ]
+            self.data_model.wavelengths["primary_index"] = (
+                self.optic.wavelengths.primary_index
+            )
+
+    def _encode_surfaces(self) -> None:
+        for idx, surface in enumerate(self.optic.surfaces):
+            handler = get_handler_for_optiland_type(surface.surface_type)
+            surf_data = handler.format(surface)
+
+            # Common properties
+            surf_data["TH"] = float(surface.thickness)
+            if surface.is_stop:
+                surf_data["AST"] = True
+
+            # Material
+            surf_data["material"] = self._encode_material(surface.material)
+
+            # Aperture
+            if surface.aperture and isinstance(surface.aperture, RadialAperture):
+                surf_data["AP"] = float(surface.aperture.r_max)
+
+            # Decenter/Tilt
+            for k in ["DCX", "DCY", "DCZ", "TLA", "TLB", "TLC"]:
+                val = getattr(surface, k.lower(), 0.0)
+                if val != 0:
+                    surf_data[k] = float(val)
+
+            self.data_model.surfaces[idx] = surf_data
+
+    def _encode_material(self, material: Any) -> str:
+        if material == "air" or material is None:
+            return "AIR"
+        if material == "mirror":
+            return "RFL"
+
+        if isinstance(material, Material):
+            return f"GLA {material.name}"
+
+        if isinstance(material, IdealMaterial):
+            n = float(material.index.item())
+            return f"GLA {n} {n} {n}"
+
+        if isinstance(material, AbbeMaterial):
+            nd = float(material.index.item())
+            float(material.abbe.item())
+            # OSLO direct index doesn't take nd, vd directly but 3 indices.
+            # We can't perfectly reconstruct without knowing wavelengths,
+            # but we can try to find indices at d, F, C.
+            try:
+                # Standard wavelengths (um)
+                w_d = 0.58756
+                w_F = 0.48613
+                w_C = 0.65627
+                n_d = material.n(w_d).item()
+                n_F = material.n(w_F).item()
+                n_C = material.n(w_C).item()
+                return f"GLA {float(n_d)} {float(n_F)} {float(n_C)}"
+            except Exception:
+                return f"GLA {nd} {nd} {nd}"
+
+        # Fallback
+        try:
+            name = getattr(material, "name", str(material))
+            return f"GLA {name}"
+        except Exception:
+            return "AIR"
