@@ -32,6 +32,7 @@ class OsloToOpticConverter(BaseOpticReader):
         self.data = oslo_data
         self.optic: Optic | None = None
         self.current_cs = CoordinateSystem()
+        self._py_surface_indices: list[int] = []
 
     def read(self, source: str) -> Optic:
         """Read an OSLO file and return a fully-configured Optic.
@@ -44,6 +45,7 @@ class OsloToOpticConverter(BaseOpticReader):
         """
         self.data = OsloDataParser(source).parse()
         self.current_cs = CoordinateSystem()
+        self._py_surface_indices = []
         return self.convert()
 
     def convert(self) -> Optic:
@@ -60,6 +62,7 @@ class OsloToOpticConverter(BaseOpticReader):
         self._configure_aperture()
         self._configure_fields()
         self._configure_wavelengths()
+        self._apply_py_solves()
         return self.optic
 
     def _configure_surfaces(self) -> None:
@@ -89,7 +92,9 @@ class OsloToOpticConverter(BaseOpticReader):
         surface_params["is_stop"] = data.get("AST", False)
 
         th = data.get("TH", 0.0)
-        if th == 1e10:
+        # OSLO uses 1e10 as "infinity"; allow for floating-point imprecision
+        # (e.g., 9.9999999996e+09 appears in practice).
+        if th >= 9.9e9:
             th = be.inf
         surface_params["thickness"] = th
 
@@ -97,8 +102,9 @@ class OsloToOpticConverter(BaseOpticReader):
         material_raw = data.get("material", "AIR")
         surface_params["material"] = self._resolve_material(material_raw)
 
-        # Handle aperture (AP is radius in OSLO)
-        if "AP" in data:
+        # Handle aperture (AP is radius in OSLO).
+        # Skip sentinel values like AP 4e9 which mean "infinite aperture".
+        if "AP" in data and data["AP"] < 1e6:
             from optiland.physical_apertures import RadialAperture
 
             surface_params["aperture"] = RadialAperture(r_max=data["AP"])
@@ -143,12 +149,10 @@ class OsloToOpticConverter(BaseOpticReader):
 
         self.optic.surfaces.add(**surface_params)
 
-        # Handle PY solve (paraxial thickness solve)
+        # Track surfaces with a PY (paraxial thickness) solve.
+        # Actual solve is applied in _apply_py_solves() after full configuration.
         if "PY" in data:
-            # PY 0.0 means adjust thickness to focal plane.
-            # In Optiland, we can use a solve.
-            # TODO: implement PY solve
-            pass
+            self._py_surface_indices.append(index)
 
     def _resolve_material(self, material_raw: str) -> Any:
         if material_raw == "AIR":
@@ -223,17 +227,41 @@ class OsloToOpticConverter(BaseOpticReader):
         y_coords = field_data.get("y", [0.0])
 
         # If object is at infinity, ObjectHeightField is invalid in Optiland.
-        # OSLO often uses OBH even for infinite objects, implying the angle.
-        # We convert to AngleField here.
+        # OSLO often uses OBH even for infinite objects, encoding the angle.
+        # OSLO OBH sign convention: negative means below axis - take abs().
         if field_type == "object_height" and be.isinf(self.optic.surfaces[0].thickness):
             field_type = "angle"
-            # OSLO OBH at TH 1e10: angle = atan(OBH / 1e10)
-            y_coords = [float(be.degrees(be.arctan(y / 1e10))) for y in y_coords]
+            y_coords = [abs(float(be.degrees(be.arctan(y / 1e10)))) for y in y_coords]
+        elif field_type == "angle":
+            # ANG is always positive in OSLO for the max half-angle.
+            y_coords = [abs(y) for y in y_coords]
 
         self.optic.fields.set_type(field_type)
 
-        for y in y_coords:
+        # OSLO stores only the maximum field value.  Expand to three standard
+        # field points (on-axis, 0.7×max, full field) for usable analysis.
+        max_y = max((abs(y) for y in y_coords), default=0.0)
+        fields_to_add = [0.0, round(0.7 * max_y, 8), max_y] if max_y > 0.0 else [0.0]
+
+        for y in fields_to_add:
             self.optic.fields.add(y=y, x=0.0)
+
+    def _apply_py_solves(self) -> None:
+        """Apply paraxial thickness (PY) solves.
+
+        PY 0.0 in an OSLO file means "set this surface's thickness so that
+        the paraxial marginal ray focuses at the image plane."  We implement
+        this by computing the back focal distance (F2) of the assembled system
+        and adding it to each PY surface's thickness.
+        """
+        if not self._py_surface_indices:
+            return
+        try:
+            bfd = float(self.optic.paraxial.F2())
+        except Exception:
+            return  # leave at 0 on failure; don't crash the import
+        for idx in self._py_surface_indices:
+            self.optic.surfaces[idx].thickness += bfd
 
     def _configure_wavelengths(self) -> None:
         wl_data = self.data.wavelengths

@@ -64,7 +64,12 @@ class OsloDataFormatter:
         for cmd, content in self.model.notes.items():
             lines.append(f'{cmd} "{content}"')
 
-        # Wavelengths
+        # Surfaces
+        for idx in sorted(self.model.surfaces.keys()):
+            self._format_surface(lines, idx, self.model.surfaces[idx])
+
+        # Wavelengths - written in the footer (after surfaces, before END),
+        # matching OSLO .len file convention.
         wl_data = self.model.wavelengths
         if wl_data.get("values"):
             vals = wl_data["values"]
@@ -87,10 +92,6 @@ class OsloDataFormatter:
                     lines.append(f"WW {self._fmt(w[0])} {self._fmt(w[1])}")
                 else:
                     lines.append(f"WW {self._fmt(w[0])}")
-
-        # Surfaces
-        for idx in sorted(self.model.surfaces.keys()):
-            self._format_surface(lines, idx, self.model.surfaces[idx])
 
         # End
         lines.append(f"END {self.model.num_surfaces}")

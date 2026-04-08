@@ -136,6 +136,9 @@ class OpticToOsloEncoder:
 
         if isinstance(material, IdealMaterial):
             n = float(material.index.item())
+            # IdealMaterial with n≈1.0 is air - write AIR, not GLA 1.0 1.0 1.0
+            if abs(n - 1.0) < 1e-6:
+                return "AIR"
             return f"GLA {n} {n} {n}"
 
         if isinstance(material, AbbeMaterial):

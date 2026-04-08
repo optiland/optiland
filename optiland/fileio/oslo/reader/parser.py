@@ -93,9 +93,20 @@ class OsloDataParser:
                 if cmd in self._dispatch_table:
                     self._dispatch_table[cmd](tokens)
 
-        # Finalize wavelengths
-        self.data_model.wavelengths["values"] = self._wavelength_values
-        self.data_model.wavelengths["weights"] = self._wavelength_weights
+        # Finalize wavelengths - deduplicate (inline WV before each GLA block
+        # causes duplicates; the final WV+WW block defines system wavelengths
+        # but shares the same values).
+        seen: set[float] = set()
+        unique_vals: list[float] = []
+        for v in self._wavelength_values:
+            if v not in seen:
+                seen.add(v)
+                unique_vals.append(v)
+        weights = list(self._wavelength_weights)
+        if weights and len(weights) < len(unique_vals):
+            weights = weights + [1.0] * (len(unique_vals) - len(weights))
+        self.data_model.wavelengths["values"] = unique_vals
+        self.data_model.wavelengths["weights"] = weights[: len(unique_vals)]
 
         return self.data_model
 
