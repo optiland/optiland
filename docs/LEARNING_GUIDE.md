@@ -101,7 +101,7 @@ Welcome to the Optiland Learning Guide! This guide walks you through key concept
         - Monte Carlo-based Tolerancing
 9. **Lens Catalogue Integration**
     - [Tutorial 9a - Edmund Optics Catalogue](https://github.com/optiland/optiland/blob/master/docs/examples/Tutorial_9a_Edmund_Optics_Catalogue.ipynb)
-        - Reading Zemax files
+        - Reading Zemax, CODE V, and OSLO files
         - Reading and analyzing an aspheric lens
     - [Tutorial 9b - Thorlabs Catalogue](https://github.com/optiland/optiland/blob/master/docs/examples/Tutorial_9b_Thorlabs_Catalogue.ipynb)
         - Reading and analyzing an achromatic doublet pair lens

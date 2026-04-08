@@ -94,14 +94,18 @@ Visualization
 Interoperability and Scripting
 ------------------------------
 
-- **Zemax File Support**:
-  Import and adapt existing designs from Zemax .zmx files. Write Optiland designs to .zmx format.
-- **CODE V File Support**:
-  Import and adapt existing designs from CODE V .seq files. Write Optiland designs to .seq format.
+- **File Support:** Import/Export Zemax (.zmx), CODE V (.seq), and OSLO (.len) files, as well as the native Optiland JSON format.
 - **JSON-Based I/O**:
   Save and load optical systems in a human-readable JSON format.
 - **Python API**:
   Build and control optical systems programmatically for scripting, automation, and integration.
+
+.. note::
+   Tracking the file formats of commercial optical design tools is a non-trivial task as these formats are not always 
+   publicly documented and are subject to change. While we strive to maintain high fidelity during import and 
+   export, users may occasionally encounter functional limitations or minor bugs. We strongly encourage the community 
+   to report any issues or submit pull requests on our `GitHub repository <https://github.com/optiland/optiland>`_ to 
+   help improve these modules collectively.
 
 Performance
 -----------
