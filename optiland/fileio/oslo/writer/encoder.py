@@ -107,7 +107,9 @@ class OpticToOsloEncoder:
                 th = 1e10
             surf_data["TH"] = th
 
-            if surface.is_stop:
+            # OSLO assumes surface 1 is the stop if no stop is explicitly marked.
+            # We omit the AST command for surface 1 to follow this convention.
+            if surface.is_stop and idx != 1:
                 surf_data["AST"] = True
 
             # Material

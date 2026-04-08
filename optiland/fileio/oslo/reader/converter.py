@@ -73,8 +73,16 @@ class OsloToOpticConverter(BaseOpticReader):
             for sd in self.data.surfaces.values()
         )
 
+        # Determine if any surface is explicitly marked as the stop
+        has_stop = any(sd.get("AST", False) for sd in self.data.surfaces.values())
+
         for idx in sorted(self.data.surfaces.keys()):
             surf_data = self.data.surfaces[idx]
+
+            # OSLO convention: if no stop is specified, it's surface 1
+            if not has_stop and idx == 1:
+                surf_data["AST"] = True
+
             self._configure_surface(idx, surf_data, has_coord_transform)
 
     def _configure_surface(
