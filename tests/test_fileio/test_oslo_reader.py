@@ -16,7 +16,7 @@ from tests.utils import assert_allclose
 @pytest.fixture
 def oslo_file():
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(current_dir, "oslo", "cox2_01.len")
+    return os.path.join(current_dir, "oslo", "cox3_07.len")
 
 
 class TestOsloDataParser:
@@ -42,22 +42,22 @@ class TestOsloReader:
     def test_load_oslo_file(self, oslo_file):
         optic = load_oslo_file(oslo_file)
         assert isinstance(optic, Optic)
-        assert optic.name == "COX 2-01"
-        assert len(optic.surfaces) == 10  # 9 + object
+        assert optic.name == "COX PROBLEM 3-07"
+        assert len(optic.surfaces) == 13  # 12 + object
 
         # Check some surface data
-        # Surface 0 (Object) TH 9.99e+09
+        # Surface 0 (Object) TH 1e+10
         assert (
             be.isinf(optic.surfaces[0].thickness) or optic.surfaces[0].thickness > 1e9
         )
 
-        # Surface 2 has glass 1.573
-        assert_allclose(optic.surfaces[2].material.n(0.58756), 1.573)
+        # Surface 2 has glass SF5
+        assert optic.surfaces[2].material_post.name.upper() == "SF5"
 
     def test_load_oslo_file_aperture(self, oslo_file):
         optic = load_oslo_file(oslo_file)
-        # EBR 0.15 -> EPD 0.3
-        assert_allclose(optic.aperture.value, 0.3)
+        # EBR 0.33 -> EPD 0.66
+        assert_allclose(optic.aperture.value, 0.66)
 
 
 if __name__ == "__main__":
@@ -68,6 +68,6 @@ if __name__ == "__main__":
     tr = TestOsloReader()
     # Mocking oslo_file fixture path
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    oslo_path = os.path.join(current_dir, "oslo", "cox2_01.len")
+    oslo_path = os.path.join(current_dir, "oslo", "cox3_07.len")
     tr.test_load_oslo_file(oslo_path)
     print("Reader test passed.")

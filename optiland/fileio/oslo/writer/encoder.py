@@ -18,6 +18,15 @@ if TYPE_CHECKING:
     from optiland.optic import Optic
 
 
+# Map from field definition class name to Optiland field type string
+_FIELD_CLASS_TO_TYPE: dict[str, str] = {
+    "AngleField": "angle",
+    "ObjectHeightField": "object_height",
+    "ParaxialImageHeightField": "paraxial_image_height",
+    "RealImageHeightField": "real_image_height",
+}
+
+
 class OpticToOsloEncoder:
     """Encodes an Optic object into an OsloDataModel.
 
@@ -53,7 +62,7 @@ class OpticToOsloEncoder:
 
     def _encode_aperture(self) -> None:
         if self.optic.aperture:
-            ap_type = self.optic.aperture.aperture_type
+            ap_type = self.optic.aperture.ap_type
             value = self.optic.aperture.value
             if ap_type == "EPD":
                 self.data_model.aperture["EPD"] = value
@@ -64,7 +73,13 @@ class OpticToOsloEncoder:
 
     def _encode_fields(self) -> None:
         if self.optic.fields:
-            self.data_model.fields["type"] = self.optic.fields.field_type
+            fd = self.optic.fields.field_definition
+            if fd:
+                f_type = _FIELD_CLASS_TO_TYPE.get(type(fd).__name__, "angle")
+            else:
+                f_type = "angle"
+
+            self.data_model.fields["type"] = f_type
             self.data_model.fields["y"] = [f.y for f in self.optic.fields]
 
     def _encode_wavelengths(self) -> None:
@@ -81,7 +96,8 @@ class OpticToOsloEncoder:
 
     def _encode_surfaces(self) -> None:
         for idx, surface in enumerate(self.optic.surfaces):
-            handler = get_handler_for_optiland_type(surface.surface_type)
+            s_type = getattr(surface, "surface_type", "standard") or "standard"
+            handler = get_handler_for_optiland_type(s_type)
             surf_data = handler.format(surface)
 
             # Common properties
@@ -90,7 +106,7 @@ class OpticToOsloEncoder:
                 surf_data["AST"] = True
 
             # Material
-            surf_data["material"] = self._encode_material(surface.material)
+            surf_data["material"] = self._encode_material(surface.material_post)
 
             # Aperture
             if surface.aperture and isinstance(surface.aperture, RadialAperture):
