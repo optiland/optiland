@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import optiland.backend as be
 from optiland.fileio.oslo.model import OsloDataModel
 from optiland.fileio.oslo.surfaces import get_handler_for_optiland_type
 from optiland.materials import AbbeMaterial, IdealMaterial, Material
@@ -101,7 +102,11 @@ class OpticToOsloEncoder:
             surf_data = handler.format(surface)
 
             # Common properties
-            surf_data["TH"] = float(surface.thickness)
+            th = float(surface.thickness)
+            if be.isinf(th):
+                th = 1e10
+            surf_data["TH"] = th
+
             if surface.is_stop:
                 surf_data["AST"] = True
 

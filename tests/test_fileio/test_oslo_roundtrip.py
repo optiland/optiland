@@ -24,6 +24,10 @@ def test_oslo_roundtrip_fno(tmp_path):
     # Verify aperture
     assert reloaded_optic.aperture.ap_type == "imageFNO"
     assert np.isclose(reloaded_optic.aperture.value, 8.0)
+    
+    # Verify infinity
+    assert be.isinf(reloaded_optic.surfaces[0].thickness)
+
 
 def test_oslo_roundtrip_nao(tmp_path):
     # Setup optic with objectNA
@@ -44,3 +48,6 @@ def test_oslo_roundtrip_nao(tmp_path):
     # Verify aperture
     assert reloaded_optic.aperture.ap_type == "objectNA"
     assert np.isclose(reloaded_optic.aperture.value, 0.1)
+    
+    # Verify infinity
+    assert be.isinf(reloaded_optic.surfaces[0].thickness)

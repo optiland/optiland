@@ -46,10 +46,8 @@ class TestOsloReader:
         assert len(optic.surfaces) == 13  # 12 + object
 
         # Check some surface data
-        # Surface 0 (Object) TH 1e+10
-        assert (
-            be.isinf(optic.surfaces[0].thickness) or optic.surfaces[0].thickness > 1e9
-        )
+        # Surface 0 (Object) is infinite
+        assert be.isinf(optic.surfaces[0].thickness)
 
         # Surface 2 has glass SF5
         assert optic.surfaces[2].material_post.name.upper() == "SF5"

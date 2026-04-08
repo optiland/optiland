@@ -87,7 +87,11 @@ class OsloToOpticConverter(BaseOpticReader):
         surface_params = handler.parse(data)
         surface_params["index"] = index
         surface_params["is_stop"] = data.get("AST", False)
-        surface_params["thickness"] = data.get("TH", 0.0)
+
+        th = data.get("TH", 0.0)
+        if th == 1e10:
+            th = be.inf
+        surface_params["thickness"] = th
 
         # Handle material
         material_raw = data.get("material", "AIR")
@@ -216,9 +220,18 @@ class OsloToOpticConverter(BaseOpticReader):
             return
 
         field_type = field_data.get("type", "angle")
+        y_coords = field_data.get("y", [0.0])
+
+        # If object is at infinity, ObjectHeightField is invalid in Optiland.
+        # OSLO often uses OBH even for infinite objects, implying the angle.
+        # We convert to AngleField here.
+        if field_type == "object_height" and be.isinf(self.optic.surfaces[0].thickness):
+            field_type = "angle"
+            # OSLO OBH at TH 1e10: angle = atan(OBH / 1e10)
+            y_coords = [float(be.degrees(be.arctan(y / 1e10))) for y in y_coords]
+
         self.optic.fields.set_type(field_type)
 
-        y_coords = field_data.get("y", [0.0])
         for y in y_coords:
             self.optic.fields.add(y=y, x=0.0)
 
