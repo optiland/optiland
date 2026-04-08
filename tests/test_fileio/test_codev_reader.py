@@ -415,6 +415,14 @@ class TestCodeVToOpticConverter:
         with pytest.raises(ValueError, match="No valid aperture type found"):
             converter._configure_aperture()
 
+    def test_aperture_na_raises(self):
+        converter = CodeVToOpticConverter(
+            {"surfaces": {}, "aperture": {"NA": 0.1}}
+        )
+        converter.optic = Optic()
+        with pytest.raises(NotImplementedError, match="image-space numerical aperture"):
+            converter._configure_aperture()
+
 
 # ---------------------------------------------------------------------------
 # load_codev_file public API
