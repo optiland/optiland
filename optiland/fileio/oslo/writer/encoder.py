@@ -115,8 +115,11 @@ class OpticToOsloEncoder:
             if surface.is_stop and idx != 1:
                 surf_data["AST"] = True
 
-            # Material
-            surf_data["material"] = self._encode_material(surface.material_post)
+            # Material — detect mirror via interaction_model.is_reflective
+            im = getattr(surface, "interaction_model", None)
+            is_mirror = bool(getattr(im, "is_reflective", False))
+            material_to_encode = "mirror" if is_mirror else surface.material_post
+            surf_data["material"] = self._encode_material(material_to_encode)
 
             # Aperture
             # th >= 9.9e9 covers both be.inf (converted to 1e10) and 1e10 as-stored
