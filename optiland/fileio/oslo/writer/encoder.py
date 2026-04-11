@@ -7,6 +7,7 @@ Kramer Harrison, 2026
 
 from __future__ import annotations
 
+import contextlib
 import math
 from typing import TYPE_CHECKING, Any
 
@@ -134,6 +135,12 @@ class OpticToOsloEncoder:
                 surf_data["AP"] = sentinel
             elif surface.aperture and isinstance(surface.aperture, RadialAperture):
                 surf_data["AP"] = float(surface.aperture.r_max)
+            elif surface.is_stop:
+                # No explicit physical aperture on stop: derive from paraxial EPD.
+                # OSLO requires AP on the stop to draw full ray bundles for off-axis
+                # fields; without it only the chief ray is plotted.
+                with contextlib.suppress(Exception):
+                    surf_data["AP"] = float(self.optic.paraxial.EPD()) / 2.0
 
             # Decenter/Tilt
             for k in ["DCX", "DCY", "DCZ", "TLA", "TLB", "TLC"]:

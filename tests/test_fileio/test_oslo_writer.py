@@ -118,6 +118,19 @@ class TestBugFixes:
         # Reader must NOT apply sentinel as a RadialAperture (AP < 1e6 check)
         assert optic2.surfaces[0].aperture is None
 
+    # Stop AP derived from paraxial EPD when no explicit RadialAperture is set
+    def test_stop_ap_written_when_no_physical_aperture(self, tmp_path):
+        from optiland.samples.simple import CementedAchromat
+
+        optic = CementedAchromat()
+        # Stop is surf 1, no explicit RadialAperture
+        assert optic.surfaces[1].aperture is None
+        model = OpticToOsloEncoder(optic).encode()
+        stop_data = model.surfaces[1]
+        assert "AP" in stop_data
+        expected_r = float(optic.paraxial.EPD()) / 2.0
+        assert_allclose(stop_data["AP"], expected_r)
+
     # BUG-W6: NXT lines have // SRF N comment
     def test_w6_nxt_has_srf_comment(self, tmp_path):
         optic = _make_simple_optic()
