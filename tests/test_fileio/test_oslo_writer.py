@@ -6,7 +6,10 @@ import os
 
 import pytest
 
+import optiland.backend as be
 from optiland.fileio import load_oslo_file, save_oslo_file
+from optiland.fileio.oslo.writer.encoder import OpticToOsloEncoder
+from optiland.fileio.oslo.writer.formatter import OsloDataFormatter
 from optiland.optic import Optic
 from tests.utils import assert_allclose
 
@@ -15,6 +18,114 @@ from tests.utils import assert_allclose
 def oslo_file():
     current_dir = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(current_dir, "oslo", "cox3_07.len")
+
+
+def _make_simple_optic(name: str = "Test", fields: list[float] | None = None) -> Optic:
+    """Return a minimal valid optic for writer tests."""
+    optic = Optic(name)
+    optic.set_aperture("EPD", 10.0)
+    optic.wavelengths.add(0.55)
+    for y in (fields if fields is not None else [0.0, 14.0, 20.0]):
+        optic.fields.add(y=y, x=0.0)
+    optic.surfaces.add(index=0, radius=0, thickness=1e10)
+    optic.surfaces.add(index=1, radius=100.0, thickness=5.0, material="N-BK7", is_stop=True)
+    optic.surfaces.add(index=2, radius=-100.0, thickness=50.0)
+    optic.surfaces.add(index=3)
+    return optic
+
+
+class TestBugFixes:
+    """Unit tests for each bug fix in the OSLO writer."""
+
+    # BUG-W1: only max field value written
+    def test_w1_only_max_field_written(self):
+        optic = _make_simple_optic(fields=[0.0, 14.0, 20.0])
+        model = OpticToOsloEncoder(optic).encode()
+        assert model.fields["y"] == [20.0]
+
+    def test_w1_single_ang_line_in_output(self, tmp_path):
+        optic = _make_simple_optic(fields=[0.0, 14.0, 20.0])
+        out = tmp_path / "w1.len"
+        save_oslo_file(optic, str(out))
+        text = out.read_text()
+        ang_lines = [ln for ln in text.splitlines() if ln.startswith("ANG ")]
+        assert len(ang_lines) == 1
+        assert "20" in ang_lines[0]
+
+    # BUG-W2: compact float format (no 12-digit scientific notation)
+    def test_w2_compact_float_format(self):
+        formatter = OsloDataFormatter.__new__(OsloDataFormatter)
+        import math
+
+        formatter.model = None  # not needed for _fmt
+        # Use the module-level helper
+        from optiland.fileio.oslo.writer.formatter import OsloDataFormatter as F
+
+        fmt = F._fmt
+        # Should produce compact notation, not 12-digit E format
+        result = fmt(None, 22.01359)
+        assert "E" not in result
+        assert result == "22.01359"
+
+    def test_w2_output_has_no_12digit_scientific(self, tmp_path):
+        optic = _make_simple_optic()
+        out = tmp_path / "w2.len"
+        save_oslo_file(optic, str(out))
+        text = out.read_text()
+        import re
+
+        assert not re.search(r"\d\.\d{12}E[+-]\d{2}", text)
+
+    # BUG-W3: LEN NEW uses actual EFL, not 1.0
+    def test_w3_len_new_has_real_efl(self, tmp_path):
+        from optiland.samples.simple import CementedAchromat
+
+        optic = CementedAchromat()
+        out = tmp_path / "w3.len"
+        save_oslo_file(optic, str(out))
+        first_lines = out.read_text().splitlines()
+        len_line = next(ln for ln in first_lines if ln.startswith("LEN NEW"))
+        # Extract scaling token
+        tokens = len_line.split()
+        scaling = float(tokens[3])
+        assert scaling != pytest.approx(1.0)  # should be real EFL, not fallback
+
+    # BUG-W4: DES and UNI always emitted
+    def test_w4_des_and_uni_in_output(self, tmp_path):
+        optic = _make_simple_optic()
+        out = tmp_path / "w4.len"
+        save_oslo_file(optic, str(out))
+        text = out.read_text()
+        assert 'DES "Optiland"' in text
+        assert "UNI 1" in text
+
+    # BUG-W5: object surface AP sentinel for infinite-conjugate system
+    def test_w5_object_surface_ap_sentinel(self, tmp_path):
+        optic = _make_simple_optic(fields=[0.0, 14.0, 20.0])
+        out = tmp_path / "w5.len"
+        save_oslo_file(optic, str(out))
+        optic2 = load_oslo_file(str(out))
+        # The AP sentinel should be large (>=1e9) and absorbed as infinite AP by reader
+        model = OpticToOsloEncoder(optic).encode()
+        assert "AP" in model.surfaces[0]
+        assert model.surfaces[0]["AP"] > 1e8
+
+    def test_w5_object_ap_sentinel_not_applied_as_physical_aperture(self, tmp_path):
+        optic = _make_simple_optic(fields=[0.0, 14.0, 20.0])
+        out = tmp_path / "w5.len"
+        save_oslo_file(optic, str(out))
+        optic2 = load_oslo_file(str(out))
+        # Reader must NOT apply sentinel as a RadialAperture (AP < 1e6 check)
+        assert optic2.surfaces[0].aperture is None
+
+    # BUG-W6: NXT lines have // SRF N comment
+    def test_w6_nxt_has_srf_comment(self, tmp_path):
+        optic = _make_simple_optic()
+        out = tmp_path / "w6.len"
+        save_oslo_file(optic, str(out))
+        nxt_lines = [ln for ln in out.read_text().splitlines() if "NXT" in ln]
+        for ln in nxt_lines:
+            assert "// SRF" in ln
 
 
 class TestOsloWriter:

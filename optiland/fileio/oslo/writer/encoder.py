@@ -7,6 +7,7 @@ Kramer Harrison, 2026
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
@@ -48,16 +49,16 @@ class OpticToOsloEncoder:
         self.data_model.name = self.optic.name or "LENS"
         self.data_model.num_surfaces = len(self.optic.surfaces) - 1  # Excluding object
 
-        # Scaling (use EFL if available)
-        try:
-            self.data_model.scaling = self.optic.paraxial.efl()
-        except Exception:
-            self.data_model.scaling = 1.0
-
         self._encode_aperture()
         self._encode_fields()
         self._encode_wavelengths()
-        self._encode_surfaces()
+        self._encode_surfaces()  # surfaces must be configured before EFL is valid
+
+        # Scaling: use actual EFL (f2) after surfaces are configured
+        try:
+            self.data_model.scaling = float(self.optic.paraxial.f2())
+        except Exception:
+            self.data_model.scaling = 1.0
 
         return self.data_model
 
@@ -75,13 +76,15 @@ class OpticToOsloEncoder:
     def _encode_fields(self) -> None:
         if self.optic.fields:
             fd = self.optic.fields.field_definition
-            if fd:
-                f_type = _FIELD_CLASS_TO_TYPE.get(type(fd).__name__, "angle")
-            else:
-                f_type = "angle"
-
+            f_type = (
+                _FIELD_CLASS_TO_TYPE.get(type(fd).__name__, "angle") if fd else "angle"
+            )
             self.data_model.fields["type"] = f_type
-            self.data_model.fields["y"] = [f.y for f in self.optic.fields]
+            # OSLO convention: store only the maximum absolute field value.
+            # The reader expands this to [0, 0.7*max, max] on load.
+            y_values = [f.y for f in self.optic.fields]
+            max_y = max((abs(y) for y in y_values), default=0.0)
+            self.data_model.fields["y"] = [max_y]
 
     def _encode_wavelengths(self) -> None:
         if self.optic.wavelengths:
@@ -116,7 +119,17 @@ class OpticToOsloEncoder:
             surf_data["material"] = self._encode_material(surface.material_post)
 
             # Aperture
-            if surface.aperture and isinstance(surface.aperture, RadialAperture):
+            # th >= 9.9e9 covers both be.inf (converted to 1e10) and 1e10 as-stored
+            if idx == 0 and th >= 9.9e9:
+                # Object surface with infinite conjugate: emit a large AP sentinel
+                # matching OSLO EDU convention: AP = tan(max_field_angle) * 1e10
+                max_y = max((abs(f.y) for f in self.optic.fields), default=0.0)
+                if max_y > 0:
+                    sentinel = math.tan(math.radians(max_y)) * 1e10
+                else:
+                    sentinel = 1e10
+                surf_data["AP"] = sentinel
+            elif surface.aperture and isinstance(surface.aperture, RadialAperture):
                 surf_data["AP"] = float(surface.aperture.r_max)
 
             # Decenter/Tilt

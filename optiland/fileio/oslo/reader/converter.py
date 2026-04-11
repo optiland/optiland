@@ -259,17 +259,15 @@ class OsloToOpticConverter(BaseOpticReader):
 
         PY 0.0 in an OSLO file means "set this surface's thickness so that
         the paraxial marginal ray focuses at the image plane."  We implement
-        this by computing the back focal distance (F2) of the assembled system
-        and adding it to each PY surface's thickness.
+        this via image_solve(), which drives F2() to zero by correctly setting
+        the image distance.
         """
         if not self._py_surface_indices:
             return
-        try:
-            bfd = float(self.optic.paraxial.F2())
-        except Exception:
-            return  # leave at 0 on failure; don't crash the import
-        for idx in self._py_surface_indices:
-            self.optic.surfaces[idx].thickness += bfd
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            self.optic.updater.image_solve()
 
     def _configure_wavelengths(self) -> None:
         wl_data = self.data.wavelengths

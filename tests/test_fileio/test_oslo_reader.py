@@ -37,6 +37,16 @@ class TestOsloDataParser:
         parser._read_rd(["RD", "50.0"])
         assert parser._current_surf_data["RD"] == 50.0
 
+    # ISSUE-P1: DES command stored in notes (quotes are stripped by implementation)
+    def test_issue_p1_des_stored_in_notes(self):
+        parser = OsloDataParser("dummy")
+        parser._read_des(["DES", '"OpticDesigner"'])
+        assert parser.data_model.notes["DES"] == "OpticDesigner"
+
+    def test_issue_p1_des_in_dispatch_table(self):
+        parser = OsloDataParser("dummy")
+        assert "DES" in parser._dispatch_table
+
 
 class TestOsloReader:
     def test_load_oslo_file(self, oslo_file):
@@ -56,6 +66,12 @@ class TestOsloReader:
         optic = load_oslo_file(oslo_file)
         # EBR 0.33 -> EPD 0.66
         assert_allclose(optic.aperture.value, 0.66)
+
+    # BUG-R1: PY solve places image at paraxial focus (F2 ≈ 0)
+    def test_bug_r1_py_solve_places_image_at_focus(self, oslo_file):
+        optic = load_oslo_file(oslo_file)
+        f2 = float(optic.paraxial.F2())
+        assert abs(f2) < 1e-6, f"F2 should be ~0 after PY solve, got {f2}"
 
 
 if __name__ == "__main__":

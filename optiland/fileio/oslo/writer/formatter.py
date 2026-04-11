@@ -51,6 +51,10 @@ class OsloDataFormatter:
         if "NAO" in self.model.aperture:
             lines.append(f"NAO {self._fmt(self.model.aperture['NAO'])}")
 
+        # DES and UNI are always emitted (OSLO EDU convention)
+        lines.append('DES "Optiland"')
+        lines.append(f"UNI {self._fmt(self.model.units)}")
+
         if "y" in self.model.fields:
             field_type_cmd = (
                 "OBH" if self.model.fields.get("type") == "object_height" else "ANG"
@@ -58,10 +62,9 @@ class OsloDataFormatter:
             for y in self.model.fields["y"]:
                 lines.append(f"{field_type_cmd} {self._fmt(y)}")
 
-        if self.model.units != 1.0:
-            lines.append(f"UNI {self._fmt(self.model.units)}")
-
         for cmd, content in self.model.notes.items():
+            if cmd == "DES":
+                continue  # already emitted explicitly above
             lines.append(f'{cmd} "{content}"')
 
         # Surfaces
@@ -148,10 +151,10 @@ class OsloDataFormatter:
             lines.append(f"PK {' '.join(str(it) for it in data['PK'])}")
 
         if index < self.model.num_surfaces:
-            lines.append("NXT")
+            lines.append(f"NXT // SRF {index + 1}")
 
     def _fmt(self, val: float) -> str:
-        """Format float for OSLO."""
+        """Format float for OSLO using compact decimal notation (≤7 sig figs)."""
         if math.isinf(val):
             return "1.0e+10"
-        return f"{val:.12E}"
+        return f"{val:.7g}"

@@ -64,6 +64,7 @@ class OsloDataParser:
             "PK": self._read_pickup,
             "FNO": self._read_fno,
             "NAO": self._read_nao,
+            "DES": self._read_des,
         }
 
     def parse(self) -> OsloDataModel:
@@ -150,6 +151,9 @@ class OsloDataParser:
 
     def _read_uni(self, tokens: list[str]) -> None:
         self.data_model.units = float(tokens[1])
+
+    def _read_des(self, tokens: list[str]) -> None:
+        self.data_model.notes["DES"] = " ".join(tokens[1:]).strip('"')
 
     def _read_sno(self, tokens: list[str]) -> None:
         cmd = tokens[0].upper()
