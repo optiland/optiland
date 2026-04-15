@@ -70,7 +70,13 @@ class OpticToOsloEncoder:
             if ap_type == "EPD":
                 self.data_model.aperture["EPD"] = value
             elif ap_type == "imageFNO":
-                self.data_model.aperture["FNO"] = value
+                # OSLO always uses EBR (entrance beam radius), never FNO.
+                # Convert: EPD = EFL / FNO, EBR = EPD / 2.
+                try:
+                    efl = float(self.optic.paraxial.f2())
+                    self.data_model.aperture["EPD"] = efl / value
+                except Exception:
+                    self.data_model.aperture["FNO"] = value
             elif ap_type == "objectNA":
                 self.data_model.aperture["NAO"] = value
 
@@ -89,15 +95,26 @@ class OpticToOsloEncoder:
 
     def _encode_wavelengths(self) -> None:
         if self.optic.wavelengths:
-            self.data_model.wavelengths["values"] = [
-                w.value for w in self.optic.wavelengths
-            ]
-            self.data_model.wavelengths["weights"] = [
-                w.weight for w in self.optic.wavelengths
-            ]
-            self.data_model.wavelengths["primary_index"] = (
-                self.optic.wavelengths.primary_index
-            )
+            values = [w.value for w in self.optic.wavelengths]
+            weights = [w.weight for w in self.optic.wavelengths]
+            primary_idx = self.optic.wavelengths.primary_index
+
+            # OSLO convention: primary wavelength must be listed first.
+            if primary_idx != 0 and primary_idx < len(values):
+                values = (
+                    [values[primary_idx]]
+                    + values[:primary_idx]
+                    + values[primary_idx + 1 :]
+                )
+                weights = (
+                    [weights[primary_idx]]
+                    + weights[:primary_idx]
+                    + weights[primary_idx + 1 :]
+                )
+
+            self.data_model.wavelengths["values"] = values
+            self.data_model.wavelengths["weights"] = weights
+            self.data_model.wavelengths["primary_index"] = 0
 
     def _encode_surfaces(self) -> None:
         for idx, surface in enumerate(self.optic.surfaces):
