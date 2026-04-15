@@ -188,12 +188,12 @@ class CoordinateSystem:
             The dictionary representation of the coordinate system.
         """
         return {
-            "x": float(self.x),
-            "y": float(self.y),
-            "z": float(self.z),
-            "rx": float(self.rx),
-            "ry": float(self.ry),
-            "rz": float(self.rz),
+            "x": float(self.x.item()),
+            "y": float(self.y.item()),
+            "z": float(self.z.item()),
+            "rx": float(self.rx.item()),
+            "ry": float(self.ry.item()),
+            "rz": float(self.rz.item()),
             "reference_cs": self.reference_cs.to_dict() if self.reference_cs else None,
         }
 
