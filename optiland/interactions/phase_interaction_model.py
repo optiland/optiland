@@ -32,15 +32,19 @@ class PhaseInteractionModel(BaseInteractionModel):
 
     interaction_type = "phase"
 
-    def __init__(
-        self,
-        parent_surface: Surface | None,
-        phase_profile: BasePhaseProfile,
-        is_reflective: bool,
-        **kwargs,
-    ):
-        super().__init__(parent_surface, is_reflective=is_reflective, **kwargs)
+    def __init__(self, parent_surface, phase_profile, is_reflective, **kwargs):
         self.phase_profile = phase_profile
+        self._parent_surface = None
+        super().__init__(parent_surface, is_reflective=is_reflective, **kwargs)
+
+    @property
+    def parent_surface(self):
+        return self._parent_surface
+
+    @parent_surface.setter
+    def parent_surface(self, value):
+        self._parent_surface = value
+        self.phase_profile.parent_surface = value
 
     def interact_real_rays(self, rays: RealRays) -> RealRays:
         if self.parent_surface is None:
