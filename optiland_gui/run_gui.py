@@ -11,6 +11,7 @@ Authors:
 from __future__ import annotations
 
 import ctypes
+import os
 import sys
 
 from PySide6.QtCore import QLocale, QSize, Qt
@@ -27,6 +28,12 @@ def main() -> None:
     if sys.platform == "win32":
         myappid = f"{ORGANIZATION_NAME}.{APPLICATION_NAME}.1.0"
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+
+    # Force XCB (X11) on Linux to avoid BadWindow / X_ConfigureWindow crashes
+    # caused by incompatibility between the VTK/OpenGL render pipeline and the
+    # Qt Wayland backend.  This must be set before QApplication is created.
+    if sys.platform.startswith("linux"):
+        os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
 
     app = QApplication(sys.argv)
     app.setWindowIcon(QIcon(OPTILAND_ICON_PATH))
