@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from optiland.thin_film import Layer, ThinFilmStack, SpectralAnalyzer
+from optiland.thin_film.optimization import ThinFilmOptimizer, ThinFilmOperand
 from optiland.materials import Material, IdealMaterial
 from .utils import assert_allclose
 
@@ -265,6 +266,78 @@ class TestThinFilmStackCalculations:
         assert_allclose(T, T_nm, rtol=1e-10)
         assert_allclose(A, A_nm, rtol=1e-10)
 
+        # Test spectral phase methods from the complex coefficients
+        phase_r = simple_stack.reflection_phase(wavelength_um, aoi_rad, "s")
+        phase_t = simple_stack.transmission_phase(wavelength_um, aoi_rad, "s")
+        phase_r_nm = simple_stack.reflection_phase_nm_deg(550.0, 0.0, "s")
+        phase_t_nm = simple_stack.transmission_phase_nm_deg(550.0, 0.0, "s")
+
+        result_um_rad = simple_stack.compute_rtRTA(wavelength_um, aoi_rad, "s")
+        expected_phase_r = be.arctan2(
+            be.imag(result_um_rad["r"]), be.real(result_um_rad["r"])
+        )
+        expected_phase_t = be.arctan2(
+            be.imag(result_um_rad["t"]), be.real(result_um_rad["t"])
+        )
+
+        assert_allclose(phase_r, expected_phase_r, rtol=1e-10)
+        assert_allclose(phase_t, expected_phase_t, rtol=1e-10)
+        assert_allclose(phase_r, phase_r_nm, rtol=1e-10)
+        assert_allclose(phase_t, phase_t_nm, rtol=1e-10)
+
+        # Test GD/GDD from phase derivatives with respect to omega
+        step_fraction = 1e-6
+        omega0 = 2 * np.pi * SPEED_OF_LIGHT / (wavelength_um * 1e-6)
+        h = step_fraction * max(abs(omega0), 1.0)
+        omega_plus = omega0 + h
+        omega_minus = omega0 - h
+        wl_plus_um = 2 * np.pi * SPEED_OF_LIGHT * 1e6 / omega_plus
+        wl_minus_um = 2 * np.pi * SPEED_OF_LIGHT * 1e6 / omega_minus
+
+        q0 = result_um_rad["r"]
+        q_plus = simple_stack.compute_rtRTA(wl_plus_um, aoi_rad, "s")["r"]
+        q_minus = simple_stack.compute_rtRTA(wl_minus_um, aoi_rad, "s")["r"]
+
+        delta_plus = be.arctan2(
+            be.imag(q_plus * be.conj(q0)),
+            be.real(q_plus * be.conj(q0)),
+        )
+        delta_minus = be.arctan2(
+            be.imag(q0 * be.conj(q_minus)),
+            be.real(q0 * be.conj(q_minus)),
+        )
+
+        expected_gd_r = (delta_plus + delta_minus) / (2 * h)
+        expected_gdd_r = (delta_plus - delta_minus) / (h * h)
+
+        gd_r = simple_stack.reflection_gd(wavelength_um, aoi_rad, "s")
+        gdd_r = simple_stack.reflection_gdd(wavelength_um, aoi_rad, "s")
+
+        assert_allclose(gd_r, expected_gd_r, rtol=1e-8, atol=1e-12)
+        assert_allclose(gdd_r, expected_gdd_r, rtol=1e-6, atol=1e-12)
+
+        q0_t = result_um_rad["t"]
+        q_plus_t = simple_stack.compute_rtRTA(wl_plus_um, aoi_rad, "s")["t"]
+        q_minus_t = simple_stack.compute_rtRTA(wl_minus_um, aoi_rad, "s")["t"]
+
+        delta_plus_t = be.arctan2(
+            be.imag(q_plus_t * be.conj(q0_t)),
+            be.real(q_plus_t * be.conj(q0_t)),
+        )
+        delta_minus_t = be.arctan2(
+            be.imag(q0_t * be.conj(q_minus_t)),
+            be.real(q0_t * be.conj(q_minus_t)),
+        )
+
+        expected_gd_t = (delta_plus_t + delta_minus_t) / (2 * h)
+        expected_gdd_t = (delta_plus_t - delta_minus_t) / (h * h)
+
+        gd_t = simple_stack.transmission_gd(wavelength_um, aoi_rad, "s")
+        gdd_t = simple_stack.transmission_gdd(wavelength_um, aoi_rad, "s")
+
+        assert_allclose(gd_t, expected_gd_t, rtol=1e-8, atol=1e-12)
+        assert_allclose(gdd_t, expected_gdd_t, rtol=1e-6, atol=1e-12)
+
         # Test RTA tuple methods
         R2, T2, A2 = simple_stack.RTA(wavelength_um, aoi_rad, "s")
         R3, T3, A3 = simple_stack.RTA_nm_deg(550.0, 0.0, "s")
@@ -357,6 +430,86 @@ class TestThinFilmStackCalculations:
 
         with pytest.raises(ValueError, match="polarization must be"):
             simple_stack.compute_rtRTA_elementwise(wavelengths_um, aoi_rads, "invalid")
+
+    def test_optimizer_accepts_spectral_phase_and_gd_metrics(
+        self, set_test_backend, simple_stack
+    ):
+        """Test that registered phase/GD metrics can be used by the optimizer."""
+        optimizer = ThinFilmOptimizer(simple_stack)
+        optimizer.add_operand(
+            property="reflection_phase",
+            target=0.0,
+            input_data={
+                "wavelength_nm": 550.0,
+                "aoi_deg": 0.0,
+                "polarization": "s",
+            },
+        )
+        optimizer.add_operand(
+            property="reflection_gd",
+            target=0.0,
+            input_data={
+                "wavelength_nm": 550.0,
+                "aoi_deg": 0.0,
+                "polarization": "s",
+            },
+        )
+
+        performance = optimizer.get_current_performance()
+        expected_phase = ThinFilmOperand.reflection_phase(simple_stack, 550.0, 0.0, "s")
+        expected_gd = ThinFilmOperand.reflection_gd(simple_stack, 550.0, 0.0, "s")
+
+        assert_allclose(performance["target_0"]["current_value"], expected_phase)
+        assert_allclose(performance["target_1"]["current_value"], expected_gd)
+
+    def test_optimizer_accepts_internal_field_metrics(
+        self, set_test_backend, single_layer_stack
+    ):
+        """Test that internal field metrics can be registered as custom operands."""
+        optimizer = ThinFilmOptimizer(single_layer_stack)
+        optimizer.add_operand(
+            property="field_phase",
+            target=0.0,
+            input_data={
+                "layer_index": 0,
+                "wavelength_nm": 550.0,
+                "aoi_deg": 0.0,
+                "polarization": "s",
+                "position_fraction": 0.5,
+            },
+        )
+        optimizer.add_operand(
+            property="field_amplitude",
+            target=0.0,
+            input_data={
+                "layer_index": 0,
+                "wavelength_nm": 550.0,
+                "aoi_deg": 0.0,
+                "polarization": "s",
+                "position_fraction": 0.5,
+            },
+        )
+
+        performance = optimizer.get_current_performance()
+        expected_phase = ThinFilmOperand.field_phase(
+            single_layer_stack,
+            0,
+            550.0,
+            0.0,
+            "s",
+            0.5,
+        )
+        expected_amplitude = ThinFilmOperand.field_amplitude(
+            single_layer_stack,
+            0,
+            550.0,
+            0.0,
+            "s",
+            0.5,
+        )
+
+        assert_allclose(performance["target_0"]["current_value"], expected_phase)
+        assert_allclose(performance["target_1"]["current_value"], expected_amplitude)
 
 
 class TestThinFilmStackUnitHelpers:

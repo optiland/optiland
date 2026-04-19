@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 import optiland.backend as be
 from optiland.materials import IdealMaterial
 
-from .core import _tmm_coh
+from .core import _spectral_phase_metrics, _tmm_coh
 from .layer import Layer
 
 if TYPE_CHECKING:
@@ -289,6 +289,176 @@ class ThinFilmStack:
     ) -> Array:
         return self.compute_rtRTA(wavelength_um, aoi_rad, polarization)["A"]
 
+    def reflection_phase(
+        self,
+        wavelength_um: float | Array,
+        aoi_rad: float | Array = 0.0,
+        polarization: Pol = "s",
+    ) -> Array:
+        """Return the spectral phase of the complex reflection coefficient r."""
+        if polarization == "u":
+            raise ValueError("reflection_phase() requires polarization 's' or 'p'")
+        r, _, _, _, _ = _tmm_coh(self, wavelength_um, aoi_rad, polarization)
+        return be.arctan2(be.imag(r), be.real(r))
+
+    def transmission_phase(
+        self,
+        wavelength_um: float | Array,
+        aoi_rad: float | Array = 0.0,
+        polarization: Pol = "s",
+    ) -> Array:
+        """Return the spectral phase of the complex transmission coefficient t."""
+        if polarization == "u":
+            raise ValueError("transmission_phase() requires polarization 's' or 'p'")
+        _, t, _, _, _ = _tmm_coh(self, wavelength_um, aoi_rad, polarization)
+        return be.arctan2(be.imag(t), be.real(t))
+
+    def reflection_phase_nm_deg(
+        self,
+        wavelength_nm: float | Array,
+        aoi_deg: float | Array = 0.0,
+        polarization: Pol = "s",
+    ) -> Array:
+        """Return the reflection phase for wavelengths in nm and AOI in degrees."""
+        wl_um = self._to_um(wavelength_nm, assume_nm=True)
+        th_rad = self._deg_to_rad(aoi_deg)
+        return self.reflection_phase(wl_um, th_rad, polarization)
+
+    def transmission_phase_nm_deg(
+        self,
+        wavelength_nm: float | Array,
+        aoi_deg: float | Array = 0.0,
+        polarization: Pol = "s",
+    ) -> Array:
+        """Return the transmission phase for wavelengths in nm and AOI in degrees."""
+        wl_um = self._to_um(wavelength_nm, assume_nm=True)
+        th_rad = self._deg_to_rad(aoi_deg)
+        return self.transmission_phase(wl_um, th_rad, polarization)
+
+    def reflection_gd(
+        self,
+        wavelength_um: float | Array,
+        aoi_rad: float | Array = 0.0,
+        polarization: Pol = "s",
+        step_fraction: float = 1e-6,
+    ) -> Array:
+        """Return the reflection group delay dphi/dω in seconds."""
+        if polarization == "u":
+            raise ValueError("reflection_gd() requires polarization 's' or 'p'")
+        return _spectral_phase_metrics(
+            self,
+            wavelength_um,
+            aoi_rad,
+            polarization,
+            coefficient="r",
+            step_fraction=step_fraction,
+        )["gd"]
+
+    def transmission_gd(
+        self,
+        wavelength_um: float | Array,
+        aoi_rad: float | Array = 0.0,
+        polarization: Pol = "s",
+        step_fraction: float = 1e-6,
+    ) -> Array:
+        """Return the transmission group delay dphi/dω in seconds."""
+        if polarization == "u":
+            raise ValueError("transmission_gd() requires polarization 's' or 'p'")
+        return _spectral_phase_metrics(
+            self,
+            wavelength_um,
+            aoi_rad,
+            polarization,
+            coefficient="t",
+            step_fraction=step_fraction,
+        )["gd"]
+
+    def reflection_gdd(
+        self,
+        wavelength_um: float | Array,
+        aoi_rad: float | Array = 0.0,
+        polarization: Pol = "s",
+        step_fraction: float = 1e-6,
+    ) -> Array:
+        """Return the reflection group-delay dispersion d²phi/dω² in s²."""
+        if polarization == "u":
+            raise ValueError("reflection_gdd() requires polarization 's' or 'p'")
+        return _spectral_phase_metrics(
+            self,
+            wavelength_um,
+            aoi_rad,
+            polarization,
+            coefficient="r",
+            step_fraction=step_fraction,
+        )["gdd"]
+
+    def transmission_gdd(
+        self,
+        wavelength_um: float | Array,
+        aoi_rad: float | Array = 0.0,
+        polarization: Pol = "s",
+        step_fraction: float = 1e-6,
+    ) -> Array:
+        """Return the transmission group-delay dispersion d²phi/dω² in s²."""
+        if polarization == "u":
+            raise ValueError("transmission_gdd() requires polarization 's' or 'p'")
+        return _spectral_phase_metrics(
+            self,
+            wavelength_um,
+            aoi_rad,
+            polarization,
+            coefficient="t",
+            step_fraction=step_fraction,
+        )["gdd"]
+
+    def reflection_gd_nm_deg(
+        self,
+        wavelength_nm: float | Array,
+        aoi_deg: float | Array = 0.0,
+        polarization: Pol = "s",
+        step_fraction: float = 1e-6,
+    ) -> Array:
+        """Return the reflection group delay for wavelengths in nm and AOI in degrees."""
+        wl_um = self._to_um(wavelength_nm, assume_nm=True)
+        th_rad = self._deg_to_rad(aoi_deg)
+        return self.reflection_gd(wl_um, th_rad, polarization, step_fraction)
+
+    def transmission_gd_nm_deg(
+        self,
+        wavelength_nm: float | Array,
+        aoi_deg: float | Array = 0.0,
+        polarization: Pol = "s",
+        step_fraction: float = 1e-6,
+    ) -> Array:
+        """Return the transmission group delay for wavelengths in nm and AOI in degrees."""
+        wl_um = self._to_um(wavelength_nm, assume_nm=True)
+        th_rad = self._deg_to_rad(aoi_deg)
+        return self.transmission_gd(wl_um, th_rad, polarization, step_fraction)
+
+    def reflection_gdd_nm_deg(
+        self,
+        wavelength_nm: float | Array,
+        aoi_deg: float | Array = 0.0,
+        polarization: Pol = "s",
+        step_fraction: float = 1e-6,
+    ) -> Array:
+        """Return the reflection GDD for wavelengths in nm and AOI in degrees."""
+        wl_um = self._to_um(wavelength_nm, assume_nm=True)
+        th_rad = self._deg_to_rad(aoi_deg)
+        return self.reflection_gdd(wl_um, th_rad, polarization, step_fraction)
+
+    def transmission_gdd_nm_deg(
+        self,
+        wavelength_nm: float | Array,
+        aoi_deg: float | Array = 0.0,
+        polarization: Pol = "s",
+        step_fraction: float = 1e-6,
+    ) -> Array:
+        """Return the transmission GDD for wavelengths in nm and AOI in degrees."""
+        wl_um = self._to_um(wavelength_nm, assume_nm=True)
+        th_rad = self._deg_to_rad(aoi_deg)
+        return self.transmission_gdd(wl_um, th_rad, polarization, step_fraction)
+
     def reflectance_nm_deg(
         self,
         wavelength_nm: float | Array,
@@ -340,6 +510,112 @@ class ThinFilmStack:
             rta_data["T"],
             rta_data["A"],
         )
+
+    def layer_fields(
+        self,
+        wavelength_um: float | Array,
+        aoi_rad: float | Array = 0.0,
+        polarization: Pol = "s",
+        position_fraction: float | Array = 0.5,
+    ) -> list[dict[str, Any]]:
+        """Return the internal complex field profile for each layer.
+
+        The field is sampled inside each layer at ``position_fraction``,
+        where ``0`` means the entrance interface and ``1`` the exit interface.
+
+        Args:
+            wavelength_um: Wavelength(s) in microns.
+            aoi_rad: Angle(s) of incidence in radians.
+            polarization: Polarization state ('s' or 'p').
+            position_fraction: Relative position inside each layer.
+
+        Returns:
+            A list of dictionaries, one per layer, containing the layer index,
+            complex field, amplitude, phase, and forward/backward components.
+        """
+        if polarization == "u":
+            raise ValueError("layer_fields() requires polarization 's' or 'p'")
+        from .core import _layer_fields as _compute_layer_fields
+
+        return _compute_layer_fields(
+            self,
+            wavelength_um,
+            aoi_rad,
+            polarization,
+            position_fraction=position_fraction,
+        )
+
+    def field_phase(
+        self,
+        wavelength_um: float | Array,
+        aoi_rad: float | Array = 0.0,
+        polarization: Pol = "s",
+        position_fraction: float | Array = 0.5,
+    ) -> list[Any]:
+        """Return the phase phi of the internal field in each layer."""
+        return [
+            entry["phase"]
+            for entry in self.layer_fields(
+                wavelength_um,
+                aoi_rad,
+                polarization,
+                position_fraction,
+            )
+        ]
+
+    def field_amplitude(
+        self,
+        wavelength_um: float | Array,
+        aoi_rad: float | Array = 0.0,
+        polarization: Pol = "s",
+        position_fraction: float | Array = 0.5,
+    ) -> list[Any]:
+        """Return the amplitude |E| of the internal field in each layer."""
+        return [
+            entry["amplitude"]
+            for entry in self.layer_fields(
+                wavelength_um,
+                aoi_rad,
+                polarization,
+                position_fraction,
+            )
+        ]
+
+    def layer_fields_nm_deg(
+        self,
+        wavelength_nm: float | Array,
+        aoi_deg: float | Array = 0.0,
+        polarization: Pol = "s",
+        position_fraction: float | Array = 0.5,
+    ) -> list[dict[str, Any]]:
+        """Return the internal complex field profile for each layer in nm/deg."""
+        wl_um = self._to_um(wavelength_nm, assume_nm=True)
+        th_rad = self._deg_to_rad(aoi_deg)
+        return self.layer_fields(wl_um, th_rad, polarization, position_fraction)
+
+    def field_phase_nm_deg(
+        self,
+        wavelength_nm: float | Array,
+        aoi_deg: float | Array = 0.0,
+        polarization: Pol = "s",
+        position_fraction: float | Array = 0.5,
+    ) -> list[Any]:
+        """Return the phase phi of the internal field in each layer in nm/deg."""
+        wl_um = self._to_um(wavelength_nm, assume_nm=True)
+        th_rad = self._deg_to_rad(aoi_deg)
+        return self.field_phase(wl_um, th_rad, polarization, position_fraction)
+
+    def field_amplitude_nm_deg(
+        self,
+        wavelength_nm: float | Array,
+        aoi_deg: float | Array = 0.0,
+        polarization: Pol = "s",
+        position_fraction: float | Array = 0.5,
+    ) -> list[Any]:
+        """Return the amplitude |E| of the internal field in each layer in nm/deg."""
+        wl_um = self._to_um(wavelength_nm, assume_nm=True)
+        th_rad = self._deg_to_rad(aoi_deg)
+        return self.field_amplitude(wl_um, th_rad, polarization, position_fraction)
 
     # ----- insertion / removal helpers -----
     def insert_layer(

@@ -20,6 +20,7 @@ from optiland.thin_film.optimization import (
     LayerThicknessVariable,
     ThinFilmOperand,
 )
+from optiland.thin_film.optimization.operand import thin_film_operand_registry
 
 
 @pytest.fixture(autouse=True)
@@ -193,6 +194,46 @@ class TestThinFilmOperand:
         assert isinstance(R_weighted, float)
         assert 0 <= R_weighted <= 1
 
+    def test_spectral_phase_and_delay_helpers(self, simple_stack):
+        """Test phase, GD and GDD helper operands from the complex coefficients."""
+        wavelength_nm = 550.0
+        phase_r = ThinFilmOperand.reflection_phase(simple_stack, wavelength_nm)
+        phase_t = ThinFilmOperand.transmission_phase(simple_stack, wavelength_nm)
+        gd_r = ThinFilmOperand.reflection_gd(simple_stack, wavelength_nm)
+        gd_t = ThinFilmOperand.transmission_gd(simple_stack, wavelength_nm)
+        gdd_r = ThinFilmOperand.reflection_gdd(simple_stack, wavelength_nm)
+        gdd_t = ThinFilmOperand.transmission_gdd(simple_stack, wavelength_nm)
+
+        assert isinstance(phase_r, float)
+        assert isinstance(phase_t, float)
+        assert isinstance(gd_r, float)
+        assert isinstance(gd_t, float)
+        assert isinstance(gdd_r, float)
+        assert isinstance(gdd_t, float)
+
+    def test_internal_field_helpers(self, simple_stack):
+        """Test field phase and amplitude helpers for a selected layer."""
+        phase = ThinFilmOperand.field_phase(
+            simple_stack,
+            layer_index=0,
+            wavelength_nm=550.0,
+            aoi_deg=0.0,
+            polarization="s",
+            position_fraction=0.5,
+        )
+        amplitude = ThinFilmOperand.field_amplitude(
+            simple_stack,
+            layer_index=0,
+            wavelength_nm=550.0,
+            aoi_deg=0.0,
+            polarization="s",
+            position_fraction=0.5,
+        )
+
+        assert isinstance(phase, float)
+        assert isinstance(amplitude, float)
+        assert amplitude >= 0
+
 
 class TestThinFilmOptimizer:
     """Test ThinFilmOptimizer functionality."""
@@ -243,6 +284,62 @@ class TestThinFilmOptimizer:
         )
 
         assert len(optimizer.targets) == 1
+
+    def test_add_phase_and_delay_operands(self, simple_stack):
+        """Test that the optimizer accepts newly registered thin-film metrics."""
+        optimizer = ThinFilmOptimizer(simple_stack)
+        optimizer.add_operand(
+            property="reflection_phase",
+            target=0.0,
+            input_data={
+                "wavelength_nm": 550.0,
+                "aoi_deg": 0.0,
+                "polarization": "s",
+            },
+        )
+        optimizer.add_operand(
+            property="reflection_gd",
+            target=0.0,
+            input_data={
+                "wavelength_nm": 550.0,
+                "aoi_deg": 0.0,
+                "polarization": "s",
+            },
+        )
+        optimizer.add_operand(
+            property="field_phase",
+            target=0.0,
+            input_data={
+                "layer_index": 0,
+                "wavelength_nm": 550.0,
+                "aoi_deg": 0.0,
+                "polarization": "s",
+                "position_fraction": 0.5,
+            },
+        )
+
+        assert len(optimizer.targets) == 3
+        performance = optimizer.get_current_performance()
+        assert "target_0" in performance
+        assert "target_1" in performance
+        assert "target_2" in performance
+        assert performance["target_0"]["property"] == "reflection_phase"
+        assert performance["target_1"]["property"] == "reflection_gd"
+        assert performance["target_2"]["property"] == "field_phase"
+
+    def test_registered_operand_names(self):
+        """Test that the new optimization operand names are registered."""
+        for name in [
+            "reflection_phase",
+            "transmission_phase",
+            "reflection_gd",
+            "transmission_gd",
+            "reflection_gdd",
+            "transmission_gdd",
+            "field_phase",
+            "field_amplitude",
+        ]:
+            assert name in thin_film_operand_registry
 
     def test_method_chaining(self, multilayer_stack):
         """Test that methods can be chained."""

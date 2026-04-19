@@ -51,6 +51,14 @@ for _name, _func in {
     "reflectance": ThinFilmOperand.reflectance,
     "transmittance": ThinFilmOperand.transmittance,
     "absorptance": ThinFilmOperand.absorptance,
+    "reflection_phase": ThinFilmOperand.reflection_phase,
+    "transmission_phase": ThinFilmOperand.transmission_phase,
+    "reflection_gd": ThinFilmOperand.reflection_gd,
+    "transmission_gd": ThinFilmOperand.transmission_gd,
+    "reflection_gdd": ThinFilmOperand.reflection_gdd,
+    "transmission_gdd": ThinFilmOperand.transmission_gdd,
+    "field_phase": ThinFilmOperand.field_phase,
+    "field_amplitude": ThinFilmOperand.field_amplitude,
 }.items():
     thin_film_operand_registry.register(_name, _func)
 

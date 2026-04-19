@@ -8,6 +8,7 @@ import pytest
 import optiland.backend as be
 from optiland.materials import IdealMaterial
 from optiland.thin_film import ThinFilmStack
+from optiland.thin_film.optimization import ThinFilmOperand
 from optiland.thin_film.optimization.needle import (
     NeedleResult,
     NeedleSynthesis,
@@ -144,6 +145,30 @@ class TestNeedleSynthesisSetup:
         )
         ns.add_spectral_target("R", [400.0, 500.0, 600.0], "below", 0.01)
         assert len(ns._targets) == 1
+
+    def test_add_custom_target(self, simple_stack, sio2, tio2):
+        ns = NeedleSynthesis(
+            stack=simple_stack,
+            candidate_materials=[sio2, tio2],
+        )
+        ns.add_custom_target(
+            "reflection_phase",
+            target=0.0,
+            input_data={
+                "wavelength_nm": 550.0,
+                "aoi_deg": 0.0,
+                "polarization": "s",
+            },
+        )
+        assert len(ns._targets) == 1
+        opt = ns._build_optimizer(simple_stack)
+        perf = opt.get_current_performance()
+        assert perf["target_0"]["property"] == "reflection_phase"
+        np.testing.assert_allclose(
+            perf["target_0"]["current_value"],
+            ThinFilmOperand.reflection_phase(simple_stack, 550.0, 0.0, "s"),
+            atol=1e-12,
+        )
 
     def test_run_without_targets_raises(self, simple_stack, sio2, tio2):
         ns = NeedleSynthesis(
@@ -360,9 +385,9 @@ class TestNeedleSynthesisRealistic:
 
         # Each step must be <= previous (monotonic decrease)
         for i in range(1, len(merits)):
-            assert merits[i] <= merits[i - 1], (
-                f"Merit increased at step {i}: {merits[i - 1]:.6e} → {merits[i]:.6e}"
-            )
+            assert (
+                merits[i] <= merits[i - 1]
+            ), f"Merit increased at step {i}: {merits[i - 1]:.6e} → {merits[i]:.6e}"
 
     def test_single_wavelength_ar_at_550nm(self, air, glass, sio2, tio2):
         """Single-wavelength V-coat design at 550 nm.

@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 Array: TypeAlias = Any  # be.ndarray
 PolSP = Literal["s", "p"]
+SPEED_OF_LIGHT = 299792458.0  # m/s
 
 
 def _complex_index(material: BaseMaterial, wavelength_um: float | Array) -> Array:
@@ -146,3 +147,178 @@ def _tmm_coh(stack: ThinFilmStack, wavelength_um, theta0_rad, pol: PolSP):
     # Absorption can also be obtained with :
     # abso = (1 - R) * (1 - etas.real / ((A + etas * B) * (C + etas * D).conj()).real)
     return r, t, R, T, abso
+
+
+def _wavelength_um_to_omega(wavelength_um: float | Array) -> Array:
+    """Convert wavelength in microns to angular frequency in rad/s."""
+    return 2 * be.pi * SPEED_OF_LIGHT / (wavelength_um * 1e-6)
+
+
+def _omega_to_wavelength_um(omega: float | Array) -> Array:
+    """Convert angular frequency in rad/s to wavelength in microns."""
+    return 2 * be.pi * SPEED_OF_LIGHT * 1e6 / omega
+
+
+def _spectral_phase_metrics(
+    stack: ThinFilmStack,
+    wavelength_um,
+    theta0_rad,
+    pol: PolSP,
+    coefficient: Literal["r", "t"] = "r",
+    step_fraction: float = 1e-6,
+) -> dict[str, Array]:
+    """Return phase, GD and GDD of a complex coefficient with respect to ω.
+
+    The quantities are computed from the complex reflection or transmission
+    coefficient using centered finite differences in angular frequency.
+
+    Returns:
+        dict with keys ``phase``, ``gd`` and ``gdd``.
+    """
+    if coefficient not in ("r", "t"):
+        raise ValueError("coefficient must be 'r' or 't'")
+
+    omega0 = _wavelength_um_to_omega(wavelength_um)
+    scale = be.where(be.abs(omega0) > 1.0, be.abs(omega0), 1.0)
+    h = step_fraction * scale
+    omega_plus = omega0 + h
+    omega_minus = omega0 - h
+
+    wl_plus = _omega_to_wavelength_um(omega_plus)
+    wl_minus = _omega_to_wavelength_um(omega_minus)
+
+    r0, t0, _, _, _ = _tmm_coh(stack, wavelength_um, theta0_rad, pol)
+    r_plus, t_plus, _, _, _ = _tmm_coh(stack, wl_plus, theta0_rad, pol)
+    r_minus, t_minus, _, _, _ = _tmm_coh(stack, wl_minus, theta0_rad, pol)
+
+    q0 = r0 if coefficient == "r" else t0
+    q_plus = r_plus if coefficient == "r" else t_plus
+    q_minus = r_minus if coefficient == "r" else t_minus
+
+    phase0 = be.arctan2(be.imag(q0), be.real(q0))
+
+    delta_plus = be.arctan2(
+        be.imag(q_plus * be.conj(q0)),
+        be.real(q_plus * be.conj(q0)),
+    )
+    delta_minus = be.arctan2(
+        be.imag(q0 * be.conj(q_minus)),
+        be.real(q0 * be.conj(q_minus)),
+    )
+
+    gd = (delta_plus + delta_minus) / (2 * h)
+    gdd = (delta_plus - delta_minus) / (h * h)
+
+    return {"phase": phase0, "gd": gd, "gdd": gdd}
+
+
+def _layer_fields(
+    stack: ThinFilmStack,
+    wavelength_um,
+    theta0_rad,
+    pol: PolSP,
+    position_fraction: float | Array = 0.5,
+) -> list[dict[str, Any]]:
+    """Compute internal complex electric field data for each layer.
+
+    The field is sampled at a relative position inside each layer. The result
+    is a list of dictionaries, one entry per layer, containing:
+    ``layer_index``, ``position_fraction``, ``E``, ``amplitude``, ``phase``,
+    ``E_plus``, ``E_minus``, ``U_in`` and ``V_in``.
+    """
+    n0 = _complex_index(stack.incident_material, wavelength_um)
+    ns = _complex_index(stack.substrate_material, wavelength_um)
+    cos0 = _snell_cos(n0, theta0_rad, n0)
+    coss = _snell_cos(n0, theta0_rad, ns)
+    eta0 = _admittance(n0, cos0, pol)
+    etas = _admittance(ns, coss, pol)
+
+    # Global characteristic matrix M = [[A, B], [C, D]]
+    A = be.to_complex(be.ones_like(eta0))
+    B = be.to_complex(be.zeros_like(eta0))
+    C = be.to_complex(be.zeros_like(eta0))
+    D = be.to_complex(be.ones_like(eta0))
+
+    for layer in stack.layers:
+        n_l = layer.n_complex(wavelength_um)
+        cos_l = _snell_cos(n0, theta0_rad, n_l)
+        eta_l = _admittance(n_l, cos_l, pol)
+        delta = layer.phase_thickness(wavelength_um, cos_l, n_l)
+        c = be.cos(delta)
+        s = be.sin(delta)
+        i = 1j
+        mA = c
+        mB = i * (s / eta_l)
+        mC = i * (eta_l * s)
+        mD = c
+        A, B, C, D = A * mA + B * mC, A * mB + B * mD, C * mA + D * mC, C * mB + D * mD
+
+    denom = eta0 * (A + etas * B) + C + etas * D
+    denom = be.where(be.abs(denom) == 0, 1e-30 + 0j, denom)
+
+    r = (eta0 * A + eta0 * etas * B - C - etas * D) / denom
+
+    layer_fields: list[dict[str, Any]] = []
+
+    # Incident-side boundary fields for a unit-amplitude incident wave.
+    U0 = 1 + r
+    V0 = eta0 * (1 - r)
+
+    # Prefix matrix from the incident side to the entrance of the current layer.
+    prefix_A = be.to_complex(be.ones_like(eta0))
+    prefix_B = be.to_complex(be.zeros_like(eta0))
+    prefix_C = be.to_complex(be.zeros_like(eta0))
+    prefix_D = be.to_complex(be.ones_like(eta0))
+
+    for layer_index, layer in enumerate(stack.layers, start=1):
+        n_l = layer.n_complex(wavelength_um)
+        cos_l = _snell_cos(n0, theta0_rad, n_l)
+        eta_l = _admittance(n_l, cos_l, pol)
+        delta = layer.phase_thickness(wavelength_um, cos_l, n_l)
+
+        det_prefix = prefix_A * prefix_D - prefix_B * prefix_C
+        det_prefix = be.where(be.abs(det_prefix) == 0, 1e-30 + 0j, det_prefix)
+
+        invA = prefix_D / det_prefix
+        invB = -prefix_B / det_prefix
+        invC = -prefix_C / det_prefix
+        invD = prefix_A / det_prefix
+
+        U_in = invA * U0 + invB * V0
+        V_in = invC * U0 + invD * V0
+
+        E_plus = 0.5 * (U_in + V_in / eta_l)
+        E_minus = 0.5 * (U_in - V_in / eta_l)
+
+        delta_z = position_fraction * delta
+        E_z = E_plus * be.exp(-1j * delta_z) + E_minus * be.exp(1j * delta_z)
+
+        layer_fields.append(
+            {
+                "layer_index": layer_index,
+                "position_fraction": position_fraction,
+                "E": E_z,
+                "amplitude": be.abs(E_z),
+                "phase": be.arctan2(be.imag(E_z), be.real(E_z)),
+                "E_plus": E_plus,
+                "E_minus": E_minus,
+                "U_in": U_in,
+                "V_in": V_in,
+            }
+        )
+
+        c = be.cos(delta)
+        s = be.sin(delta)
+        i = 1j
+        mA = c
+        mB = i * (s / eta_l)
+        mC = i * (eta_l * s)
+        mD = c
+        prefix_A, prefix_B, prefix_C, prefix_D = (
+            prefix_A * mA + prefix_B * mC,
+            prefix_A * mB + prefix_B * mD,
+            prefix_C * mA + prefix_D * mC,
+            prefix_C * mB + prefix_D * mD,
+        )
+
+    return layer_fields

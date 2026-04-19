@@ -197,6 +197,35 @@ class NeedleSynthesis:
             tolerance=tolerance,
         )
 
+    def add_custom_target(
+        self,
+        operand_type: str,
+        target: float | None = None,
+        min_val: float | None = None,
+        max_val: float | None = None,
+        weight: float = 1.0,
+        input_data: dict[str, Any] | None = None,
+        label: str | None = None,
+    ) -> NeedleSynthesis:
+        """Add a custom thin-film target backed by a registered operand.
+
+        This mirrors the custom operand path of ``ThinFilmOptimizer`` and makes
+        thin-film metrics such as phase, GD, GDD, and internal field values
+        available to needle synthesis.
+        """
+        self._targets.append(
+            dict(
+                operand_type=operand_type,
+                target=target,
+                min_val=min_val,
+                max_val=max_val,
+                weight=weight,
+                input_data=input_data,
+                label=label,
+            )
+        )
+        return self
+
     def _apply_targets(self, optimizer: ThinFilmOptimizer) -> None:
         """Copy stored targets onto a ThinFilmOptimizer instance."""
         for t in self._targets:

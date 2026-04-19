@@ -21,10 +21,16 @@ class ThinFilmOperand:
     """Operand functions for thin film stack optimization.
 
     This class provides static methods that compute optical properties
-    (reflectance, transmittance, absorptance) of thin film stacks.
+    (reflectance, transmittance, absorptance, phase, GD, GDD, internal field)
     These methods are designed to be used as operand functions in the
     optimization framework.
     """
+
+    @staticmethod
+    def _mean_scalar(value) -> float:
+        if hasattr(value, "size") and value.size == 1:
+            return float(value.item())
+        return float(be.mean(value))
 
     @staticmethod
     def reflectance(
@@ -121,6 +127,110 @@ class ThinFilmOperand:
             return float(A.item())
         else:
             return float(be.mean(A))
+
+    @staticmethod
+    def reflection_phase(
+        stack: ThinFilmStack,
+        wavelength_nm: float | list[float],
+        aoi_deg: float = 0.0,
+        polarization: str = "s",
+    ) -> float:
+        wl_nm = be.atleast_1d(wavelength_nm)
+        aoi = be.atleast_1d(aoi_deg)
+        phase = stack.reflection_phase_nm_deg(wl_nm, aoi, polarization)
+        return ThinFilmOperand._mean_scalar(phase)
+
+    @staticmethod
+    def transmission_phase(
+        stack: ThinFilmStack,
+        wavelength_nm: float | list[float],
+        aoi_deg: float = 0.0,
+        polarization: str = "s",
+    ) -> float:
+        wl_nm = be.atleast_1d(wavelength_nm)
+        aoi = be.atleast_1d(aoi_deg)
+        phase = stack.transmission_phase_nm_deg(wl_nm, aoi, polarization)
+        return ThinFilmOperand._mean_scalar(phase)
+
+    @staticmethod
+    def reflection_gd(
+        stack: ThinFilmStack,
+        wavelength_nm: float | list[float],
+        aoi_deg: float = 0.0,
+        polarization: str = "s",
+    ) -> float:
+        wl_nm = be.atleast_1d(wavelength_nm)
+        aoi = be.atleast_1d(aoi_deg)
+        gd = stack.reflection_gd_nm_deg(wl_nm, aoi, polarization)
+        return ThinFilmOperand._mean_scalar(gd)
+
+    @staticmethod
+    def transmission_gd(
+        stack: ThinFilmStack,
+        wavelength_nm: float | list[float],
+        aoi_deg: float = 0.0,
+        polarization: str = "s",
+    ) -> float:
+        wl_nm = be.atleast_1d(wavelength_nm)
+        aoi = be.atleast_1d(aoi_deg)
+        gd = stack.transmission_gd_nm_deg(wl_nm, aoi, polarization)
+        return ThinFilmOperand._mean_scalar(gd)
+
+    @staticmethod
+    def reflection_gdd(
+        stack: ThinFilmStack,
+        wavelength_nm: float | list[float],
+        aoi_deg: float = 0.0,
+        polarization: str = "s",
+    ) -> float:
+        wl_nm = be.atleast_1d(wavelength_nm)
+        aoi = be.atleast_1d(aoi_deg)
+        gdd = stack.reflection_gdd_nm_deg(wl_nm, aoi, polarization)
+        return ThinFilmOperand._mean_scalar(gdd)
+
+    @staticmethod
+    def transmission_gdd(
+        stack: ThinFilmStack,
+        wavelength_nm: float | list[float],
+        aoi_deg: float = 0.0,
+        polarization: str = "s",
+    ) -> float:
+        wl_nm = be.atleast_1d(wavelength_nm)
+        aoi = be.atleast_1d(aoi_deg)
+        gdd = stack.transmission_gdd_nm_deg(wl_nm, aoi, polarization)
+        return ThinFilmOperand._mean_scalar(gdd)
+
+    @staticmethod
+    def field_phase(
+        stack: ThinFilmStack,
+        layer_index: int,
+        wavelength_nm: float | list[float],
+        aoi_deg: float = 0.0,
+        polarization: str = "s",
+        position_fraction: float = 0.5,
+    ) -> float:
+        wl_nm = be.atleast_1d(wavelength_nm)
+        aoi = be.atleast_1d(aoi_deg)
+        layer_data = stack.layer_fields_nm_deg(
+            wl_nm, aoi, polarization, position_fraction
+        )[layer_index]
+        return ThinFilmOperand._mean_scalar(layer_data["phase"])
+
+    @staticmethod
+    def field_amplitude(
+        stack: ThinFilmStack,
+        layer_index: int,
+        wavelength_nm: float | list[float],
+        aoi_deg: float = 0.0,
+        polarization: str = "s",
+        position_fraction: float = 0.5,
+    ) -> float:
+        wl_nm = be.atleast_1d(wavelength_nm)
+        aoi = be.atleast_1d(aoi_deg)
+        layer_data = stack.layer_fields_nm_deg(
+            wl_nm, aoi, polarization, position_fraction
+        )[layer_index]
+        return ThinFilmOperand._mean_scalar(layer_data["amplitude"])
 
     @staticmethod
     def reflectance_weighted(
