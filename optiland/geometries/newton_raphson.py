@@ -4,17 +4,29 @@ The Newton Raphson geometry represents a surface utilizing the Newton-Raphson
 method for ray tracing. This is an abstract base class that should be inherited
 by any geometry that uses the Newton-Raphson method for ray tracing.
 
+When the PyTorch backend is active with gradient tracking enabled, the
+``distance`` method uses a DiffOptics-style one-step implicit correction
+to compute correct first-order gradients through the converged intersection
+point without unrolling the Newton-Raphson iterations through the autograd
+graph.
+
 Kramer Harrison, 2024
 """
 
 from __future__ import annotations
 
+import contextlib
 import warnings
 from abc import ABC, abstractmethod
 
 import optiland.backend as be
 from optiland.coordinate_system import CoordinateSystem
 from optiland.geometries.standard import StandardGeometry
+
+try:
+    import torch
+except (ImportError, ModuleNotFoundError):
+    torch = None
 
 
 # -- utility functions --
@@ -37,6 +49,15 @@ def _is_radius_infinite(radius):
         bool(is_inf_tensor.item())
         if hasattr(is_inf_tensor, "item")
         else bool(is_inf_tensor)
+    )
+
+
+def _sign_preserving_floor(value, eps=1e-14):
+    """Clamp values to a minimum absolute magnitude while preserving sign."""
+    return be.where(
+        be.abs(value) > eps,
+        value,
+        be.where(value >= 0, eps, -eps),
     )
 
 
@@ -116,11 +137,84 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
         """
         return self._surface_normal(rays.x, rays.y)
 
+    # ------------------------------------------------------------------
+    # Primal Newton-Raphson solve (no autograd graph)
+    # ------------------------------------------------------------------
+
+    def _solve_distance_primal(self, rays):
+        """Run the Newton-Raphson iteration to find the intersection distance.
+
+        This is a pure numerical solve with **no** autograd graph.  It is
+        used both by the differentiable path (inside torch.no_grad) and by
+        the non-differentiable path.
+
+        The current implementation evaluates ``sag()`` and
+        ``_surface_normal()`` separately at each iteration.
+
+        Potential future optimization: support an optional fused
+        ``eval_sag_and_grad(x, y)`` API to return ``(sag_val, fx, fy)``
+        in a single pass and reduce duplicate surface computations.
+
+        Args:
+            rays: An object with attributes x, y, z, L, M, N.
+
+        Returns:
+            Tensor or ndarray: Converged propagation distance t*.
+        """
+        # Better initial guess via base conic intersection
+        t = super().distance(rays)
+
+        for _ in range(self.max_iter):
+            x_int = rays.x + t * rays.L
+            y_int = rays.y + t * rays.M
+            z_int = rays.z + t * rays.N
+
+            f_t = self.sag(x_int, y_int) - z_int
+
+            nx, ny, nz = self._surface_normal(x_int, y_int)
+            nz_safe = _sign_preserving_floor(nz)
+            fx = -nx / nz_safe
+            fy = -ny / nz_safe
+            df_dt = fx * rays.L + fy * rays.M - rays.N
+
+            if be.max(be.abs(f_t)) < self.tol:
+                break
+
+            safe_df_dt = _sign_preserving_floor(df_dt)
+            t = t - f_t / safe_df_dt
+
+        return t
+
+    # ------------------------------------------------------------------
+    # Public distance method with autograd dispatch
+    # ------------------------------------------------------------------
+
     def distance(self, rays):
         """
         Calculates the distance from the ray origin to the surface intersection
         using a robust Newton-Raphson method. This version uses the base conic
         intersection as a strong initial guess.
+
+        **Differentiable mode (torch backend with grad enabled):**
+
+        The primal Newton-Raphson solve runs inside ``torch.no_grad()`` so
+        that the iterative loop is never recorded in the autograd graph.  A
+        one step implicit correction (in DiffOptics style) is then applied:
+
+            t_implicit = t_detached - F(t_detached) / (dF/dt)_detached
+
+        Since F is near zero at convergence, the forward value is unchanged,
+        but the gradients are correct to first order via the implicit function
+        theorem.
+
+        Note:
+            This implicit correction is intended for correct first-order
+            gradients. Higher order derivatives (double backward and beyond)
+            are not guaranteed to match the exact unrolled Newton system.
+
+        **Non differentiable mode (numpy backend, or torch without grad):**
+
+        Returns the converged t directly.
 
         Args:
             rays (RealRays): The rays used for calculating distance.
@@ -129,43 +223,43 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
             be.ndarray: An array of propagation distances 't' from each ray's
             current position to its intersection point with the geometry.
         """
-        # better initial guess for the propagation distance 't' by
-        # intersecting with the base conic surface.
-        t = super().distance(rays)
+        use_torch_diff = (
+            torch is not None
+            and be.get_backend() == "torch"
+            and torch.is_grad_enabled()
+        )
 
-        # Newton-Raphson method to refine the intersection point
-        for _ in range(self.max_iter):
-            # current intersection point P(t) = P0 + t*D
-            x_int = rays.x + t * rays.L
-            y_int = rays.y + t * rays.M
-            z_int = rays.z + t * rays.N
+        # --- Primal solve (no gradient tracking) -------------------------
+        ctx = torch.no_grad() if use_torch_diff else contextlib.nullcontext()
 
-            # error function f(t) = sag(x(t), y(t)) - z(t)
-            # find the root t such that f(t) = 0
-            f_t = self.sag(x_int, y_int) - z_int
+        with ctx:
+            t = self._solve_distance_primal(rays)
 
-            # convergence check
-            if be.max(be.abs(f_t)) < self.tol:
-                break
+        if not use_torch_diff:
+            return t
 
-            # derivative of the error func at the
-            # curr intersection point
-            # f'(t) = (d_sag/d_x)*Lx + (d_sag/d_y)*My - Nz
-            nx, ny, nz = self._surface_normal(x_int, y_int)
+        # --- DiffOptics-style one-step implicit correction ----------------
+        t_detached = t.detach()
 
-            # normalized normal components:
-            # fx = -nx / nz and fy = -ny / nz.
-            nz_safe = be.where(be.abs(nz) > 1e-14, nz, 1e-14)
-            fx = -nx / nz_safe
-            fy = -ny / nz_safe
+        x_int = rays.x + t_detached * rays.L
+        y_int = rays.y + t_detached * rays.M
+        z_int = rays.z + t_detached * rays.N
 
-            df_dt = fx * rays.L + fy * rays.M - rays.N
+        F = self.sag(x_int, y_int) - z_int
 
-            # update step: t_new = t - f(t) / f'(t).
-            safe_df_dt = be.where(be.abs(df_dt) > 1e-14, df_dt, 1e-14)
-            t = t - f_t / safe_df_dt
+        nx, ny, nz = self._surface_normal(x_int, y_int)
+        nz_safe = _sign_preserving_floor(nz)
+        fx = -nx / nz_safe
+        fy = -ny / nz_safe
+        dF_dt = (fx * rays.L + fy * rays.M - rays.N).detach()
 
-        return t
+        safe_dF_dt = _sign_preserving_floor(dF_dt)
+
+        # Implicit correction: t_implicit has value approx t_detached (since
+        # F approx 0) but carries correct gradients: dt*/dtheta = -F_theta / F_t.
+        t_implicit = t_detached - F / safe_dF_dt
+
+        return t_implicit
 
     def _intersection_plane(self, rays):
         """Calculates the intersection points of the rays with a plane (z=0).
