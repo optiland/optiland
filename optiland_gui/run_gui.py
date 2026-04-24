@@ -33,7 +33,7 @@ def main() -> None:
     # caused by incompatibility between the VTK/OpenGL render pipeline and the
     # Qt Wayland backend.  This must be set before QApplication is created.
     if sys.platform.startswith("linux"):
-        os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
+        os.environ["QT_QPA_PLATFORM"] = "xcb"
 
     app = QApplication(sys.argv)
     app.setWindowIcon(QIcon(OPTILAND_ICON_PATH))
