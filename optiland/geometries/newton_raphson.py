@@ -9,6 +9,7 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+import contextlib
 import warnings
 from abc import ABC, abstractmethod
 
@@ -117,51 +118,55 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
         return self._surface_normal(rays.x, rays.y)
 
     def distance(self, rays):
-        """
-        Calculates the distance from the ray origin to the surface intersection
-        using a robust Newton-Raphson method. This version uses the base conic
-        intersection as a strong initial guess.
-
-        Args:
-            rays (RealRays): The rays used for calculating distance.
-
-        Returns:
-            be.ndarray: An array of propagation distances 't' from each ray's
-            current position to its intersection point with the geometry.
-        """
-        # better initial guess for the propagation distance 't' by
-        # intersecting with the base conic surface.
         t = super().distance(rays)
+        # Phase 1: converge WITHOUT building the computation graph.
+        # Wrapping all iterations in no_grad avoids recording O(max_iter) graph
+        # nodes, as described in "dO: A differentiable engine for Deep Lens design"
+        # (vccimaging/DiffOptics). For numpy, nullcontext is a no-op.
 
-        # Newton-Raphson method to refine the intersection point
-        for _ in range(self.max_iter):
-            # current intersection point P(t) = P0 + t*D
+        no_grad_ctx = (
+            be._lib.no_grad() if be.supports_gradients else contextlib.nullcontext()
+        )
+        with no_grad_ctx:
+            for _ in range(self.max_iter):
+                x_int = rays.x + t * rays.L
+                y_int = rays.y + t * rays.M
+                z_int = rays.z + t * rays.N
+
+                f_t = self.sag(x_int, y_int) - z_int
+
+                if be.max(be.abs(f_t)) < self.tol:
+                    break
+                nx, ny, nz = self._surface_normal(x_int, y_int)
+                nz_safe = be.where(be.abs(nz) > 1e-14, nz, 1e-14)
+                fx = -nx / nz_safe
+                fy = -ny / nz_safe
+
+                df_dt = fx * rays.L + fy * rays.M - rays.N
+
+                safe_df_dt = be.where(be.abs(df_dt) > 1e-14, df_dt, 1e-14)
+                t = t - f_t / safe_df_dt
+
+        # Phase 2: one final Newton step WITH the AD graph re-engaged.
+        # At convergence f(t) ≈ 0, so t barely moves numerically, but autograd
+        # now records a single operation. The gradient it produces is
+        # dt/d_params = -(∂f/∂params) / (∂f/∂t), which is the implicit function
+        # theorem — identical to backpropping through infinite iterations.
+
+        if be.supports_gradients and be.grad_mode.requires_grad:
             x_int = rays.x + t * rays.L
             y_int = rays.y + t * rays.M
             z_int = rays.z + t * rays.N
 
-            # error function f(t) = sag(x(t), y(t)) - z(t)
-            # find the root t such that f(t) = 0
             f_t = self.sag(x_int, y_int) - z_int
 
-            # convergence check
-            if be.max(be.abs(f_t)) < self.tol:
-                break
-
-            # derivative of the error func at the
-            # curr intersection point
-            # f'(t) = (d_sag/d_x)*Lx + (d_sag/d_y)*My - Nz
             nx, ny, nz = self._surface_normal(x_int, y_int)
-
-            # normalized normal components:
-            # fx = -nx / nz and fy = -ny / nz.
             nz_safe = be.where(be.abs(nz) > 1e-14, nz, 1e-14)
             fx = -nx / nz_safe
             fy = -ny / nz_safe
 
             df_dt = fx * rays.L + fy * rays.M - rays.N
 
-            # update step: t_new = t - f(t) / f'(t).
             safe_df_dt = be.where(be.abs(df_dt) > 1e-14, df_dt, 1e-14)
             t = t - f_t / safe_df_dt
 
