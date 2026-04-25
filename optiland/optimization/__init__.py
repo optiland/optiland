@@ -31,6 +31,11 @@ except (ImportError, ModuleNotFoundError, OSError):
     pass
 
 from .optimizer.scipy import glass_expert
+
+from .optimizer.custom import (
+    ParticleSwarm,
+)
+
 import sys
 
 optimization = sys.modules[__name__]
