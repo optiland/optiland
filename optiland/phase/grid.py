@@ -25,6 +25,7 @@ class GridPhaseProfile(BasePhaseProfile):
     phase_type = "grid"
 
     def __init__(self, x_coords: be.Array, y_coords: be.Array, phase_grid: be.Array):
+        super().__init__()
         self.backend = be.get_backend()
         self.x_coords = x_coords
         self.y_coords = y_coords

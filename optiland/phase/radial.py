@@ -21,6 +21,7 @@ class RadialPhaseProfile(BasePhaseProfile):
     phase_type = "radial"
 
     def __init__(self, coefficients: list[float]):
+        super().__init__()
         self.coefficients = coefficients
 
     def get_phase(

@@ -81,27 +81,31 @@ class BaseInteractionModel(ABC):
         }
 
     @classmethod
-    def from_dict(cls, data, parent_surface):
-        """Creates an interaction model from a dictionary representation."""
+    def _deserialize_init_data(cls, data):
         from optiland.coatings import BaseCoating
         from optiland.scatter import BaseBSDF
 
+        init_data = data.copy()
+        init_data.pop("type", None)
+        init_data.pop("material_pre", None)
+
+        if init_data.get("coating") is not None:
+            init_data["coating"] = BaseCoating.from_dict(init_data["coating"])
+
+        if init_data.get("bsdf") is not None:
+            init_data["bsdf"] = BaseBSDF.from_dict(init_data["bsdf"])
+
+        return init_data
+
+    @classmethod
+    def from_dict(cls, data, parent_surface):
+        """Creates an interaction model from a dictionary representation."""
         interaction_type = data["type"]
         subclass = cls._registry.get(interaction_type)
         if subclass is None:
             raise ValueError(f"Unknown interaction model type: {interaction_type}")
 
-        # Remove 'type' from data to avoid passing it to the constructor
-        init_data = data.copy()
-        init_data.pop("type")
-        # Ignore 'material_pre' that might be present in older files but is obsolete:
-        if "material_pre" in init_data:
-            init_data.pop("material_pre")
-
-        if "coating" in init_data and init_data["coating"] is not None:
-            init_data["coating"] = BaseCoating.from_dict(init_data["coating"])
-        if "bsdf" in init_data and init_data["bsdf"] is not None:
-            init_data["bsdf"] = BaseBSDF.from_dict(init_data["bsdf"])
+        init_data = subclass._deserialize_init_data(data)
 
         return subclass(
             parent_surface=parent_surface,

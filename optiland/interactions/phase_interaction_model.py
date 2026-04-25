@@ -12,7 +12,6 @@ from optiland.phase.base import BasePhaseProfile
 
 if typing.TYPE_CHECKING:
     from optiland.raytrace.rays import ParaxialRays, RealRays
-    from optiland.surfaces.standard_surface import Surface
 
 
 class PhaseInteractionModel(BaseInteractionModel):
@@ -32,15 +31,19 @@ class PhaseInteractionModel(BaseInteractionModel):
 
     interaction_type = "phase"
 
-    def __init__(
-        self,
-        parent_surface: Surface | None,
-        phase_profile: BasePhaseProfile,
-        is_reflective: bool,
-        **kwargs,
-    ):
-        super().__init__(parent_surface, is_reflective=is_reflective, **kwargs)
+    def __init__(self, parent_surface, phase_profile, is_reflective, **kwargs):
         self.phase_profile = phase_profile
+        self._parent_surface = None
+        super().__init__(parent_surface, is_reflective=is_reflective, **kwargs)
+
+    @property
+    def parent_surface(self):
+        return self._parent_surface
+
+    @parent_surface.setter
+    def parent_surface(self, value):
+        self._parent_surface = value
+        self.phase_profile.parent_surface = value
 
     def interact_real_rays(self, rays: RealRays) -> RealRays:
         if self.parent_surface is None:
@@ -186,22 +189,9 @@ class PhaseInteractionModel(BaseInteractionModel):
         return data
 
     @classmethod
-    def from_dict(cls, data: dict, parent_surface: Surface) -> PhaseInteractionModel:
-        """Deserializes an interaction model from a dictionary.
-
-        Args:
-            data: A dictionary representation of an interaction model.
-            parent_surface: The surface to which this model is attached.
-
-        Returns:
-            An instance of a `PhaseInteractionModel`.
-        """
-        phase_profile = BasePhaseProfile.from_dict(data.pop("phase_profile"))
-        data.pop("type", None)
-        is_reflective = data.pop("is_reflective", False)
-        return cls(
-            parent_surface,
-            phase_profile=phase_profile,
-            is_reflective=is_reflective,
-            **data,
+    def _deserialize_init_data(cls, data):
+        init_data = super()._deserialize_init_data(data)
+        init_data["phase_profile"] = BasePhaseProfile.from_dict(
+            init_data["phase_profile"]
         )
+        return init_data

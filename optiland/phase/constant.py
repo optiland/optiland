@@ -22,6 +22,7 @@ class ConstantPhaseProfile(BasePhaseProfile):
     phase_type = "constant"
 
     def __init__(self, phase: float = 0.0):
+        super().__init__()
         self.phase = phase
 
     def get_phase(

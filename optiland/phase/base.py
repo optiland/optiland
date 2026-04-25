@@ -9,6 +9,7 @@ import typing
 
 if typing.TYPE_CHECKING:
     from optiland import backend as be
+    from optiland.surfaces.standard_surface import Surface
 
 
 class BasePhaseProfile(abc.ABC):
@@ -20,6 +21,9 @@ class BasePhaseProfile(abc.ABC):
     """
 
     _registry = {}
+
+    def __init__(self):
+        self.parent_surface: Surface | None = None
 
     def __init_subclass__(cls, **kwargs):
         """Registers subclasses for deserialization."""
