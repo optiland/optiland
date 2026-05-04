@@ -1,4 +1,4 @@
-coatings
+﻿coatings
 ========
 
 .. automodule:: coatings
@@ -11,7 +11,9 @@ coatings
       BaseCoating
       BaseCoatingPolarized
       FresnelCoating
+      JonesThinFilm
       PolarizerCoating
       RetarderCoating
       SimpleCoating
+      ThinFilmCoating
    
