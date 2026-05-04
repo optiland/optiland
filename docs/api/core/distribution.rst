@@ -22,5 +22,6 @@
       LineYDistribution
       RandomDistribution
       RingDistribution
+      SobolDistribution
       UniformDistribution
    
