@@ -167,15 +167,29 @@ class ZernikePolynomialGeometry(NewtonRaphsonGeometry):
         self._validate_inputs(x_norm, y_norm)
 
         # Convert to local polar
-        rho = be.sqrt(x_norm**2 + y_norm**2)
-        phi = be.arctan2(y_norm, x_norm)
+        rho2 = x_norm**2 + y_norm**2
+        center = rho2 == 0
+
+        safe_rho2 = be.where(center, be.ones_like(rho2), rho2)
+        safe_rho = be.sqrt(safe_rho2)
+        rho = be.where(center, be.zeros_like(safe_rho), safe_rho)
+
+        x_phi = be.where(center, be.ones_like(x_norm), x_norm)
+        y_phi = be.where(center, be.zeros_like(y_norm), y_norm)
+        phi = be.arctan2(y_phi, x_phi)
 
         # Base conic
         r2 = x**2 + y**2
-        z = r2 / (self.radius * (1 + be.sqrt(1 - (1 + self.k) * r2 / self.radius**2)))
+
+        if bool(be.all(be.isinf(self.radius))):
+            z = be.zeros_like(x)
+        else:
+            z = r2 / (
+                self.radius * (1 + be.sqrt(1 - (1 + self.k) * r2 / self.radius**2))
+            )
 
         # Add Zernike polynomial contributions
-        z += self.zernike.poly(rho, phi)
+        z = z + self.zernike.poly(rho, phi)
 
         return z
 
@@ -197,54 +211,83 @@ class ZernikePolynomialGeometry(NewtonRaphsonGeometry):
         """
         # Conic partial derivatives:
         r2 = x**2 + y**2
-        denominator = self.radius * be.sqrt(1 - (1 + self.k) * r2 / self.radius**2)
-        dzdx = x / denominator
-        dzdy = y / denominator
 
-        # Protect against divide-by-zero for r=0
-        # or handle small r if needed
-        eps = 1e-14
-        denominator = be.where(be.abs(denominator) < eps, eps, denominator)
+        if bool(be.all(be.isinf(self.radius))):
+            dzdx = be.zeros_like(x)
+            dzdy = be.zeros_like(y)
+        else:
+            denominator = self.radius * be.sqrt(1 - (1 + self.k) * r2 / self.radius**2)
+
+            valid_denominator = be.abs(denominator) > 0
+            safe_denominator = be.where(
+                valid_denominator,
+                denominator,
+                be.ones_like(denominator),
+            )
+
+            dzdx = be.where(
+                valid_denominator,
+                x / safe_denominator,
+                be.zeros_like(x),
+            )
+            dzdy = be.where(
+                valid_denominator,
+                y / safe_denominator,
+                be.zeros_like(y),
+            )
 
         # Now add partial derivatives from the Zernike expansions
         x_norm = x / self.norm_radius
         y_norm = y / self.norm_radius
-        rho = be.sqrt(x_norm**2 + y_norm**2)
-        phi = be.arctan2(y_norm, x_norm)
+
+        rho2 = x_norm**2 + y_norm**2
+        center = rho2 == 0
+
+        safe_rho2 = be.where(center, be.ones_like(rho2), rho2)
+        safe_rho = be.sqrt(safe_rho2)
+        rho = be.where(center, be.zeros_like(safe_rho), safe_rho)
+
+        x_phi = be.where(center, be.ones_like(x_norm), x_norm)
+        y_phi = be.where(center, be.zeros_like(y_norm), y_norm)
+        phi = be.arctan2(y_phi, x_phi)
 
         # Chain rule:
         # dZ/dx = dZ/drho * d(rho)/dx + dZ/dphi * d(phi)/dx
         # We'll define the partials of (rho,phi) wrt x:
         #   drho/dx    = x / (norm_x^2 * rho)
         #   dphi/dx  = - y / (rho^2 * norm_y * norm_x)
-        drho_dx = (
-            be.zeros_like(x)
-            if be.all(rho == 0)
-            else ((x / (self.norm_radius**2)) / (rho + eps))
+        drho_dx = be.where(
+            center,
+            be.zeros_like(x),
+            (x / (self.norm_radius**2)) / safe_rho,
         )
-        drho_dy = (
-            be.zeros_like(y)
-            if be.all(rho == 0)
-            else ((y / (self.norm_radius**2)) / (rho + eps))
+        drho_dy = be.where(
+            center,
+            be.zeros_like(y),
+            (y / (self.norm_radius**2)) / safe_rho,
         )
-        dphi_dx = -(y_norm) / (rho**2 + eps) * (1.0 / self.norm_radius)
-        dphi_dy = +(x_norm) / (rho**2 + eps) * (1.0 / self.norm_radius)
+        dphi_dx = be.where(
+            center,
+            be.zeros_like(x),
+            -(y_norm) / safe_rho2 * (1.0 / self.norm_radius),
+        )
+        dphi_dy = be.where(
+            center,
+            be.zeros_like(y),
+            +(x_norm) / safe_rho2 * (1.0 / self.norm_radius),
+        )
 
         for (n, m), c in zip(self.zernike.indices, self.zernike.coeffs, strict=True):
-            if c == 0:
-                continue
-
             dZdrho, dZdphi = self.zernike.get_derivative(n, m, rho, phi)
             # Partial derivatives w.r.t. x and y
-            dzdx += c * (dZdrho * drho_dx + dZdphi * dphi_dx)
-            dzdy += c * (dZdrho * drho_dy + dZdphi * dphi_dy)
+            dzdx = dzdx + c * (dZdrho * drho_dx + dZdphi * dphi_dx)
+            dzdy = dzdy + c * (dZdrho * drho_dy + dZdphi * dphi_dy)
 
         # Surface normal vector in cartesian coords: (-dzdx, -dzdy, 1)
         # normalized. Check sign conventions!
         nx = +dzdx
         ny = +dzdy
         norm = be.sqrt(nx**2 + ny**2 + 1)
-        norm = be.where(norm < eps, 1.0, norm)  # Avoid division by zero
         nx = nx / norm
         ny = ny / norm
         nz = -be.ones_like(x) / norm
