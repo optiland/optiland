@@ -215,11 +215,10 @@ class BaseZernike(ABC):
     @staticmethod
     def _radial_term(n, m, r):
         """Calculate the radial term of the Zernike polynomial."""
-        s_max = (n - abs(m)) // 2 + 1
+        n = int(n)
+        m_abs = abs(int(m))
 
-        n = be.array(n)
-        m = be.array(m)
-        m_abs = be.abs(m)
+        s_max = (n - m_abs) // 2 + 1
         r = be.array(r)
 
         # Initialize value with correct backend
@@ -272,10 +271,10 @@ class BaseZernike(ABC):
         Returns:
             float: The calculated value of the radial derivative.
         """
-        s_max = (n - abs(m)) // 2 + 1
+        n = int(n)
+        m = abs(int(m))
 
-        n = be.array(n)
-        m = be.array(m)
+        s_max = (n - m) // 2 + 1
         r = be.array(r)
 
         # Initialize value with correct backend
