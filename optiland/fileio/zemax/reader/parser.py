@@ -128,18 +128,40 @@ class ZemaxDataParser:
         self.data_model.aperture["floating_stop"] = True
 
     def _read_config_data(self, data: list[str]) -> None:
+        # Legacy ZEMAX files (e.g. VERS 6133) emit FTYP with only 1-2 tokens
+        # where the current format has 8. Read defensively so a short FTYP
+        # falls back to defaults instead of raising IndexError.
+        def _safe_int(idx: int, default: int = 0) -> int:
+            if idx >= len(data):
+                return default
+            tok = data[idx]
+            if not tok:
+                return default
+            try:
+                return int(tok)
+            except ValueError:
+                return default
+
         fields = self.data_model.fields
-        fields["num_fields"] = int(data[3])
+        fields["num_fields"] = _safe_int(3, 0)
         fields["type"] = {
             0: "angle",
             1: "object_height",
             2: "paraxial_image_height",
             3: "real_image_height",
             4: "theodolite_angle",
-        }.get(int(data[1]), "unsupported")
-        self.data_model.wavelengths["num_wavelengths"] = int(data[4])
-        fields["object_space_telecentric"] = int(data[2]) == 1
-        fields["afocal_image_space"] = int(data[7]) == 1
+        }.get(_safe_int(1, 0), "unsupported")
+        self.data_model.wavelengths["num_wavelengths"] = _safe_int(4, 0)
+        fields["object_space_telecentric"] = _safe_int(2, 0) == 1
+        fields["afocal_image_space"] = _safe_int(7, 0) == 1
+        # Legacy files may omit XFLN/YFLN entirely (implying a single
+        # on-axis field). Seed defaults so downstream code does not hit
+        # KeyError 'x' / 'y'. Any real XFLN/YFLN lines that follow will
+        # overwrite these.
+        fields.setdefault("x", [0.0])
+        fields.setdefault("y", [0.0])
+        if fields["num_fields"] <= 0:
+            fields["num_fields"] = 1
 
     def _read_x_fields(self, data: list[str]) -> None:
         n = self.data_model.fields["num_fields"]

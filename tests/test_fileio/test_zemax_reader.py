@@ -134,6 +134,19 @@ class TestZemaxDataParser:
         self.parser._read_diameter(["DIAM", "8.5", "1", "0", "0", "1", '""'])
         assert self.parser._current_surf_data["diameter"] == 8.5
 
+    def test_read_config_data_legacy_short_ftyp(self):
+        # Legacy ZEMAX (e.g. VERS 6133) writes FTYP with only 1-2 tokens
+        # while modern files emit 8. Verify the parser falls back to
+        # sensible defaults instead of raising IndexError.
+        self.parser._read_config_data(["FTYP", "0"])
+        fields = self.parser.data_model.fields
+        # angle-type field (default for legacy on-axis layout)
+        assert fields["type"] == "angle"
+        # one on-axis field seeded so downstream KeyError 'x'/'y' is avoided
+        assert fields["num_fields"] == 1
+        assert fields["x"] == [0.0]
+        assert fields["y"] == [0.0]
+
 
 # ---------------------------------------------------------------------------
 # End-to-end reader tests
