@@ -82,19 +82,27 @@ class OpticUpdater:
             # No need to shift other surfaces as they are relative to S1 at z=0
             return
 
-        positions = self.optic.surfaces.positions
-        # Detach positions used as reference points to prevent stale computation
-        # graphs (from prior iterations) from being pulled into the current graph.
-        if hasattr(positions, "detach"):
-            positions = positions.detach()
-        delta_t = value - positions[surface_number + 1] + positions[surface_number]
-        positions = be.copy(positions)  # required to avoid in-place modification
-        positions[surface_number + 1 :] = positions[surface_number + 1 :] + delta_t
-        positions = positions - positions[1]  # force surface 1 to be at zero
-        for k, surface in enumerate(self.optic.surfaces):
-            surface.geometry.cs.z = be.array(positions[k])
-        if surface_number < len(self.optic.surfaces):
-            self.optic.surfaces[surface_number].thickness = value
+        # Source of truth for downstream positions is each surface's `.thickness`
+        # attribute. Update the requested one first, then rebuild every cs.z
+        # downstream from those thickness values (rather than incrementally
+        # mutating cs.z). This keeps every current-iteration thickness tensor
+        # in the autograd graph — the prior incremental form needed `detach()`
+        # to drop stale graphs from earlier iterations, but that also severed
+        # in-iteration grad paths when multiple thickness variables were
+        # updated sequentially (only the last one kept its gradient). See #569.
+        surfaces = self.optic.surfaces
+        n = len(surfaces)
+        if surface_number < n:
+            surfaces[surface_number].thickness = value
+
+        # Surface 1 anchored at z=0; cs.z[k] = sum of upstream thicknesses.
+        if n >= 2:
+            z = be.array(0.0)
+            surfaces[1].geometry.cs.z = be.array(z)
+            for k in range(2, n):
+                t_prev = surfaces[k - 1].thickness
+                z = z + (t_prev if hasattr(t_prev, "detach") else be.array(t_prev))
+                surfaces[k].geometry.cs.z = be.array(z)
 
     def set_index(self, value: float, surface_number: int) -> None:
         """Set the index of refraction of a surface.
