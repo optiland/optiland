@@ -233,6 +233,36 @@ class Aberrations:
         self._precalculations()
         return self._compute_over_surfaces(self._TchC_term).flatten()
 
+    def _signed_refractive_indices(self, wavelength: float) -> BEArray:
+        """Return signed refractive indices following the Welford convention.
+
+        For Seidel third-order aberration formulas to be valid in systems
+        containing mirrors, the post-mirror medium is treated as having a
+        sign-flipped refractive index. Each reflection toggles the sign for
+        all subsequent surfaces — so a two-mirror system ends with the
+        original sign, a three-mirror system with the flipped sign, etc.
+
+        ``surfaces.n()`` itself returns magnitudes only (materials don't
+        carry direction), which is why the Seidel formulas previously
+        evaluated to zero on every reflective surface.
+
+        Args:
+            wavelength: Wavelength at which to evaluate the indices.
+
+        Returns:
+            Array of signed refractive indices, one per surface.
+        """
+        n_raw = self.optic.surfaces.n(wavelength)
+        n_signed = []
+        sign = 1.0
+        for k, surf in enumerate(self.optic.surfaces):
+            if getattr(surf.interaction_model, "is_reflective", False):
+                sign = -sign
+            # ``be.abs`` because the underlying material may already report a
+            # signed n on some backends; we standardize on magnitude × sign.
+            n_signed.append(sign * be.abs(n_raw[k]))
+        return be.array(n_signed)
+
     def _compute_over_surfaces(self, term_func: Callable) -> BEArray:
         """
         Compute a given aberration term over all relevant surfaces.
@@ -256,8 +286,15 @@ class Aberrations:
         """
         self._inv: float = self.optic.paraxial.invariant()  # Lagrange invariant
         self._on_axis = be.isclose(self._inv, be.array(0.0))
-        # Refractive indices for all surfaces
-        self._n: BEArray = self.optic.surfaces.n(self.optic.primary_wavelength)
+        # Refractive indices for all surfaces.
+        # For mirror systems we must use the Welford / Smith sign convention:
+        # after each reflection, the post-surface medium's refractive index
+        # flips sign. Without this, the Seidel third-order formulas reduce to
+        # zero on reflective surfaces because every (n[k] - n[k-1]) term
+        # vanishes — `surfaces.n()` returns magnitudes only. See upstream #347.
+        self._n: BEArray = self._signed_refractive_indices(
+            self.optic.primary_wavelength
+        )
         self._N: int = self.optic.surfaces.num_surfaces
         self._C = 1 / self.optic.surfaces.radii
         self._ya, self._ua = self.optic.paraxial.marginal_ray()

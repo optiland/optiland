@@ -259,3 +259,27 @@ class TestSimpleSinglet:
 
         # Other Seidel coefficients are expected to be zero for on-axis field
         assert_allclose(S[1:], [0, 0, 0, 0], atol=1e-8)
+
+
+class TestReflectiveSystemSeidels:
+    """Regression test for upstream issue #347.
+
+    For systems containing mirrors, the post-mirror refractive index must be
+    treated as sign-flipped (Welford / Smith convention). Without this, every
+    `(n[k] - n[k-1])` term in the Seidel formulas evaluates to zero across
+    reflective surfaces, collapsing the first four Seidel sums to zero — even
+    though mirrors do contribute aberrations.
+    """
+
+    def test_hubble_seidels_are_not_all_zero(self, set_test_backend):
+        from optiland.samples.telescopes import HubbleTelescope
+
+        S = HubbleTelescope().aberrations.seidels()
+        # A two-mirror Cassegrain has nontrivial third-order aberrations at
+        # all five Seidel terms (the conic constants are tuned to balance
+        # spherical + coma but residuals exist; field curvature and
+        # distortion vary across the field). All five must be nonzero.
+        for idx in range(5):
+            assert not be.isclose(S[idx], be.array(0.0)), (
+                f"Hubble Seidel S[{idx}]=0 — issue #347 not fixed"
+            )
