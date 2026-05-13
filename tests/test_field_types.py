@@ -262,3 +262,67 @@ def test_get_starting_z_offset(set_test_backend):
 
     # check that the z offset is correct
     assert_allclose(z_offset, optic.paraxial.EPD())
+
+
+def test_tilted_object_origins(set_test_backend):
+    """Test ray origins for a tilted object surface across field types."""
+    import numpy as np
+
+    optic = Optic()
+    # 45 deg tilt around x-axis
+    rx = 45 * np.pi / 180
+    optic.surfaces.add(index=0, thickness=60, rx=rx)
+    optic.surfaces.add(index=1, thickness=10, is_stop=True)
+    optic.surfaces.add(index=2)
+
+    optic.set_aperture("EPD", 10)
+    optic.wavelengths.add(0.58756, is_primary=True)
+
+    # 1. Test ObjectHeightField
+    optic.fields.set_type("object_height")
+    optic.fields.add(y=10)
+
+    origins = optic.fields.field_definition.get_ray_origins(
+        optic, Hx=0, Hy=1, Px=0, Py=0, vx=0, vy=0
+    )
+
+    # Expected: y_global = 10 * cos(45), z_global = -60 + 10 * sin(45)
+    assert_allclose(origins[0], [0.0])
+    assert_allclose(origins[1], [10 * np.cos(rx)])
+    assert_allclose(origins[2], [-60 + 10 * np.sin(rx)])
+
+    # 2. Test AngleField (finite)
+    optic.fields.set_type("angle")
+    # dist_to_ep = EPL - pos[0] = 0 - (-60) = 60
+    # y_local = -tan(field_y) * 60.
+    # To get y_local = 10, we need tan(field_y) = -10/60 => field_y = arctan(-10/60)
+    angle_deg = np.degrees(np.arctan(-10/60))
+    optic.fields.fields = []
+    optic.fields.add(y=angle_deg)
+
+    origins = optic.fields.field_definition.get_ray_origins(
+        optic, Hx=0, Hy=-1, Px=0, Py=0, vx=0, vy=0
+    )
+    # y_local should be 10. y_global = 10 * cos(45), z_global = -60 + 10 * sin(45)
+    assert_allclose(origins[1], [10 * np.cos(rx)], atol=1e-7)
+    assert_allclose(origins[2], [-60 + 10 * np.sin(rx)], atol=1e-7)
+
+    # 3. Test ParaxialImageHeightField (finite)
+    optic.fields.set_type("paraxial_image_height")
+    # We set a field height that should correspond to some y_obj.
+    optic.fields.fields = []
+    optic.fields.add(y=10)
+
+    # Add a lens to make ParaxialImageHeightField happy
+    optic.surfaces.add(index=1, radius=50, thickness=5, material="N-BK7", is_stop=True)
+
+    origins = optic.fields.field_definition.get_ray_origins(
+        optic, Hx=0, Hy=1, Px=0, Py=0, vx=0, vy=0
+    )
+    # y0, z0 should reflect the tilt.
+    # We verify that (y0, z0) correctly maps back to a point with local z=0
+    # after rotating back by 45 degrees.
+    y_global = be.to_numpy(origins[1])
+    z_global = be.to_numpy(origins[2])
+    z_local = -(y_global) * np.sin(rx) + (z_global + 60) * np.cos(rx)
+    assert_allclose(z_local, [0.0], atol=1e-7)
