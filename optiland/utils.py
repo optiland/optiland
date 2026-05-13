@@ -321,3 +321,33 @@ def set_attr_by_path(obj: Any, path: str, value: Any) -> None:
         container[int(index)] = value
     else:
         setattr(current_obj, final_attr, value)
+
+
+def globalize_coordinates(surface, x_local, y_local, z_local):
+    """Transform local surface coordinates to global coordinates.
+
+    Args:
+        surface: The surface whose coordinate system is used for the
+            transformation.
+        x_local (BEArray): The local x-coordinates.
+        y_local (BEArray): The local y-coordinates.
+        z_local (BEArray): The local z-coordinates.
+
+    Returns:
+        tuple: (x_global, y_global, z_global) as flattened backend arrays.
+    """
+    eff_translation, eff_rot_mat = surface.geometry.cs.get_effective_transform()
+
+    points_local = be.stack([x_local, y_local, z_local], axis=0)
+    if len(be.shape(points_local)) == 1:
+        points_local = be.unsqueeze_last(points_local)
+
+    points_global = be.matmul(eff_rot_mat, points_local) + be.reshape(
+        eff_translation, (3, 1)
+    )
+
+    x_global = be.ravel(points_global[0, :])
+    y_global = be.ravel(points_global[1, :])
+    z_global = be.ravel(points_global[2, :])
+
+    return x_global, y_global, z_global
