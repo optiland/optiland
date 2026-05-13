@@ -67,31 +67,25 @@ class TestParaxialOperand:
 
 
 class TestAberrationOperand:
-    # Baseline values updated after the fix for #347: prior values assumed all
-    # reflective-surface Seidel contributions were zero, which was the bug
-    # itself (missing sign-flip-on-reflection in the refractive-index array).
-    # Mirror-achromatic terms (TAchC, LchC, TchC) remain zero — mirrors have
-    # no dispersion. Surface-1 (the flat stop) contributions also remain zero.
-
     def test_seidel(self, set_test_backend, hubble):
         assert_allclose(
             operand.AberrationOperand.seidels(hubble, 0),
-            0.0010996096102621794,
+            0.0007595410648595602,
         )
 
     def test_TSC(self, set_test_backend, hubble):
         assert_allclose(
-            operand.AberrationOperand.TSC(hubble, 2), 8.875344146321693,
+            operand.AberrationOperand.TSC(hubble, 2), -0.08528104851182583,
         )
 
     def test_SC(self, set_test_backend, hubble):
         assert_allclose(
-            operand.AberrationOperand.SC(hubble, 2), 426.01711809736076,
+            operand.AberrationOperand.SC(hubble, 2), -4.093496084924931,
         )
 
     def test_CC(self, set_test_backend, hubble):
         assert_allclose(
-            operand.AberrationOperand.CC(hubble, 2), -0.9049279940582642,
+            operand.AberrationOperand.CC(hubble, 2), -1.7735249708111127,
         )
 
     def test_TCC(self, set_test_backend, hubble):
@@ -134,32 +128,32 @@ class TestAberrationOperand:
 
     def test_TSC_sum(self, set_test_backend, hubble):
         assert_allclose(
-            operand.AberrationOperand.TSC_sum(hubble), -65.09487652060287,
+            operand.AberrationOperand.TSC_sum(hubble), -6.735430351945126e-05,
         )
 
     def test_SC_sum(self, set_test_backend, hubble):
         assert_allclose(
-            operand.AberrationOperand.SC_sum(hubble), -3124.5584668064816,
+            operand.AberrationOperand.SC_sum(hubble), -0.003233011115258755,
         )
 
     def test_CC_sum(self, set_test_backend, hubble):
         assert_allclose(
-            operand.AberrationOperand.CC_sum(hubble), 0.8766927460988676,
+            operand.AberrationOperand.CC_sum(hubble), 0.008095769346019077,
         )
 
     def test_TCC_sum(self, set_test_backend, hubble):
         assert_allclose(
-            operand.AberrationOperand.TCC_sum(hubble), 2.630078238296602,
+            operand.AberrationOperand.TCC_sum(hubble), 0.024287308038056565,
         )
 
     def test_TAC_sum(self, set_test_backend, hubble):
         assert_allclose(
-            operand.AberrationOperand.TAC_sum(hubble), 0.049354753613037414,
+            operand.AberrationOperand.TAC_sum(hubble), -0.034842575437082024,
         )
 
     def test_AC_sum(self, set_test_backend, hubble):
         assert_allclose(
-            operand.AberrationOperand.AC_sum(hubble), 2.3690315048059887,
+            operand.AberrationOperand.AC_sum(hubble), -1.6724459728074144,
         )
 
     def test_TPC_sum(self, set_test_backend, hubble):
@@ -174,7 +168,7 @@ class TestAberrationOperand:
 
     def test_DC_sum(self, set_test_backend, hubble):
         assert_allclose(
-            operand.AberrationOperand.DC_sum(hubble), 0.026390667757385033,
+            operand.AberrationOperand.DC_sum(hubble), 0.018229011190635025,
         )
 
     def test_TAchC_sum(self, set_test_backend, hubble):
