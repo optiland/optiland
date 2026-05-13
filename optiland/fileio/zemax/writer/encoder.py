@@ -214,9 +214,9 @@ class ZemaxFileEncoder:
     def _encode_glas(self, glas: dict[str, Any]) -> str:
         name = glas.get("name", "")
         if name == "MIRROR":
-            return "  GLAS MIRROR 1 0 0 0"
+            return "  GLAS MIRROR 0 0 0 0 0 0 0 0 0 0"
         if "n" in glas and "V" in glas:
             # MODEL glass
-            return f"  GLAS MODEL 1 0 {_fmt(glas['n'])} {_fmt(glas['V'])}"
+            return f"  GLAS MODEL 1 0 {_fmt(glas['n'])} {_fmt(glas['V'])} 0 0 0 0 0 0"
         # Catalog glass
-        return f"  GLAS {name} 1 0 0 0"
+        return f"  GLAS {name} 0 0 0 0 0 0 0 0 0 0"
