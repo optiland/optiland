@@ -263,6 +263,24 @@ class Aberrations:
             n_signed.append(sign * be.abs(n_raw[k]))
         return be.array(n_signed)
 
+    def _get_conic_term(self, k: int, p_ya: int, p_yb: int) -> float:
+        """
+        Compute the transverse conic contribution for surface k.
+        """
+        dn = self._n[k] - self._n[k - 1]
+
+        # Conic Seidel sum: S_conic = dn * K * c^3 * ya^p_ya * yb^p_yb
+        S_conic = (
+            dn
+            * self._K[k]
+            * (self._C[k] ** 3)
+            * (self._ya[k] ** p_ya)
+            * (self._yb[k] ** p_yb)
+        )
+
+        # Convert Wavefront Seidel Sum to Transverse Aberration contribution
+        return -S_conic / (2 * self._n[-1] * self._ua[-1])
+
     def _compute_over_surfaces(self, term_func: Callable) -> BEArray:
         """
         Compute a given aberration term over all relevant surfaces.
@@ -286,21 +304,18 @@ class Aberrations:
         """
         self._inv: float = self.optic.paraxial.invariant()  # Lagrange invariant
         self._on_axis = be.isclose(self._inv, be.array(0.0))
-        # Refractive indices for all surfaces.
-        # For mirror systems we must use the Welford / Smith sign convention:
-        # after each reflection, the post-surface medium's refractive index
-        # flips sign. Without this, the Seidel third-order formulas reduce to
-        # zero on reflective surfaces because every (n[k] - n[k-1]) term
-        # vanishes — `surfaces.n()` returns magnitudes only. See upstream #347.
-        self._n: BEArray = self._signed_refractive_indices(
-            self.optic.primary_wavelength
-        )
+        self._n = self._signed_refractive_indices(self.optic.primary_wavelength)
+        n_F = self._signed_refractive_indices(0.4861)
+        n_C = self._signed_refractive_indices(0.6563)
+        self._dn = n_F - n_C
+
         self._N: int = self.optic.surfaces.num_surfaces
         self._C = 1 / self.optic.surfaces.radii
         self._ya, self._ua = self.optic.paraxial.marginal_ray()
         self._yb, self._ub = self.optic.paraxial.chief_ray()
         self._hp = self._inv / (self._n[-1] * self._ua[-1])
-        self._dn = self.optic.surfaces.n(0.4861) - self.optic.surfaces.n(0.6563)
+
+        self._K = self.optic.surfaces.conic
 
         i_list = []
         ip_list = []
@@ -359,7 +374,9 @@ class Aberrations:
             * (self._ua[k] + i_val)
             * i_val**2
         )
-        return term / (2 * self._n[k] * self._n[-1] * self._ua[-1])
+        spherical = term / (2 * self._n[k] * self._n[-1] * self._ua[-1])
+        # Negate to match the Welford/Zemax convention
+        return -spherical + self._get_conic_term(k, p_ya=4, p_yb=0)
 
     def _TSC_term(self, k: int) -> float:
         """
@@ -373,7 +390,8 @@ class Aberrations:
         """
         if self._on_axis:
             return self._TSC_on_axis_term(k)
-        return self._B[k - 1] * self._i[k - 1] ** 2 * self._hp
+        spherical = self._B[k - 1] * self._i[k - 1] ** 2 * self._hp
+        return -spherical + self._get_conic_term(k, p_ya=4, p_yb=0)
 
     def _CC_term(self, k: int) -> float:
         """
@@ -385,7 +403,8 @@ class Aberrations:
         Returns:
             Computed sagittal coma term.
         """
-        return self._B[k - 1] * self._i[k - 1] * self._ip[k - 1] * self._hp
+        spherical = self._B[k - 1] * self._i[k - 1] * self._ip[k - 1] * self._hp
+        return -spherical + self._get_conic_term(k, p_ya=3, p_yb=1)
 
     def _TAC_term(self, k: int) -> float:
         """
@@ -397,7 +416,8 @@ class Aberrations:
         Returns:
             Computed transverse astigmatism term.
         """
-        return self._B[k - 1] * self._ip[k - 1] ** 2 * self._hp
+        spherical = self._B[k - 1] * self._ip[k - 1] ** 2 * self._hp
+        return -spherical + self._get_conic_term(k, p_ya=2, p_yb=2)
 
     def _TPC_term(self, k: int) -> BEArray:
         """
@@ -409,13 +429,14 @@ class Aberrations:
         Returns:
             Computed transverse Petzval sum term.
         """
-        return (
+        term = (
             (self._n[k] - self._n[k - 1])
             * self._C[k]
             * self._hp
             * self._inv
             / (2 * self._n[k] * self._n[k - 1])
         )
+        return -term
 
     def _DC_term(self, k: int) -> BEArray:
         """
@@ -427,10 +448,11 @@ class Aberrations:
         Returns:
             Computed distortion term.
         """
-        return self._hp * (
+        spherical = self._hp * (
             self._Bp[k - 1] * self._i[k - 1] * self._ip[k - 1]
             + 0.5 * (self._ub[k] ** 2 - self._ub[k - 1] ** 2)
         )
+        return -spherical + self._get_conic_term(k, p_ya=1, p_yb=3)
 
     def _TAchC_term(self, k: int) -> BEArray:
         """
