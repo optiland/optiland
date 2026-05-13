@@ -36,11 +36,27 @@ class ObjectHeightField(BaseFieldDefinition):
         self._validate_object_infinite(optic)
         obj = optic.object_surface
         max_field = optic.fields.max_field
-        field_x = max_field * Hx
-        field_y = max_field * Hy
-        x0 = be.array(field_x)
-        y0 = be.array(field_y)
-        z0 = obj.geometry.sag(x0, y0) + obj.geometry.cs.z
+        x_local = be.atleast_1d(be.array(max_field * Hx))
+        y_local = be.atleast_1d(be.array(max_field * Hy))
+        z_local = obj.geometry.sag(x_local, y_local)
+
+        # Globalize the local coordinates
+        eff_translation, eff_rot_mat = obj.geometry.cs.get_effective_transform()
+
+        # Handle both scalar and array inputs for field coordinates
+        # and ensure the points are correctly transformed to the global system.
+        points_local = be.stack([x_local, y_local, z_local], axis=0)
+        if len(be.shape(points_local)) == 1:
+            points_local = be.unsqueeze_last(points_local)
+
+        points_global = be.matmul(eff_rot_mat, points_local) + be.reshape(
+            eff_translation, (3, 1)
+        )
+
+        x0 = be.ravel(points_global[0, :])
+        y0 = be.ravel(points_global[1, :])
+        z0 = be.ravel(points_global[2, :])
+
         return x0, y0, z0
 
     def get_paraxial_object_position(self, optic, Hy, y1, EPL):

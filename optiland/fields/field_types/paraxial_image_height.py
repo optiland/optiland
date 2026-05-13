@@ -56,18 +56,33 @@ class ParaxialImageHeightField(BaseFieldDefinition):
         else:
             y_obj = y_obj_unit * (y_img_target / y_img_unit)
             x_obj = y_obj_unit * (x_img_target / y_img_unit)
-            x0 = x_obj
-            y0 = y_obj
-            z0 = (
-                optic.object_surface.geometry.sag(x0, y0)
-                + optic.object_surface.geometry.cs.z
+            x_local = be.atleast_1d(be.array(x_obj))
+            y_local = be.atleast_1d(be.array(y_obj))
+            z_local = optic.object_surface.geometry.sag(x_local, y_local)
+
+            # Globalize the local coordinates
+            eff_translation, eff_rot_mat = (
+                optic.object_surface.geometry.cs.get_effective_transform()
             )
+
+            points_local = be.stack([x_local, y_local, z_local], axis=0)
+            if len(be.shape(points_local)) == 1:
+                points_local = be.unsqueeze_last(points_local)
+
+            points_global = be.matmul(eff_rot_mat, points_local) + be.reshape(
+                eff_translation, (3, 1)
+            )
+
+            x0 = be.ravel(points_global[0, :])
+            y0 = be.ravel(points_global[1, :])
+            z0 = be.ravel(points_global[2, :])
+
             if be.size(x0) == 1:
-                x0 = be.full_like(Px, x0)
+                x0 = be.full_like(be.atleast_1d(Px), x0)
             if be.size(y0) == 1:
-                y0 = be.full_like(Px, y0)
+                y0 = be.full_like(be.atleast_1d(Px), y0)
             if be.size(z0) == 1:
-                z0 = be.full_like(Px, z0)
+                z0 = be.full_like(be.atleast_1d(Px), z0)
         return x0, y0, z0
 
     def get_paraxial_object_position(self, optic, Hy, y1, EPL):
