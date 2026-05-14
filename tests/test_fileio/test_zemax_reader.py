@@ -147,6 +147,29 @@ class TestZemaxDataParser:
         assert fields["x"] == [0.0]
         assert fields["y"] == [0.0]
 
+    def test_read_config_data_empty_tokens(self):
+        # FTYP positions present but empty (some malformed files do this) —
+        # _safe_int should treat empty as missing and apply defaults.
+        self.parser._read_config_data(
+            ["FTYP", "", "", "", "", "", "", "", ""]
+        )
+        fields = self.parser.data_model.fields
+        assert fields["type"] == "angle"
+        assert fields["num_fields"] == 1
+        assert fields["object_space_telecentric"] is False
+        assert fields["afocal_image_space"] is False
+
+    def test_read_config_data_non_integer_tokens(self):
+        # FTYP positions present but non-integer text — _safe_int should
+        # swallow the ValueError and apply defaults.
+        self.parser._read_config_data(
+            ["FTYP", "x", "x", "x", "x", "x", "x", "x", "x"]
+        )
+        fields = self.parser.data_model.fields
+        assert fields["type"] == "angle"
+        assert fields["num_fields"] == 1
+        assert fields["afocal_image_space"] is False
+
 
 # ---------------------------------------------------------------------------
 # End-to-end reader tests
