@@ -154,7 +154,12 @@ class ArrayBackend(TracerBackend):
                     }
                 )
 
-        def _log_hits(rays: NSQRayBundle, mask: np.ndarray, comp_name: str) -> None:
+        def _log_hits(
+            rays: NSQRayBundle,
+            mask: np.ndarray,
+            comp_name: str,
+            t_offset: np.ndarray | None = None,
+        ) -> None:
             if event_log is None or rays.ray_id is None:
                 return
             mask_np = to_numpy(mask).astype(bool)
@@ -168,6 +173,12 @@ class ArrayBackend(TracerBackend):
             L_np = to_numpy(rays.L)[idx]
             M_np = to_numpy(rays.M)[idx]
             N_np = to_numpy(rays.N)[idx]
+            if t_offset is not None:
+                # Advance to the actual hit surface position
+                t_np = to_numpy(t_offset)[idx]
+                x_np = x_np + t_np * L_np
+                y_np = y_np + t_np * M_np
+                z_np = z_np + t_np * N_np
             flux_np = to_numpy(rays.flux)[idx]
             wl_np = to_numpy(rays.wavelength)[idx]
             bounce_np = to_numpy(rays.bounce)[idx]
@@ -257,12 +268,12 @@ class ArrayBackend(TracerBackend):
                     det_first = any_det_hit & (~comp_closer | ~any_comp_hit)
                     comp_first = any_comp_hit & (~det_first)
 
-                    # Record detector hits
+                    # Record detector hits (log at actual detector position)
                     for di, det in enumerate(scene.detectors):
                         mask_di = det_first & (det_idx == di)
                         if mask_di.any():
                             det_name = getattr(det, "name", f"detector_{di}")
-                            _log_hits(rays, mask_di, det_name)
+                            _log_hits(rays, mask_di, det_name, t_offset=det_t_min)
                             det.record(rays, det_t_min, mask_di)
 
                     # Advance and kill detector-hit rays
@@ -276,12 +287,12 @@ class ArrayBackend(TracerBackend):
                         rays.alive = rays.alive & ~det_first
                         rays.bounce = xp.where(det_first, rays.bounce + 1, rays.bounce)
 
-                    # Apply component interactions
+                    # Apply component interactions (log at actual surface position)
                     for ci, comp in enumerate(scene.surfaces):
                         mask_ci = comp_first & (comp_idx == ci)
                         if mask_ci.any():
                             comp_name = getattr(comp, "name", f"comp_{ci}")
-                            _log_hits(rays, mask_ci, comp_name)
+                            _log_hits(rays, mask_ci, comp_name, t_offset=t_min)
                             comp.interact(rays, t_min, hit_normals, mask_ci, self.rng)
 
                     # Kill rays with no hit (escaped)

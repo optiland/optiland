@@ -124,20 +124,30 @@ class NSQRays2D:
             return
 
         ray_ids = np.unique(events["ray_id"])
+        _order = {"birth": 0, "hit": 1, "death": 2}
         for rid in ray_ids:
             mask = events["ray_id"] == rid
             ev = events[mask]
-            # Sort events by bounce order: birth first, then hits, then death
-            order = {"birth": 0, "hit": 1, "death": 2}
-            sort_idx = np.argsort([order.get(e, 1) for e in ev["event_type"]])
+            sort_idx = np.argsort([_order.get(str(e), 1) for e in ev["event_type"]])
             ev = ev[sort_idx]
             if len(ev) < 2:
                 continue
             px = ev["x"]
             py = ev["y"]
             pz = ev["z"]
-            horiz, vert = project_rays(px, py, pz, projection)
-            ax.plot(horiz, vert, color=color, linewidth=1, alpha=0.5)
+
+            if color_by in ("bounce", "segment"):
+                for b_idx in range(1, len(px)):
+                    seg_x = px[b_idx - 1 : b_idx + 1]
+                    seg_y = py[b_idx - 1 : b_idx + 1]
+                    seg_z = pz[b_idx - 1 : b_idx + 1]
+                    horiz, vert = project_rays(seg_x, seg_y, seg_z, projection)
+                    bounce_val = int(ev["bounce"][b_idx - 1])
+                    c = ray_cycle[bounce_val % len(ray_cycle)]
+                    ax.plot(horiz, vert, color=c, linewidth=1, alpha=0.5)
+            else:
+                horiz, vert = project_rays(px, py, pz, projection)
+                ax.plot(horiz, vert, color=color, linewidth=1, alpha=0.5)
 
 
 class NSQRays3D(NSQRays2D):
@@ -240,11 +250,11 @@ class NSQRays3D(NSQRays2D):
             return
 
         ray_ids = np.unique(events["ray_id"])
-        order_map = {"birth": 0, "hit": 1, "death": 2}
+        _order = {"birth": 0, "hit": 1, "death": 2}
         for rid in ray_ids:
             mask = events["ray_id"] == rid
             ev = events[mask]
-            sort_idx = np.argsort([order_map.get(e, 1) for e in ev["event_type"]])
+            sort_idx = np.argsort([_order.get(str(e), 1) for e in ev["event_type"]])
             ev = ev[sort_idx]
             if len(ev) < 2:
                 continue
@@ -261,6 +271,12 @@ class NSQRays3D(NSQRays2D):
                 line_actor = vtk.vtkActor()
                 line_actor.SetMapper(line_mapper)
                 line_actor.GetProperty().SetLineWidth(1)
-                line_actor.GetProperty().SetColor(color)
+
+                if color_by in ("bounce", "segment"):
+                    bounce_val = int(ev["bounce"][b - 1])
+                    c = ray_cycle[bounce_val % len(ray_cycle)]
+                else:
+                    c = color
+                line_actor.GetProperty().SetColor(c)
                 line_actor.GetProperty().SetOpacity(0.5)
                 renderer.AddActor(line_actor)
