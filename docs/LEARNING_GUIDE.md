@@ -126,3 +126,13 @@ Welcome to the Optiland Learning Guide! This guide walks you through key concept
         - Utilizes a super-resolution GAN (SRGAN) to upscale low-resolution wavefront data into high-resolution data.
     - [Tutorial 12e - Optimization of Aspheric Lenses via Reinforcement Learning](https://github.com/HarrisonKramer/LensAI/blob/main/notebooks/Example_4/RL_aspheric_singlet.ipynb)
         - Reinforcement learning is applied to the optimization of aspheric singlet lenses to generate new lens designs.
+13. **Nonsequential Ray Tracing**
+    - [Tutorial 13a - Introduction to Nonsequential Ray Tracing](https://github.com/optiland/optiland/blob/master/docs/examples/Tutorial_13a_Nonsequential_Intro.ipynb)
+        - Setting up an NSQScene
+        - Adding components, sources, and detectors
+        - Monte Carlo tracing and result analysis
+    - [Tutorial 13b - Stray Light & Ghost Analysis](https://github.com/optiland/optiland/blob/master/docs/examples/Tutorial_13b_Stray_Light.ipynb)
+        - Converting sequential optics to nonsequential scenes
+        - Identifying ghost reflections and stray light paths
+    - [Tutorial 13c - Scattering and BSDF Models](https://github.com/optiland/optiland/blob/master/docs/examples/Tutorial_13c_Scattering.ipynb)
+        - Modeling real-world surface scattering

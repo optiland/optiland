@@ -109,6 +109,7 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
    gallery/real_world_projects
    gallery/external_tools
    gallery/extended_sources
+   gallery/nonsequential
    gallery/miscellaneous
 
 
@@ -134,6 +135,7 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
    developers_guide/code_structure
    developers_guide/configurable_backend
    developers_guide/ray_overview
+   developers_guide/nonsequential_raytracing
    developers_guide/surface_overview
    developers_guide/interaction_models
    developers_guide/propagation_models
@@ -183,6 +185,7 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
    api/api_visualization
    api/api_wavefront
    api/api_zernike
+   api/api_nonsequential
    api/api_multiconfig
 
 

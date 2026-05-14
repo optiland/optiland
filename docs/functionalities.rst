@@ -12,6 +12,8 @@ Design Tools
   Optiland supports both NumPy and PyTorch backends for all core computations. This flexibility enables easy integration with scientific computing pipelines and deep learning frameworks.
 - **Sequential Ray Tracing**:
   Trace rays through traditional or advanced systems, including asymmetric and freeform designs.
+- **Nonsequential Ray Tracing**:
+  Simulate complex light-matter interactions in non-sequential systems, including scattering, multi-source illumination, and stray light analysis.
 - **Lens System Modeling**:
   Built-in support for spherical, conic, aspheric, and fully freeform surfaces.
 - **Aperture, Field, and Wavelength Configuration**:
@@ -62,6 +64,24 @@ Extended Source Modeling
   Validate source definitions with multi-panel diagnostic plots showing spatial distributions, angular distributions, cross-sections, and ray propagation paths.
 - **Irradiance Analysis Compatibility**:
   Compute incoherent irradiance distributions at detector surfaces from extended source illumination.
+
+Nonsequential Ray Tracing
+-------------------------
+
+- **Monte Carlo Simulation**:
+  Utilize unbiased Monte Carlo sampling to simulate complex optical systems where light can follow any path.
+- **Complex Scene Modeling**:
+  Define scenes with multiple sources, lenses, mirrors, and detectors placed arbitrarily in 3D space.
+- **Surface Interaction Models**:
+  Support for refraction, reflection (including TIR), absorption, and BSDF-based scattering.
+- **Multiple Source Types**:
+  Model light from point sources, collimated beams, and extended spatial/angular sources.
+- **Advanced Detectors**:
+  Analyze system performance with irradiance maps, spectral detectors, and far-field (angular) distributions.
+- **Stray Light and Ghost Analysis**:
+  Identify and quantify unwanted light paths and ghost reflections.
+- **Hardware Acceleration**:
+  Take advantage of GPU acceleration (CuPy) for large-scale Monte Carlo traces.
 
 Material Database
 -----------------
