@@ -1,12 +1,12 @@
-"""
-Provides the main sidebar navigation widget for the application.
+"""Provides the main sidebar navigation widget for the application.
 
-This module defines `SidebarWidget`, which is a QWidget that serves as the
-primary navigation control for the Optiland GUI. It features a series of
-tool buttons for selecting different application panels (e.g., Design, Analysis)
-and can dynamically collapse to an icon-only view when resized.
+This module defines :class:`SidebarWidget`, which is a
+:class:`~PySide6.QtWidgets.QWidget` that serves as the primary navigation
+control for the Optiland GUI.  It features a series of tool buttons for
+selecting different application panels (e.g. Design, Analysis) and
+automatically collapses to an icon-only view when resized below a threshold.
 
-@author: Manuel Fragata Mendes, 2025
+Author: Manuel Fragata Mendes, 2025
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ from PySide6.QtGui import QIcon, QResizeEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
     QLabel,
-    QMessageBox,
     QSizePolicy,
     QToolButton,
     QVBoxLayout,
@@ -29,43 +28,35 @@ SIDEBAR_MAX_WIDTH = 150
 
 
 class SidebarWidget(QWidget):
-    """
-    A collapsible sidebar widget for main navigation.
+    """A collapsible sidebar widget for main panel navigation.
 
-    This widget displays a vertical list of tool buttons that emit a signal
-    when a menu item is selected. It automatically collapses to an icon-only
-    mode when its width is below a certain threshold and provides links to
-    external resources like GitHub and the documentation.
+    Displays a vertical list of tool buttons that emit a signal when a menu
+    item is selected.  Automatically collapses to an icon-only mode when its
+    width falls below :data:`COLLAPSE_THRESHOLD_WIDTH`, and links to external
+    resources via the title bar's buttons.
 
     Signals:
         menuSelected (str): Emitted when a navigation button is clicked,
-                            sending the name of the selected menu.
+            carrying the internal name of the selected menu.
+        showWipMessage (str): Emitted when a work-in-progress button is
+            clicked, carrying a description to show in a toast notification.
 
-    Attributes:
-        title_label (QLabel): The label at the top of the sidebar.
-        settings_button (QToolButton): The button for accessing settings.
-        github_button (QToolButton): The button for opening the GitHub page.
-        help_button (QToolButton): The button for opening the documentation.
+    Args:
+        parent: Optional parent widget.
     """
 
     menuSelected = Signal(str)
+    showWipMessage = Signal(str)
 
-    def __init__(self, parent=None):
-        """
-        Initializes the SidebarWidget.
-
-        Args:
-            parent (QWidget, optional): The parent widget. Defaults to None.
-        """
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        # Buttons that are not yet implemented
         self._wip_buttons = [
             "dash",
-            "analysis",
-            "optimization",
             "materials",
             "tolerancing",
         ]
-        self._last_checked_button = None
+        self._last_checked_button: QToolButton | None = None
         self.setObjectName("SidebarWidget")
         self.setMinimumWidth(SIDEBAR_MIN_WIDTH)
         self.setMaximumWidth(SIDEBAR_MAX_WIDTH)
@@ -87,7 +78,7 @@ class SidebarWidget(QWidget):
         )
         self._main_layout.addWidget(self.title_label)
 
-        self._buttons_list = []
+        self._buttons_list: list[dict] = []
         self.current_theme = "dark"
 
         button_definitions = [
@@ -125,20 +116,19 @@ class SidebarWidget(QWidget):
         self._main_layout.addStretch(1)
         self.update_icons()
 
-        design_button_item = next(
+        # Pre-select the "design" button as the default navigation target
+        design_item = next(
             (item for item in self._buttons_list if item["name"] == "design"), None
         )
-        if design_button_item:
-            design_button_item["widget"].setChecked(True)
-            self._last_checked_button = design_button_item["widget"]
+        if design_item:
+            design_item["widget"].setChecked(True)
+            self._last_checked_button = design_item["widget"]
 
-    def _handle_button_click(self):
-        """
-        Handles clicks on the navigation buttons.
+    def _handle_button_click(self) -> None:
+        """Handle clicks on navigation buttons.
 
-        It checks if a feature is a work-in-progress and shows a message if so.
-        Otherwise, it emits the `menuSelected` signal with the name of the
-        clicked button.
+        Shows a WIP toast for unimplemented features; emits
+        :attr:`menuSelected` for implemented ones.
         """
         checked_button = self._button_group.checkedButton()
         if not checked_button:
@@ -150,11 +140,9 @@ class SidebarWidget(QWidget):
         )
 
         if button_name in self._wip_buttons:
-            QMessageBox.information(
-                self,
-                "Work in Progress",
-                "This feature is currently under development.\nStay tuned for "
-                "updates to the GUI!",
+            self.showWipMessage.emit(
+                "This feature is currently under development. "
+                "Stay tuned for updates to the GUI!"
             )
             checked_button.setChecked(False)
             if self._last_checked_button:
@@ -165,15 +153,14 @@ class SidebarWidget(QWidget):
             self.menuSelected.emit(button_name)
             self._last_checked_button = checked_button
 
-    def set_collapsed(self, collapsed: bool):
-        """
-        Sets the collapsed state of the sidebar.
+    def set_collapsed(self, collapsed: bool) -> None:
+        """Set the collapsed state of the sidebar.
 
-        In a collapsed state, buttons show only icons. In an expanded state,
-        they show icons and text.
+        In the collapsed state buttons show only icons; in the expanded state
+        they show icons and text below them.
 
         Args:
-            collapsed (bool): True to collapse the sidebar, False to expand it.
+            collapsed: ``True`` to collapse to icon-only mode.
         """
         if self._is_collapsed == collapsed:
             return
@@ -195,13 +182,8 @@ class SidebarWidget(QWidget):
                 item["widget"].setToolTip("")
         self.updateGeometry()
 
-    def resizeEvent(self, event: QResizeEvent):
-        """
-        Handles the resize event to automatically collapse or expand the sidebar.
-
-        Args:
-            event (QResizeEvent): The resize event.
-        """
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        """Automatically collapse or expand based on available width."""
         super().resizeEvent(event)
         current_width = event.size().width()
 
@@ -210,22 +192,19 @@ class SidebarWidget(QWidget):
         elif current_width > COLLAPSE_THRESHOLD_WIDTH and self._is_collapsed:
             self.set_collapsed(False)
 
-    def force_set_collapse_state(self, collapse: bool):
-        """
-        Public method to forcefully set the collapse state, bypassing width checks.
+    def force_set_collapse_state(self, collapse: bool) -> None:
+        """Force a specific collapse state, bypassing the width check.
 
         Args:
-            collapse (bool): The desired collapse state.
+            collapse: The desired collapse state.
         """
         self.set_collapsed(collapse)
 
-    def update_icons(self, theme="dark"):
-        """
-        Updates all button icons to match the specified theme.
+    def update_icons(self, theme: str = "dark") -> None:
+        """Update all button icons to match *theme*.
 
         Args:
-            theme (str, optional): The name of the theme ('dark' or 'light').
-                                   Defaults to "dark".
+            theme: The theme name (``"dark"`` or ``"light"``).
         """
         self.current_theme = theme
         for item in self._buttons_list:

@@ -134,9 +134,9 @@ class BasePSF(Wavefront):
             current_fig = fig_to_plot_on
             current_fig.clear()
             ax = (
-                current_fig.add_subplot(111, figsize=figsize)
+                current_fig.add_subplot(111)
                 if projection == "2d"
-                else current_fig.add_subplot(111, figsize=figsize, projection="3d")
+                else current_fig.add_subplot(111, projection="3d")
             )
         else:
             current_fig, ax = (

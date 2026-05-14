@@ -10,54 +10,81 @@ Author: Manuel Fragata Mendes, 2025
 from __future__ import annotations
 
 import inspect
+import logging
 
 import matplotlib
 
 from optiland.visualization.themes import get_active_theme, set_theme
 
+logger = logging.getLogger(__name__)
 
-def apply_gui_matplotlib_styles(theme="light"):
-    """Applies Matplotlib rcParams for GUI embedding with theme awareness.
 
-    This function configures Matplotlib's runtime configuration parameters (`rcParams`)
-    to ensure that plots embedded in the GUI have a consistent and readable style.
-    It adjusts colors and sizes for either a "light" or "dark" theme.
+def apply_gui_matplotlib_styles(theme: str = "light") -> None:
+    """Apply Matplotlib rcParams for GUI embedding with theme awareness.
+
+    Configures Matplotlib's runtime configuration parameters (``rcParams``)
+    so that plots embedded in the GUI have a consistent and readable style.
+    Adjusts colours and sizes for either a *light* or *dark* theme.
 
     Args:
-        theme (str): The theme to apply, either "light" or "dark". Defaults to "light".
+        theme: The theme to apply, either ``"light"`` or ``"dark"``.
     """
     set_theme(theme)
-    theme = get_active_theme()
+    active_theme = get_active_theme()
     valid_params = {
-        k: v for k, v in theme.parameters.items() if k in matplotlib.rcParams
+        k: v for k, v in active_theme.parameters.items() if k in matplotlib.rcParams
     }
     matplotlib.rcParams.update(valid_params)
 
 
-def get_analysis_parameters(analysis_class):
-    """Inspects an analysis class's __init__ to find its configurable parameters.
+_SKIP_PARAMS = frozenset({"self", "cls", "optic", "optical_system"})
+_VARIADIC_KINDS = frozenset(
+    {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
+)
 
-    This function uses Python's `inspect` module to determine the parameters of
-    the constructor of a given analysis class. It filters out standard parameters
-    like 'self' and 'optic' to return a dictionary of parameters that can be
-    configured by the user in the GUI.
+
+def _sig_has_only_variadic(sig: inspect.Signature) -> bool:
+    """Return ``True`` when every non-self parameter is ``*args`` or ``**kwargs``."""
+    return all(
+        p.kind in _VARIADIC_KINDS
+        for name, p in sig.parameters.items()
+        if name not in _SKIP_PARAMS
+    )
+
+
+def get_analysis_parameters(analysis_class: type) -> dict:
+    """Inspect an analysis class's constructor to find its configurable parameters.
+
+    Uses Python's :mod:`inspect` module to determine the parameters of the
+    constructor of a given analysis class.  Standard parameters like ``self``
+    and ``optic`` are filtered out.
+
+    For *factory dispatch* classes (e.g. ``FFTPSF``, ``HuygensPSF``) whose
+    ``__init__`` contains only ``*args`` / ``**kwargs``, the function falls
+    back to inspecting ``__new__``, where the real parameter list lives.
 
     Args:
         analysis_class: The analysis class to inspect.
 
     Returns:
-        dict: A dictionary where keys are parameter names and values are dicts
-              containing the parameter's 'default' value and 'annotation'.
-              Returns an empty dictionary if inspection fails.
+        A dict whose keys are parameter names and values are dicts with
+        ``"default"`` and ``"annotation"`` entries.  Returns ``{}`` if
+        inspection fails.
     """
     if not analysis_class:
         return {}
 
-    params = {}
+    params: dict = {}
     try:
         sig = inspect.signature(analysis_class.__init__)
+        if _sig_has_only_variadic(sig) and hasattr(analysis_class, "__new__"):
+            # Factory dispatch class — real params live in __new__
+            sig = inspect.signature(analysis_class.__new__)
+
         for param_name, param_obj in sig.parameters.items():
-            if param_name in ["self", "optic", "optical_system"]:
+            if param_name in _SKIP_PARAMS:
+                continue
+            if param_obj.kind in _VARIADIC_KINDS:
                 continue
             params[param_name] = {
                 "default": (
@@ -71,15 +98,22 @@ def get_analysis_parameters(analysis_class):
                     else None
                 ),
             }
-    except (ValueError, TypeError) as e:
-        print(
-            f"Warning: Could not inspect parameters for {analysis_class.__name__}: {e}"
+    except (ValueError, TypeError) as exc:
+        logger.warning(
+            "Could not inspect parameters for %s: %s",
+            getattr(analysis_class, "__name__", repr(analysis_class)),
+            exc,
         )
     return params
 
 
-def handle_matplotlib_scroll_zoom(event):
-    """Handles mouse wheel scrolling for zooming on a Matplotlib axes."""
+def handle_matplotlib_scroll_zoom(event: object) -> None:
+    """Handle mouse wheel scrolling for zooming on a Matplotlib axes.
+
+    Args:
+        event: A Matplotlib scroll event.  Must have ``inaxes``, ``step``,
+            ``xdata``, and ``ydata`` attributes.
+    """
     if not event.inaxes:
         return
 

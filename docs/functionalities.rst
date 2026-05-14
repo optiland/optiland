@@ -89,7 +89,7 @@ Visualization
 - **Customizable Visualization Themes**:
   Optiland includes a flexible theme system to control the appearance of 2D plots. You can easily switch between predefined themes (e.g., ``light``, ``dark``) or create your own. For a hands-on example, see the :doc:`gallery/miscellaneous/themes` notebook.
 - **Optiland GUI**:
-  A fully functional graphical user interface (GUI) for interactive design, analysis, and visualization of optical systems. See the :ref:`gui_quickstart` for more details on using the GUI.
+  A fully functional graphical user interface (GUI) for interactive design, analysis, and visualization of optical systems. Features include a VS Code-style **Command Palette** (Ctrl+K) for quick access to actions and tools. See the :ref:`gui_quickstart` for more details on using the GUI.
 
 Interoperability and Scripting
 ------------------------------

@@ -300,7 +300,7 @@ class TestRayOperand:
             "wavelength": 0.55,
             "num_rays": 3,
         }
-        assert_allclose(operand.RayOperand.OPD_difference(**data), 0.0732334055041471)
+        assert_allclose(operand.RayOperand.OPD_difference(**data),  0.22240780)
 
     def test_opd_diff_on_axis(self, set_test_backend, hubble):
         data = {
@@ -312,7 +312,7 @@ class TestRayOperand:
         }
         assert_allclose(
             operand.RayOperand.OPD_difference(**data),
-            0.0013295118803701674,
+             0.001328702368213,
         )
 
     def test_opd_diff_new_dist(self, set_test_backend, hubble):

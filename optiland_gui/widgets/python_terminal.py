@@ -1,18 +1,18 @@
-"""
-Provides an interactive Python terminal and script editor widget.
+"""Provides an interactive Python terminal and script editor widget.
 
-This module contains the implementation of a sophisticated Python scripting widget,
-`PythonTerminalWidget`, which integrates a multi-tab script editor, a list of
-executable code snippets (Quick-Actions), and a rich Jupyter console. It is
-designed to be embedded within the main application to provide scripting
-capabilities.
+This module contains the implementation of :class:`PythonTerminalWidget`, which
+integrates a multi-tab script editor, a list of executable code snippets
+(Quick-Actions), and a rich Jupyter console.  It is designed to be embedded
+within the main application to provide scripting capabilities.
 
 The module also includes helper classes:
-- `PythonHighlighter`: For syntax highlighting of Python code in the editor.
-- `ClickableLabel`: A custom QLabel that supports left and right-click events,
-  used for the collapsible snippets panel header.
 
-@author: Manuel Fragata Mendes, 2025
+- :class:`PythonHighlighter`: Syntax highlighting for Python code in the editor.
+- :class:`ClickableLabel`: A custom :class:`~PySide6.QtWidgets.QLabel` that
+  supports left- and right-click events, used for the collapsible snippets
+  panel header.
+
+Author: Manuel Fragata Mendes, 2025
 """
 
 from __future__ import annotations
@@ -49,36 +49,29 @@ from qtconsole.inprocess import QtInProcessKernelManager
 from qtconsole.rich_jupyter_widget import RichJupyterWidget
 
 
-# --- Theme-Aware Python Syntax Highlighter ---
 class PythonHighlighter(QSyntaxHighlighter):
+    """A theme-aware syntax highlighter for Python code.
+
+    Applies syntax highlighting to a :class:`~PySide6.QtGui.QTextDocument`
+    based on a provided theme palette.  Recognises Python keywords, strings,
+    comments, and numbers.
+
+    Args:
+        parent: The :class:`~PySide6.QtGui.QTextDocument` to highlight.
+        theme_colors: A dict mapping token type names to
+            :class:`~PySide6.QtGui.QColor` objects.
     """
-    A theme-aware syntax highlighter for Python code.
 
-    This class applies syntax highlighting to a QTextDocument based on a provided
-    theme. It recognizes Python keywords, strings, comments, and numbers.
-
-    Attributes:
-        theme_colors (dict): A dictionary mapping token types to QColor objects.
-        highlighting_rules (list): A list of tuples, each containing a
-                                   QRegularExpression and a QTextCharFormat.
-    """
-
-    def __init__(self, parent, theme_colors):
-        """
-        Initializes the PythonHighlighter.
-
-        Args:
-            parent (QTextDocument): The parent document to apply highlighting to.
-            theme_colors (dict): A dictionary of colors for different token types.
-        """
+    def __init__(self, parent, theme_colors: dict) -> None:  # noqa: ANN001
         super().__init__(parent)
         self.theme_colors = theme_colors
-        self.highlighting_rules = []
+        self.highlighting_rules: list = []
         self._build_rules()
 
-    def _build_rules(self):
-        """Builds the list of highlighting rules based on the current theme."""
+    def _build_rules(self) -> None:
+        """Build the list of highlighting rules from the current theme colours."""
         self.highlighting_rules.clear()
+
         keyword_format = QTextCharFormat()
         keyword_format.setForeground(self.theme_colors["keyword"])
         keyword_format.setFontWeight(QFont.Bold)
@@ -120,48 +113,49 @@ class PythonHighlighter(QSyntaxHighlighter):
         ]
         for word in keywords:
             self.highlighting_rules.append((QRegularExpression(word), keyword_format))
+
         string_format = QTextCharFormat()
         string_format.setForeground(self.theme_colors["string"])
         self.highlighting_rules.append((QRegularExpression('".*"'), string_format))
         self.highlighting_rules.append((QRegularExpression("'.*'"), string_format))
+
         comment_format = QTextCharFormat()
         comment_format.setForeground(self.theme_colors["comment"])
         comment_format.setFontItalic(True)
         self.highlighting_rules.append((QRegularExpression("#[^\n]*"), comment_format))
+
         number_format = QTextCharFormat()
         number_format.setForeground(self.theme_colors["number"])
         self.highlighting_rules.append(
             (QRegularExpression("\\b[0-9]+\\.?[0-9]*\\b"), number_format)
         )
 
-    def highlightBlock(self, text):
-        """
-        Applies syntax highlighting to a single block of text.
+    def highlightBlock(self, text: str) -> None:
+        """Apply syntax highlighting to a single block of text.
 
-        This method is called by Qt whenever a block of text needs to be redrawn.
+        Called by Qt whenever a block of text needs to be redrawn.
 
         Args:
-            text (str): The text of the block to highlight.
+            text: The text of the block to highlight.
         """
-        for pattern, format in self.highlighting_rules:
+        for pattern, fmt in self.highlighting_rules:
             match_iterator = pattern.globalMatch(text)
             while match_iterator.hasNext():
                 match = match_iterator.next()
-                self.setFormat(match.capturedStart(), match.capturedLength(), format)
+                self.setFormat(match.capturedStart(), match.capturedLength(), fmt)
 
-    def update_theme(self, theme_colors):
-        """
-        Updates the theme colors and rebuilds the highlighting rules.
+    def update_theme(self, theme_colors: dict) -> None:
+        """Update the theme palette and rebuild the highlighting rules.
 
         Args:
-            theme_colors (dict): The new dictionary of theme colors.
+            theme_colors: The new dict of theme colours.
         """
         self.theme_colors = theme_colors
         self._build_rules()
         self.rehighlight()
 
 
-# --- Code Snippets ---
+# Code snippet constants for the Quick-Actions panel
 ADD_SURFACE_SNIPPET = (
     "optic = connector.get_optic()\n"
     "optic.surfaces.add(\n"
@@ -203,7 +197,6 @@ REFRESH_GUI_SNIPPET = (
     "iface.refresh_all()"
 )
 
-# The final dictionary is now much cleaner.
 CODE_SNIPPETS = {
     "Add Standard Surface": ADD_SURFACE_SNIPPET,
     "Set System Aperture": SET_APERTURE_SNIPPET,
@@ -215,24 +208,19 @@ CODE_SNIPPETS = {
 
 
 class ClickableLabel(QLabel):
-    """
-    A QLabel that emits signals on left and right mouse clicks.
+    """A :class:`~PySide6.QtWidgets.QLabel` that emits signals on mouse clicks.
 
     Signals:
         leftClicked: Emitted on a left mouse button press.
-        rightClicked: Emitted on a right mouse button press, passing the event position.
+        rightClicked: Emitted on a right mouse button press, passing the
+            event position.
     """
 
     leftClicked = Signal()
     rightClicked = Signal(object)
 
-    def mousePressEvent(self, event):
-        """
-        Handles mouse press events to emit click signals.
-
-        Args:
-            event (QMouseEvent): The mouse press event.
-        """
+    def mousePressEvent(self, event) -> None:  # noqa: ANN001
+        """Emit the appropriate click signal based on the pressed button."""
         if event.button() == Qt.LeftButton:
             self.leftClicked.emit()
         elif event.button() == Qt.RightButton:
@@ -241,10 +229,10 @@ class ClickableLabel(QLabel):
 
 
 class PythonTerminalWidget(QWidget):
-    """
-    An integrated Python scripting widget with an editor and console.
+    """An integrated Python scripting widget with an editor and console.
 
-    This widget provides a comprehensive scripting environment, including:
+    Provides a comprehensive scripting environment, including:
+
     - A tabbed text editor for writing and managing multiple Python scripts.
     - A "Quick-Actions" panel with predefined and user-savable code snippets.
     - An interactive Jupyter console for executing code and inspecting results.
@@ -252,33 +240,23 @@ class PythonTerminalWidget(QWidget):
     - Theming support for both light and dark modes.
 
     Signals:
-        commandExecuted: Emitted after any command is executed in the
-        Jupyter kernel.
+        commandExecuted: Emitted after any command is executed in the kernel.
 
-    Attributes:
-        kernel_manager (QtInProcessKernelManager): Manages the in-process
-        Jupyter kernel.
-        kernel_client (KernelClient): The client for communicating with the kernel.
-        script_tabs (QTabWidget): The tabbed widget for holding script editors.
-        snippets_list (QListWidget): The list displaying available Quick-Actions.
-        jupyter_widget (RichJupyterWidget): The console widget.
+    Args:
+        parent: Optional parent widget.
+        custom_variables: Variables to inject into the kernel's namespace.
+        theme: Initial theme, either ``"dark"`` or ``"light"``.
     """
 
     commandExecuted = Signal()
     ICON_SIZE = QSize(22, 22)
 
-    def __init__(self, parent=None, custom_variables=None, theme="dark"):
-        """
-        Initializes the PythonTerminalWidget.
-
-        Args:
-            parent (QWidget, optional): The parent widget. Defaults to None.
-            custom_variables (dict, optional): A dictionary of variables to inject
-                                               into the kernel's namespace.
-                                               Defaults to None.
-            theme (str, optional): The initial theme ('dark' or 'light').
-                                   Defaults to "dark".
-        """
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        custom_variables: dict | None = None,
+        theme: str = "dark",
+    ) -> None:
         super().__init__(parent)
         self.setObjectName("PythonTerminalWidget")
         self.current_theme = theme
@@ -301,8 +279,8 @@ class PythonTerminalWidget(QWidget):
         self._setup_ui()
         self.set_theme(self.current_theme)
 
-    def _define_themes(self):
-        """Defines the color palettes for light and dark themes."""
+    def _define_themes(self) -> None:
+        """Define the colour palettes for the light and dark themes."""
         self.themes = {
             "dark": {
                 "keyword": QColor("#CF8A2E"),
@@ -330,8 +308,8 @@ class PythonTerminalWidget(QWidget):
             },
         }
 
-    def _setup_ui(self):
-        """Sets up the main UI layout and dock widgets for the terminal."""
+    def _setup_ui(self) -> None:
+        """Set up the main UI layout and dock widgets for the terminal."""
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         self.dock_area = QMainWindow()
@@ -343,8 +321,8 @@ class PythonTerminalWidget(QWidget):
         self.editor_dock = self._create_editor_dock()
         self.dock_area.addDockWidget(Qt.LeftDockWidgetArea, self.editor_dock)
 
-    def _create_editor_dock(self):
-        """Creates the dock widget containing the script editor and snippets panel."""
+    def _create_editor_dock(self) -> QDockWidget:
+        """Create the dock widget containing the script editor and snippets panel."""
         dock = QDockWidget("Script Editor", self)
         dock.setAllowedAreas(Qt.AllDockWidgetAreas)
         editor_widget = QWidget()
@@ -387,7 +365,6 @@ class PythonTerminalWidget(QWidget):
         self.snippets_panel.setFixedWidth(200)
         snippets_layout = QVBoxLayout(self.snippets_panel)
         snippets_layout.setContentsMargins(4, 0, 0, 0)
-
         snippets_layout.setAlignment(Qt.AlignTop)
 
         self.snippets_title_label = ClickableLabel("Quick-Actions")
@@ -406,12 +383,10 @@ class PythonTerminalWidget(QWidget):
         self.btn_run_script.clicked.connect(self._run_script_from_editor)
         self.btn_save_script.clicked.connect(lambda: self._save_script())
         self.btn_load_script.clicked.connect(self._load_script)
-        # FIX 3: Correctly connect the button to its function
         self.btn_save_quick_action.clicked.connect(self._save_as_quick_action)
         self.snippets_list.itemDoubleClicked.connect(self._insert_snippet_from_item)
         self.script_tabs.tabCloseRequested.connect(self._close_tab)
 
-        # Connect the custom signals from the clickable label
         self.snippets_title_label.leftClicked.connect(self._toggle_snippets_collapse)
         self.snippets_title_label.rightClicked.connect(self._show_icon_context_menu)
 
@@ -419,8 +394,8 @@ class PythonTerminalWidget(QWidget):
 
         return dock
 
-    def _create_console_dock(self):
-        """Creates the dock widget containing the Jupyter console."""
+    def _create_console_dock(self) -> QDockWidget:
+        """Create the dock widget containing the Jupyter console."""
         dock = QDockWidget("Console", self)
         dock.setAllowedAreas(Qt.AllDockWidgetAreas)
         self.jupyter_widget = RichJupyterWidget()
@@ -430,22 +405,21 @@ class PythonTerminalWidget(QWidget):
         dock.setWidget(self.jupyter_widget)
         return dock
 
-    def _get_current_editor(self):
-        """Returns the currently active QTextEdit widget in the script tabs."""
+    def _get_current_editor(self) -> QTextEdit | None:
+        """Return the currently active editor widget in the script tabs."""
         return self.script_tabs.currentWidget()
 
-    def _create_new_tab(self, content="", file_path=None):
-        """
-        Creates a new tab in the script editor.
+    def _create_new_tab(
+        self, content: str = "", file_path: str | None = None
+    ) -> QTextEdit:
+        """Create a new tab in the script editor.
 
         Args:
-            content (str, optional): The initial text content for the new editor.
-                                     Defaults to "".
-            file_path (str, optional): The file path associated with the content.
-                                       Defaults to None.
+            content: Initial text content for the new editor.
+            file_path: The file path associated with the content, if any.
 
         Returns:
-            QTextEdit: The newly created editor widget.
+            The newly created editor widget.
         """
         self.untitled_script_counter += 1
 
@@ -458,12 +432,10 @@ class PythonTerminalWidget(QWidget):
         highlighter = PythonHighlighter(editor.document(), theme_colors)
         editor.setProperty("highlighter", highlighter)
 
-        # Track modification state and file path for each tab
         editor.setProperty("is_modified", bool(content) and file_path is None)
         editor.setProperty("file_path", file_path)
         editor.textChanged.connect(lambda: self._on_text_changed(editor))
 
-        # Set tab title
         title = (
             os.path.basename(file_path)
             if file_path
@@ -476,14 +448,11 @@ class PythonTerminalWidget(QWidget):
         self.set_theme(self.current_theme)
         return editor
 
-    def _on_text_changed(self, editor):
-        """
-        Marks a tab as modified when its text changes.
-
-        Adds an asterisk (*) to the tab title to indicate unsaved changes.
+    def _on_text_changed(self, editor: QTextEdit) -> None:
+        """Mark *editor*'s tab as modified by appending ``*`` to its title.
 
         Args:
-            editor (QTextEdit): The editor whose text has changed.
+            editor: The editor whose text has changed.
         """
         if editor and not editor.property("is_modified"):
             editor.setProperty("is_modified", True)
@@ -492,14 +461,13 @@ class PythonTerminalWidget(QWidget):
             if not current_title.endswith("*"):
                 self.script_tabs.setTabText(current_index, current_title + "*")
 
-    def _close_tab(self, index):
-        """
-        Handles the request to close a script tab.
+    def _close_tab(self, index: int) -> None:
+        """Handle the request to close a script tab.
 
         Prompts the user to save changes if the script is modified.
 
         Args:
-            index (int): The index of the tab to close.
+            index: The index of the tab to close.
         """
         editor = self.script_tabs.widget(index)
         if not editor or not editor.property("is_modified"):
@@ -522,23 +490,22 @@ class PythonTerminalWidget(QWidget):
         elif reply == QMessageBox.Discard:
             self._perform_close_tab(index)
 
-    def _perform_close_tab(self, index):
-        """Actually closes the tab after handling save logic."""
+    def _perform_close_tab(self, index: int) -> None:
+        """Close a tab; if it is the last one, open a fresh empty tab first."""
         if self.script_tabs.count() > 1:
             self.script_tabs.removeTab(index)
         else:
-            # If it's the last tab, create a new empty one before closing
             self._create_new_tab()
             self.script_tabs.removeTab(index)
 
-    def _refresh_snippets_list(self):
-        """Reloads the list of Quick-Actions from the CODE_SNIPPETS dictionary."""
+    def _refresh_snippets_list(self) -> None:
+        """Reload the Quick-Actions list from the :data:`CODE_SNIPPETS` dict."""
         self.snippets_list.clear()
         for name in CODE_SNIPPETS:
             self.snippets_list.addItem(QListWidgetItem(name))
 
-    def _toggle_snippets_collapse(self):
-        """Toggles the Quick-Actions panel between its collapsed and expanded states."""
+    def _toggle_snippets_collapse(self) -> None:
+        """Toggle the Quick-Actions panel between collapsed and expanded states."""
         icon_name = f":/icons/{self.current_theme}/flash.svg"
         if self.snippets_list.isVisible():
             self.snippets_list.setVisible(False)
@@ -550,17 +517,20 @@ class PythonTerminalWidget(QWidget):
             self.snippets_panel.setFixedWidth(200)
             self.snippets_title_label.setText("Quick-Actions")
 
-    def _show_icon_context_menu(self, position):
-        """Shows the context menu if the snippets panel is collapsed."""
+    def _show_icon_context_menu(self, position: object) -> None:
+        """Show the context menu when the snippets panel is collapsed.
+
+        Args:
+            position: The local position from the right-click event.
+        """
         if not self.snippets_list.isVisible():
             self._show_snippets_context_menu(position)
 
-    def _show_snippets_context_menu(self, position):
-        """
-        Displays a context menu with all available Quick-Actions.
+    def _show_snippets_context_menu(self, position: object) -> None:
+        """Display a context menu with all available Quick-Actions.
 
         Args:
-            position (QPoint): The position at which to show the menu.
+            position: The local position at which to show the menu.
         """
         menu = QMenu(self)
         for name in CODE_SNIPPETS:
@@ -570,54 +540,50 @@ class PythonTerminalWidget(QWidget):
             )
             menu.addAction(action)
 
-        # Use the global position of the label to show the menu correctly
         global_pos = self.snippets_title_label.mapToGlobal(position)
         menu.exec(global_pos)
 
-    def _on_kernel_execute(self):
-        """Callback function that emits the commandExecuted signal."""
+    def _on_kernel_execute(self) -> None:
+        """Emit :attr:`commandExecuted` after a kernel execution step."""
         self.commandExecuted.emit()
 
-    def _run_script_from_editor(self):
-        """Executes the entire script from the currently active editor tab."""
+    def _run_script_from_editor(self) -> None:
+        """Execute the entire script from the currently active editor tab."""
         editor = self._get_current_editor()
         if editor and editor.toPlainText().strip():
             self.kernel_client.execute(editor.toPlainText(), silent=False)
             self.console_dock.raise_()
 
-    def _insert_snippet_from_item(self, item):
-        """
-        Inserts a snippet into the editor when its item is double-clicked.
+    def _insert_snippet_from_item(self, item: QListWidgetItem) -> None:
+        """Insert a snippet into the editor when its list item is double-clicked.
 
         Args:
-            item (QListWidgetItem): The list widget item that was double-clicked.
+            item: The list widget item that was activated.
         """
         self._insert_snippet(item.text())
 
-    def _insert_snippet(self, name):
-        """
-        Inserts the code of a named snippet into the current editor.
+    def _insert_snippet(self, name: str) -> None:
+        """Insert the code of a named snippet into the current editor.
 
         Args:
-            name (str): The name of the snippet to insert.
+            name: The name key from :data:`CODE_SNIPPETS`.
         """
         editor = self._get_current_editor() or self._create_new_tab()
         snippet_code = CODE_SNIPPETS.get(name, "")
         editor.setPlainText(snippet_code)
         editor.setFocus()
 
-    def _save_script(self, index_to_save=None):
-        """
-        Saves the script from the current or specified tab to a file.
+    def _save_script(self, index_to_save: int | None = None) -> bool:
+        """Save the script from the current or specified tab to a file.
 
-        If the script has no associated file path, a "Save As" dialog is shown.
+        If the script has no associated file path, a *Save As* dialog is shown.
 
         Args:
-            index_to_save (int, optional): The index of the tab to save.
-                                           If None, the current tab is used.
+            index_to_save: The index of the tab to save.  Defaults to the
+                currently visible tab.
 
         Returns:
-            bool: True if the save was successful, False otherwise.
+            ``True`` if the save was successful, ``False`` otherwise.
         """
         if index_to_save is None:
             index_to_save = self.script_tabs.currentIndex()
@@ -647,8 +613,8 @@ class PythonTerminalWidget(QWidget):
             QMessageBox.critical(self, "Error", f"Could not save file:\n{e}")
             return False
 
-    def _load_script(self):
-        """Opens a file dialog to load a Python script into a new or current tab."""
+    def _load_script(self) -> None:
+        """Open a file dialog to load a Python script into the editor."""
         filepath, _ = QFileDialog.getOpenFileName(
             self, "Load Script", "", "Python Files (*.py)"
         )
@@ -672,8 +638,8 @@ class PythonTerminalWidget(QWidget):
         else:
             self._create_new_tab(content=content, file_path=filepath)
 
-    def _save_as_quick_action(self):
-        """Saves the content of the current editor as a new Quick-Action."""
+    def _save_as_quick_action(self) -> None:
+        """Save the current editor's content as a new Quick-Action."""
         editor = self._get_current_editor()
         if not editor or not editor.toPlainText().strip():
             return
@@ -684,17 +650,14 @@ class PythonTerminalWidget(QWidget):
             CODE_SNIPPETS[text] = editor.toPlainText()
             self._refresh_snippets_list()
 
-    def set_theme(self, theme_name="dark"):
-        """
-        Applies a new theme to the entire widget.
+    def set_theme(self, theme_name: str = "dark") -> None:
+        """Apply *theme_name* to the entire widget.
 
-        This updates the syntax highlighter, Jupyter console style, and other
-        UI elements to match the selected theme.
+        Updates the syntax highlighter, Jupyter console style, and all UI
+        elements to match the selected theme.
 
         Args:
-            theme_name (str, optional): The name of the theme to apply ('dark' or
-                                        'light').
-                                        Defaults to "dark".
+            theme_name: The theme to apply (``"dark"`` or ``"light"``).
         """
         self.current_theme = theme_name
         theme_palette = self.themes.get(theme_name, self.themes["dark"])
@@ -763,7 +726,8 @@ class PythonTerminalWidget(QWidget):
             icon_name = f":/icons/{self.current_theme}/flash.svg"
             self.snippets_title_label.setPixmap(QIcon(icon_name).pixmap(24))
 
-    def shutdown_kernel(self):
+    def shutdown_kernel(self) -> None:
+        """Shut down the Jupyter kernel cleanly on application exit."""
         if self.kernel_client and self.kernel_client.channels_running:
             self.kernel_client.stop_channels()
         if self.kernel_manager and self.kernel_manager.is_alive():

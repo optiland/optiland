@@ -104,6 +104,58 @@ def test_paraxial_image_height_cooke_triplet(set_test_backend):
     assert_allclose(u_chief_angle, u_chief_pih)
 
 
+def test_real_image_height_get_ray_origins(set_test_backend):
+    """Test that real image height field type get_ray_origins method works."""
+    # load a Cooke triplet
+    optic = objectives.CookeTriplet()
+
+    # change the field type to real image height
+    optic.fields.set_type("real_image_height")
+
+    # set the field value
+    optic.fields.fields = []
+    optic.fields.add(y=0)
+    optic.fields.add(y=20.0)
+
+    # get the ray origins
+    origins = optic.fields.field_definition.get_ray_origins(
+        optic,
+        Hx=0,
+        Hy=1,
+        Px=0,
+        Py=0,
+        vx=0,
+        vy=0,
+    )
+
+    # basic structural checks
+    assert len(origins) == 3
+    assert_allclose(origins[0], [0.0])
+
+    # Change to finite object
+    optic = objectives.CookeTriplet()
+    optic.object_surface.geometry.cs.z = be.array([-555.0])
+    optic.fields.set_type("real_image_height")
+    optic.fields.fields = []
+    optic.fields.add(y=0)
+    optic.fields.add(y=20.0)
+
+    origins = optic.fields.field_definition.get_ray_origins(
+        optic,
+        Hx=0,
+        Hy=1,
+        Px=0,
+        Py=0,
+        vx=0,
+        vy=0,
+    )
+
+    # stronger checks
+    assert len(origins) == 3
+    assert_allclose(origins[0], [0.0])
+    assert_allclose(origins[2], [-555.0])
+
+
 def test_paraxial_get_ray_origins(set_test_backend):
     """Test that paraxial image height field type get_ray_origins method
     works."""

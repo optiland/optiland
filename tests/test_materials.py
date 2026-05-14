@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from importlib import resources
+import time
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -63,6 +64,52 @@ class TestBaseMaterial:
         """_detach_if_tensor returns plain values unchanged."""
         assert BaseMaterial._detach_if_tensor(1.5) == 1.5
         assert BaseMaterial._detach_if_tensor(None) is None
+
+    def test_large_array_cache_key_runtime_is_sublinear(self, set_test_backend):
+        """Regression guard for O(N) array cache-key construction.
+
+        Large wavelength arrays should use metadata-based keys rather than
+        materializing every array element into a Python tuple.
+        """
+
+        class DummyMaterial(BaseMaterial):
+            def _calculate_n(self, wavelength, **kwargs):
+                return wavelength
+
+            def _calculate_k(self, wavelength, **kwargs):
+                return wavelength
+
+        material = DummyMaterial()
+
+        small = np.linspace(0.45, 0.65, 1_000, dtype=np.float64)
+        large = np.linspace(0.45, 0.65, 200_000, dtype=np.float64)
+
+        # Warm up once to reduce one-time effects.
+        material._create_cache_key(small, temperature=25)
+        material._create_cache_key(large, temperature=25)
+
+        small_iters = 200
+        t0 = time.perf_counter()
+        for _ in range(small_iters):
+            material._create_cache_key(small, temperature=25)
+        small_avg_s = (time.perf_counter() - t0) / small_iters
+
+        large_iters = 5
+        t0 = time.perf_counter()
+        for _ in range(large_iters):
+            material._create_cache_key(large, temperature=25)
+        large_avg_s = (time.perf_counter() - t0) / large_iters
+
+        ratio = large_avg_s / max(small_avg_s, 1e-9)
+        assert ratio < 40.0, (
+            "Large-array cache-key generation appears to scale linearly with array size "
+            f"(ratio={ratio:.2f}, small_avg={small_avg_s:.3e}s, large_avg={large_avg_s:.3e}s)"
+        )
+
+        # Keys should still be deterministic for repeated calls on same input.
+        key1 = material._create_cache_key(large, temperature=25)
+        key2 = material._create_cache_key(large, temperature=25)
+        assert key1 == key2
 
     def test_detach_if_tensor_numpy(self, set_test_backend):
         """_detach_if_tensor returns numpy arrays unchanged."""

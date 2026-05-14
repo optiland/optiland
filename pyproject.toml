@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "optiland"
-version = "0.5.9"
+version = "0.6.0"
 authors = [{ name = "Kramer Harrison", email = "kdanielharrison@gmail.com" }]
 description = "Open Source Optical Design in Python"
 readme = "README.md"

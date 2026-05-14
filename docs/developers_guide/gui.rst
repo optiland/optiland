@@ -105,6 +105,12 @@ Key Widgets
     *   Provides direct access to the `OptilandConnector` instance (via the `connector` variable), allowing advanced users to interact with the optical system programmatically.
     *   Commands executed in the terminal can trigger GUI updates if they modify the `Optic` object.
 
+*   **Command Palette (`widgets/command_palette.py`)**:
+
+    *   A floating panel that allows users to quickly search for and execute GUI commands.
+    *   Similar to the command palette found in VS Code, it provides a centralized interface for discovering and running various tools, analyses, and layout operations.
+    *   Triggered from the `MainWindow` via the `Ctrl+K` shortcut.
+
 Styling and Resources
 ~~~~~~~~~~~~~~~~~~~~~~~~
 

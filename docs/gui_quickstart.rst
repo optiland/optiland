@@ -90,6 +90,14 @@ When you first open the Optiland GUI, you'll see a main window containing severa
 *   **Sidebar**: Located on the left, it provides quick navigation to show/hide the main panels like Lens Editor, Viewer, Analysis, etc.
 *   **Python Terminal** (View > Python Terminal): An embedded IPython terminal for advanced users who want to interact with the optical system programmatically using Optiland's Python API.
 
+Command Palette (Ctrl+K)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Optiland features a VS Code-style **Command Palette** that provides quick access to various tools, analyses, and layout actions.
+
+*   **Keyboard Shortcut**: Press ``Ctrl+K`` to open the palette.
+*   **Functionality**: Type to search for specific commands (e.g., "Open", "Spot Diagram", "Theme"). Use the arrow keys to navigate and ``Enter`` to execute the selected command.
+
 .. note::
 
    All windows are dockable and can be rearranged to suit your workflow. You can also save your layout for future sessions. These can be loaded by pressing "1" or "2" in the top toolbar, corresponding to the slot used for saving your layout.

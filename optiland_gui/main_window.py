@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import inspect
+import logging
 import os
 from collections import defaultdict
 
@@ -24,9 +25,10 @@ from PySide6.QtCore import (
     Qt,
     Slot,
 )
-from PySide6.QtGui import QAction, QResizeEvent
+from PySide6.QtGui import QAction, QIcon, QKeySequence, QResizeEvent, QShortcut
 from PySide6.QtWidgets import (
     QDialog,
+    QDockWidget,
     QFileDialog,
     QLabel,
     QMenuBar,
@@ -45,25 +47,38 @@ from . import gui_plot_utils
 from .action_manager import ActionManager
 from .config import (
     APPLICATION_NAME,
+    OPTILAND_ICON_PATH,
     ORGANIZATION_NAME,
     SIDEBAR_QSS_PATH,
     THEME_DARK_PATH,
 )
 from .optiland_connector import OptilandConnector
 from .panel_manager import PanelManager
-
-# from .optimization_panel import OptimizationPanel # we will support this later on
+from .utils import logging_handler as _log_handler
+from .utils.plot_theme import apply_plot_theme
+from .widgets.command_palette import (
+    CommandPaletteWidget,
+    CommandRegistry,
+    PaletteCommand,
+)
 from .widgets.custom_title_bar import CustomTitleBar
 from .widgets.frameless_window import FramelessWindow
 from .widgets.sidebar import (
     SIDEBAR_MAX_WIDTH,
     SIDEBAR_MIN_WIDTH,
 )
+from .widgets.toast import ToastManager
 
 try:
     from .resources import resources_rc  # noqa: F401
 except ImportError as e:
-    print(f"Warning (main_window.py): Could not import resources_rc.py: {e}")
+    import logging as _import_logging
+
+    _import_logging.getLogger(__name__).warning(
+        "Could not import resources_rc.py: %s", e
+    )
+
+logger = logging.getLogger(__name__)
 
 
 class MainWindow(FramelessWindow):
@@ -171,6 +186,7 @@ class MainWindow(FramelessWindow):
     def _configure_window(self):
         """Sets up the main window's flags, title, and geometry."""
         self.setWindowTitle("Optiland GUI")
+        self.setWindowIcon(QIcon(OPTILAND_ICON_PATH))
         self.setGeometry(100, 100, 1600, 900)
 
     def _init_core_components(self):
@@ -189,6 +205,10 @@ class MainWindow(FramelessWindow):
         self.dock_animations = {}
         self.dock_original_sizes = {}
         self.about_dialog = None
+        # These are initialised after the window is shown (needs parent geometry)
+        self.toast_manager: ToastManager | None = None
+        self.command_palette: CommandPaletteWidget | None = None
+        self.command_registry = CommandRegistry.instance()
 
     def _setup_menus_and_toolbars(self):
         """Creates and populates the main menu bar, custom title bar, and toolbars."""
@@ -247,6 +267,24 @@ class MainWindow(FramelessWindow):
         self.connector.modifiedStateChanged.connect(
             self._update_project_name_in_title_bar
         )
+
+        # Toast manager — must be created after the window exists
+        self.toast_manager = ToastManager(self)
+        # Expose on connector so services can call it
+        self.connector.toast_manager = self.toast_manager
+
+        # Logging handler: route Python WARNING+ to toasts
+        self._gui_log_handler = _log_handler.install(self.toast_manager)
+
+        # Command palette (Ctrl+K)
+        self.command_palette = CommandPaletteWidget(
+            self, self.command_registry, self.settings
+        )
+        palette_shortcut = QShortcut(QKeySequence("Ctrl+K"), self)
+        palette_shortcut.activated.connect(self.command_palette.toggle)
+
+        # Register commands
+        self._register_palette_commands()
 
         self._initial_narrow_check_done = False
         self._update_project_name_in_title_bar()
@@ -332,6 +370,11 @@ class MainWindow(FramelessWindow):
         file_menu = menu_bar.addMenu("&File")
         file_menu.addActions(am.get_actions("new", "open", "save", "save_as"))
         file_menu.addSeparator()
+        import_menu = file_menu.addMenu("&Import")
+        import_menu.addActions(am.get_actions("import_zemax", "import_codev"))
+        export_menu = file_menu.addMenu("&Export")
+        export_menu.addActions(am.get_actions("export_zemax", "export_codev"))
+        file_menu.addSeparator()
         file_menu.addAction(am.get_action("exit"))
 
         edit_menu = menu_bar.addMenu("&Edit")
@@ -342,6 +385,8 @@ class MainWindow(FramelessWindow):
         view_menu.addSeparator()
         theme_menu = view_menu.addMenu("&Theme")
         theme_menu.addActions(am.get_actions("dark_theme", "light_theme"))
+        view_menu.addSeparator()
+
         view_menu.addSeparator()
 
         # Add toggle actions for all managed docks
@@ -376,13 +421,15 @@ class MainWindow(FramelessWindow):
         toolbar.addSeparator()
         toolbar.addActions(am.get_actions("dock_all", "reset_layout"))
 
-    def _handle_maximize_restore(self):
+    def _handle_maximize_restore(self) -> None:
+        """Toggle between maximized and normal window states."""
         if self.isMaximized():
             self.showNormal()
         else:
             self.showMaximized()
 
-    def changeEvent(self, event: QEvent):
+    def changeEvent(self, event: QEvent) -> None:
+        """Update the maximize button state when the window state changes."""
         super().changeEvent(event)
         if event.type() == QEvent.Type.WindowStateChange and (
             hasattr(self, "custom_title_bar_widget") and self.custom_title_bar_widget
@@ -391,7 +438,8 @@ class MainWindow(FramelessWindow):
                 self.isMaximized()
             )
 
-    def load_stylesheets(self):
+    def load_stylesheets(self) -> None:
+        """Load and apply the current theme and sidebar stylesheets."""
         style_str = ""
         try:
             with open(self.current_theme_path) as f_theme:
@@ -409,8 +457,11 @@ class MainWindow(FramelessWindow):
 
         self.setStyleSheet(style_str)
 
-        theme_name = "dark" if self.current_theme_path == THEME_DARK_PATH else "light"
+        is_dark = self.current_theme_path == THEME_DARK_PATH
+        theme_name = "dark" if is_dark else "light"
         gui_plot_utils.apply_gui_matplotlib_styles(theme=theme_name)
+        # Also apply the new theme-specific rcParams overrides
+        apply_plot_theme(is_dark)
 
         if hasattr(self, "custom_title_bar_widget"):
             self.custom_title_bar_widget.setStyleSheet(style_str)
@@ -418,13 +469,12 @@ class MainWindow(FramelessWindow):
         dark_theme_action = self.action_manager.get_action("dark_theme")
         light_theme_action = self.action_manager.get_action("light_theme")
         if dark_theme_action and light_theme_action:
-            is_dark = self.current_theme_path == THEME_DARK_PATH
             dark_theme_action.setChecked(is_dark)
             light_theme_action.setChecked(not is_dark)
 
-    def _update_project_name_in_title_bar(self):
+    def _update_project_name_in_title_bar(self) -> None:
+        """Update the project name displayed in the custom title bar."""
         if hasattr(self, "custom_title_bar_widget") and self.custom_title_bar_widget:
-            # New logic starts here
             display_name = "UnnamedProject.json"
             current_file = self.connector.get_current_filepath()
             is_modified = self.connector.is_modified()
@@ -487,7 +537,15 @@ class MainWindow(FramelessWindow):
             animation.start(QPropertyAnimation.DeleteWhenStopped)
             self.dock_animations[dock_widget] = animation
 
-    def animate_dock_toggle(self, dock_widget, show_state_after_toggle):
+    def animate_dock_toggle(
+        self, dock_widget: QDockWidget, show_state_after_toggle: bool
+    ) -> None:
+        """Toggle a dock widget visibility with a slide/fade animation.
+
+        Args:
+            dock_widget: The dock widget to show or hide.
+            show_state_after_toggle: ``True`` to show, ``False`` to hide.
+        """
         animation_duration = 150
         easing_curve = QEasingCurve.InOutQuad
         is_left_or_right_dock = self.dockWidgetArea(dock_widget) in [
@@ -540,7 +598,12 @@ class MainWindow(FramelessWindow):
             )
 
     @Slot(str)
-    def switch_theme(self, theme_path):
+    def switch_theme(self, theme_path: str) -> None:
+        """Switch the application theme to *theme_path*.
+
+        Args:
+            theme_path: Path to the QSS theme file to apply.
+        """
         if theme_path != self.current_theme_path:
             self.current_theme_path = theme_path
             self.load_stylesheets()
@@ -552,17 +615,20 @@ class MainWindow(FramelessWindow):
                 self.custom_title_bar_widget.update_theme_icons(theme_name)
 
     @Slot()
-    def refresh_all_gui_panels(self):
+    def refresh_all_gui_panels(self) -> None:
+        """Re-emit :attr:`opticChanged` to refresh all connected panels."""
         self.connector.opticChanged.emit()
 
     @Slot()
-    def new_system_action(self):
+    def new_system_action(self) -> None:
+        """Slot for the *New System* action."""
         self.connector.new_system()
         self._update_project_name_in_title_bar()
-        print("Main Window: New System action triggered")
+        logger.debug("New System action triggered")
 
     @Slot()
-    def open_system_action(self):
+    def open_system_action(self) -> None:
+        """Slot for the *Open System* action — shows a file chooser dialog."""
         filepath, _ = QFileDialog.getOpenFileName(
             self,
             "Open Optiland System",
@@ -572,21 +638,23 @@ class MainWindow(FramelessWindow):
         if filepath:
             self.connector.load_optic_from_file(filepath)
             self._update_project_name_in_title_bar()
-            print(f"Main Window: Open System action triggered - {filepath}")
+            logger.debug("Open System action triggered: %s", filepath)
 
     @Slot()
-    def save_system_action(self):
+    def save_system_action(self) -> None:
+        """Slot for the *Save System* action — saves to the current file path."""
         current_path = self.connector.get_current_filepath()
         if current_path:
             self.connector.save_optic_to_file(current_path)
             self._update_project_name_in_title_bar()
-            print(f"Main Window: Save System action triggered - {current_path}")
+            logger.debug("Save System action triggered: %s", current_path)
         else:
             self.save_system_as_action()
 
     @Slot()
-    def save_system_as_action(self):
-        filepath, _ = QFileDialog.getSaveFileName(
+    def save_system_as_action(self) -> None:
+        """Slot for *Save System As* — prompts for a file path."""
+        filepath, selected_filter = QFileDialog.getSaveFileName(
             self,
             "Save Optiland System As...",
             "",
@@ -595,12 +663,89 @@ class MainWindow(FramelessWindow):
         if filepath:
             if (
                 not filepath.lower().endswith(".json")
-                and "(*.json)" in _.split(";;")[0]
+                and "(*.json)" in selected_filter.split(";;")[0]
             ):
                 filepath += ".json"
             self.connector.save_optic_to_file(filepath)
             self._update_project_name_in_title_bar()
-            print(f"Main Window: Save System As action triggered - {filepath}")
+            logger.debug("Save System As action triggered: %s", filepath)
+
+    def _confirm_discard_changes(self) -> bool:
+        """Prompt the user to confirm discarding unsaved changes.
+
+        Returns:
+            ``True`` if the user confirms (or there are no unsaved changes),
+            ``False`` if the user cancels.
+        """
+        if not self.connector.is_modified():
+            return True
+        reply = QMessageBox.question(
+            self,
+            "Unsaved Changes",
+            "The current system has unsaved changes. "
+            "Importing will replace it. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        return reply == QMessageBox.StandardButton.Yes
+
+    @Slot()
+    def import_zemax_action(self):
+        """Show a file dialog and import a Zemax .zmx file."""
+        if not self._confirm_discard_changes():
+            return
+        filepath, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import Zemax File",
+            "",
+            "Zemax Files (*.zmx);;All Files (*)",
+        )
+        if filepath:
+            self.connector.import_zemax(filepath)
+            self._update_project_name_in_title_bar()
+
+    @Slot()
+    def import_codev_action(self):
+        """Show a file dialog and import a CODE V .seq file."""
+        if not self._confirm_discard_changes():
+            return
+        filepath, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import CODE V File",
+            "",
+            "CODE V Files (*.seq);;All Files (*)",
+        )
+        if filepath:
+            self.connector.import_codev(filepath)
+            self._update_project_name_in_title_bar()
+
+    @Slot()
+    def export_zemax_action(self):
+        """Show a file dialog and export the current system as a Zemax .zmx file."""
+        filepath, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export to Zemax",
+            "",
+            "Zemax Files (*.zmx);;All Files (*)",
+        )
+        if filepath:
+            if not filepath.lower().endswith(".zmx"):
+                filepath += ".zmx"
+            self.connector.export_zemax(filepath)
+
+    @Slot()
+    def export_codev_action(self):
+        """Show a file dialog and export the current system as a CODE V .seq file."""
+        filepath, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export to CODE V",
+            "",
+            "CODE V Files (*.seq);;All Files (*)",
+        )
+        if filepath:
+            if not filepath.lower().endswith(".seq"):
+                filepath += ".seq"
+            self.connector.export_codev(filepath)
 
     @Slot()
     def about_action(self):
@@ -641,11 +786,9 @@ class MainWindow(FramelessWindow):
         self.about_dialog.exec()
 
     @Slot()
-    def reset_windows_action(self):
-        print(
-            "Main Window: Reset Windows action triggered - resetting to "
-            "revised default layout."
-        )
+    def reset_windows_action(self) -> None:
+        """Reset the dock layout to the application default."""
+        logger.debug("Reset Windows action triggered.")
         self._apply_revised_default_dock_layout()
         if hasattr(self, "panel_manager"):
             for dock in self.panel_manager.get_all_docks():
@@ -659,11 +802,10 @@ class MainWindow(FramelessWindow):
         dock_toolbar_state = self.saveState()
         self.settings.setValue(f"Layouts/Config{target_slot}Geometry", window_geometry)
         self.settings.setValue(f"Layouts/Config{target_slot}State", dock_toolbar_state)
-        QMessageBox.information(
-            self,
-            "Layout Saved",
-            f"The current window layout was saved to configuration - {target_slot}",
-        )
+        if self.toast_manager:
+            self.toast_manager.notify(
+                f"Layout saved to configuration — {target_slot}", "success"
+            )
         self.next_save_slot_index = 2 if target_slot == 1 else 1
         self.settings.setValue("Layouts/NextSaveSlot", self.next_save_slot_index)
         load_layout_1 = self.action_manager.get_action("load_layout_1")
@@ -673,9 +815,10 @@ class MainWindow(FramelessWindow):
         load_layout_2 = self.action_manager.get_action("load_layout_2")
         if load_layout_2:
             load_layout_2.setEnabled(self.settings.contains("Layouts/Config2Geometry"))
-        print(
-            f"Layout saved to slot {target_slot}. Next save will be to slot "
-            "{self.next_save_slot_index}."
+        logger.debug(
+            "Layout saved to slot %d. Next save will be slot %d.",
+            target_slot,
+            self.next_save_slot_index,
         )
 
     def _load_layout_from_slot(self, slot_number):
@@ -688,45 +831,46 @@ class MainWindow(FramelessWindow):
                 dock_toolbar_state, QByteArray
             ):
                 if not self.restoreGeometry(window_geometry):
-                    print(
-                        "Warning: Failed to restore window geometry from "
-                        "slot {slot_number}."
+                    logger.warning(
+                        "Failed to restore window geometry from slot %d.",
+                        slot_number,
                     )
                 if not self.restoreState(dock_toolbar_state):
-                    print(
-                        "Warning: Failed to restore dock/toolbar state from "
-                        "slot {slot_number}."
+                    logger.warning(
+                        "Failed to restore dock/toolbar state from slot %d.",
+                        slot_number,
                     )
-                QMessageBox.information(
-                    self,
-                    "Layout Loaded",
-                    f"Layout from configuration - {slot_number} has been loaded.",
-                )
+                if self.toast_manager:
+                    self.toast_manager.notify(
+                        f"Layout from configuration — {slot_number} loaded.", "success"
+                    )
             else:
-                QMessageBox.warning(
-                    self,
-                    "Load Error",
-                    f"Invalid layout data found in configuration - {slot_number}.",
-                )
+                if self.toast_manager:
+                    self.toast_manager.notify(
+                        f"Invalid layout data in configuration — {slot_number}.",
+                        "warning",
+                    )
         else:
-            QMessageBox.information(
-                self,
-                "Load Layout",
-                f"No layout saved in configuration - {slot_number}.",
-            )
+            if self.toast_manager:
+                self.toast_manager.notify(
+                    f"No layout saved in configuration — {slot_number}.", "info"
+                )
 
     @Slot()
-    def load_layout_1_slot(self):
-        print("Loading layout from slot 1...")
+    def load_layout_1_slot(self) -> None:
+        """Load the window layout saved in slot 1."""
+        logger.debug("Loading layout from slot 1.")
         self._load_layout_from_slot(1)
 
     @Slot()
-    def load_layout_2_slot(self):
-        print("Loading layout from slot 2...")
+    def load_layout_2_slot(self) -> None:
+        """Load the window layout saved in slot 2."""
+        logger.debug("Loading layout from slot 2.")
         self._load_layout_from_slot(2)
 
-    def closeEvent(self, event: QEvent):
-        print("Main Window: Closing application.")
+    def closeEvent(self, event: QEvent) -> None:
+        """Shut down the Jupyter kernel and accept the close event."""
+        logger.debug("Closing application.")
         if hasattr(self, "panel_manager") and self.panel_manager.python_terminal:
             self.panel_manager.python_terminal.shutdown_kernel()
         event.accept()
@@ -734,15 +878,13 @@ class MainWindow(FramelessWindow):
     @Slot()
     def show_settings_wip(self):
         """Shows a 'Work in Progress' message for the settings panel."""
-        QMessageBox.information(
-            self,
-            "Work in Progress",
-            "The settings panel is currently under development.",
-        )
+        if self.toast_manager:
+            self.toast_manager.notify(
+                "The settings panel is currently under development.", "info"
+            )
 
-    # logic to load samples from the samples folder in optiland
-    def _populate_gallery_menu(self, menu_bar: QMenuBar):
-        """Creates the 'Gallery' menu by inspecting the samples package."""
+    def _populate_gallery_menu(self, menu_bar: QMenuBar) -> None:
+        """Create the 'Gallery' menu by inspecting the samples package."""
         gallery_menu = menu_bar.addMenu("&Gallery")
         samples_menu = gallery_menu.addMenu("&Samples")
 
@@ -768,16 +910,113 @@ class MainWindow(FramelessWindow):
                 )
                 submenu.addAction(action)
 
-    def _load_sample_action(self, optic_class: type[Optic]):
-        """Instantiates and loads the selected sample class."""
+    def _register_palette_commands(self) -> None:
+        """Populate the :class:`CommandRegistry` with app-level commands."""
+        reg = self.command_registry
+        am = self.action_manager
+
+        # --- File actions ---
+        _file_cmds = [
+            ("New", "Create a new optical system", "new", "Ctrl+N", "File"),
+            ("Open", "Open an existing system file", "open", "Ctrl+O", "File"),
+            ("Save", "Save the current system", "save", "Ctrl+S", "File"),
+            ("Save As", "Save to a new file", "save_as", "", "File"),
+        ]
+        for name, desc, action_key, shortcut, cat in _file_cmds:
+            action = am.get_action(action_key)
+            if action:
+                reg.register(
+                    PaletteCommand(
+                        name=name,
+                        description=desc,
+                        callback=action.trigger,
+                        shortcut=shortcut,
+                        category=cat,
+                    )
+                )
+
+        # --- View / theme ---
+        dark_action = am.get_action("dark_theme")
+        light_action = am.get_action("light_theme")
+        if dark_action:
+            reg.register(
+                PaletteCommand(
+                    "Dark Theme",
+                    "Switch to dark mode",
+                    dark_action.trigger,
+                    category="Settings",
+                )
+            )
+        if light_action:
+            reg.register(
+                PaletteCommand(
+                    "Light Theme",
+                    "Switch to light mode",
+                    light_action.trigger,
+                    category="Settings",
+                )
+            )
+
+        reset_action = am.get_action("reset_layout")
+        if reset_action:
+            reg.register(
+                PaletteCommand(
+                    "Reset Layout",
+                    "Reset to default dock layout",
+                    reset_action.trigger,
+                    category="Settings",
+                )
+            )
+
+        # --- Analysis types ---
+        if hasattr(self, "panel_manager") and self.panel_manager.analysis_panel:
+            ap = self.panel_manager.analysis_panel
+            for analysis_name in ap._analysis_class_map:
+                reg.register(
+                    PaletteCommand(
+                        name=f"Run {analysis_name}",
+                        description=f"Open Analysis panel and run {analysis_name}",
+                        callback=lambda n=analysis_name: (
+                            self._run_analysis_from_palette(n)
+                        ),
+                        keywords=["analysis", analysis_name.lower()],
+                        category="Analysis",
+                    )
+                )
+
+    def _run_analysis_from_palette(self, analysis_name: str) -> None:
+        """Show the analysis panel and run *analysis_name*."""
+        pm = self.panel_manager
+        if hasattr(pm, "analysis_dock") and pm.analysis_dock:
+            pm.analysis_dock.show()
+            pm.analysis_dock.raise_()
+        if hasattr(pm, "analysis_panel") and pm.analysis_panel:
+            ap = pm.analysis_panel
+            ap.analysisTypeCombo.setCurrentText(analysis_name)
+            ap.run_analysis_slot()
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        """Reposition toasts when the window resizes."""
+        super().resizeEvent(event)
+        if self.toast_manager:
+            self.toast_manager.reposition()
+        if self.command_palette and self.command_palette._visible:
+            self.command_palette._reposition()
+
+    def _load_sample_action(self, optic_class: type[Optic]) -> None:
+        """Instantiate and load the selected sample class.
+
+        Args:
+            optic_class: The sample :class:`~optiland.optic.Optic` subclass to load.
+        """
         try:
             optic_instance = optic_class()
             self.connector.load_optic_from_object(optic_instance)
             print(f"Loaded sample: {optic_class.__name__}")
 
         except Exception as e:
-            QMessageBox.critical(
-                self,
-                "Sample Load Error",
-                f"Could not load sample '{optic_class.__name__}':\n{e}",
-            )
+            msg = f"Could not load sample '{optic_class.__name__}': {e}"
+            if self.toast_manager:
+                self.toast_manager.notify(msg, "error")
+            else:
+                QMessageBox.critical(self, "Sample Load Error", msg)

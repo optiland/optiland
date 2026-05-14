@@ -110,8 +110,8 @@ class RealImageHeightField(BaseFieldDefinition):
                 jac_update_x[mask_x] = d_curr_x[mask_x] / d_val_x[mask_x]
 
                 # Store current values before updating val_x
-                prev_val_x = val_x.copy()
-                prev_curr_x = curr_x.copy()
+                prev_val_x = be.copy(val_x)
+                prev_curr_x = be.copy(curr_x)
 
                 # Apply update X
                 val_x -= err_x / jac_update_x
@@ -124,17 +124,17 @@ class RealImageHeightField(BaseFieldDefinition):
                 jac_update_y = be.ones_like(val_y) * jacobian  # Fallback
                 jac_update_y[mask_y] = d_curr_y[mask_y] / d_val_y[mask_y]
 
-                prev_val_y = val_y.copy()  # Save OLD val
-                prev_curr_y = curr_y.copy()
+                prev_val_y = be.copy(val_y)  # Save OLD val
+                prev_curr_y = be.copy(curr_y)
 
                 val_y -= err_y / jac_update_y
             else:
-                prev_val_x = val_x.copy()
-                prev_curr_x = curr_x.copy()
+                prev_val_x = be.copy(val_x)
+                prev_curr_x = be.copy(curr_x)
                 val_x -= err_x / jacobian
 
-                prev_val_y = val_y.copy()
-                prev_curr_y = curr_y.copy()
+                prev_val_y = be.copy(val_y)
+                prev_curr_y = be.copy(curr_y)
                 val_y -= err_y / jacobian
 
         # Generate final ray origins using the converged field parameters

@@ -1,8 +1,6 @@
-"""
-Provides a custom title bar for QDockWidgets.
+"""Provides a custom title bar for QDockWidgets.
 
 Author: Manuel Fragata Mendes, 2025
-Refactored by: Jules, 2025
 """
 
 from __future__ import annotations
@@ -21,22 +19,33 @@ from PySide6.QtWidgets import (
 
 
 class CustomDockTitleBar(QWidget):
-    """A custom title bar for QDockWidgets with macOS-style buttons."""
+    """A custom title bar for :class:`~PySide6.QtWidgets.QDockWidget` instances.
 
-    def __init__(self, parent_dock: QDockWidget, title: str = ""):
+    Provides macOS-style traffic-light buttons (hide, float/dock, close) and
+    supports dragging the dock widget while it is floating.
+
+    Args:
+        parent_dock: The dock widget that owns this title bar.
+        title: Display text shown in the title bar label.
+    """
+
+    def __init__(self, parent_dock: QDockWidget, title: str = "") -> None:
         super().__init__(parent_dock)
         self.setObjectName("CustomDockTitleBar")
-        self.dock_widget = parent_dock  # Store reference to the actual dock widget
+        self.dock_widget = parent_dock
+
+        # Initialise drag-tracking state
+        self._mouse_press_pos = None
+        self._window_pos_before_move = None
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 3, 8, 3)  # Left, Top, Right, Bottom
+        layout.setContentsMargins(10, 3, 8, 3)
         layout.setSpacing(2)
 
         self.title_label = QLabel(title)
         layout.addWidget(self.title_label)
         layout.addStretch()
 
-        # Create buttons
         self.minimize_btn = QPushButton(self)
         self.minimize_btn.setObjectName("DockMinimizeButton")
         self.minimize_btn.setFixedSize(10, 10)
@@ -61,8 +70,8 @@ class CustomDockTitleBar(QWidget):
         layout.addWidget(self.undock_btn)
         layout.addWidget(self.close_btn)
 
-    def paintEvent(self, event):
-        """Ensures the background is drawn correctly according to the stylesheet."""
+    def paintEvent(self, event) -> None:  # noqa: ANN001
+        """Draw the background according to the active stylesheet."""
         opt = QStyleOption()
         opt.initFrom(self)
         painter = QPainter(self)
@@ -71,8 +80,9 @@ class CustomDockTitleBar(QWidget):
         )
         super().paintEvent(event)
 
-    def mousePressEvent(self, event):
-        """Handles mouse press for dragging the floating dock."""
+    def mousePressEvent(self, event) -> None:  # noqa: ANN001
+        """Begin a drag operation when the left button is pressed over
+        a floating dock."""
         if (
             event.button() == Qt.MouseButton.LeftButton
             and self.dock_widget.isFloating()
@@ -81,17 +91,18 @@ class CustomDockTitleBar(QWidget):
             self._window_pos_before_move = self.dock_widget.pos()
         super().mousePressEvent(event)
 
-    def mouseMoveEvent(self, event):
-        """Handles mouse move for dragging."""
+    def mouseMoveEvent(self, event) -> None:  # noqa: ANN001
+        """Move the floating dock widget as the mouse is dragged."""
         if (
             self.dock_widget.isFloating()
             and event.buttons() == Qt.MouseButton.LeftButton
-        ) and (hasattr(self, "_mouse_press_pos") and self._mouse_press_pos is not None):
+            and self._mouse_press_pos is not None
+        ):
             delta = event.globalPosition().toPoint() - self._mouse_press_pos
             self.dock_widget.move(self._window_pos_before_move + delta)
         super().mouseMoveEvent(event)
 
-    def mouseReleaseEvent(self, event):
-        """Handles mouse release to stop dragging."""
+    def mouseReleaseEvent(self, event) -> None:  # noqa: ANN001
+        """End the drag operation on mouse release."""
         self._mouse_press_pos = None
         super().mouseReleaseEvent(event)

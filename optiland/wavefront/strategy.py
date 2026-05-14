@@ -468,9 +468,9 @@ class CentroidStrategy(ReferenceStrategy):
             SphericalReference: The spherical reference geometry.
         """
         distances_wf = be.linalg.norm(wavefront_points - centroid, axis=1)
-        radius = float(be.sum(weights * distances_wf) / be.sum(weights))
+        radius = (be.sum(weights * distances_wf) / be.sum(weights)).item()
         return SphericalReference(
-            (float(centroid[0]), float(centroid[1]), float(centroid[2])), radius
+            (centroid[0].item(), centroid[1].item(), centroid[2].item()), radius
         )
 
     def _calculate_reference_sphere(
@@ -508,11 +508,11 @@ class CentroidStrategy(ReferenceStrategy):
             mean_direction = mean_direction / norm
 
         return PlanarReference(
-            (float(centroid[0]), float(centroid[1]), float(centroid[2])),
+            (centroid[0].item(), centroid[1].item(), centroid[2].item()),
             (
-                float(mean_direction[0]),
-                float(mean_direction[1]),
-                float(mean_direction[2]),
+                mean_direction[0].item(),
+                mean_direction[1].item(),
+                mean_direction[2].item(),
             ),
         )
 
@@ -578,8 +578,8 @@ class BestFitStrategy(CentroidStrategy):
         yc = c[1] / 2
         zc = c[2] / 2
         radius = be.sqrt(c[3] + xc**2 + yc**2 + zc**2)
-        self.center = (float(xc), float(yc), float(zc))
-        return SphericalReference(self.center, float(radius))
+        self.center = (xc.item(), yc.item(), zc.item())
+        return SphericalReference(self.center, radius.item())
 
     def _create_planar_ref(self, wavefront_points: be.ndarray) -> PlanarReference:
         """Create a planar reference geometry using least-squares fit.
@@ -601,8 +601,8 @@ class BestFitStrategy(CentroidStrategy):
         normal = vh[-1, :]
 
         return PlanarReference(
-            (float(centroid[0]), float(centroid[1]), float(centroid[2])),
-            (float(normal[0]), float(normal[1]), float(normal[2])),
+            (centroid[0].item(), centroid[1].item(), centroid[2].item()),
+            (normal[0].item(), normal[1].item(), normal[2].item()),
         )
 
 

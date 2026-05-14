@@ -72,6 +72,9 @@ class OptimizerGeneric(BaseOptimizer):
             result (OptimizeResult): The optimization result.
 
         """
+        if method == "Default":
+            method = None
+
         x0 = [var.value for var in self.problem.variables]
         self._x.append(x0)
         x0 = be.to_numpy(x0)

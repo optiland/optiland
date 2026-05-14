@@ -24,6 +24,7 @@
     <file alias="dark/add_quick_action.svg">icons/dark/add_quick_action.svg</file>
     <file alias="dark/tool.svg">icons/dark/tool.svg</file>
     <file alias="dark/minimize.svg">icons/dark/minimize.svg</file>
+    <file alias="optiland_icon.png">icons/optiland_icon.png</file>
 
 
     <file alias="light/dash.svg">icons/light/dash.svg</file>

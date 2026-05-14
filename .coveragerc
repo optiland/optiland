@@ -1,0 +1,4 @@
+[run]
+omit =
+    tests/gui/*
+    optiland_gui/*

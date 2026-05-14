@@ -249,6 +249,12 @@ Visualization
 
         my_lens.info()
 
+GUI Keyboard Shortcuts
+----------------------
+
+* **Ctrl+K**: Open the VS Code-style **Command Palette** for quick access to actions and tools.
+* **1 / 2**: Load layout presets 1 and 2, respectively.
+
 Advanced Features (Brief Overview)
 ----------------------------------
 

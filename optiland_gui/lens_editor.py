@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QEvent, QSize, Qt, Signal, Slot
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal, Slot
+from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFormLayout,
@@ -22,6 +22,8 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
     QPushButton,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
     QToolButton,
@@ -165,6 +167,36 @@ class SurfaceTypeWidget(QWidget):
         self.type_button.setVisible(is_editable)
         self.type_edit.setReadOnly(not is_editable)
 
+        # Badge label shown when non-standard variable types are registered
+        self._var_badge = QLabel("V")
+        self._var_badge.setObjectName("VariableBadge")
+        self._var_badge.setFixedSize(16, 16)
+        self._var_badge.setAlignment(Qt.AlignCenter)
+        self._var_badge.setStyleSheet(
+            "QLabel#VariableBadge {"
+            "  background-color: #6488ea;"
+            "  color: #ffffff;"
+            "  border-radius: 3px;"
+            "  font-size: 9px;"
+            "  font-weight: bold;"
+            "}"
+        )
+        self._var_badge.setVisible(False)
+        self.layout.insertWidget(0, self._var_badge)
+
+    def setHasVariables(self, types: list[str]) -> None:
+        """Show or hide the variable badge for non-standard variable types.
+
+        Args:
+            types: List of non-standard variable type strings registered for
+                this surface (e.g. ``["asphere_coeff", "index"]``).
+        """
+        if types:
+            self._var_badge.setToolTip("Optimization variables: " + ", ".join(types))
+            self._var_badge.setVisible(True)
+        else:
+            self._var_badge.setVisible(False)
+
     def type_selected(self, new_type):
         self.type_edit.setText(new_type.title())
         self.surfaceTypeChanged.emit(new_type)
@@ -176,6 +208,32 @@ class SurfaceTypeWidget(QWidget):
         else:
             type_info = self.connector.get_surface_type_info(self.row)
             self.type_edit.setText(type_info["display_text"])
+
+
+class _AccentFocusDelegate(QStyledItemDelegate):
+    """Item delegate that draws an accent-coloured border around the focused cell.
+
+    Replaces Qt's default dotted focus rectangle with a clean 1.5 px accent
+    border so the active cell is clearly visible without visual noise.
+    """
+
+    _ACCENT = QColor("#007ACC")
+
+    def paint(
+        self,
+        painter: QPainter,
+        option: QStyleOptionViewItem,
+        index,
+    ) -> None:
+        super().paint(painter, option, index)
+        from PySide6.QtWidgets import QStyle
+
+        if option.state & QStyle.State_HasFocus:
+            painter.save()
+            pen = QPen(self._ACCENT, 1.5)
+            painter.setPen(pen)
+            painter.drawRect(option.rect.adjusted(1, 1, -1, -1))
+            painter.restore()
 
 
 class LensEditor(QWidget):
@@ -198,23 +256,41 @@ class LensEditor(QWidget):
         self.tableWidget = QTableWidget()
         self.tableWidget.installEventFilter(self)
         self.tableWidget.setContextMenuPolicy(Qt.CustomContextMenu)
+
+        # ScrollPerPixel for smooth scrolling (SPEC §4.6)
+        self.tableWidget.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.tableWidget.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+
+        # Accent focus delegate (SPEC §4.1)
+        self._focus_delegate = _AccentFocusDelegate(self.tableWidget)
+        self.tableWidget.setItemDelegate(self._focus_delegate)
+
         self.layout.addWidget(self.tableWidget)
 
         self.buttonLayout = QHBoxLayout()
         self.btnAddSurface = QPushButton("Add Surface")
+        self.btnAddSurface.setToolTip(
+            "Add a new surface after the current selection (Insert)"
+        )
         self.btnRemoveSurface = QPushButton("Remove Surface")
+        self.btnRemoveSurface.setToolTip(
+            "Remove the currently selected surface (Delete)"
+        )
         self.buttonLayout.addWidget(self.btnAddSurface)
         self.buttonLayout.addWidget(self.btnRemoveSurface)
         self.layout.addLayout(self.buttonLayout)
 
     def connect_signals(self):
-        self.btnAddSurface.clicked.connect(self.surfaces.add_handler)
+        self.btnAddSurface.clicked.connect(self.add_surface_handler)
         self.btnRemoveSurface.clicked.connect(self.remove_surface_handler)
         self.tableWidget.itemChanged.connect(self.on_item_changed_handler)
         self.tableWidget.customContextMenuRequested.connect(self.show_context_menu)
         self.tableWidget.itemSelectionChanged.connect(self.update_headers_on_selection)
         self.connector.opticLoaded.connect(self.full_refresh_from_optic)
         self.connector.opticChanged.connect(self.full_refresh_from_optic)
+        self.connector.optimizationVariablesChanged.connect(
+            self.full_refresh_from_optic
+        )
 
     def setup_table(self):
         self.tableWidget.blockSignals(True)
@@ -241,12 +317,34 @@ class LensEditor(QWidget):
     def eventFilter(self, source, event):
         if source is self.tableWidget and event.type() == QEvent.KeyPress:
             if event.key() == Qt.Key_Insert:
-                self.surfaces.add_handler()
+                self.add_surface_handler()
                 return True
             if event.key() == Qt.Key_Delete:
                 self.remove_surface_handler()
                 return True
+            if event.key() == Qt.Key_V and event.modifiers() == (
+                Qt.ControlModifier | Qt.ShiftModifier
+            ):
+                self._request_add_optimization_variable()
+                return True
         return super().eventFilter(source, event)
+
+    def _request_add_optimization_variable(self) -> None:
+        """Emit requestAddOptimizationVariable for the currently focused cell."""
+        ui_row = self.tableWidget.currentRow()
+        ui_col = self.tableWidget.currentColumn()
+        if ui_row < 0:
+            return
+        surface_index = self.map_ui_row_to_surface_index(ui_row)
+        _col_var_type = {
+            self.connector.COL_RADIUS: "radius",
+            self.connector.COL_THICKNESS: "thickness",
+            self.connector.COL_CONIC: "conic",
+        }
+        suggested_type = _col_var_type.get(ui_col, "radius")
+        self.connector.requestAddOptimizationVariable.emit(
+            surface_index, suggested_type
+        )
 
     def map_ui_row_to_surface_index(self, ui_row):
         if self.open_prop_source_row != -1 and ui_row > self.open_prop_source_row:
@@ -282,6 +380,16 @@ class LensEditor(QWidget):
                 lambda r=row: self.toggle_properties_widget(r)
             )
             self.tableWidget.setCellWidget(row, col_idx, widget)
+
+            # Badge for non-standard variable types (asphere_coeff, index, …)
+            _standard_types = {"radius", "thickness", "conic"}
+            extra_var_types = [
+                vd["type"]
+                for vd in self.connector.get_optimization_variables()
+                if vd.get("surface_number") == row
+                and vd.get("type") not in _standard_types
+            ]
+            widget.setHasVariables(extra_var_types)
         else:
             item_data = self.connector.get_surface_data(row, col_idx)
             item = QTableWidgetItem(str(item_data) if item_data is not None else "")
@@ -301,12 +409,29 @@ class LensEditor(QWidget):
             if (is_obj_or_img and is_non_editable_header) or is_last_thickness:
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
+            # Highlight cells that are registered optimization variables
+            _col_var_type = {
+                self.connector.COL_RADIUS: "radius",
+                self.connector.COL_THICKNESS: "thickness",
+                self.connector.COL_CONIC: "conic",
+            }
+            if col_idx in _col_var_type:
+                vtype = _col_var_type[col_idx]
+                for vd in self.connector.get_optimization_variables():
+                    if vd.get("surface_number") == row and vd.get("type") == vtype:
+                        item.setBackground(QBrush(QColor(100, 150, 255, 80)))
+                        item.setToolTip(
+                            f"Variable: min={vd.get('min_val')}, "
+                            f"max={vd.get('max_val')}"
+                        )
+                        break
+
             self.tableWidget.setItem(row, col_idx, item)
 
     def _process_table_row(self, row_index):
         """Populates a single row in the lens data editor table."""
         self.tableWidget.setVerticalHeaderItem(
-            row_index, QTableWidgetItem(str(row_index + 1))
+            row_index, QTableWidgetItem(str(row_index))
         )
         for col_idx, header in enumerate(self.connector.get_column_headers()):
             self._process_table_cell(row_index, col_idx, header)
@@ -351,16 +476,50 @@ class LensEditor(QWidget):
         headers = self.connector.get_column_headers(surface_index)
         self.tableWidget.setHorizontalHeaderLabels(headers)
 
+    def _flash_cell(
+        self, row: int, col: int, valid: bool, duration_ms: int = 300
+    ) -> None:
+        """Briefly flash a cell green (valid) or red (invalid) after an edit.
+
+        Args:
+            row: Table row index.
+            col: Table column index.
+            valid: If ``True`` flash green, else red.
+            duration_ms: How long the flash lasts in milliseconds.
+        """
+        item = self.tableWidget.item(row, col)
+        if item is None:
+            return
+        flash_color = QColor(76, 175, 80, 120) if valid else QColor(244, 67, 54, 120)
+        original_bg = item.background()
+
+        def set_bg(color):
+            self.tableWidget.blockSignals(True)
+            item.setBackground(QBrush(color))
+            self.tableWidget.blockSignals(False)
+
+        set_bg(flash_color)
+        QTimer.singleShot(duration_ms, lambda: set_bg(original_bg))
+
     @Slot(QTableWidgetItem)
     def on_item_changed_handler(self, item: QTableWidgetItem):
         if not self.tableWidget.signalsBlocked():
-            surface_index = self.map_ui_row_to_surface_index(item.row())
-            self.connector.set_surface_data(surface_index, item.column(), item.text())
+            row = item.row()
+            col = item.column()
+            text = item.text()
+            surface_index = self.map_ui_row_to_surface_index(row)
+            try:
+                self.connector.set_surface_data(surface_index, col, text)
+                self._flash_cell(row, col, valid=True)
+            except Exception:
+                self._flash_cell(row, col, valid=False)
 
     @Slot()
     def add_surface_handler(self, surface_index_to_add_before=None):
-        if surface_index_to_add_before is not None:
-            self.connector.surfaces.add(index=surface_index_to_add_before)
+        if surface_index_to_add_before is not None and not isinstance(
+            surface_index_to_add_before, bool
+        ):
+            self.connector.add_surface(index=surface_index_to_add_before)
         else:
             ui_row = self.tableWidget.currentRow()
             surface_index = self.map_ui_row_to_surface_index(ui_row)
@@ -369,7 +528,7 @@ class LensEditor(QWidget):
                 if ui_row != -1
                 else self.connector.get_surface_count() - 1
             )
-            self.connector.surfaces.add(index=insert_pos)
+            self.connector.add_surface(index=insert_pos)
 
     @Slot()
     def remove_surface_handler(self, surface_index_to_remove=None):
@@ -451,9 +610,7 @@ class LensEditor(QWidget):
 
         if not is_prop_widget_row:
             add_above = menu.addAction("Add Surface Above")
-            add_above.triggered.connect(
-                lambda: self.surfaces.add_handler(surface_index)
-            )
+            add_above.triggered.connect(lambda: self.add_surface_handler(surface_index))
             remove_action = menu.addAction("Remove Current Surface")
             remove_action.triggered.connect(
                 lambda: self.remove_surface_handler(surface_index)
@@ -469,10 +626,37 @@ class LensEditor(QWidget):
             is_obj_or_img = (surface_index == 0) or (
                 surface_index == self.connector.get_surface_count() - 1
             )
+
+            menu.addSeparator()
+            make_stop_action = menu.addAction("Make Stop Surface")
+            make_stop_action.triggered.connect(
+                lambda _=False, si=surface_index: self.connector.set_stop_surface(si)
+            )
+
             if is_obj_or_img:
                 if surface_index == 0:
                     add_above.setEnabled(False)
                 remove_action.setEnabled(False)
                 props_action.setEnabled(False)
+                make_stop_action.setEnabled(False)
+
+            menu.addSeparator()
+            ui_col = self.tableWidget.columnAt(pos.x())
+            _col_var_type = {
+                self.connector.COL_RADIUS: "radius",
+                self.connector.COL_THICKNESS: "thickness",
+                self.connector.COL_CONIC: "conic",
+            }
+            suggested_type = _col_var_type.get(ui_col, "radius")
+            add_var_action = menu.addAction(
+                "Add as Optimization Variable...  Ctrl+Shift+V"
+            )
+            add_var_action.triggered.connect(
+                lambda _=False, si=surface_index, st=suggested_type: (
+                    self.connector.requestAddOptimizationVariable.emit(si, st)
+                )
+            )
+            if is_obj_or_img:
+                add_var_action.setEnabled(False)
 
         menu.exec(self.tableWidget.viewport().mapToGlobal(pos))

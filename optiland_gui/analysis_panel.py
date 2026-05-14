@@ -15,6 +15,7 @@ import contextlib
 import copy
 import inspect
 import json
+from enum import Enum
 from typing import TYPE_CHECKING, Literal, get_args, get_origin, get_type_hints
 
 import matplotlib.pyplot as plt
@@ -23,8 +24,15 @@ from matplotlib.axes import Axes
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
-from PySide6.QtCore import Qt, QTimer, Slot
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import (
+    QEasingCurve,
+    QPropertyAnimation,
+    QRegularExpression,
+    Qt,
+    QTimer,
+    Slot,
+)
+from PySide6.QtGui import QIcon, QRegularExpressionValidator
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -32,6 +40,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -165,6 +174,8 @@ class AnalysisPanel(QWidget):
         self.active_mpl_toolbar_widget = None
         self.motion_notify_cid = None
         self.current_settings_widgets = {}
+        # Mapping of display name → class, built from the registry at init.
+        self._analysis_class_map: dict[str, type] = {}
 
     def _setup_main_layout(self):
         """Sets up the main QVBoxLayout for the panel."""
@@ -177,8 +188,9 @@ class AnalysisPanel(QWidget):
         top_bar_layout = QHBoxLayout()
         top_bar_layout.addWidget(QLabel("Analysis Type:"))
         self.analysisTypeCombo = QComboBox()
-        self.analysisTypeCombo.addItems(list(self.ANALYSIS_MAP.keys()))
         self.analysisTypeCombo.setObjectName("AnalysisTypeCombo")
+        self._build_analysis_class_map()
+        self._populate_analysis_combo()
         top_bar_layout.addWidget(self.analysisTypeCombo)
         top_bar_layout.addSpacerItem(
             QSpacerItem(
@@ -202,6 +214,55 @@ class AnalysisPanel(QWidget):
         top_bar_layout.addWidget(self.btnRunAll)
         top_bar_layout.addWidget(self.btnStop)
         self.main_layout.addLayout(top_bar_layout)
+
+    def _build_analysis_class_map(self) -> None:
+        """Build ``_analysis_class_map`` from the analysis registry.
+
+        Calls ``AnalysisRunner.get_analysis_registry`` via the connector and
+        populates ``self._analysis_class_map`` with
+        ``{display_name: cls}`` entries.  Falls back to ``ANALYSIS_MAP`` if
+        the registry returns nothing (e.g. during unit tests with a stub
+        connector).
+        """
+        registry = self.connector._analysis_runner.get_analysis_registry()
+        if registry:
+            self._analysis_class_map = {name: cls for _, name, cls in registry}
+        else:
+            self._analysis_class_map = dict(self.ANALYSIS_MAP)
+
+    def _populate_analysis_combo(self) -> None:
+        """Populate ``analysisTypeCombo`` with grouped entries from the registry.
+
+        Category names are inserted as bold, disabled header items.
+        Selectable analysis entries follow each category header.  If no
+        registry entries are available the combo falls back to a flat list
+        from ``ANALYSIS_MAP``.
+        """
+        self.analysisTypeCombo.clear()
+        registry = self.connector._analysis_runner.get_analysis_registry()
+        if not registry:
+            self.analysisTypeCombo.addItems(list(self.ANALYSIS_MAP.keys()))
+            return
+
+        model = self.analysisTypeCombo.model()
+        current_category: str | None = None
+        for category, name, _cls in registry:
+            if category != current_category:
+                self.analysisTypeCombo.addItem(category)
+                header_idx = self.analysisTypeCombo.count() - 1
+                header_item = model.item(header_idx)
+                header_item.setEnabled(False)
+                font = header_item.font()
+                font.setBold(True)
+                header_item.setFont(font)
+                current_category = category
+            self.analysisTypeCombo.addItem(name)
+
+        # Select the first selectable item
+        for i in range(self.analysisTypeCombo.count()):
+            if self.analysisTypeCombo.model().item(i).isEnabled():
+                self.analysisTypeCombo.setCurrentIndex(i)
+                break
 
     def _setup_main_content_area(self):
         """Sets up the central area containing the plot and settings panels."""
@@ -454,8 +515,8 @@ class AnalysisPanel(QWidget):
                 "num_rings": (1, 1024),
                 "num_fields": (1, 1024),
                 "num_steps": (1, 51),
-                "surface_idx": (-100, 100),
-                "detector_surface": (-100, 100),
+                "surface_idx": (-100, 1000),
+                "detector_surface": (-100, 1000),
                 "grid_size": (32, 8192),
             }
             min_v, max_v = ranges.get(param_name, (-1000000, 1000000))
@@ -466,7 +527,23 @@ class AnalysisPanel(QWidget):
         else:  # float
             widget = QDoubleSpinBox()
             widget.setDecimals(4)
-            widget.setRange(-1e9, 1e9)
+
+            # Normalized coordinate ranges
+            norm_params = [
+                "hx",
+                "hy",
+                "px",
+                "py",
+                "field_x",
+                "field_y",
+                "pupil_x",
+                "pupil_y",
+            ]
+            if param_name.lower() in norm_params:
+                widget.setRange(-1.0, 1.0)
+            else:
+                widget.setRange(-1e9, 1e11)
+
             widget.setSingleStep(0.01 if "delta_focus" in param_name else 0.1)
             widget.setValue(float(default_value) if default_value is not None else 0.0)
         return widget
@@ -487,15 +564,27 @@ class AnalysisPanel(QWidget):
             "coordinates": ["local", "global"],
             "distortion_type": ["f-tan", "f-theta"],
             "cmap": ["inferno", "viridis", "plasma", "magma", "gray", "jet"],
+            "strategy": ["chief_ray", "centroid", "best_fit"],
+            "reference": ["chief_ray", "centroid"],
+            "zernike_type": ["fringe", "standard", "noll"],
         }
         if param_name in combo_options:
             widget = QComboBox()
             widget.addItems(combo_options[param_name])
-            widget.setCurrentText(
-                str(default_value) if default_value else widget.itemText(0)
-            )
+
+            # If default_value is an Enum, use its value or name for matching
+            if isinstance(default_value, Enum):
+                match_val = str(default_value.value)
+            else:
+                match_val = str(default_value)
+
+            widget.setCurrentText(match_val if default_value else widget.itemText(0))
         else:
-            widget = QLineEdit(str(default_value) if default_value is not None else "")
+            if isinstance(default_value, Enum):
+                text = str(default_value.value)
+            else:
+                text = str(default_value) if default_value is not None else ""
+            widget = QLineEdit(text)
         return widget
 
     def _prepare_param_details(self, param_name, param_info, default_override=None):
@@ -508,6 +597,23 @@ class AnalysisPanel(QWidget):
         )
 
         annotation = param_info.get("annotation")
+        if isinstance(annotation, str):
+            # Forward-reference string — map common patterns to actual types.
+            ann_lower = annotation.lower()
+            if "tuple" in ann_lower:
+                annotation = tuple
+            elif annotation in ("int",):
+                annotation = int
+            elif annotation in ("float",):
+                annotation = float
+            elif annotation in ("bool",):
+                annotation = bool
+            elif annotation in ("str",):
+                annotation = str
+            else:
+                # Unknown string annotation — infer from the default value.
+                annotation = None
+
         if annotation in (inspect.Parameter.empty, None):
             if isinstance(default_value, bool):
                 annotation = bool
@@ -522,8 +628,37 @@ class AnalysisPanel(QWidget):
             annotation = str
         if param_name == "grid_size":
             annotation = int
-            if default_value is None:
+            if default_value in [None, inspect.Parameter.empty]:
                 default_value = 128
+        if param_name in ["field", "pupil"] and default_value in [
+            None,
+            inspect.Parameter.empty,
+            "",
+        ]:
+            annotation = tuple
+            default_value = (0.0, 0.0)
+
+        # wavelength (singular) is required — default to primary
+        if param_name == "wavelength" and default_value in [
+            None,
+            inspect.Parameter.empty,
+            "",
+        ]:
+            annotation = str
+            default_value = "primary"
+        # MMDFTPSF requires explicit image_size/pixel_pitch when they are None
+        if param_name == "image_size" and default_value in [
+            None,
+            inspect.Parameter.empty,
+        ]:
+            annotation = int
+            default_value = 128
+        if param_name == "pixel_pitch" and default_value in [
+            None,
+            inspect.Parameter.empty,
+        ]:
+            annotation = float
+            default_value = 5e-6
 
         return label_text, default_value, annotation
 
@@ -562,9 +697,14 @@ class AnalysisPanel(QWidget):
         return widget
 
     def _create_tuple_line_edit(self, default_value):
-        """Creates a QLineEdit for a tuple parameter."""
+        """Creates a QLineEdit for a tuple parameter with validation."""
         widget = QLineEdit(", ".join(map(str, default_value)) if default_value else "")
-        widget.setPlaceholderText("e.g., 0, 0.5 or 128,128")
+        widget.setPlaceholderText("e.g., 0, 0.5 or 128, 128")
+
+        # Regex for one or more numbers separated by commas/spaces
+        regex = QRegularExpression(r"^[-+]?[\d\.]+\s*(,\s*[-+]?[\d\.]+\s*)*$")
+        validator = QRegularExpressionValidator(regex, widget)
+        widget.setValidator(validator)
         return widget
 
     def _add_setting_widget(
@@ -603,7 +743,11 @@ class AnalysisPanel(QWidget):
 
         init_params = gui_plot_utils.get_analysis_parameters(analysis_class)
         for name, info in init_params.items():
-            info["annotation"] = resolved_hints.get(name)
+            # Only overwrite with the resolved hint when it was actually resolved;
+            # otherwise keep the raw annotation (may be a forward-ref string).
+            resolved = resolved_hints.get(name)
+            if resolved is not None:
+                info["annotation"] = resolved
 
         if analysis_class.__name__ in [self.GEOMETRIC_MTF, self.FFT_MTF]:
             if "grid_size" not in init_params:
@@ -635,7 +779,7 @@ class AnalysisPanel(QWidget):
             self.settings_form_layout.removeRow(0)
         self.current_settings_widgets.clear()
 
-        analysis_class = self.ANALYSIS_MAP.get(analysis_name)
+        analysis_class = self._analysis_class_map.get(analysis_name)
         if not analysis_class:
             self.settings_form_layout.addRow(QLabel("No settings available."))
             return
@@ -715,13 +859,16 @@ class AnalysisPanel(QWidget):
     def on_analysis_type_changed(self, analysis_name: str):
         """Handles the change of the selected analysis type.
 
-        This slot is connected to the `currentTextChanged` signal of the
-        analysis type combo box. It updates the settings UI to reflect the
-        parameters of the newly selected analysis.
+        This slot is connected to the ``currentTextChanged`` signal of the
+        analysis type combo box.  Category header items are non-selectable,
+        but if one is somehow reached this slot returns early without
+        updating the UI.
 
         Args:
             analysis_name: The new analysis name selected in the combo box.
         """
+        if analysis_name not in self._analysis_class_map:
+            return  # category header or unrecognised item — skip
         self._update_settings_ui(analysis_name)
         if self.current_plot_page_index == -1 or not self.analysis_results_pages:
             self.plotTitleLabel.setText(analysis_name)
@@ -769,6 +916,7 @@ class AnalysisPanel(QWidget):
         """Creates and shows the right-click menu for a page button."""
         menu = QMenu()
         clone_action = menu.addAction("Clone Analysis")
+        remove_action = menu.addAction("Remove Analysis")
         undock_action = menu.addAction("Undock (WIP)")
         undock_action.setEnabled(False)
 
@@ -776,6 +924,8 @@ class AnalysisPanel(QWidget):
 
         if action == clone_action:
             self._clone_analysis_page(page_index)
+        elif action == remove_action:
+            self._remove_analysis_page(page_index)
 
     def _clone_analysis_page(self, page_index):
         """Clones an existing analysis page."""
@@ -799,6 +949,26 @@ class AnalysisPanel(QWidget):
         self.switch_plot_page(len(self.analysis_results_pages) - 1)
         self.logArea.append("Analysis cloned successfully.")
 
+    def _remove_analysis_page(self, page_index):
+        """Removes an analysis page from the analysis results."""
+        if 0 <= page_index < len(self.analysis_results_pages):
+            self.analysis_results_pages.pop(page_index)
+
+            # If the current page was removed, switch to the nearest available page
+            if self.current_plot_page_index == page_index:
+                if not self.analysis_results_pages:
+                    self.current_plot_page_index = -1
+                elif self.current_plot_page_index >= len(self.analysis_results_pages):
+                    self.current_plot_page_index = len(self.analysis_results_pages) - 1
+            # If a later page was removed, current_plot_page_index stays the same
+            # If an earlier page was removed, shift current_plot_page_index back 1
+            elif self.current_plot_page_index > page_index:
+                self.current_plot_page_index -= 1
+
+            self.update_pagination_ui()
+            self.display_plot_page(self.current_plot_page_index)
+            self.logArea.append("Analysis removed.")
+
     def resizeEvent(self, event):
         """Restarts a timer every time the window is resized."""
         super().resizeEvent(event)
@@ -821,9 +991,10 @@ class AnalysisPanel(QWidget):
             self.current_plot_page_index = page_index
             self.update_pagination_ui()
             self.display_plot_page(page_index)
+            page_data = self.analysis_results_pages[page_index]
             self.logArea.append(
                 f"Switched to page {page_index + 1}: "
-                "{page_data.get('name', 'Analysis')}"
+                f"{page_data.get('name', 'Analysis')}"
             )
         else:
             self.current_plot_page_index = -1
@@ -1024,8 +1195,25 @@ class AnalysisPanel(QWidget):
             )
             self._setup_plot_toolbar(self.active_mpl_canvas_widget)
             plot_layout.addWidget(self.active_mpl_canvas_widget)
+            self._fade_in_canvas(self.active_mpl_canvas_widget)
         else:
             plot_layout.addWidget(QLabel(f"Cannot embed plot for {analysis_name}"))
+
+    def _fade_in_canvas(self, canvas, duration_ms: int = 250) -> None:
+        """Fade a newly-rendered canvas from transparent to fully opaque.
+
+        Args:
+            canvas: The :class:`FigureCanvas` widget to animate.
+            duration_ms: Animation duration in milliseconds.
+        """
+        effect = QGraphicsOpacityEffect(canvas)
+        canvas.setGraphicsEffect(effect)
+        anim = QPropertyAnimation(effect, b"opacity", canvas)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setDuration(duration_ms)
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+        anim.start(QPropertyAnimation.DeleteWhenStopped)
 
     def on_plot_double_click(self, event):
         """Handler for mouse events on the plot canvas."""
@@ -1100,6 +1288,37 @@ class AnalysisPanel(QWidget):
 
         return text
 
+    def _validate_all_inputs(self):
+        """Validates all input widgets in the current settings panel.
+
+        Returns:
+            Tuple[bool, str]: (Is valid, Error message)
+        """
+        for param_name, widget in self.current_settings_widgets.items():
+            if isinstance(widget, QLineEdit) and param_name in [
+                "field",
+                "pupil",
+                "res",
+                "px_size",
+            ]:
+                # Check tuple logic (field, pupil, res, etc.)
+                val = self._get_value_from_lineedit(widget, param_name)
+                if val is None:
+                    return (
+                        False,
+                        f"Invalid '{param_name}'. Expected 'x, y' format.",
+                    )
+
+                # Range check for normalized coords
+                if param_name in ["field", "pupil"]:
+                    for v in val:
+                        if not (-1.0001 <= v <= 1.0001):
+                            return (
+                                False,
+                                f"'{param_name}' coord {v} outside [-1, 1].",
+                            )
+        return True, ""
+
     def _parse_cross_section(self, text):
         """Parses a cross-section string (e.g., 'cross-x, 128')."""
         parts = [p.strip() for p in text.split(",")]
@@ -1120,19 +1339,29 @@ class AnalysisPanel(QWidget):
         Returns:
             True if the system is valid, False otherwise.
         """
+        tm = getattr(self.connector, "toast_manager", None)
         if not optic or optic.surface_group.num_surfaces < 2:
-            QMessageBox.warning(
-                self,
-                self.ANALYSIS_ERROR_TITLE,
-                "A minimal optical system (at least 2 surfaces) is required.",
-            )
+            if tm:
+                tm.notify(
+                    "A minimal optical system (at least 2 surfaces) is required.",
+                    "warning",
+                )
+            else:
+                QMessageBox.warning(
+                    self,
+                    self.ANALYSIS_ERROR_TITLE,
+                    "A minimal optical system (at least 2 surfaces) is required.",
+                )
             return False
         if optic.wavelengths.num_wavelengths == 0:
-            QMessageBox.warning(
-                self,
-                self.ANALYSIS_ERROR_TITLE,
-                "The optical system has no defined wavelengths.",
-            )
+            if tm:
+                tm.notify("The optical system has no defined wavelengths.", "warning")
+            else:
+                QMessageBox.warning(
+                    self,
+                    self.ANALYSIS_ERROR_TITLE,
+                    "The optical system has no defined wavelengths.",
+                )
             return False
         return True
 
@@ -1155,18 +1384,36 @@ class AnalysisPanel(QWidget):
         optic = self.connector.get_optic()
         final_args = {"optic": optic, **constructor_args}
 
-        # Filter args to only those accepted by the constructor
-        valid_init_params = inspect.signature(analysis_class.__init__).parameters
+        # Filter args to only those accepted by the constructor.
+        # For factory dispatch classes (e.g. FFTPSF) whose __init__ is
+        # *args/**kwargs, fall back to __new__ for the accepted-param list.
+        init_sig = inspect.signature(analysis_class.__init__)
+        init_params = init_sig.parameters
+        _variadic = frozenset(
+            {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
+        )
+        if all(
+            p.kind in _variadic for name, p in init_params.items() if name != "self"
+        ) and hasattr(analysis_class, "__new__"):
+            init_params = inspect.signature(analysis_class.__new__).parameters
+        valid_init_params = init_params
         filtered_args = {k: v for k, v in final_args.items() if k in valid_init_params}
 
+        # Inject defaults for required args that may be absent when the
+        # settings panel has never been opened (e.g. field/wavelength for
+        # wavefront and PSF analyses).
+        _required_defaults = {"field": (0.0, 0.0), "wavelength": "primary"}
+        for _key, _default in _required_defaults.items():
+            if _key not in filtered_args and _key in valid_init_params:
+                filtered_args[_key] = _default
+
         if (
-            analysis_name in ["self.GEOMETRIC_MTF", "self.FFT_MTF"]
+            analysis_name in [self.GEOMETRIC_MTF, self.FFT_MTF]
             and "max_freq" in final_args
             and "max_freq" not in filtered_args
         ):
             filtered_args["max_freq"] = final_args["max_freq"]
 
-        print(f"LOG: Executing {analysis_name} with args: {filtered_args}")
         instance = analysis_class(**filtered_args)
 
         # Check if the analysis can be plotted directly on a Matplotlib figure
@@ -1186,7 +1433,7 @@ class AnalysisPanel(QWidget):
         }
 
         # Special case for sizing the plot figure for certain analyses
-        if analysis_name == "Through-Focus Spot Diagram":
+        if analysis_name in ("Through-Focus Spot", "Through-Focus Spot Diagram"):
             num_f = optic.fields.num_fields
             num_s = final_args.get("num_steps", 5)
             page_data["figsize"] = (max(1, num_s) * 3, max(1, num_f) * 3)
@@ -1247,6 +1494,16 @@ class AnalysisPanel(QWidget):
         if not self._validate_system_for_analysis(optic):
             return None
 
+        # Validate UI inputs (ranges, tuples, etc)
+        valid, error_msg = self._validate_all_inputs()
+        if not valid:
+            tm = getattr(self.connector, "toast_manager", None)
+            if tm:
+                tm.notify(error_msg, "error")
+            else:
+                QMessageBox.warning(self, "Invalid Input", error_msg)
+            return None
+
         try:
             # If no args are provided, get them from the UI (standard run)
             if constructor_args is None and view_args is None:
@@ -1257,11 +1514,16 @@ class AnalysisPanel(QWidget):
             )
 
         except Exception as e:
-            QMessageBox.critical(
-                self,
-                self.ANALYSIS_ERROR_TITLE,
-                f"An error occurred during {analysis_name}:\n{e}",
-            )
+            msg = f"An error occurred during {analysis_name}:\n{e}"
+            tm = getattr(self.connector, "toast_manager", None)
+            if tm:
+                tm.notify(msg, "error")
+            else:
+                QMessageBox.critical(
+                    self,
+                    self.ANALYSIS_ERROR_TITLE,
+                    msg,
+                )
             import traceback
 
             print(f"Analysis Panel Error: {e}\n{traceback.format_exc()}")
@@ -1275,7 +1537,7 @@ class AnalysisPanel(QWidget):
         analysis_name = page_data.get("name")
         self.logArea.setText(f"Rerunning {analysis_name} with new settings...")
         new_page_data = self._execute_analysis(
-            self.ANALYSIS_MAP[analysis_name], analysis_name
+            self._analysis_class_map.get(analysis_name), analysis_name
         )
         if new_page_data:
             self.analysis_results_pages[self.current_plot_page_index] = new_page_data
@@ -1295,7 +1557,7 @@ class AnalysisPanel(QWidget):
     @Slot()
     def run_analysis_slot(self):
         analysis_name = self.analysisTypeCombo.currentText()
-        analysis_class = self.ANALYSIS_MAP.get(analysis_name)
+        analysis_class = self._analysis_class_map.get(analysis_name)
         if not analysis_class:
             return
         self.logArea.setText(f"Running {analysis_name}...")
@@ -1342,9 +1604,12 @@ class AnalysisPanel(QWidget):
                     f"Settings for {current_analysis_name} saved to {filepath}"
                 )
             except Exception as e:
-                QMessageBox.critical(
-                    self, "Save Error", f"Could not save settings:\n{e}"
-                )
+                msg = f"Could not save settings:\n{e}"
+                tm = getattr(self.connector, "toast_manager", None)
+                if tm:
+                    tm.notify(msg, "error")
+                else:
+                    QMessageBox.critical(self, "Save Error", msg)
 
     def on_scroll_zoom(self, event):
         gui_plot_utils.handle_matplotlib_scroll_zoom(event)
@@ -1391,6 +1656,9 @@ class AnalysisPanel(QWidget):
                 )
 
             except Exception as e:
-                QMessageBox.critical(
-                    self, "Load Error", f"Could not load or apply settings:\n{e}"
-                )
+                msg = f"Could not load or apply settings:\n{e}"
+                tm = getattr(self.connector, "toast_manager", None)
+                if tm:
+                    tm.notify(msg, "error")
+                else:
+                    QMessageBox.critical(self, "Load Error", msg)

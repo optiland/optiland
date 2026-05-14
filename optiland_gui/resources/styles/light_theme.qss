@@ -263,8 +263,15 @@ QPushButton:hover {
     border-color: #343A40;  /* --accent-tertiary: Darker border on hover */
 }
 QPushButton:pressed {
-    background-color: #343A40;  /* --accent-tertiary: Even darker background when pressed */
-    border-color: #212529;    /* --main-text: Darkest border when pressed */
+    background-color: #343A40;
+    border-color: #212529;
+    padding-top: 7px;   /* 6+1 px shift gives a subtle press-down feel */
+    padding-bottom: 5px;
+}
+
+QPushButton:focus {
+    border: 1.5px solid #007ACC;
+    outline: none;
 }
 QPushButton:disabled {
     color: #ADB5BD;       /* --disabled-subtle-border: Text color for disabled buttons */
@@ -282,7 +289,8 @@ QLineEdit, QDoubleSpinBox, QComboBox {
     min-height: 16px;
 }
 QLineEdit:focus, QDoubleSpinBox:focus, QComboBox:focus {
-    border: 1px solid #6C757D; /* --accent-primary: Border color when field has focus */
+    border: 1.5px solid #007ACC;
+    outline: none;
 }
 QLineEdit:read-only {
     background-color: #E9ECEF; /* --toolbar-sidebar-bg: Background for read-only fields */
@@ -724,3 +732,40 @@ QWidget#CustomDockTitleBar QLabel {
 #DockMinimizeButton { background-color: #6C757D; } /* Green */
 #DockUndockButton { background-color: #F48F4F; } /* Yellow */
 #DockCloseButton { background-color: #ED695E; } /* Red */
+
+/* ============================================================
+   Phase 1 QSS Polish (light theme)
+   ============================================================ */
+
+/* Tooltip — rounded, theme-matched */
+QToolTip {
+    background-color: #F8F9FA;
+    color: #212529;
+    border: 1px solid #CED4DA;
+    padding: 5px 8px;
+    border-radius: 5px;
+    font-size: 9pt;
+}
+
+/* Lens editor table row hover */
+QTableWidget::item:hover {
+    background-color: rgba(0, 0, 0, 0.04);
+}
+
+/* Column header hover */
+QHeaderView::section:hover {
+    background-color: #DEE2E6;
+}
+
+/* Global focus indicator */
+QWidget:focus {
+    outline: none;
+}
+QPushButton:focus,
+QComboBox:focus,
+QLineEdit:focus,
+QSpinBox:focus,
+QDoubleSpinBox:focus {
+    border: 1.5px solid #007ACC;
+    outline: none;
+}

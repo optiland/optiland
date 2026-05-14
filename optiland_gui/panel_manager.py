@@ -1,13 +1,10 @@
-"""
-Manages the creation, layout, and lifecycle of dockable panels.
+"""Manages the creation, layout, and lifecycle of dockable panels.
 
-This module provides the `PanelManager` class, which is responsible for
-instantiating, configuring, and arranging all the QDockWidget panels used in
-the Optiland GUI. This decouples the main window from the specific details of
-each panel.
-
-Author: Jules, 2025
-"""
+This module provides :class:`PanelManager`, which is responsible for
+instantiating, configuring, and arranging all the
+:class:`~PySide6.QtWidgets.QDockWidget` panels used in the Optiland GUI.
+Decoupling panel management from :class:`~optiland_gui.main_window.MainWindow`
+keeps each class focused on a single responsibility."""
 
 from __future__ import annotations
 
@@ -18,6 +15,7 @@ from PySide6.QtWidgets import QDockWidget, QMainWindow, QWidget
 
 from .analysis_panel import AnalysisPanel
 from .lens_editor import LensEditor
+from .optimization_panel import OptimizationPanel
 from .system_properties_panel import SystemPropertiesPanel
 from .viewer_panel import ViewerPanel
 from .widgets.custom_dock_widget import CustomDockWidget
@@ -27,18 +25,32 @@ from .widgets.sidebar import SidebarWidget
 if TYPE_CHECKING:
     from .optiland_connector import OptilandConnector
 
+# Default theme applied before the user's preference is loaded.
+_DEFAULT_THEME = "dark"
+
 
 class PanelManager:
-    """Manages the instantiation and layout of all GUI panels."""
+    """Manages the instantiation and layout of all GUI panels.
 
-    def __init__(self, main_window: QMainWindow, connector: OptilandConnector):
+    Args:
+        main_window: The application's main window.
+        connector: The central
+            :class:`~optiland_gui.optiland_connector.OptilandConnector` instance.
+    """
+
+    def __init__(self, main_window: QMainWindow, connector: OptilandConnector) -> None:
         self.main_window = main_window
         self.connector = connector
-        self.all_docks = []
-        self.sidebar = None
+        self.all_docks: list[QDockWidget] = []
+        self.sidebar: QDockWidget | None = None
 
-    def create_all_panels(self, parent_for_iface: QWidget):
-        """Creates instances of all panels and their containing docks."""
+    def create_all_panels(self, parent_for_iface: QWidget) -> None:
+        """Create instances of all panels and their containing dock widgets.
+
+        Args:
+            parent_for_iface: The main window widget, whose ``iface`` attribute
+                is injected into the scripting terminal's kernel namespace.
+        """
         # Sidebar
         self.sidebar_content_widget = SidebarWidget(self.main_window)
         self.sidebar = self._create_dock(
@@ -51,7 +63,7 @@ class PanelManager:
         )
         self.sidebar.setTitleBarWidget(QWidget())
 
-        # Main Panels
+        # Main panels
         self.viewer_panel = ViewerPanel(self.connector)
         self.viewer_dock = self._create_dock(
             self.viewer_panel, "ViewerDock", "System Viewer"
@@ -72,15 +84,19 @@ class PanelManager:
             self.analysis_panel, "AnalysisPanelDock", "Analysis"
         )
 
-        # Terminal
-        initial_theme = "dark"  # TODO: Get this from settings or main_window
+        self.optimization_panel = OptimizationPanel(self.connector)
+        self.optimization_dock = self._create_dock(
+            self.optimization_panel, "OptimizationDock", "Optimization"
+        )
+
+        # Scripting terminal — inject connector and iface into the kernel
         self.python_terminal = PythonTerminalWidget(
             parent_for_iface,
             custom_variables={
                 "connector": self.connector,
                 "iface": parent_for_iface.iface,
             },
-            theme=initial_theme,
+            theme=_DEFAULT_THEME,
         )
         self.terminal_dock = self._create_dock(
             self.python_terminal, "TerminalDock", "Scripts Terminal"
@@ -92,6 +108,7 @@ class PanelManager:
             self.lens_editor_dock,
             self.system_properties_dock,
             self.analysis_dock,
+            self.optimization_dock,
             self.terminal_dock,
         ]
 
@@ -100,11 +117,24 @@ class PanelManager:
         widget: QWidget,
         name: str,
         title: str,
-        features=None,
-        allowed_areas=Qt.AllDockWidgetAreas,
-        use_custom_title_bar=True,
+        features: QDockWidget.DockWidgetFeature | None = None,
+        allowed_areas: Qt.DockWidgetArea = Qt.AllDockWidgetAreas,
+        use_custom_title_bar: bool = True,
     ) -> QDockWidget:
-        """Factory method for creating and configuring a QDockWidget."""
+        """Factory method for creating and configuring a :class:`QDockWidget`.
+
+        Args:
+            widget: The content widget to embed in the dock.
+            name: Unique object name for state persistence.
+            title: Window title shown in the title bar.
+            features: Dock feature flags; defaults to Closable | Movable | Floatable.
+            allowed_areas: Dock areas the widget may be placed in.
+            use_custom_title_bar: If ``True``, use :class:`CustomDockWidget`;
+                otherwise use a plain :class:`QDockWidget`.
+
+        Returns:
+            The configured dock widget.
+        """
         if use_custom_title_bar:
             dock = CustomDockWidget(title, self.main_window)
             dock.setWidget(widget)
@@ -124,15 +154,15 @@ class PanelManager:
         dock.setAllowedAreas(allowed_areas)
         return dock
 
-    def setup_default_layout(self):
-        """Arranges the dock widgets into the default layout."""
+    def setup_default_layout(self) -> None:
+        """Arrange the dock widgets into the application's default layout."""
         for dock in self.all_docks:
             if dock:
                 dock.setFloating(False)
                 self.main_window.addDockWidget(Qt.LeftDockWidgetArea, dock)
                 dock.show()
 
-        # Layout logic
+        # Place panels in their designated areas
         self.main_window.addDockWidget(Qt.LeftDockWidgetArea, self.sidebar)
         self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.lens_editor_dock)
         self.main_window.splitDockWidget(
@@ -147,25 +177,43 @@ class PanelManager:
         self.main_window.tabifyDockWidget(
             self.analysis_dock, self.system_properties_dock
         )
+        self.main_window.tabifyDockWidget(self.analysis_dock, self.optimization_dock)
 
-        # Ensure panels are raised
+        # Raise panels in reverse order so the first item ends up on top
         for dock in reversed(self.all_docks):
             if dock:
                 dock.raise_()
 
     def get_all_docks(self) -> list[QDockWidget]:
-        """Returns a list of all managed dock widgets."""
+        """Return a list of all managed dock widgets."""
         return self.all_docks
 
-    def connect_signals(self):
+    def connect_signals(self) -> None:
         """Connect signals for the managed panels."""
         self.sidebar_content_widget.menuSelected.connect(self.on_sidebar_menu_selected)
+        self.sidebar_content_widget.showWipMessage.connect(self._on_sidebar_wip_message)
         self.python_terminal.commandExecuted.connect(self.connector.opticChanged.emit)
 
-    def on_sidebar_menu_selected(self, button_name: str):
-        """Shows and raises the corresponding dock when a sidebar button is clicked."""
+    def _on_sidebar_wip_message(self, message: str) -> None:
+        """Forward a WIP message from the sidebar to the toast manager.
+
+        Args:
+            message: The notification text to display.
+        """
+        tm = getattr(self.main_window, "toast_manager", None)
+        if tm is not None:
+            tm.notify(message, "info")
+
+    def on_sidebar_menu_selected(self, button_name: str) -> None:
+        """Show and raise the dock widget corresponding to a sidebar button.
+
+        Args:
+            button_name: Internal name of the clicked sidebar button (e.g.
+                ``"analysis"``, ``"design"``).
+        """
         dock_map = {
             "analysis": self.analysis_dock,
+            "optimization": self.optimization_dock,
             "scripts": self.terminal_dock,
             "design": self.lens_editor_dock,
         }
@@ -174,10 +222,14 @@ class PanelManager:
             dock.show()
             dock.raise_()
 
-    def update_theme(self, theme_name: str):
-        """Propagates theme changes to all relevant panels."""
+    def update_theme(self, theme_name: str) -> None:
+        """Propagate a theme change to all relevant panels.
+
+        Args:
+            theme_name: Either ``"dark"`` or ``"light"``.
+        """
         self.sidebar_content_widget.update_icons(theme_name)
-        # Call the full theme update method on panels with plots
         self.analysis_panel.update_theme(theme_name)
         self.viewer_panel.update_theme(theme_name)
         self.python_terminal.set_theme(theme_name)
+        self.optimization_panel.update_theme(theme_name)

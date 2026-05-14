@@ -14,5 +14,5 @@ identifiers:
 repository-code: 'https://github.com/optiland/optiland'
 url: 'https://optiland.readthedocs.io/'
 license: MIT
-version: 0.5.9
+version: 0.6.0
 date-released: '2026-02-08'

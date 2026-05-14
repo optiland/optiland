@@ -116,7 +116,11 @@ class ParaxialRayTracer:
             # reflect or refract
             if surfs[k].interaction_model.is_reflective:
                 if surfs[k].surface_type == "paraxial":
-                    f = surfs[k].interaction_model.f
+                    f = (
+                        -surfs[k].interaction_model.f
+                        if reverse
+                        else surfs[k].interaction_model.f
+                    )
                     u_ = -u_ - y_ / f
                 else:
                     u_ = -u_ - 2 * y_ / R[k]

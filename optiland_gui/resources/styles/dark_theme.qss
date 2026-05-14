@@ -277,7 +277,14 @@ QPushButton:hover {
 }
 
 QPushButton:pressed {
-    background-color: #005090; /* Slightly deeper press - Kept specific hex as requested */
+    background-color: #005090; /* Slightly deeper press */
+    padding-top: 9px;   /* 8+1 px shift gives a subtle press-down feel */
+    padding-bottom: 7px;
+}
+
+QPushButton:focus {
+    border: 1.5px solid #007ACC;
+    outline: none;
 }
 
 /* Style for non-accented buttons, if needed (e.g., secondary actions) */
@@ -306,8 +313,9 @@ QLineEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {
 }
 
 QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
-    border: 1px solid #007ACC; /* var(--primary-color) */
-    background-color: #2E2E2E; /* var(--surface-color) for focused input field */
+    border: 1.5px solid #007ACC;
+    background-color: #2E2E2E;
+    outline: none;
 }
 
 QComboBox::drop-down {
@@ -437,11 +445,12 @@ QMenuBar::item:pressed { /* When menu title is clicked */
 
 /* Tooltip style */
 QToolTip {
-    background-color: #3C3C3C; /* var(--secondary-color) */
-    color: #E0E0E0; /* var(--text-color) */
-    border: 1px solid #4A4A4A; /* var(--border-color) */
-    padding: 4px;
-    border-radius: 3px;
+    background-color: #3C3C3C;
+    color: #E0E0E0;
+    border: 1px solid #4A4A4A;
+    padding: 5px 8px;
+    border-radius: 5px;
+    font-size: 9pt;
 }
 
 /* Specific widget styling if needed */
@@ -673,4 +682,42 @@ QToolButton#TitleBarGitHubButton:hover,
 QToolButton#TitleBarHelpButton:hover {
     background-color: rgba(255, 255, 255, 0.1); /* Faint highlight on hover */
     border-radius: 4px;
+}
+
+/* ============================================================
+   Phase 1 QSS Polish (dark theme)
+   ============================================================ */
+
+/* Lens editor table row hover */
+QTableWidget::item:hover {
+    background-color: rgba(255, 255, 255, 0.04);
+}
+
+/* Column header hover — brighter to confirm clickability */
+QHeaderView::section:hover {
+    background-color: #303030;
+}
+
+/* Dock widget grip affordance — 2×3 dot pattern on the title bar */
+QDockWidget::title {
+    padding-left: 20px;
+    /* background-image: url("data:image/png;base64,"); */ /* placeholder; real grip via subcontrol */
+}
+
+/* Global focus indicator — accent border instead of dotted rectangle */
+QWidget:focus {
+    outline: none;
+}
+QPushButton:focus,
+QComboBox:focus,
+QLineEdit:focus,
+QSpinBox:focus,
+QDoubleSpinBox:focus {
+    border: 1.5px solid #007ACC;
+    outline: none;
+}
+
+/* Toast overlay (dark) */
+QWidget#CommandPaletteOverlay {
+    background: rgba(0, 0, 0, 120);
 }
