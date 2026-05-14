@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import matplotlib
 import matplotlib.pyplot as plt
+import numpy as np
 import pytest
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
@@ -16,6 +17,7 @@ from optiland.coordinate_system import CoordinateSystem
 from optiland.geometries import BaseGeometry, EvenAsphere
 from optiland.materials import AbbeMaterial, BaseMaterial, IdealMaterial, MaterialFile
 from optiland.optic import Optic
+from optiland.physical_apertures import RadialAperture
 from optiland.samples.microscopes import UVReflectingMicroscope
 from optiland.samples.objectives import ReverseTelephoto, TessarLens
 from optiland.samples.simple import Edmund_49_847
@@ -520,9 +522,7 @@ class TestLensInfoViewer:
 
     def test_view_abbe_material(self, set_test_backend):
         lens = ReverseTelephoto()
-        lens.surfaces[2].material_post = AbbeMaterial(
-            1.5, 60, model="polynomial"
-        )
+        lens.surfaces[2].material_post = AbbeMaterial(1.5, 60, model="polynomial")
         viewer = LensInfoViewer(lens)
         viewer.view()
 
@@ -613,3 +613,78 @@ def test_mangin_mirror_visualization(projection, lens_class, set_test_backend):
     assert len(lens_components[0].surfaces) == 2, (
         "The Mangin mirror component should be made of two surfaces."
     )
+
+
+class TestAnnularApertureVisualization:
+    """Regression tests for annular aperture polygon fill artifacts (#538).
+
+    When a surface has a RadialAperture with r_min > 0, NaN values are
+    injected into the sag coordinates by aperture clipping. The Polygon
+    patch must split at NaN boundaries to avoid diagonal line artifacts.
+    """
+
+    def _build_annular_lens(self):
+        """Build a lens with annular aperture surfaces (Case 1 from #538)."""
+        lens = Optic()
+        lens.surfaces.add(index=0, radius=np.inf, thickness=5)
+        lens.surfaces.add(
+            index=1,
+            radius=7.72,
+            thickness=0.55,
+            material=IdealMaterial(n=1.369),
+            aperture=RadialAperture(r_max=5.5),
+            is_stop=True,
+        )
+        lens.surfaces.add(
+            index=2,
+            radius=6.5,
+            thickness=0.25,
+            material=IdealMaterial(n=1.0),
+            aperture=RadialAperture(r_max=5.5),
+        )
+        lens.surfaces.add(
+            index=3,
+            radius=11.5,
+            thickness=0.01,
+            material=IdealMaterial(n=1.38),
+            aperture=RadialAperture(r_max=11.0, r_min=5.0),
+        )
+        lens.surfaces.add(
+            index=4,
+            radius=11.5,
+            thickness=10,
+            material=IdealMaterial(n=1.0),
+            aperture=RadialAperture(r_max=11.0, r_min=5.0),
+        )
+        lens.surfaces.add(index=5)
+        lens.set_aperture(aperture_type="EPD", value=3.0)
+        lens.fields.set_type(field_type="angle")
+        lens.fields.add(y=0)
+        lens.wavelengths.add(value=0.55, is_primary=True)
+        return lens
+
+    def test_draw_annular_aperture_no_nan_in_patches(self, set_test_backend):
+        """Verify that no polygon patch contains NaN vertices."""
+        lens = self._build_annular_lens()
+        fig, ax = lens.draw()
+
+        for p in ax.patches:
+            verts = p.get_path().vertices
+            assert not np.isnan(verts).any(), (
+                "Polygon patch contains NaN vertices, "
+                "which causes fill artifacts with annular apertures"
+            )
+
+        plt.close(fig)
+
+    def test_draw_annular_aperture_produces_patches(self, set_test_backend):
+        """Verify that drawing a lens with annular apertures produces
+        polygon patches (the lens body is still rendered)."""
+        lens = self._build_annular_lens()
+        fig, ax = lens.draw()
+
+        assert len(ax.patches) > 0, (
+            "No patches were drawn for lens with annular apertures"
+        )
+
+        plt.close(fig)

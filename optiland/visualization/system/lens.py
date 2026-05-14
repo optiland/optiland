@@ -154,6 +154,10 @@ class Lens2D:
     def _plot_single_lens(self, ax, x, y, z, theme=None, projection="YZ"):
         """Plot a single lens on the given matplotlib axis.
 
+        Handles NaN vertices from physical aperture clipping (e.g. annular
+        apertures with r_min > 0) by splitting the vertex array into
+        contiguous non-NaN segments and drawing a separate polygon for each.
+
         Args:
             ax (matplotlib.axes.Axes): The matplotlib axis on which the
                 lens will be plotted.
@@ -177,15 +181,45 @@ class Lens2D:
         else:
             vertices = be.to_numpy(be.column_stack((z, y)))
 
-        polygon = Polygon(
-            vertices,
-            closed=True,
-            facecolor=facecolor,
-            edgecolor=edgecolor,
-            label="Lens",
-        )
-        ax.add_patch(polygon)
-        return polygon
+        valid = ~np.isnan(vertices).any(axis=1)
+
+        if valid.all():
+            polygon = Polygon(
+                vertices,
+                closed=True,
+                facecolor=facecolor,
+                edgecolor=edgecolor,
+                label="Lens",
+            )
+            ax.add_patch(polygon)
+            return polygon
+
+        # Split vertices at NaN boundaries into contiguous valid segments
+        diff = np.diff(valid.astype(np.int8))
+        starts = list(np.where(diff == 1)[0] + 1)
+        ends = list(np.where(diff == -1)[0] + 1)
+
+        if valid[0]:
+            starts.insert(0, 0)
+        if valid[-1]:
+            ends.append(len(valid))
+
+        first_polygon = None
+        for start, end in zip(starts, ends, strict=False):
+            segment = vertices[start:end]
+            if len(segment) >= 3:
+                polygon = Polygon(
+                    segment,
+                    closed=True,
+                    facecolor=facecolor,
+                    edgecolor=edgecolor,
+                    label="Lens",
+                )
+                ax.add_patch(polygon)
+                if first_polygon is None:
+                    first_polygon = polygon
+
+        return first_polygon
 
     def _plot_lenses(self, ax, sags, theme=None, projection="YZ"):
         """Plot the lenses on the given matplotlib axis.
