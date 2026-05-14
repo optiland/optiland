@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from optiland.nonsequential._utils import to_numpy
 from optiland.nonsequential.components.base import BaseComponent, _get_xp
 from optiland.nonsequential.materials.nsq_material import VACUUM
 
@@ -73,15 +74,15 @@ class ReflectiveComponent(BaseComponent):
         xp = _get_xp(rays.x)
 
         # Advance to hit point
-        rays.x = xp.where(hit_mask, rays.x + t * rays.dx, rays.x)
-        rays.y = xp.where(hit_mask, rays.y + t * rays.dy, rays.y)
-        rays.z = xp.where(hit_mask, rays.z + t * rays.dz, rays.z)
+        rays.x = xp.where(hit_mask, rays.x + t * rays.L, rays.x)
+        rays.y = xp.where(hit_mask, rays.y + t * rays.M, rays.y)
+        rays.z = xp.where(hit_mask, rays.z + t * rays.N, rays.z)
 
-        dirs = xp.stack([rays.dx, rays.dy, rays.dz], axis=1)
+        dirs = xp.stack([rays.L, rays.M, rays.N], axis=1)
 
         if self.bsdf is not None:
             # BSDF scatter
-            hit_np = np.where(_to_numpy(xp, hit_mask))[0]
+            hit_np = np.where(to_numpy(hit_mask))[0]
             if len(hit_np) > 0:
                 dirs_hit = dirs[hit_np]
                 normals_hit = normals[hit_np]
@@ -105,15 +106,9 @@ class ReflectiveComponent(BaseComponent):
             hit_col = hit_mask[:, None]
             all_d = xp.where(hit_col, reflected, dirs)
 
-        rays.dx = all_d[:, 0]
-        rays.dy = all_d[:, 1]
-        rays.dz = all_d[:, 2]
+        rays.L = all_d[:, 0]
+        rays.M = all_d[:, 1]
+        rays.N = all_d[:, 2]
 
         # n_current unchanged (reflection stays in same medium)
         rays.bounce = xp.where(hit_mask, rays.bounce + 1, rays.bounce)
-
-
-def _to_numpy(xp, arr):
-    if xp is not np:
-        return xp.asnumpy(arr)
-    return arr

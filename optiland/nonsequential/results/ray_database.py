@@ -20,11 +20,11 @@ class RayDatabase:
         x: Ray positions x [mm].
         y: Ray positions y [mm].
         z: Ray positions z [mm].
-        dx: Ray directions x (unit vector).
-        dy: Ray directions y.
-        dz: Ray directions z.
+        L: Ray direction cosine x (unit vector).
+        M: Ray direction cosine y.
+        N: Ray direction cosine z.
         flux: Per-ray flux [W].
-        wavelength: Per-ray wavelength [nm].
+        wavelength: Per-ray wavelength [µm].
     """
 
     def __init__(
@@ -32,9 +32,9 @@ class RayDatabase:
         x: np.ndarray,
         y: np.ndarray,
         z: np.ndarray,
-        dx: np.ndarray,
-        dy: np.ndarray,
-        dz: np.ndarray,
+        L: np.ndarray,
+        M: np.ndarray,
+        N: np.ndarray,
         flux: np.ndarray,
         wavelength: np.ndarray,
     ) -> None:
@@ -44,18 +44,18 @@ class RayDatabase:
             x: Positions x [mm].
             y: Positions y [mm].
             z: Positions z [mm].
-            dx: Directions x.
-            dy: Directions y.
-            dz: Directions z.
+            L: Direction cosine x.
+            M: Direction cosine y.
+            N: Direction cosine z.
             flux: Per-ray flux [W].
-            wavelength: Per-ray wavelength [nm].
+            wavelength: Per-ray wavelength [µm].
         """
         self.x = x
         self.y = y
         self.z = z
-        self.dx = dx
-        self.dy = dy
-        self.dz = dz
+        self.L = L
+        self.M = M
+        self.N = N
         self.flux = flux
         self.wavelength = wavelength
 
@@ -68,7 +68,7 @@ class RayDatabase:
         """Return ray data as a pandas DataFrame.
 
         Returns:
-            DataFrame with columns x, y, z, dx, dy, dz, flux, wavelength.
+            DataFrame with columns x, y, z, L, M, N, flux, wavelength.
 
         Raises:
             ImportError: If pandas is not installed.
@@ -80,9 +80,9 @@ class RayDatabase:
                 "x": self.x,
                 "y": self.y,
                 "z": self.z,
-                "dx": self.dx,
-                "dy": self.dy,
-                "dz": self.dz,
+                "L": self.L,
+                "M": self.M,
+                "N": self.N,
                 "flux": self.flux,
                 "wavelength": self.wavelength,
             }
@@ -99,9 +99,9 @@ class RayDatabase:
             x=self.x,
             y=self.y,
             z=self.z,
-            dx=self.dx,
-            dy=self.dy,
-            dz=self.dz,
+            L=self.L,
+            M=self.M,
+            N=self.N,
             flux=self.flux,
             wavelength=self.wavelength,
         )

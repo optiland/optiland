@@ -12,6 +12,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from optiland.nonsequential._utils import (
+    to_numpy as _to_numpy,  # noqa: F401 backward compat
+)
 from optiland.nonsequential.backends.array_backend import ArrayBackend
 
 if TYPE_CHECKING:
@@ -97,15 +100,3 @@ def _get_detector_names(scene) -> list[str]:
         return list(scene.detector_registry._registry.keys())
     except AttributeError:
         return []
-
-
-def _to_numpy(arr: np.ndarray) -> np.ndarray:
-    """Convert a CuPy or NumPy array to NumPy."""
-    try:
-        import cupy  # type: ignore[import]
-
-        if isinstance(arr, cupy.ndarray):
-            return cupy.asnumpy(arr)
-    except ImportError:
-        pass
-    return np.asarray(arr)

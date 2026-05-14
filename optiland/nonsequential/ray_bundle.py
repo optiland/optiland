@@ -1,15 +1,17 @@
 """Ray Bundle for Non-Sequential Raytracing.
 
-Defines NSQRayBundle (the core in-memory ray state) and IntersectionResult.
+Defines NSQRayBundle -- the core in-memory ray state.
 
 Kramer Harrison, 2026
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-import numpy as np
+import numpy as np  # noqa: TC002
+
+from optiland.nonsequential._utils import get_xp
 
 
 @dataclass
@@ -17,21 +19,21 @@ class NSQRayBundle:
     """Central in-memory object carrying all live ray state.
 
     All arrays are shape (N,) or (N, 3). Arrays may be NumPy or CuPy
-    depending on the active TracerBackend. Dead rays (alive=False) remain
-    in the array and are skipped by masked operations.
+    depending on the active TracerBackend.
 
     Attributes:
         x: Position x-component [mm], shape (N,).
         y: Position y-component [mm], shape (N,).
         z: Position z-component [mm], shape (N,).
-        dx: Direction x-component (unit vector), shape (N,).
-        dy: Direction y-component (unit vector), shape (N,).
-        dz: Direction z-component (unit vector), shape (N,).
+        L: Direction x-component (unit vector), shape (N,).
+        M: Direction y-component (unit vector), shape (N,).
+        N: Direction z-component (unit vector), shape (N,).
         flux: Current flux weight [W or normalized], shape (N,).
-        wavelength: Wavelength [nm], shape (N,).
+        wavelength: Wavelength [µm], shape (N,).
         n_current: Refractive index of current medium, shape (N,).
         bounce: Number of surface hits, shape (N,).
         alive: Boolean mask -- False for dead/terminated rays, shape (N,).
+        ray_id: Unique ray identifier, shape (N,). None if not assigned.
         s0: Stokes S0 parameter, shape (N,). None if polarization disabled.
         s1: Stokes S1 parameter, shape (N,). None if polarization disabled.
         s2: Stokes S2 parameter, shape (N,). None if polarization disabled.
@@ -41,14 +43,15 @@ class NSQRayBundle:
     x: np.ndarray
     y: np.ndarray
     z: np.ndarray
-    dx: np.ndarray
-    dy: np.ndarray
-    dz: np.ndarray
+    L: np.ndarray
+    M: np.ndarray
+    N: np.ndarray
     flux: np.ndarray
     wavelength: np.ndarray
     n_current: np.ndarray
     bounce: np.ndarray
     alive: np.ndarray
+    ray_id: np.ndarray | None = None
     s0: np.ndarray | None = None
     s1: np.ndarray | None = None
     s2: np.ndarray | None = None
@@ -62,44 +65,39 @@ class NSQRayBundle:
     @property
     def num_rays_alive(self) -> int:
         """Number of alive rays."""
-        xp = _get_xp(self.x)
+        xp = get_xp(self.x)
         return int(xp.sum(self.alive))
 
     @property
     def positions(self) -> np.ndarray:
         """Ray positions as (N, 3) array [mm]."""
-        xp = _get_xp(self.x)
+        xp = get_xp(self.x)
         return xp.stack([self.x, self.y, self.z], axis=1)
 
     @property
     def directions(self) -> np.ndarray:
         """Ray directions as (N, 3) unit-vector array."""
-        xp = _get_xp(self.dx)
-        return xp.stack([self.dx, self.dy, self.dz], axis=1)
+        xp = get_xp(self.L)
+        return xp.stack([self.L, self.M, self.N], axis=1)
 
     def compact(self) -> NSQRayBundle:
-        """Return a new bundle containing only alive rays.
-
-        Removes dead rays to improve GPU occupancy. Call when the dead
-        fraction exceeds 50%.
-
-        Returns:
-            A new NSQRayBundle with only the alive rays.
-        """
+        """Return a new bundle containing only alive rays."""
         mask = self.alive
         kwargs: dict = dict(
             x=self.x[mask],
             y=self.y[mask],
             z=self.z[mask],
-            dx=self.dx[mask],
-            dy=self.dy[mask],
-            dz=self.dz[mask],
+            L=self.L[mask],
+            M=self.M[mask],
+            N=self.N[mask],
             flux=self.flux[mask],
             wavelength=self.wavelength[mask],
             n_current=self.n_current[mask],
             bounce=self.bounce[mask],
             alive=self.alive[mask],
         )
+        if self.ray_id is not None:
+            kwargs["ray_id"] = self.ray_id[mask]
         if self.s0 is not None:
             kwargs["s0"] = self.s0[mask]
             kwargs["s1"] = self.s1[mask]
@@ -113,49 +111,11 @@ class NSQRayBundle:
         Args:
             t: Per-ray distances [mm], shape (N,).
         """
-        self.x = self.x + t * self.dx
-        self.y = self.y + t * self.dy
-        self.z = self.z + t * self.dz
-
-
-@dataclass
-class IntersectionResult:
-    """Result of a ray-component intersection test.
-
-    Attributes:
-        t: Per-ray distance to nearest hit [mm], shape (N,). inf if no hit.
-        normals: Hit surface normals in global frame, shape (N, 3).
-            Normals point toward the incoming ray (outward from surface).
-        hit_mask: True where the ray actually intersected, shape (N,).
-        component_index: Index of the hit component/detector in the scene
-            list. -1 if no hit. Shape (N,).
-        is_detector: True if the hit object is a detector (not a component).
-            Shape (N,).
-    """
-
-    t: np.ndarray
-    normals: np.ndarray
-    hit_mask: np.ndarray
-    component_index: np.ndarray = field(
-        default_factory=lambda: np.array([], dtype=np.int32)
-    )
-    is_detector: np.ndarray = field(default_factory=lambda: np.array([], dtype=bool))
+        self.x = self.x + t * self.L
+        self.y = self.y + t * self.M
+        self.z = self.z + t * self.N
 
 
 def _get_xp(arr: np.ndarray):
-    """Return the array module (numpy or cupy) for the given array.
-
-    Args:
-        arr: A NumPy or CuPy array.
-
-    Returns:
-        The array module (numpy or cupy).
-    """
-    try:
-        import cupy  # type: ignore[import]
-
-        if isinstance(arr, cupy.ndarray):
-            return cupy
-    except ImportError:
-        pass
-    return np
+    """Backward-compatible alias for get_xp."""
+    return get_xp(arr)

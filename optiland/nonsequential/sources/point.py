@@ -30,6 +30,7 @@ class PointSource(BaseNSQSource):
         spectrum: Wavelength distribution.
         total_flux: Total emitted flux [W].
         half_angle_deg: Half-angle of the emission cone [deg]. 180 = isotropic.
+        medium: Medium the source is embedded in.
     """
 
     def __init__(
@@ -38,6 +39,7 @@ class PointSource(BaseNSQSource):
         spectrum: Spectrum,
         total_flux: float = 1.0,
         half_angle_deg: float = 90.0,
+        medium=None,
     ) -> None:
         """Initialize PointSource.
 
@@ -47,9 +49,11 @@ class PointSource(BaseNSQSource):
             total_flux: Total emitted flux [W].
             half_angle_deg: Half-angle of emission cone [deg].
                 90 = hemisphere, 180 = full sphere (isotropic).
+            medium: Medium the source is embedded in (default: vacuum).
         """
         super().__init__(cs, spectrum, total_flux)
         self.half_angle_deg = float(half_angle_deg)
+        self.medium = medium
 
     def generate(self, num_rays: int, rng: np.random.Generator) -> NSQRayBundle:
         """Generate rays from a point source in global coordinates.
@@ -89,21 +93,30 @@ class PointSource(BaseNSQSource):
         # Source position in global frame
         pos = translation  # shape (3,)
 
-        # Sample wavelengths
+        # Sample wavelengths [µm]
         wavelengths = self.spectrum.sample(num_rays, rng)
 
         flux_per_ray = self.total_flux / num_rays
+
+        # Initialize n_current from medium if provided
+        medium = getattr(self, "medium", None)
+        if medium is not None:
+            n_init = np.asarray(medium.n(wavelengths), dtype=float)
+            if np.ndim(n_init) == 0:
+                n_init = np.full(num_rays, float(n_init))
+        else:
+            n_init = np.ones(num_rays)
 
         return NSQRayBundle(
             x=np.full(num_rays, pos[0]),
             y=np.full(num_rays, pos[1]),
             z=np.full(num_rays, pos[2]),
-            dx=dirs_global[:, 0].copy(),
-            dy=dirs_global[:, 1].copy(),
-            dz=dirs_global[:, 2].copy(),
+            L=dirs_global[:, 0].copy(),
+            M=dirs_global[:, 1].copy(),
+            N=dirs_global[:, 2].copy(),
             flux=np.full(num_rays, flux_per_ray),
             wavelength=wavelengths,
-            n_current=np.ones(num_rays),
+            n_current=n_init,
             bounce=np.zeros(num_rays, dtype=np.int32),
             alive=np.ones(num_rays, dtype=bool),
         )

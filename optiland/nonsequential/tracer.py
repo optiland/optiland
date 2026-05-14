@@ -28,29 +28,37 @@ class SimulationResult:
     """Top-level result returned by NSQTracer.trace() / NSQScene.trace().
 
     Attributes:
-        detectors: Per-detector result objects, keyed by detector name
-            (or ``'detector_N'`` if unnamed).
+        detectors: Per-detector result objects, keyed by detector name.
         num_rays_total: Total number of rays launched.
         num_rays_absorbed: Rays terminated by absorbing components.
-        num_rays_escaped: Rays that ran out of bounces or fell below flux
-            threshold.
+        num_rays_escaped: Rays that left the scene with no hit.
+        num_rays_flux_killed: Rays killed for falling below flux threshold.
+        num_rays_bounce_killed: Rays killed for exceeding max_bounces.
         total_flux_in: Total flux launched by all sources [W].
         total_flux_detected: Total flux recorded on all detectors [W].
+        total_flux_absorbed: Flux absorbed by AbsorbingComponents [W].
+        total_flux_escaped: Flux carried by escaped rays [W].
+        total_flux_lost: Flux lost to flux/bounce kill [W].
         flux_conservation_error:
-            ``|flux_in - (detected + absorbed + escaped)| / flux_in``.
+            ``|flux_in - detected - absorbed - escaped| / flux_in``.
         trace_time_sec: Wall-clock time for the trace [s].
-        ray_paths: Optional dictionary containing ray history matrices.
+        ray_paths: Optional per-ray event log dict (if record_paths=True).
     """
 
     detectors: dict[str, object] = field(default_factory=dict)
     num_rays_total: int = 0
     num_rays_absorbed: int = 0
     num_rays_escaped: int = 0
+    num_rays_flux_killed: int = 0
+    num_rays_bounce_killed: int = 0
     total_flux_in: float = 0.0
     total_flux_detected: float = 0.0
+    total_flux_absorbed: float = 0.0
+    total_flux_escaped: float = 0.0
+    total_flux_lost: float = 0.0
     flux_conservation_error: float = 0.0
     trace_time_sec: float = 0.0
-    ray_paths: dict[str, list] | None = None
+    ray_paths: dict | None = None
 
 
 class NSQTracer:

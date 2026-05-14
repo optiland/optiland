@@ -56,23 +56,20 @@ class NSQMaterial:
             ) from exc
         return cls(optiland_material=mat)
 
-    def n(self, wavelength_nm: float | np.ndarray) -> float | np.ndarray:
+    def n(self, wavelength_um: float | np.ndarray) -> float | np.ndarray:
         """Refractive index at the given wavelength(s).
 
         Args:
-            wavelength_nm: Wavelength(s) in nanometres.
+            wavelength_um: Wavelength(s) in micrometres [µm].
 
         Returns:
             Refractive index. Returns 1.0 for vacuum.
         """
         if self.optiland_material is None:
-            if np.ndim(wavelength_nm) == 0:
+            if np.ndim(wavelength_um) == 0:
                 return 1.0
-            return np.ones_like(np.asarray(wavelength_nm, dtype=float))
-        # BaseMaterial.n() takes wavelength in microns
-        wl_um = np.asarray(wavelength_nm, dtype=float) / 1000.0
-        result = self.optiland_material.n(wl_um)
-        # Convert backend array to numpy scalar/array
+            return np.ones_like(np.asarray(wavelength_um, dtype=float))
+        result = self.optiland_material.n(np.asarray(wavelength_um, dtype=float))
         try:
             return (
                 float(result)

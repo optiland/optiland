@@ -5,10 +5,11 @@ Kramer Harrison, 2026
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from optiland.nonsequential.materials.nsq_material import NSQMaterial
     from optiland.nonsequential.sources.base import Spectrum
 
 
@@ -21,11 +22,13 @@ class PointSourceConfig:
         total_flux: Total emitted flux [W].
         half_angle_deg: Half-angle of the emission cone [deg].
             90 = hemisphere, 180 = full sphere (isotropic).
+        medium: Medium the source is embedded in (default: vacuum).
     """
 
     spectrum: Spectrum
     total_flux: float = 1.0
     half_angle_deg: float = 90.0
+    medium: NSQMaterial | None = field(default=None)
 
 
 @dataclass
@@ -37,12 +40,14 @@ class CollimatedSourceConfig:
         total_flux: Total emitted flux [W].
         aperture_radius: Beam semi-diameter [mm].
         profile: Spatial profile -- ``'tophat'`` or ``'gaussian'``.
+        medium: Medium the source is embedded in (default: vacuum).
     """
 
     spectrum: Spectrum
     total_flux: float = 1.0
     aperture_radius: float = 1.0
     profile: str = "tophat"
+    medium: NSQMaterial | None = field(default=None)
 
 
 @dataclass
@@ -55,6 +60,7 @@ class ExtendedSourceConfig:
         width: Source width [mm].
         height: Source height [mm].
         half_angle_deg: Half-angle of the emission cone [deg].
+        medium: Medium the source is embedded in (default: vacuum).
     """
 
     spectrum: Spectrum
@@ -62,3 +68,4 @@ class ExtendedSourceConfig:
     width: float = 1.0
     height: float = 1.0
     half_angle_deg: float = 90.0
+    medium: NSQMaterial | None = field(default=None)

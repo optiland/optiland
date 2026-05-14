@@ -33,6 +33,7 @@ class CollimatedSource(BaseNSQSource):
         aperture_radius: Beam aperture radius [mm].
         profile: Intensity profile ('tophat' or 'gaussian').
         gaussian_sigma: Gaussian sigma [mm] (used when profile='gaussian').
+        medium: Medium the source is embedded in.
     """
 
     def __init__(
@@ -43,6 +44,7 @@ class CollimatedSource(BaseNSQSource):
         aperture_radius: float = 5.0,
         profile: Literal["tophat", "gaussian"] = "tophat",
         gaussian_sigma: float | None = None,
+        medium=None,
     ) -> None:
         """Initialize CollimatedSource.
 
@@ -54,6 +56,7 @@ class CollimatedSource(BaseNSQSource):
             profile: Intensity profile ('tophat' or 'gaussian').
             gaussian_sigma: Gaussian standard deviation [mm].
                 Defaults to aperture_radius / 2 if None.
+            medium: Medium the source is embedded in (default: vacuum).
         """
         super().__init__(cs, spectrum, total_flux)
         self.aperture_radius = float(aperture_radius)
@@ -63,6 +66,7 @@ class CollimatedSource(BaseNSQSource):
             if gaussian_sigma is not None
             else aperture_radius / 2.0
         )
+        self.medium = medium
 
     def generate(self, num_rays: int, rng: np.random.Generator) -> NSQRayBundle:
         """Generate collimated rays in global coordinates.
@@ -103,19 +107,29 @@ class CollimatedSource(BaseNSQSource):
         pos_global = pos_local @ rot.T + translation
         dirs_global = dirs_local @ rot.T
 
+        # Sample wavelengths [µm]
         wavelengths = self.spectrum.sample(num_rays, rng)
         flux_per_ray = self.total_flux / num_rays
+
+        # Initialize n_current from medium if provided
+        medium = getattr(self, "medium", None)
+        if medium is not None:
+            n_init = np.asarray(medium.n(wavelengths), dtype=float)
+            if np.ndim(n_init) == 0:
+                n_init = np.full(num_rays, float(n_init))
+        else:
+            n_init = np.ones(num_rays)
 
         return NSQRayBundle(
             x=pos_global[:, 0].copy(),
             y=pos_global[:, 1].copy(),
             z=pos_global[:, 2].copy(),
-            dx=dirs_global[:, 0].copy(),
-            dy=dirs_global[:, 1].copy(),
-            dz=dirs_global[:, 2].copy(),
+            L=dirs_global[:, 0].copy(),
+            M=dirs_global[:, 1].copy(),
+            N=dirs_global[:, 2].copy(),
             flux=np.full(num_rays, flux_per_ray),
             wavelength=wavelengths,
-            n_current=np.ones(num_rays),
+            n_current=n_init,
             bounce=np.zeros(num_rays, dtype=np.int32),
             alive=np.ones(num_rays, dtype=bool),
         )

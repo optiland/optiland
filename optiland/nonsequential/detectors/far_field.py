@@ -11,7 +11,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from optiland.nonsequential.components.base import _get_transform, _get_xp
+from optiland.nonsequential._utils import to_numpy
+from optiland.nonsequential.components.base import _get_transform
 from optiland.nonsequential.components.geometry.analytic.plane import (
     FinitePlaneGeometry,
 )
@@ -76,20 +77,19 @@ class FarFieldDetector(BaseDetector):
             t: Hit distances [mm], shape (N,).
             hit_mask: Boolean mask of hitting rays, shape (N,).
         """
-        xp = _get_xp(rays.x)
-        hit_mask_np = _to_numpy(xp, hit_mask).astype(bool)
+        hit_mask_np = to_numpy(hit_mask).astype(bool)
         if not hit_mask_np.any():
             return
 
         _, rot = _get_transform(self.cs)
         R = np.array(rot, dtype=float)
 
-        dx_g = _to_numpy(xp, rays.dx)
-        dy_g = _to_numpy(xp, rays.dy)
-        dz_g = _to_numpy(xp, rays.dz)
-        flux_np = _to_numpy(xp, rays.flux)
+        L_g = to_numpy(rays.L)
+        M_g = to_numpy(rays.M)
+        N_g = to_numpy(rays.N)
+        flux_np = to_numpy(rays.flux)
 
-        dirs_g = np.stack([dx_g, dy_g, dz_g], axis=1)
+        dirs_g = np.stack([L_g, M_g, N_g], axis=1)
         dirs_l = dirs_g @ R  # global -> local
 
         dirs_hit = dirs_l[hit_mask_np]
@@ -139,9 +139,3 @@ class FarFieldDetector(BaseDetector):
         """Clear accumulated data."""
         self._intensity[:] = 0.0
         self._num_rays_hit = 0
-
-
-def _to_numpy(xp, arr):
-    if xp is not np:
-        return xp.asnumpy(arr)
-    return np.asarray(arr)

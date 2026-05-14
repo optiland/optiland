@@ -11,7 +11,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from optiland.nonsequential.components.base import _get_transform, _get_xp
+from optiland.nonsequential._utils import to_numpy
+from optiland.nonsequential.components.base import _get_transform
 from optiland.nonsequential.components.geometry.analytic.plane import (
     FinitePlaneGeometry,
 )
@@ -81,29 +82,28 @@ class IrradianceDetector(BaseDetector):
             t: Hit distances [mm], shape (N,).
             hit_mask: Boolean mask of hitting rays, shape (N,).
         """
-        xp = _get_xp(rays.x)
         translation, rot = _get_transform(self.cs)
 
         # Get hit positions in global frame
-        hit_mask_np = _to_numpy(xp, hit_mask).astype(bool)
+        hit_mask_np = to_numpy(hit_mask).astype(bool)
         if not hit_mask_np.any():
             return
 
-        x_g = _to_numpy(xp, rays.x)
-        y_g = _to_numpy(xp, rays.y)
-        z_g = _to_numpy(xp, rays.z)
-        dx_g = _to_numpy(xp, rays.dx)
-        dy_g = _to_numpy(xp, rays.dy)
-        dz_g = _to_numpy(xp, rays.dz)
-        t_np = _to_numpy(xp, t)
-        flux_np = _to_numpy(xp, rays.flux)
+        x_g = to_numpy(rays.x)
+        y_g = to_numpy(rays.y)
+        z_g = to_numpy(rays.z)
+        L_g = to_numpy(rays.L)
+        M_g = to_numpy(rays.M)
+        N_g = to_numpy(rays.N)
+        t_np = to_numpy(t)
+        flux_np = to_numpy(rays.flux)
 
         # Use only hit rays to avoid inf*0 NaN from non-hit rays
         idx = np.where(hit_mask_np)[0]
         t_hit = t_np[idx]
-        hx_g = x_g[idx] + t_hit * dx_g[idx]
-        hy_g = y_g[idx] + t_hit * dy_g[idx]
-        hz_g = z_g[idx] + t_hit * dz_g[idx]
+        hx_g = x_g[idx] + t_hit * L_g[idx]
+        hy_g = y_g[idx] + t_hit * M_g[idx]
+        hz_g = z_g[idx] + t_hit * N_g[idx]
 
         # Transform hit positions to local detector frame
         pos_g = np.stack([hx_g, hy_g, hz_g], axis=1)
@@ -153,9 +153,3 @@ class IrradianceDetector(BaseDetector):
         """Clear accumulated data."""
         self._flux_map[:] = 0.0
         self._num_rays_hit = 0
-
-
-def _to_numpy(xp, arr):
-    if xp is not np:
-        return xp.asnumpy(arr)
-    return np.asarray(arr)

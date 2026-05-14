@@ -56,6 +56,11 @@ class NSQScene:
         scene.add_source(source_obj)      # auto-named
         scene.add_detector(detector_obj)  # auto-named
 
+    Mutation note: Components are held by reference. Modifying a component's
+    CoordinateSystem or geometry after scene construction is valid and takes
+    effect on the next trace() call. If a BVH acceleration structure is later
+    introduced, call scene.invalidate_cache() after any structural change.
+
     Attributes:
         component_registry: Registry of named compound components.
         source_registry: Registry of named sources.
@@ -393,6 +398,7 @@ def _build_source(cs: CoordinateSystem, config) -> BaseNSQSource:
             spectrum=config.spectrum,
             total_flux=config.total_flux,
             half_angle_deg=config.half_angle_deg,
+            medium=getattr(config, "medium", None),
         )
     if isinstance(config, CollimatedSourceConfig):
         return CollimatedSource(
@@ -400,6 +406,7 @@ def _build_source(cs: CoordinateSystem, config) -> BaseNSQSource:
             spectrum=config.spectrum,
             total_flux=config.total_flux,
             aperture_radius=config.aperture_radius,
+            medium=getattr(config, "medium", None),
         )
     if isinstance(config, ExtendedSourceConfig):
         return ExtendedSource(
@@ -409,6 +416,7 @@ def _build_source(cs: CoordinateSystem, config) -> BaseNSQSource:
             width=config.width,
             height=config.height,
             half_angle_deg=config.half_angle_deg,
+            medium=getattr(config, "medium", None),
         )
     raise TypeError(
         f"Unrecognised source config type: {type(config).__name__}. "

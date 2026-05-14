@@ -27,7 +27,7 @@ def _make_minimal_scene():
     )
 
     scene = NSQScene()
-    spectrum = Spectrum.monochromatic(550.0)
+    spectrum = Spectrum.monochromatic(0.55)
 
     scene.add_source(
         "S1",

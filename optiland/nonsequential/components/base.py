@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from optiland.nonsequential._utils import get_xp
+
 if TYPE_CHECKING:
     from optiland.coordinate_system import CoordinateSystem
     from optiland.nonsequential.bsdf.base import BaseBSDF
@@ -83,7 +85,7 @@ class BaseComponent(ABC):
 
         # Global ray data as (N, 3) arrays
         positions_g = xp.stack([rays.x, rays.y, rays.z], axis=1)
-        directions_g = xp.stack([rays.dx, rays.dy, rays.dz], axis=1)
+        directions_g = xp.stack([rays.L, rays.M, rays.N], axis=1)
 
         t_np = xp.array(translation, dtype=positions_g.dtype)
         R_np = xp.array(rot, dtype=positions_g.dtype)
@@ -92,10 +94,14 @@ class BaseComponent(ABC):
         positions_l = (positions_g - t_np) @ R_np
         directions_l = directions_g @ R_np
 
-        # Only intersect alive rays -- mask others with inf
         t_hit, normals_l, hit_mask = self.geometry.ray_intersect(
             positions_l, directions_l
         )
+
+        # T_EPSILON guard: prevent self-intersection after surface crossing
+        T_EPSILON = 1e-9
+        t_hit = xp.where(t_hit > T_EPSILON, t_hit, xp.full_like(t_hit, xp.inf))
+        hit_mask = hit_mask & (t_hit > T_EPSILON)
 
         # Dead rays can't hit
         t_hit = xp.where(rays.alive, t_hit, xp.full_like(t_hit, xp.inf))
@@ -161,11 +167,5 @@ def _get_transform(cs: CoordinateSystem) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _get_xp(arr: np.ndarray):
-    try:
-        import cupy  # type: ignore[import]
-
-        if isinstance(arr, cupy.ndarray):
-            return cupy
-    except ImportError:
-        pass
-    return np
+    """Backward-compatible alias for get_xp."""
+    return get_xp(arr)

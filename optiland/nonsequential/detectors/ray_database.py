@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from optiland.nonsequential.components.base import _get_xp
+from optiland.nonsequential._utils import to_numpy
 from optiland.nonsequential.detectors.base import BaseDetector
 from optiland.nonsequential.results.ray_database import RayDatabase
 
@@ -61,9 +61,9 @@ class RayDatabaseDetector(BaseDetector):
         self._x: list[np.ndarray] = []
         self._y: list[np.ndarray] = []
         self._z: list[np.ndarray] = []
-        self._dx: list[np.ndarray] = []
-        self._dy: list[np.ndarray] = []
-        self._dz: list[np.ndarray] = []
+        self._L: list[np.ndarray] = []
+        self._M: list[np.ndarray] = []
+        self._N: list[np.ndarray] = []
         self._flux: list[np.ndarray] = []
         self._wavelength: list[np.ndarray] = []
         self._total_flux: float = 0.0
@@ -77,28 +77,27 @@ class RayDatabaseDetector(BaseDetector):
             t: Hit distances [mm], shape (N,).
             hit_mask: Boolean mask of hitting rays, shape (N,).
         """
-        xp = _get_xp(rays.x)
-        hit_mask_np = _to_numpy(xp, hit_mask).astype(bool)
+        hit_mask_np = to_numpy(hit_mask).astype(bool)
         if not hit_mask_np.any():
             return
 
-        x_g = _to_numpy(xp, rays.x)
-        y_g = _to_numpy(xp, rays.y)
-        z_g = _to_numpy(xp, rays.z)
-        dx_g = _to_numpy(xp, rays.dx)
-        dy_g = _to_numpy(xp, rays.dy)
-        dz_g = _to_numpy(xp, rays.dz)
-        t_np = _to_numpy(xp, t)
-        flux_np = _to_numpy(xp, rays.flux)
-        wl_np = _to_numpy(xp, rays.wavelength)
+        x_g = to_numpy(rays.x)
+        y_g = to_numpy(rays.y)
+        z_g = to_numpy(rays.z)
+        L_g = to_numpy(rays.L)
+        M_g = to_numpy(rays.M)
+        N_g = to_numpy(rays.N)
+        t_np = to_numpy(t)
+        flux_np = to_numpy(rays.flux)
+        wl_np = to_numpy(rays.wavelength)
 
         # Advance hit positions
-        hx = (x_g + t_np * dx_g)[hit_mask_np]
-        hy = (y_g + t_np * dy_g)[hit_mask_np]
-        hz = (z_g + t_np * dz_g)[hit_mask_np]
-        hdx = dx_g[hit_mask_np]
-        hdy = dy_g[hit_mask_np]
-        hdz = dz_g[hit_mask_np]
+        hx = (x_g + t_np * L_g)[hit_mask_np]
+        hy = (y_g + t_np * M_g)[hit_mask_np]
+        hz = (z_g + t_np * N_g)[hit_mask_np]
+        hL = L_g[hit_mask_np]
+        hM = M_g[hit_mask_np]
+        hN = N_g[hit_mask_np]
         hflux = flux_np[hit_mask_np]
         hwl = wl_np[hit_mask_np]
 
@@ -109,9 +108,9 @@ class RayDatabaseDetector(BaseDetector):
             self._x.append(hx)
             self._y.append(hy)
             self._z.append(hz)
-            self._dx.append(hdx)
-            self._dy.append(hdy)
-            self._dz.append(hdz)
+            self._L.append(hL)
+            self._M.append(hM)
+            self._N.append(hN)
             self._flux.append(hflux)
             self._wavelength.append(hwl)
 
@@ -123,17 +122,17 @@ class RayDatabaseDetector(BaseDetector):
                     all_x = np.concatenate(self._x)[-self.max_rays :]
                     all_y = np.concatenate(self._y)[-self.max_rays :]
                     all_z = np.concatenate(self._z)[-self.max_rays :]
-                    all_dx = np.concatenate(self._dx)[-self.max_rays :]
-                    all_dy = np.concatenate(self._dy)[-self.max_rays :]
-                    all_dz = np.concatenate(self._dz)[-self.max_rays :]
+                    all_L = np.concatenate(self._L)[-self.max_rays :]
+                    all_M = np.concatenate(self._M)[-self.max_rays :]
+                    all_N = np.concatenate(self._N)[-self.max_rays :]
                     all_f = np.concatenate(self._flux)[-self.max_rays :]
                     all_wl = np.concatenate(self._wavelength)[-self.max_rays :]
                     self._x = [all_x]
                     self._y = [all_y]
                     self._z = [all_z]
-                    self._dx = [all_dx]
-                    self._dy = [all_dy]
-                    self._dz = [all_dz]
+                    self._L = [all_L]
+                    self._M = [all_M]
+                    self._N = [all_N]
                     self._flux = [all_f]
                     self._wavelength = [all_wl]
 
@@ -148,9 +147,9 @@ class RayDatabaseDetector(BaseDetector):
                 x=np.concatenate(self._x),
                 y=np.concatenate(self._y),
                 z=np.concatenate(self._z),
-                dx=np.concatenate(self._dx),
-                dy=np.concatenate(self._dy),
-                dz=np.concatenate(self._dz),
+                L=np.concatenate(self._L),
+                M=np.concatenate(self._M),
+                N=np.concatenate(self._N),
                 flux=np.concatenate(self._flux),
                 wavelength=np.concatenate(self._wavelength),
             )
@@ -159,9 +158,9 @@ class RayDatabaseDetector(BaseDetector):
             x=np.array([]),
             y=np.array([]),
             z=np.array([]),
-            dx=np.array([]),
-            dy=np.array([]),
-            dz=np.array([]),
+            L=np.array([]),
+            M=np.array([]),
+            N=np.array([]),
             flux=np.array([self._total_flux]),
             wavelength=np.array([0.0]),
         )
@@ -171,16 +170,10 @@ class RayDatabaseDetector(BaseDetector):
         self._x.clear()
         self._y.clear()
         self._z.clear()
-        self._dx.clear()
-        self._dy.clear()
-        self._dz.clear()
+        self._L.clear()
+        self._M.clear()
+        self._N.clear()
         self._flux.clear()
         self._wavelength.clear()
         self._total_flux = 0.0
         self._num_rays_hit = 0
-
-
-def _to_numpy(xp, arr):
-    if xp is not np:
-        return xp.asnumpy(arr)
-    return np.asarray(arr)

@@ -11,7 +11,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from optiland.nonsequential.components.base import _get_transform, _get_xp
+from optiland.nonsequential._utils import to_numpy
+from optiland.nonsequential.components.base import _get_transform
 from optiland.nonsequential.components.geometry.analytic.plane import (
     FinitePlaneGeometry,
 )
@@ -34,7 +35,7 @@ class SpectralDetector(BaseDetector):
         height: Detector height [mm].
         num_pixels_x: Number of pixels along x.
         num_pixels_y: Number of pixels along y.
-        wavelength_bins: Wavelength bin edges [nm].
+        wavelength_bins: Wavelength bin edges [µm].
     """
 
     def __init__(
@@ -55,7 +56,7 @@ class SpectralDetector(BaseDetector):
             height: Detector height [mm].
             num_pixels_x: Number of pixels along x.
             num_pixels_y: Number of pixels along y.
-            wavelength_bins: Wavelength bin edges [nm], shape (n_lambda + 1,).
+            wavelength_bins: Wavelength bin edges [µm], shape (n_lambda + 1,).
             name: Optional label.
         """
         geometry = FinitePlaneGeometry(width=width, height=height)
@@ -83,8 +84,7 @@ class SpectralDetector(BaseDetector):
             t: Hit distances [mm], shape (N,).
             hit_mask: Boolean mask of hitting rays, shape (N,).
         """
-        xp = _get_xp(rays.x)
-        hit_mask_np = _to_numpy(xp, hit_mask).astype(bool)
+        hit_mask_np = to_numpy(hit_mask).astype(bool)
         if not hit_mask_np.any():
             return
 
@@ -92,21 +92,21 @@ class SpectralDetector(BaseDetector):
         t_vec = np.array(translation, dtype=float)
         R = np.array(rot, dtype=float)
 
-        x_g = _to_numpy(xp, rays.x)
-        y_g = _to_numpy(xp, rays.y)
-        z_g = _to_numpy(xp, rays.z)
-        dx_g = _to_numpy(xp, rays.dx)
-        dy_g = _to_numpy(xp, rays.dy)
-        dz_g = _to_numpy(xp, rays.dz)
-        t_np = _to_numpy(xp, t)
-        flux_np = _to_numpy(xp, rays.flux)
-        wl_np = _to_numpy(xp, rays.wavelength)
+        x_g = to_numpy(rays.x)
+        y_g = to_numpy(rays.y)
+        z_g = to_numpy(rays.z)
+        L_g = to_numpy(rays.L)
+        M_g = to_numpy(rays.M)
+        N_g = to_numpy(rays.N)
+        t_np = to_numpy(t)
+        flux_np = to_numpy(rays.flux)
+        wl_np = to_numpy(rays.wavelength)
 
         idx = np.where(hit_mask_np)[0]
         t_hit = t_np[idx]
-        hx_g = x_g[idx] + t_hit * dx_g[idx]
-        hy_g = y_g[idx] + t_hit * dy_g[idx]
-        hz_g = z_g[idx] + t_hit * dz_g[idx]
+        hx_g = x_g[idx] + t_hit * L_g[idx]
+        hy_g = y_g[idx] + t_hit * M_g[idx]
+        hz_g = z_g[idx] + t_hit * N_g[idx]
 
         pos_g = np.stack([hx_g, hy_g, hz_g], axis=1)
         pos_l = (pos_g - t_vec) @ R
@@ -148,6 +148,7 @@ class SpectralDetector(BaseDetector):
 
         x_centres = 0.5 * (self._x_edges[:-1] + self._x_edges[1:])
         y_centres = 0.5 * (self._y_edges[:-1] + self._y_edges[1:])
+        # wl_centres in µm
         wl_centres = 0.5 * (self.wavelength_bins[:-1] + self.wavelength_bins[1:])
 
         return SpectralResult(
@@ -163,9 +164,3 @@ class SpectralDetector(BaseDetector):
         """Clear accumulated data."""
         self._flux_map[:] = 0.0
         self._num_rays_hit = 0
-
-
-def _to_numpy(xp, arr):
-    if xp is not np:
-        return xp.asnumpy(arr)
-    return np.asarray(arr)

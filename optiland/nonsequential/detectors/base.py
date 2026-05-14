@@ -62,7 +62,7 @@ class BaseDetector(ABC):
         translation, rot = _get_transform(self.cs)
 
         positions_g = xp.stack([rays.x, rays.y, rays.z], axis=1)
-        directions_g = xp.stack([rays.dx, rays.dy, rays.dz], axis=1)
+        directions_g = xp.stack([rays.L, rays.M, rays.N], axis=1)
 
         t_np = xp.array(translation, dtype=positions_g.dtype)
         R_np = xp.array(rot, dtype=positions_g.dtype)
@@ -73,6 +73,12 @@ class BaseDetector(ABC):
         t_hit, normals_l, hit_mask = self.geometry.ray_intersect(
             positions_l, directions_l
         )
+
+        # T_EPSILON guard: prevent self-intersection
+        T_EPSILON = 1e-9
+        t_hit = xp.where(t_hit > T_EPSILON, t_hit, xp.full_like(t_hit, xp.inf))
+        hit_mask = hit_mask & (t_hit > T_EPSILON)
+
         t_hit = xp.where(rays.alive, t_hit, xp.full_like(t_hit, xp.inf))
         hit_mask = hit_mask & rays.alive
 

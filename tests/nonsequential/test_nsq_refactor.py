@@ -282,7 +282,7 @@ class TestNSQSceneNewAPI:
         assert len(scene.surfaces) == 1
 
     def test_add_source_and_detector_via_config(self):
-        spec = Spectrum.monochromatic(550.0)
+        spec = Spectrum.monochromatic(0.55)
         scene = NSQScene()
 
         src_cs = CoordinateSystem(z=0)
@@ -330,7 +330,7 @@ class TestBackwardCompat:
 
     def test_old_add_source(self):
         cs = CoordinateSystem()
-        spec = Spectrum.monochromatic(550.0)
+        spec = Spectrum.monochromatic(0.55)
         src = PointSource(cs=cs, spectrum=spec, total_flux=1.0)
         scene = NSQScene()
         scene.add_source(src)
@@ -358,7 +358,7 @@ class TestLensIntegration:
 
         Checks that flux is detected and conservation error < 1%.
         """
-        spec = Spectrum.monochromatic(550.0)
+        spec = Spectrum.monochromatic(0.55)
 
         scene = NSQScene()
 
@@ -398,7 +398,7 @@ class TestVisualizationSmoke:
     """Smoke tests: viewers must run without exception on a minimal scene."""
 
     def _build_minimal_scene(self):
-        spec = Spectrum.monochromatic(550.0)
+        spec = Spectrum.monochromatic(0.55)
         scene = NSQScene()
         src_cs = CoordinateSystem(z=0)
         scene.add_source("S1", src_cs,

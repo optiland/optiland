@@ -21,7 +21,7 @@ class Spectrum:
     """Wavelength distribution for Monte Carlo sampling.
 
     Attributes:
-        wavelengths: Wavelength values [nm].
+        wavelengths: Wavelength values [µm].
         weights: Relative spectral power weights (unnormalized).
     """
 
@@ -34,6 +34,8 @@ class Spectrum:
         self.weights = np.asarray(self.weights, dtype=np.float64)
         if self.wavelengths.shape != self.weights.shape:
             raise ValueError("wavelengths and weights must have the same shape.")
+        if np.any(self.wavelengths > 20.0):
+            raise ValueError("Wavelengths must be in µm (expected range 0.1-20 µm).")
         # Build cumulative distribution for inverse-CDF sampling
         self._cdf = np.cumsum(self.weights)
         self._cdf /= self._cdf[-1]
@@ -43,7 +45,7 @@ class Spectrum:
         """Create a monochromatic spectrum at a single wavelength.
 
         Args:
-            wavelength: Wavelength [nm].
+            wavelength: Wavelength [µm].
 
         Returns:
             A Spectrum with a single wavelength.
@@ -63,7 +65,7 @@ class Spectrum:
             rng: NumPy random generator.
 
         Returns:
-            Sampled wavelengths [nm], shape (n,).
+            Sampled wavelengths [µm], shape (n,).
         """
         if len(self.wavelengths) == 1:
             return np.full(num, self.wavelengths[0])

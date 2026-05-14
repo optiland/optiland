@@ -48,6 +48,8 @@ class AbsorbingComponent(BaseComponent):
             name: Optional label.
         """
         super().__init__(cs, geometry, material_front, material_front, None, name)
+        self._absorbed_count: int = 0
+        self._absorbed_flux: float = 0.0
 
     def interact(
         self,
@@ -69,11 +71,21 @@ class AbsorbingComponent(BaseComponent):
         xp = _get_xp(rays.x)
 
         # Advance to hit point before killing
-        rays.x = xp.where(hit_mask, rays.x + t * rays.dx, rays.x)
-        rays.y = xp.where(hit_mask, rays.y + t * rays.dy, rays.y)
-        rays.z = xp.where(hit_mask, rays.z + t * rays.dz, rays.z)
+        rays.x = xp.where(hit_mask, rays.x + t * rays.L, rays.x)
+        rays.y = xp.where(hit_mask, rays.y + t * rays.M, rays.y)
+        rays.z = xp.where(hit_mask, rays.z + t * rays.N, rays.z)
+
+        # Count absorbed rays (must be alive when they hit)
+        hit_alive = hit_mask & rays.alive
+        self._absorbed_count += int(hit_alive.sum())
+        self._absorbed_flux += float(rays.flux[hit_alive].sum())
 
         # Terminate rays
         rays.alive = rays.alive & ~hit_mask
         rays.flux = xp.where(hit_mask, xp.zeros_like(rays.flux), rays.flux)
         rays.bounce = xp.where(hit_mask, rays.bounce + 1, rays.bounce)
+
+    def reset_stats(self) -> None:
+        """Reset per-simulation absorbed ray and flux counters."""
+        self._absorbed_count = 0
+        self._absorbed_flux = 0.0

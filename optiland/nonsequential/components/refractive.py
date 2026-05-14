@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from optiland.nonsequential._utils import to_numpy
 from optiland.nonsequential.components.base import BaseComponent, _get_xp
 
 if TYPE_CHECKING:
@@ -86,12 +87,12 @@ class RefractiveComponent(BaseComponent):
         xp = _get_xp(rays.x)
 
         # Advance hit rays to intersection point
-        rays.x = xp.where(hit_mask, rays.x + t * rays.dx, rays.x)
-        rays.y = xp.where(hit_mask, rays.y + t * rays.dy, rays.y)
-        rays.z = xp.where(hit_mask, rays.z + t * rays.dz, rays.z)
+        rays.x = xp.where(hit_mask, rays.x + t * rays.L, rays.x)
+        rays.y = xp.where(hit_mask, rays.y + t * rays.M, rays.y)
+        rays.z = xp.where(hit_mask, rays.z + t * rays.N, rays.z)
 
-        dirs = xp.stack([rays.dx, rays.dy, rays.dz], axis=1)
-        wl = rays.wavelength  # nm
+        dirs = xp.stack([rays.L, rays.M, rays.N], axis=1)
+        wl = rays.wavelength  # µm
 
         # Determine n1 and n2 for each ray (based on side of the surface)
         dot = (dirs * normals).sum(axis=1)  # cos_theta_i (signed)
@@ -164,9 +165,9 @@ class RefractiveComponent(BaseComponent):
 
         # Apply only to hit rays
         hit_col = hit_mask[:, None]
-        rays.dx = xp.where(hit_col[:, 0], new_d[:, 0], rays.dx)
-        rays.dy = xp.where(hit_col[:, 0], new_d[:, 1], rays.dy)
-        rays.dz = xp.where(hit_col[:, 0], new_d[:, 2], rays.dz)
+        rays.L = xp.where(hit_col[:, 0], new_d[:, 0], rays.L)
+        rays.M = xp.where(hit_col[:, 0], new_d[:, 1], rays.M)
+        rays.N = xp.where(hit_col[:, 0], new_d[:, 2], rays.N)
 
         # Update n_current: stays n1 on reflect, becomes n2 on refract
         rays.n_current = xp.where(
@@ -178,30 +179,24 @@ class RefractiveComponent(BaseComponent):
 
         # Apply BSDF scatter if present
         if self.bsdf is not None:
-            hit_indices = np.where(_to_numpy(xp, hit_mask))[0]
+            hit_indices = np.where(to_numpy(hit_mask))[0]
             if len(hit_indices) > 0:
-                dirs_hit = xp.stack([rays.dx, rays.dy, rays.dz], axis=1)[hit_indices]
+                dirs_hit = xp.stack([rays.L, rays.M, rays.N], axis=1)[hit_indices]
                 normals_hit = normals[hit_indices]
                 wl_hit = rays.wavelength[hit_indices]
                 scattered, weights = self.bsdf.sample(
                     len(hit_indices), dirs_hit, normals_hit, wl_hit, rng
                 )
                 # Update directions for hit rays
-                all_dx = xp.array(rays.dx)
-                all_dy = xp.array(rays.dy)
-                all_dz = xp.array(rays.dz)
-                all_dx[hit_indices] = scattered[:, 0]
-                all_dy[hit_indices] = scattered[:, 1]
-                all_dz[hit_indices] = scattered[:, 2]
-                rays.dx = all_dx
-                rays.dy = all_dy
-                rays.dz = all_dz
+                all_L = xp.array(rays.L)
+                all_M = xp.array(rays.M)
+                all_N = xp.array(rays.N)
+                all_L[hit_indices] = scattered[:, 0]
+                all_M[hit_indices] = scattered[:, 1]
+                all_N[hit_indices] = scattered[:, 2]
+                rays.L = all_L
+                rays.M = all_M
+                rays.N = all_N
                 flux_arr = xp.array(rays.flux)
                 flux_arr[hit_indices] *= weights
                 rays.flux = flux_arr
-
-
-def _to_numpy(xp, arr):
-    if xp is not np:
-        return xp.asnumpy(arr)
-    return arr

@@ -22,6 +22,31 @@ class ConversionError(Exception):
     """Raised when a sequential surface or element cannot be converted to NSQ."""
 
 
+def _has_polarization_surfaces(optic) -> bool:
+    """Return True if any surface has polarization-sensitive coatings.
+
+    Args:
+        optic: Sequential Optic.
+
+    Returns:
+        True if any surface has polarization-sensitive coatings.
+    """
+    try:
+        for surf in optic.surfaces.surfaces:
+            if (
+                hasattr(surf, "coating")
+                and surf.coating is not None
+                and (
+                    hasattr(surf.coating, "jones_matrix")
+                    or hasattr(surf.coating, "is_polarizing")
+                )
+            ):
+                return True
+        return False
+    except Exception:
+        return False
+
+
 def sequential_to_nonsequential(
     optic: Optic,
     *,
@@ -129,6 +154,14 @@ def sequential_to_nonsequential(
     _add_sources(scene, optic, beam_diameter, half_angle_deg)
 
     _add_detector(scene, optic, detector_width, detector_height, detector_pixels)
+
+    if _has_polarization_surfaces(optic):
+        warnings.warn(
+            "Polarization coatings and Jones matrices on sequential surfaces are not "
+            "carried over to the NSQ scene. Polarization tracking in NSQ is deferred.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     warnings.warn(
         "The converted NSQ scene uses Fresnel reflections at all uncoated interfaces. "
@@ -434,13 +467,12 @@ def _build_spectrum(optic) -> object:
     from optiland.nonsequential.sources.base import Spectrum  # noqa: PLC0415
 
     wls_um = [w.value for w in optic.wavelengths.wavelengths]
-    wls_nm = [w * 1000.0 for w in wls_um]
     weights = list(optic.wavelengths.weights)
     if not weights or all(w == 0 for w in weights):
-        weights = [1.0] * len(wls_nm)
+        weights = [1.0] * len(wls_um)
 
     return Spectrum(
-        wavelengths=np.array(wls_nm, dtype=np.float64),
+        wavelengths=np.array(wls_um, dtype=np.float64),
         weights=np.array(weights, dtype=np.float64),
     )
 
