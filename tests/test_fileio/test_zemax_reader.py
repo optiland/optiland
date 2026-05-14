@@ -296,6 +296,57 @@ class TestZemaxToOpticConverterExtended:
         assert surf.geometry.R_yz == 50.0
         assert surf.geometry.R_rot == 60.0
 
+    def test_configure_surfaces_paraxial(self):
+        # PARAXIAL surface in zemax → 'paraxial' surface_type in Optiland.
+        # PARM 1 carries the focal length (Zemax convention).
+        zemax_data = {
+            "surfaces": {
+                0: {
+                    "type": "standard",
+                    "radius": be.inf,
+                    "thickness": be.inf,
+                    "conic": 0.0,
+                    "material": "Air",
+                },
+                1: {
+                    "type": "paraxial",
+                    "radius": be.inf,
+                    "thickness": 100.0,
+                    "conic": 0.0,
+                    "param_0": 100.0,  # focal length
+                    "is_stop": True,
+                    "material": "Air",
+                },
+                2: {
+                    "type": "standard",
+                    "radius": be.inf,
+                    "thickness": 0.0,
+                    "conic": 0.0,
+                    "material": "Air",
+                },
+            },
+            "aperture": {"EPD": 10},
+            "fields": {"type": "angle", "x": [0], "y": [0]},
+            "wavelengths": {"primary_index": 0, "data": [0.55]},
+        }
+        optic = ZemaxToOpticConverter(zemax_data).convert()
+        # Surface 1 should be paraxial with f=100
+        paraxial_surf = optic.surfaces[1]
+        assert paraxial_surf.surface_type == "paraxial"
+        assert paraxial_surf.interaction_model.f == 100.0
+        # Paraxial EFL must trace to 100 mm
+        efl = float(optic.paraxial.f2())
+        assert_allclose(efl, 100.0, rtol=1e-6)
+
+    def test_configure_surface_coefficients_paraxial_returns_none(self):
+        converter = ZemaxToOpticConverter({
+            "surfaces": {},
+            "aperture": {"EPD": 10},
+            "fields": {"type": "angle", "x": [0], "y": [0]},
+            "wavelengths": {"primary_index": 0, "data": [0.55]},
+        })
+        assert converter._configure_surface_coefficients({"type": "paraxial"}) is None
+
     def test_configure_surfaces_infinity_thickness(self):
         zemax_data = {
             "surfaces": {
