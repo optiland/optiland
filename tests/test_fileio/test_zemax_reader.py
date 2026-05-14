@@ -338,6 +338,57 @@ class TestZemaxToOpticConverterExtended:
         efl = float(optic.paraxial.f2())
         assert_allclose(efl, 100.0, rtol=1e-6)
 
+    def test_configure_surfaces_paraxial_with_coordinate_break(self):
+        # A coordinate_break anywhere in the surface list forces the CB code
+        # path inside _configure_surfaces, which has its own paraxial f-injection
+        # block. Exercise it explicitly.
+        zemax_data = {
+            "surfaces": {
+                0: {
+                    "type": "standard",
+                    "radius": be.inf,
+                    "thickness": be.inf,
+                    "conic": 0.0,
+                    "material": "Air",
+                },
+                1: {
+                    "type": "coordinate_break",
+                    "param_0": 0.0,
+                    "param_1": 0.0,
+                    "thickness": 0.0,
+                    "param_2": 0.0,
+                    "param_3": 0.0,
+                    "param_4": 0.0,
+                    "conic": 0.0,
+                },
+                2: {
+                    "type": "paraxial",
+                    "radius": be.inf,
+                    "thickness": 50.0,
+                    "conic": 0.0,
+                    "param_0": 50.0,
+                    "is_stop": True,
+                    "material": "Air",
+                },
+                3: {
+                    "type": "standard",
+                    "radius": be.inf,
+                    "thickness": 0.0,
+                    "conic": 0.0,
+                    "material": "Air",
+                },
+            },
+            "aperture": {"EPD": 10},
+            "fields": {"type": "angle", "x": [0], "y": [0]},
+            "wavelengths": {"primary_index": 0, "data": [0.55]},
+        }
+        optic = ZemaxToOpticConverter(zemax_data).convert()
+        # Surface 1 in the resulting Optic corresponds to the paraxial element
+        # (surface 0 is the object plane, the coordinate_break is consumed).
+        paraxial_surf = optic.surfaces[1]
+        assert paraxial_surf.surface_type == "paraxial"
+        assert paraxial_surf.interaction_model.f == 50.0
+
     def test_configure_surface_coefficients_paraxial_returns_none(self):
         converter = ZemaxToOpticConverter({
             "surfaces": {},
