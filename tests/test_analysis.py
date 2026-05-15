@@ -131,7 +131,9 @@ def cooke_spot_diagram_cached(cooke_triplet_class):
 
 @pytest.fixture(scope="class")
 def cooke_encircled_energy_cached(cooke_triplet_class):
-    return analysis.EncircledEnergy(cooke_triplet_class)
+    return analysis.EncircledEnergy(
+        cooke_triplet_class, num_rays=50, distribution="hexapolar"
+    )
 
 
 @pytest.fixture(scope="class")
@@ -1742,7 +1744,7 @@ class TestThroughFocusSpotDiagram:
         assert len(field_lines) == expected_field_lines
 
 
-class TestThroughFocusSpotDiagram:
+class TestThroughFocusSpotDiagramMore:
     @pytest.fixture
     def tf_spot(self, set_test_backend):
         """Creates a ThroughFocusSpotDiagram instance after setting backend."""
