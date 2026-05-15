@@ -136,7 +136,6 @@ Optiland is continually evolving to provide new functionalities for optical desi
 - [ ] **Non-sequential Ray Tracing** (Ghost analysis, stray light, etc.)
 - [ ] **Physical Optics Propagation** (Diffraction, beam clipping, Gaussian beam evolution)
 - [ ] **Multi-Path Sequential Ray Tracing**
-- [ ] **Thin Film Design** (Coatings, polarization effects)
 - [ ] **Additional Freeforms** (Superconic, etc.)
 
 ### Optimization & Algorithms
