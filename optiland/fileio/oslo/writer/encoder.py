@@ -181,25 +181,21 @@ class OpticToOsloEncoder:
             # IdealMaterial with n≈1.0 is air - write AIR, not GLA 1.0 1.0 1.0
             if abs(n - 1.0) < 1e-6:
                 return "AIR"
-            return f"GLA {n} {n} {n}"
+            ns = f"{n:.7g}"
+            return f"GLA {ns} {ns} {ns}"
 
         if isinstance(material, AbbeMaterial):
             nd = float(material.index.item())
-            float(material.abbe.item())
-            # OSLO direct index doesn't take nd, vd directly but 3 indices.
-            # We can't perfectly reconstruct without knowing wavelengths,
-            # but we can try to find indices at d, F, C.
+            # OSLO direct index format: GLA <n_d> <n_F> <n_C>
             try:
-                # Standard wavelengths (um)
-                w_d = 0.58756
-                w_F = 0.48613
-                w_C = 0.65627
-                n_d = material.n(w_d).item()
-                n_F = material.n(w_F).item()
-                n_C = material.n(w_C).item()
-                return f"GLA {float(n_d)} {float(n_F)} {float(n_C)}"
+                w_d, w_F, w_C = 0.58756, 0.48613, 0.65627
+                n_d = f"{float(material.n(w_d).item()):.7g}"
+                n_F = f"{float(material.n(w_F).item()):.7g}"
+                n_C = f"{float(material.n(w_C).item()):.7g}"
+                return f"GLA {n_d} {n_F} {n_C}"
             except Exception:
-                return f"GLA {nd} {nd} {nd}"
+                ns = f"{nd:.7g}"
+                return f"GLA {ns} {ns} {ns}"
 
         # Fallback
         try:

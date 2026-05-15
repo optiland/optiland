@@ -131,14 +131,16 @@ class TestBugFixes:
         expected_r = float(optic.paraxial.EPD()) / 2.0
         assert_allclose(stop_data["AP"], expected_r)
 
-    # BUG-W6: NXT lines have // SRF N comment
-    def test_w6_nxt_has_srf_comment(self, tmp_path):
+    # W6: NXT lines must be plain "NXT" with no inline comment so that
+    # OSLO EDU can parse the file without errors.
+    def test_w6_nxt_lines_are_clean(self, tmp_path):
         optic = _make_simple_optic()
         out = tmp_path / "w6.len"
         save_oslo_file(optic, str(out))
         nxt_lines = [ln for ln in out.read_text().splitlines() if "NXT" in ln]
+        assert nxt_lines, "expected at least one NXT line"
         for ln in nxt_lines:
-            assert "// SRF" in ln
+            assert ln.strip() == "NXT", f"NXT line must be bare; got: {ln!r}"
 
 
 class TestOsloWriter:

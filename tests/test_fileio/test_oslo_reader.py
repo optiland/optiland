@@ -8,7 +8,9 @@ import pytest
 
 import optiland.backend as be
 from optiland.fileio import load_oslo_file
+from optiland.fileio.oslo.reader.converter import OsloToOpticConverter
 from optiland.fileio.oslo.reader.parser import OsloDataParser
+from optiland.materials import AbbeMaterial, Material
 from optiland.optic import Optic
 from tests.utils import assert_allclose
 
@@ -72,6 +74,53 @@ class TestOsloReader:
         optic = load_oslo_file(oslo_file)
         f2 = float(optic.paraxial.F2())
         assert abs(f2) < 1e-6, f"F2 should be ~0 after PY solve, got {f2}"
+
+
+@pytest.fixture
+def fallback_glass_file():
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(current_dir, "oslo", "test_glass_fallback.len")
+
+
+class TestGlassFallback:
+    """Glass name resolution: built-in catalog fallback and prefix stripping."""
+
+    def test_lakn6_resolves_to_abbe_material(self, fallback_glass_file):
+        optic = load_oslo_file(fallback_glass_file)
+        mat = optic.surfaces[1].material_post
+        assert isinstance(mat, AbbeMaterial), (
+            f"LAKN6 should resolve to AbbeMaterial; got {type(mat).__name__}"
+        )
+        assert_allclose(float(mat.n(0.58756).item()), 1.6400, atol=1e-3)
+
+    def test_sf18_resolves_to_abbe_material(self, fallback_glass_file):
+        optic = load_oslo_file(fallback_glass_file)
+        mat = optic.surfaces[2].material_post
+        assert isinstance(mat, AbbeMaterial), (
+            f"SF18 should resolve to AbbeMaterial; got {type(mat).__name__}"
+        )
+        assert_allclose(float(mat.n(0.58756).item()), 1.7215, atol=1e-3)
+
+    def test_h_laf2_resolves_via_prefix_strip(self, fallback_glass_file):
+        optic = load_oslo_file(fallback_glass_file)
+        mat = optic.surfaces[4].material_post
+        # H_LAF2 → strip H_ → LAF2 → found as Material or AbbeMaterial
+        assert isinstance(mat, (Material, AbbeMaterial)), (
+            f"H_LAF2 should resolve to a real glass; got {type(mat).__name__}"
+        )
+        nd = float(mat.n(0.58756).item())
+        assert nd > 1.5, f"H_LAF2 nd should be >1.5 (lanthanum flint); got {nd:.4f}"
+
+    def test_no_glass_silently_becomes_air(self, fallback_glass_file):
+        optic = load_oslo_file(fallback_glass_file)
+        for i, surf in enumerate(optic.surfaces):
+            mat = surf.material_post
+            nd = float(mat.n(0.58756).item())
+            # None of the glass surfaces (1, 2, 4) should resolve to n=1.0 (air)
+            if i in (1, 2, 4):
+                assert nd > 1.1, (
+                    f"Surface {i} glass silently became air (n={nd:.4f})"
+                )
 
 
 if __name__ == "__main__":

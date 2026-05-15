@@ -151,7 +151,7 @@ class OsloDataFormatter:
             lines.append(f"PK {' '.join(str(it) for it in data['PK'])}")
 
         if index < self.model.num_surfaces:
-            lines.append(f"NXT // SRF {index + 1}")
+            lines.append("NXT")
 
     def _fmt(self, val: float) -> str:
         """Format float for OSLO using compact decimal notation (≤7 sig figs)."""
