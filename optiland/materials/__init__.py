@@ -18,6 +18,7 @@ from .material_utils import (
     plot_glass_map,
     plot_nk,
 )
+from .model import ModelMaterial
 
 __all__ = [
     # From abbe.py
@@ -38,5 +39,6 @@ __all__ = [
     "glasses_selection",
     "plot_glass_map",
     "plot_nk",
-    find_closest_glass,
+    "find_closest_glass",
+    "ModelMaterial",
 ]
