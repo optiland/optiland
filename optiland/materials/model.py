@@ -83,7 +83,7 @@ class ModelMaterial(BaseMaterial):
         dPgF: float,
         P_ref: float | None = None,
         lambda_ref: float | None = None,
-    ):
+    ) -> None:
         super().__init__()
         self.nd = nd
         self.vd = vd
@@ -118,7 +118,7 @@ class ModelMaterial(BaseMaterial):
         omega = be.array(omega)
         n = be.full_like(omega, nd)
         for k, coeff in enumerate(coeffs, start=1):
-            n += coeff * omega**k
+            n = n + coeff * omega**k
 
         return n
 
@@ -328,15 +328,15 @@ class ModelMaterial(BaseMaterial):
         # vd, dPgF, and P_ref.
         if self.lambda_ref is not None and self.p_ref is not None:
             x = be.array([nd, vd, dPgF, self.p_ref])
-            feats = be.array([1.0, x[0], x[1], x[2], x[3]])
+            feats = [be.array(1.0), x[0], x[1], x[2], x[3]]
             for i in range(4):
                 for j in range(i, 4):
-                    feats = be.append(feats, x[i] * x[j])
+                    feats.append(x[i] * x[j])
             for i in range(4):
                 for j in range(i, 4):
                     for k in range(j, 4):
-                        feats = be.append(feats, x[i] * x[j] * x[k])
-            return feats
+                        feats.append(x[i] * x[j] * x[k])
+            return be.stack(feats)
         # Visible routing's feature vector is a fixed 20-elements vector
         else:
             feats = be.array(
