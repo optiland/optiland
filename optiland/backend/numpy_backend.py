@@ -1088,7 +1088,7 @@ class NumpyBackend(AbstractBackend):
 
         sobol = qmc.Sobol(d=dim, scramble=scramble, seed=seed)
         samples = sobol.random(n=num_samples_pow2)
-        return samples[:num_samples].astype(np.float32)
+        return samples[:num_samples].astype(self._dtype)
 
     def erfinv(self, x: ArrayLike) -> NDArray:
         """Inverse error function.
