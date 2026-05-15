@@ -73,7 +73,9 @@ class GridDistortion(BaseAnalysis):
         self,
         fig_to_plot_on: Figure | None = None,
         figsize: tuple[float, float] = (7, 7),
-    ) -> tuple[Figure, Axes]:  # Adjusted for squareness
+        *,
+        show: bool = True,
+    ) -> tuple[Figure, Axes]:
         """Visualizes the grid distortion analysis.
 
         Args:
@@ -81,6 +83,8 @@ class GridDistortion(BaseAnalysis):
                 If None, a new figure is created. Defaults to None.
             figsize (tuple, optional): Size of the figure if a new one is created.
                 Defaults to (7, 7) for a square plot.
+            show (bool): If True (default), calls plt.show(). Set False for
+                headless use.
         Returns:
             tuple: The figure and axes objects used for plotting.
         """
@@ -128,6 +132,8 @@ class GridDistortion(BaseAnalysis):
 
         if is_gui_embedding and hasattr(current_fig, "canvas"):
             current_fig.canvas.draw_idle()
+        if show and not is_gui_embedding:
+            plt.show()
         return current_fig, ax
 
     def _generate_data(self):
