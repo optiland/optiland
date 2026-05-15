@@ -12,6 +12,7 @@ Kramer Harrison, 2024
 # import pkg_resources
 from __future__ import annotations
 
+import warnings
 from importlib import resources
 
 import pandas as pd
@@ -177,9 +178,11 @@ class Material(MaterialFile):
 
         # Warning if no exact matches found
         if dfi["similarity_score"].iloc[0] > 0:
-            print(
-                f"Warning: No exact matches found for material {self.name}. "
+            warnings.warn(
+                f"No exact matches found for material {self.name}. "
                 "Material may be invalid.",
+                UserWarning,
+                stacklevel=2,
             )
 
         return dfi
