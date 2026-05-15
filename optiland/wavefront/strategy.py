@@ -74,6 +74,7 @@ class ReferenceStrategy(ABC):
         """
         pass
 
+    @abstractmethod
     def _create_reference_geometry(self, rays: RealRays) -> ReferenceGeometry:
         """Creates the reference geometry based on the traced rays.
 
@@ -83,7 +84,6 @@ class ReferenceStrategy(ABC):
         Returns:
             ReferenceGeometry: The computed reference geometry (sphere or plane).
         """
-        raise NotImplementedError
 
     def _correct_tilt(
         self,

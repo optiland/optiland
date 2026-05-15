@@ -123,6 +123,8 @@ class SpotDiagram(BaseAnalysis):
         fig_to_plot_on: Figure | None = None,
         figsize: tuple[float, float] = (12, 4),
         add_airy_disk: bool = False,
+        *,
+        show: bool = True,
     ) -> tuple[Figure, list[Axes]]:
         """Displays the spot diagram plot.
 
@@ -133,6 +135,8 @@ class SpotDiagram(BaseAnalysis):
                 Defaults to (12, 4).
             add_airy_disk: If True, adds the Airy disk visualization to the
                 plots. Defaults to False.
+            show (bool): If True (default), calls plt.show(). Set False for
+                headless use.
 
         Returns:
             A tuple containing the Matplotlib figure and a list of its axes.
@@ -161,6 +165,11 @@ class SpotDiagram(BaseAnalysis):
             )
 
         finalize_plot(fig, axs, len(self.fields), self.wavelengths)
+        is_gui_embedding = fig_to_plot_on is not None
+        if show and not is_gui_embedding:
+            import matplotlib.pyplot as plt
+
+            plt.show()
         return fig, fig.get_axes()
 
     # --- Calculation Methods ---

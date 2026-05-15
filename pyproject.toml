@@ -72,6 +72,11 @@ dev = [
     "codecov>=2.1.13",
     "torch",
     "pytest-cov>=7.0.0",
+    "pytest-xdist>=3.6",
 ]
 gui = ["PySide6", "qtconsole"]
 torch = ["torch"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--dist loadfile"

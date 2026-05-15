@@ -127,6 +127,8 @@ class ThroughFocusMTF(ThroughFocusAnalysis):
         self,
         fig_to_plot_on: Figure | None = None,
         figsize: tuple[float, float] = (12, 4),
+        *,
+        show: bool = True,
     ) -> tuple[Figure, Axes]:
         """
         Visualizes the through-focus Modulation Transfer Function (MTF) results for
@@ -148,6 +150,8 @@ class ThroughFocusMTF(ThroughFocusAnalysis):
         figsize : tuple of float, optional
             Size of the figure to create if `fig_to_plot_on` is None.
             Default is (12, 4).
+        show : bool, optional
+            If True (default), calls plt.show(). Set False for headless use.
 
         Returns
         -------
@@ -271,5 +275,6 @@ class ThroughFocusMTF(ThroughFocusAnalysis):
 
         if is_gui_embedding and hasattr(current_fig, "canvas"):
             current_fig.canvas.draw_idle()
-
+        if show and not is_gui_embedding:
+            plt.show()
         return current_fig, ax

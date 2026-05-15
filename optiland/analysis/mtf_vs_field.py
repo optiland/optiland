@@ -135,6 +135,8 @@ class MTFvsField(BaseAnalysis):
         self,
         fig_to_plot_on: Figure | None = None,
         figsize: tuple[float, float] = (8, 5),
+        *,
+        show: bool = True,
     ) -> tuple[Figure, Axes]:
         """
         Plots the MTF versus the field coordinate for each frequency and wavelength.
@@ -145,6 +147,8 @@ class MTFvsField(BaseAnalysis):
                 If None (default), a new figure will be created.
             figsize (tuple[float, float], optional): Size of the figure to create
                 if `fig_to_plot_on` is None. Defaults to (8, 5).
+            show (bool): If True (default), calls plt.show(). Set False for
+                headless use.
 
         Returns:
             tuple[Figure, Axes]: The matplotlib Figure and Axes objects
@@ -220,5 +224,6 @@ class MTFvsField(BaseAnalysis):
 
         if is_gui_embedding and hasattr(current_fig, "canvas"):
             current_fig.canvas.draw_idle()
-
+        if show and not is_gui_embedding:
+            plt.show()
         return current_fig, ax

@@ -364,7 +364,7 @@ class TorchBackend(AbstractBackend):
         if isinstance(x, torch.Tensor):
             return x
 
-        if isinstance(x, (list, tuple)) and len(x) > 0:
+        if isinstance(x, list | tuple) and len(x) > 0:
             # Check if any element is a Tensor
             if any(isinstance(v, torch.Tensor) for v in x):
                 # Ensure all are tensors and stack them to preserve gradients

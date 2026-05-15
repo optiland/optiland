@@ -70,34 +70,51 @@ class TestAberrationOperand:
     def test_seidel(self, set_test_backend, hubble):
         assert_allclose(
             operand.AberrationOperand.seidels(hubble, 0),
-            0.0014539022855417389,
+            0.0007595410648595602,
         )
 
     def test_TSC(self, set_test_backend, hubble):
-        assert_allclose(operand.AberrationOperand.TSC(hubble, 2), 0.0)
+        assert_allclose(
+            operand.AberrationOperand.TSC(hubble, 2), -0.08528104851182583,
+        )
 
     def test_SC(self, set_test_backend, hubble):
-        assert_allclose(operand.AberrationOperand.SC(hubble, 2), 0.0)
+        assert_allclose(
+            operand.AberrationOperand.SC(hubble, 2), -4.093496084924931,
+        )
 
     def test_CC(self, set_test_backend, hubble):
-        assert_allclose(operand.AberrationOperand.CC(hubble, 2), 0.0)
+        assert_allclose(
+            operand.AberrationOperand.CC(hubble, 2), -1.7735249708111127,
+        )
 
     def test_TCC(self, set_test_backend, hubble):
-        assert_allclose(operand.AberrationOperand.TCC(hubble, 1), 0.0)
+        assert_allclose(
+            operand.AberrationOperand.TCC(hubble, 1), 5.344862220471395,
+        )
 
     def test_TAC(self, set_test_backend, hubble):
-        assert_allclose(operand.AberrationOperand.TAC(hubble, 1), 0.0)
+        assert_allclose(
+            operand.AberrationOperand.TAC(hubble, 1), -0.04291149104517085,
+        )
 
     def test_AC(self, set_test_backend, hubble):
-        assert_allclose(operand.AberrationOperand.AC(hubble, 1), 0.0)
+        assert_allclose(
+            operand.AberrationOperand.AC(hubble, 1), -2.059754466636744,
+        )
 
     def test_TPC(self, set_test_backend, hubble):
-        assert_allclose(operand.AberrationOperand.TPC(hubble, 1), 0.0)
+        assert_allclose(
+            operand.AberrationOperand.TPC(hubble, 1), 0.04291149104517085,
+        )
 
     def test_PC(self, set_test_backend, hubble):
-        assert_allclose(operand.AberrationOperand.PC(hubble, 1), 0.0)
+        assert_allclose(
+            operand.AberrationOperand.PC(hubble, 1), 2.059754466636744,
+        )
 
     def test_DC(self, set_test_backend, hubble):
+        # Surface 1 (flat stop, R=inf) contributes 0 to distortion.
         assert_allclose(operand.AberrationOperand.DC(hubble, 1), 0.0)
 
     def test_TAchC(self, set_test_backend, hubble):
@@ -110,31 +127,49 @@ class TestAberrationOperand:
         assert_allclose(operand.AberrationOperand.TchC(hubble, 1), 0.0)
 
     def test_TSC_sum(self, set_test_backend, hubble):
-        assert_allclose(operand.AberrationOperand.TSC_sum(hubble), 0.0)
+        assert_allclose(
+            operand.AberrationOperand.TSC_sum(hubble), -6.735430351945126e-05,
+        )
 
     def test_SC_sum(self, set_test_backend, hubble):
-        assert_allclose(operand.AberrationOperand.SC_sum(hubble), 0.0)
+        assert_allclose(
+            operand.AberrationOperand.SC_sum(hubble), -0.003233011115258755,
+        )
 
     def test_CC_sum(self, set_test_backend, hubble):
-        assert_allclose(operand.AberrationOperand.CC_sum(hubble), 0.0)
+        assert_allclose(
+            operand.AberrationOperand.CC_sum(hubble), 0.008095769346019077,
+        )
 
     def test_TCC_sum(self, set_test_backend, hubble):
-        assert_allclose(operand.AberrationOperand.TCC_sum(hubble), 0.0)
+        assert_allclose(
+            operand.AberrationOperand.TCC_sum(hubble), 0.024287308038056565,
+        )
 
     def test_TAC_sum(self, set_test_backend, hubble):
-        assert_allclose(operand.AberrationOperand.TAC_sum(hubble), 0.0)
+        assert_allclose(
+            operand.AberrationOperand.TAC_sum(hubble), -0.034842575437082024,
+        )
 
     def test_AC_sum(self, set_test_backend, hubble):
-        assert_allclose(operand.AberrationOperand.AC_sum(hubble), 0.0)
+        assert_allclose(
+            operand.AberrationOperand.AC_sum(hubble), -1.6724459728074144,
+        )
 
     def test_TPC_sum(self, set_test_backend, hubble):
-        assert_allclose(operand.AberrationOperand.TPC_sum(hubble), 0.0)
+        assert_allclose(
+            operand.AberrationOperand.TPC_sum(hubble), -0.3081888930539122,
+        )
 
     def test_PC_sum(self, set_test_backend, hubble):
-        assert_allclose(operand.AberrationOperand.PC_sum(hubble), 0.0)
+        assert_allclose(
+            operand.AberrationOperand.PC_sum(hubble), -14.793087668927964,
+        )
 
     def test_DC_sum(self, set_test_backend, hubble):
-        assert_allclose(operand.AberrationOperand.DC_sum(hubble), 0.03489370392123652)
+        assert_allclose(
+            operand.AberrationOperand.DC_sum(hubble), 0.018229011190635025,
+        )
 
     def test_TAchC_sum(self, set_test_backend, hubble):
         assert_allclose(operand.AberrationOperand.TAchC_sum(hubble), 0.0)
