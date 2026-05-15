@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import abc
 import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
@@ -120,19 +121,21 @@ class OptimizationTarget:
         return float(value_array[0])
 
 
-class ThinFilmBaseOperand:
+class ThinFilmBaseOperand(abc.ABC):
     """Base class for merit-function operands."""
 
     weight: float
 
+    @abc.abstractmethod
     def delta(self, context: ThinFilmEvaluationContext) -> float:
-        raise NotImplementedError
+        """Compute the scalar residual for this operand."""
 
     def fun(self, context: ThinFilmEvaluationContext) -> float:
         return math.sqrt(float(self.weight)) * self.delta(context)
 
+    @abc.abstractmethod
     def performance_data(self, context: ThinFilmEvaluationContext) -> dict[str, Any]:
-        raise NotImplementedError
+        """Return performance metrics dict for reporting."""
 
     def plot(self, ax, plot_type: str, x_values: np.ndarray, **kwargs) -> None:
         return None
