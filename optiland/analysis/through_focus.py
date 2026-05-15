@@ -144,8 +144,10 @@ class ThroughFocusAnalysis(ABC):
         to the optical system, and performs the specific analysis defined in
         `_perform_analysis_at_focus`. The results are stored in `self.results`.
         """
-        for position in self.positions:
-            self._defocus_image_plane(position)
-            result = self._perform_analysis_at_focus()
-            self.results.append(result)
-        self._reset_focus()
+        try:
+            for position in self.positions:
+                self._defocus_image_plane(position)
+                result = self._perform_analysis_at_focus()
+                self.results.append(result)
+        finally:
+            self._reset_focus()
