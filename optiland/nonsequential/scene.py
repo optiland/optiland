@@ -406,6 +406,8 @@ def _build_source(cs: CoordinateSystem, config) -> BaseNSQSource:
             spectrum=config.spectrum,
             total_flux=config.total_flux,
             aperture_radius=config.aperture_radius,
+            profile=config.profile,
+            gaussian_sigma=config.gaussian_sigma,
             medium=getattr(config, "medium", None),
         )
     if isinstance(config, ExtendedSourceConfig):
@@ -415,6 +417,7 @@ def _build_source(cs: CoordinateSystem, config) -> BaseNSQSource:
             total_flux=config.total_flux,
             width=config.width,
             height=config.height,
+            aperture_radius=config.aperture_radius,
             half_angle_deg=config.half_angle_deg,
             medium=getattr(config, "medium", None),
         )

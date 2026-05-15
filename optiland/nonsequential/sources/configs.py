@@ -40,6 +40,7 @@ class CollimatedSourceConfig:
         total_flux: Total emitted flux [W].
         aperture_radius: Beam semi-diameter [mm].
         profile: Spatial profile -- ``'tophat'`` or ``'gaussian'``.
+        gaussian_sigma: Gaussian sigma [mm]. Defaults to aperture_radius / 2.
         medium: Medium the source is embedded in (default: vacuum).
     """
 
@@ -47,6 +48,7 @@ class CollimatedSourceConfig:
     total_flux: float = 1.0
     aperture_radius: float = 1.0
     profile: str = "tophat"
+    gaussian_sigma: float | None = None
     medium: NSQMaterial | None = field(default=None)
 
 
@@ -59,6 +61,8 @@ class ExtendedSourceConfig:
         total_flux: Total emitted flux [W].
         width: Source width [mm].
         height: Source height [mm].
+        aperture_radius: Circular aperture radius [mm]. If set, overrides
+            width/height for a circular source.
         half_angle_deg: Half-angle of the emission cone [deg].
         medium: Medium the source is embedded in (default: vacuum).
     """
@@ -67,5 +71,6 @@ class ExtendedSourceConfig:
     total_flux: float = 1.0
     width: float = 1.0
     height: float = 1.0
+    aperture_radius: float | None = None
     half_angle_deg: float = 90.0
     medium: NSQMaterial | None = field(default=None)
