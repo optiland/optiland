@@ -62,6 +62,14 @@ class StandardGeometry(BaseGeometry):
     def __str__(self):
         return "Standard"
 
+    def set_radius(self, value: float) -> None:
+        """Set the radius of curvature.
+
+        Args:
+            value (float): The new radius of curvature.
+        """
+        self.radius = be.array(value)
+
     def flip(self):
         """Flip the geometry.
 
