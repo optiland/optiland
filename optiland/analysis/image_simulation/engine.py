@@ -139,10 +139,15 @@ class ImageSimulationEngine:
         self.simulated_image = result
         return result
 
-    def view(self, force_rerun=False):
+    def view(self, force_rerun=False, *, show: bool = True):
         """
         Visualizes the original and simulated images side-by-side.
         Runs the simulation if it hasn't been run yet or if force_rerun is True.
+
+        Args:
+            force_rerun: Re-run the simulation even if results already exist.
+            show (bool): If True (default), calls plt.show(). Set False for
+                headless use.
         """
         if self.simulated_image is None or force_rerun:
             self.run()
@@ -176,8 +181,8 @@ class ImageSimulationEngine:
         ax[1].axis("off")
 
         plt.tight_layout()
-        plt.show()
-
+        if show:
+            plt.show()
         return fig, ax
 
     def _preprocess(self, image):

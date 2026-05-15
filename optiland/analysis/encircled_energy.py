@@ -75,6 +75,8 @@ class EncircledEnergy(SpotDiagram):
         self,
         fig_to_plot_on: Figure | None = None,
         figsize: tuple[float, float] = (7, 4.5),
+        *,
+        show: bool = True,
     ) -> tuple[Figure, Axes]:
         """Plot the Encircled Energy curve.
 
@@ -83,6 +85,8 @@ class EncircledEnergy(SpotDiagram):
                 If None, a new figure is created. Defaults to None.
             figsize (tuple, optional): The size of the figure if a new one is
                 created. Defaults to (7, 4.5).
+            show (bool): If True (default), calls plt.show(). Set False for
+                headless use.
 
         Returns:
             tuple: A tuple containing the figure and axes objects.
@@ -114,6 +118,8 @@ class EncircledEnergy(SpotDiagram):
 
         if is_gui_embedding and hasattr(current_fig, "canvas"):
             current_fig.canvas.draw_idle()
+        if show and not is_gui_embedding:
+            plt.show()
         return current_fig, ax
 
     def centroid(self):

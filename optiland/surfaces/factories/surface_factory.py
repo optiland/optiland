@@ -30,6 +30,14 @@ if TYPE_CHECKING:
     from optiland.materials.base import BaseMaterial
 
 
+# Surface type → forced interaction_type override.
+# None value means: use caller-supplied interaction_type or the default.
+_SURFACE_INTERACTION_OVERRIDES: dict[str, str] = {
+    "paraxial": "thin_lens",
+    "grating": "diffractive",
+}
+
+
 class SurfaceFactory:
     """A factory class for creating surface objects by delegating to sub-factories.
 
@@ -43,6 +51,34 @@ class SurfaceFactory:
         _material_factory (MaterialFactory): Factory for materials.
         _coating_factory (CoatingFactory): Factory for coatings.
     """
+
+    @classmethod
+    def register_surface_interaction(
+        cls,
+        surface_type: str,
+        interaction_type: str,
+        *,
+        overwrite: bool = False,
+    ) -> None:
+        """Register a mandatory interaction type for a given surface type.
+
+        When a surface of this type is created, the factory always uses the
+        specified interaction_type regardless of any caller kwarg.
+
+        Args:
+            surface_type: The surface type string key (e.g. 'paraxial').
+            interaction_type: The interaction model string key to force.
+            overwrite: Allow replacing an existing mapping.
+
+        Raises:
+            ValueError: If surface_type already has a mapping and overwrite is False.
+        """
+        if surface_type in _SURFACE_INTERACTION_OVERRIDES and not overwrite:
+            raise ValueError(
+                f"Surface type '{surface_type}' already has a registered "
+                "interaction override. Pass overwrite=True to replace it."
+            )
+        _SURFACE_INTERACTION_OVERRIDES[surface_type] = interaction_type
 
     def __init__(self, surface_group):
         self._surface_group = surface_group
@@ -116,13 +152,10 @@ class SurfaceFactory:
 
         # Determine interaction type
         interaction_type = kwargs.get("interaction_type", "refractive_reflective")
-        phase_profile = kwargs.get("phase_profile")
 
-        if surface_type == "paraxial":
-            interaction_type = "thin_lens"
-        elif surface_type == "grating":
-            interaction_type = "diffractive"
-        elif phase_profile is not None:
+        if surface_type in _SURFACE_INTERACTION_OVERRIDES:
+            interaction_type = _SURFACE_INTERACTION_OVERRIDES[surface_type]
+        elif kwargs.get("phase_profile") is not None:
             interaction_type = "phase"
 
         # Build interaction model

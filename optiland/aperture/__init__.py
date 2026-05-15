@@ -43,6 +43,14 @@ def make_system_aperture(aperture_type: str, value: float) -> BaseSystemAperture
         ValueError: If *aperture_type* is not a registered type.
 
     """
+    # Aliases for legacy Zemax aperture identifiers. ``paraxialImageFNO`` is
+    # the paraxial image-space F/#; in the paraxial regime it matches
+    # Optiland's ``imageFNO`` (differences only appear as second-order
+    # corrections in fast systems), which is good enough as a starting point.
+    _ALIASES = {
+        "paraxialImageFNO": "imageFNO",
+    }
+    aperture_type = _ALIASES.get(aperture_type, aperture_type)
     if aperture_type not in BaseSystemAperture._registry:
         raise ValueError(
             f"Aperture type must be one of "

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 import optiland.backend as be
 from optiland.rays.paraxial_rays import ParaxialRays
+from optiland.raytrace.base import BaseRayTracer
 from optiland.surfaces import ObjectSurface
 
 if TYPE_CHECKING:
@@ -19,7 +20,7 @@ if TYPE_CHECKING:
     from optiland.optic import Optic
 
 
-class ParaxialRayTracer:
+class ParaxialRayTracer(BaseRayTracer):
     """Class to trace paraxial rays through an optical system"""
 
     def __init__(self, optic: Optic):
@@ -28,7 +29,7 @@ class ParaxialRayTracer:
         Args:
             optic: The optical system to be traced.
         """
-        self.optic = optic
+        super().__init__(optic)
 
     def trace(self, Hy: ScalarOrArray, Py: ScalarOrArray, wavelength: ScalarOrArray):
         """Trace paraxial ray through the optical system based on specified field
@@ -116,7 +117,11 @@ class ParaxialRayTracer:
             # reflect or refract
             if surfs[k].interaction_model.is_reflective:
                 if surfs[k].surface_type == "paraxial":
-                    f = surfs[k].interaction_model.f
+                    f = (
+                        -surfs[k].interaction_model.f
+                        if reverse
+                        else surfs[k].interaction_model.f
+                    )
                     u_ = -u_ - y_ / f
                 else:
                     u_ = -u_ - 2 * y_ / R[k]

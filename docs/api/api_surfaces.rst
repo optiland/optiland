@@ -15,7 +15,7 @@ Most analyses are performed on the `SurfaceGroup` level, which abstracts the com
    surfaces.image_surface
    surfaces.object_surface
    surfaces.standard_surface
-   surfaces.surfaces
+   surfaces.surface_group
 
 Surface Factory
 ---------------

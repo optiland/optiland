@@ -21,3 +21,4 @@ or unique functionality of Optiland.
     miscellaneous/themes
     miscellaneous/lens_draw_projection
     miscellaneous/ray_aiming
+    miscellaneous/eye

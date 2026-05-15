@@ -55,6 +55,30 @@ def unpolarized_optic(set_test_backend):
     return optic
 
 
+@pytest.fixture(scope="class")
+def polarized_optic_class(set_test_backend_class):
+    """Class-scoped variant of :func:`polarized_optic`."""
+    from optiland.samples.objectives import CookeTriplet
+
+    optic = CookeTriplet()
+    state = PolarizationState(
+        is_polarized=True, Ex=1.0, Ey=0.0, phase_x=0.0, phase_y=0.0
+    )
+    optic.updater.set_polarization(state)
+    return optic
+
+
+@pytest.fixture(scope="class")
+def vectorial_mtf_onaxis_cached(polarized_optic_class):
+    """Class-scoped vectorial MTF shared across the on-axis test class.
+
+    Running the Huygens-Fresnel PSF calculation through ``VectorialHuygensMTF``
+    is the slowest non-coverage-bearing work in this file. Tests that only
+    inspect immutable attributes of the result reuse one instance per backend.
+    """
+    return VectorialHuygensMTF(polarized_optic_class, fields=[(0, 0)], image_size=16)
+
+
 # ---------------------------------------------------------------------------
 # ScalarHuygensMTF
 # ---------------------------------------------------------------------------
@@ -180,33 +204,27 @@ class TestHuygensMTFFactory:
 
 
 class TestVectorialHuygensMTF:
-    def test_psf_data_shape(self, polarized_optic):
-        mtf = VectorialHuygensMTF(polarized_optic, fields=[(0, 0)], image_size=16)
+    def test_psf_data_shape(self, vectorial_mtf_onaxis_cached):
+        mtf = vectorial_mtf_onaxis_cached
         assert len(mtf.psf_data) == 1
         assert mtf.psf_data[0].shape == (16, 16)
         assert len(mtf.psf_instances) == 1
 
-    def test_mtf_values_in_unit_interval(self, polarized_optic):
-        mtf = VectorialHuygensMTF(polarized_optic, fields=[(0, 0)], image_size=16)
-        tangential, sagittal = mtf.mtf[0]
+    def test_mtf_values_in_unit_interval(self, vectorial_mtf_onaxis_cached):
+        tangential, sagittal = vectorial_mtf_onaxis_cached.mtf[0]
         assert np.all(be.to_numpy(tangential) >= 0)
         assert np.all(be.to_numpy(tangential) <= 1)
         assert np.all(be.to_numpy(sagittal) >= 0)
         assert np.all(be.to_numpy(sagittal) <= 1)
 
-    def test_dc_value_is_one(self, polarized_optic):
-        mtf = VectorialHuygensMTF(polarized_optic, fields=[(0, 0)], image_size=16)
-        tangential, sagittal = mtf.mtf[0]
+    def test_dc_value_is_one(self, vectorial_mtf_onaxis_cached):
+        tangential, sagittal = vectorial_mtf_onaxis_cached.mtf[0]
         assert_allclose(tangential[0], 1.0, atol=1e-6)
         assert_allclose(sagittal[0], 1.0, atol=1e-6)
 
-    def test_frequency_array_length(self, polarized_optic):
-        image_size = 16
-        mtf = VectorialHuygensMTF(
-            polarized_optic, fields=[(0, 0)], image_size=image_size
-        )
-        # freq is now a list of per-field arrays; check the first field.
-        assert len(be.to_numpy(mtf.freq[0])) == image_size // 2
+    def test_frequency_array_length(self, vectorial_mtf_onaxis_cached):
+        # freq is a list of per-field arrays; check the first field.
+        assert len(be.to_numpy(vectorial_mtf_onaxis_cached.freq[0])) == 16 // 2
 
     def test_unpolarized_mtf_valid(self, unpolarized_optic):
         """An unpolarized source produces a valid MTF."""

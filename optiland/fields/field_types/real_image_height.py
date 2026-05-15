@@ -6,6 +6,7 @@ Kramer Harrison, 2025
 from __future__ import annotations
 
 import optiland.backend as be
+from optiland.utils import globalize_coordinates
 
 from .base import BaseFieldDefinition
 from .paraxial_image_height import ParaxialImageHeightField
@@ -187,18 +188,20 @@ class RealImageHeightField(BaseFieldDefinition):
             z0 = be.full_like(Px, z)
         else:
             # val_x, val_y are object heights
-            x0 = val_x
-            y0 = val_y
+            x_local = be.atleast_1d(be.array(val_x))
+            y_local = be.atleast_1d(be.array(val_y))
 
             # Ensure correct shape
-            if be.size(x0) == 1:
-                x0 = be.full_like(Px, x0)
-            if be.size(y0) == 1:
-                y0 = be.full_like(Px, y0)
+            if be.size(x_local) == 1:
+                x_local = be.full_like(be.atleast_1d(Px), x_local)
+            if be.size(y_local) == 1:
+                y_local = be.full_like(be.atleast_1d(Px), y_local)
 
-            z0 = (
-                optic.object_surface.geometry.sag(x0, y0)
-                + optic.object_surface.geometry.cs.z
+            z_local = optic.object_surface.geometry.sag(x_local, y_local)
+
+            # Globalize the local coordinates
+            x0, y0, z0 = globalize_coordinates(
+                optic.object_surface, x_local, y_local, z_local
             )
         return x0, y0, z0
 

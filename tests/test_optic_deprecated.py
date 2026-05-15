@@ -322,7 +322,7 @@ class TestDeprecatedSetRadius:
         optic = _three_surface_optic()
         with pytest.warns(DeprecationWarning):
             optic.set_radius(100.0, 1)
-        assert optic.surfaces[1].geometry.radius == pytest.approx(100.0)
+        assert_allclose(optic.surfaces[1].geometry.radius, 100.0)
 
     def test_matches_new_api(self, set_test_backend):
         optic_old = _three_surface_optic()
@@ -330,9 +330,7 @@ class TestDeprecatedSetRadius:
         with pytest.warns(DeprecationWarning):
             optic_old.set_radius(100.0, 1)
         optic_new.updater.set_radius(100.0, 1)
-        assert optic_old.surfaces[1].geometry.radius == pytest.approx(
-            optic_new.surfaces[1].geometry.radius
-        )
+        assert_allclose(optic_old.surfaces[1].geometry.radius, optic_new.surfaces[1].geometry.radius)
 
 
 # ===========================================================================
@@ -733,9 +731,7 @@ class TestDeprecatedUpdate:
         with pytest.warns(DeprecationWarning):
             optic_old.update()
         optic_new.updater.update()
-        assert optic_old.surfaces[1].geometry.radius == pytest.approx(
-            optic_new.surfaces[1].geometry.radius
-        )
+        assert_allclose(optic_old.surfaces[1].geometry.radius, optic_new.surfaces[1].geometry.radius)
 
 
 # ===========================================================================

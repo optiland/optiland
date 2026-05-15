@@ -150,6 +150,9 @@ class ZemaxToOpticConverter(BaseOpticReader):
             if surf.get("aperture") is not None:
                 surface_params["aperture"] = surf["aperture"]
 
+            if surf["type"] == "paraxial":
+                surface_params["f"] = float(surf.get("param_0", 0.0))
+
             if surf["type"] == "toroidal":
                 surface_params["radius_y"] = surf["radius"]
                 surface_params["toroidal_coeffs_poly_y"] = coeffs
@@ -211,6 +214,9 @@ class ZemaxToOpticConverter(BaseOpticReader):
         if data.get("aperture") is not None:
             surface_params["aperture"] = data["aperture"]
 
+        if data["type"] == "paraxial":
+            surface_params["f"] = float(data.get("param_0", 0.0))
+
         if data["type"] == "toroidal":
             surface_params["toroidal_coeffs_poly_y"] = coefficients
         else:
@@ -251,7 +257,7 @@ class ZemaxToOpticConverter(BaseOpticReader):
             ValueError: If the surface type is not recognised.
         """
         surf_type = data["type"]
-        if surf_type in ("standard", "coordinate_break"):
+        if surf_type in ("standard", "coordinate_break", "paraxial"):
             return None
 
         if surf_type in ("even_asphere", "odd_asphere", "toroidal"):

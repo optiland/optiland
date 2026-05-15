@@ -78,6 +78,8 @@ class Optic:
         fields (FieldGroup): The group of fields defined for the system.
         wavelengths (WavelengthGroup): The group of wavelengths used for
             analysis.
+        surfaces (SurfaceGroup): The group of surfaces that make up the
+            optical system.
         paraxial (Paraxial): A helper class for paraxial analysis of the
             optical system.
         aberrations (Aberrations): A helper class for analyzing aberrations.
