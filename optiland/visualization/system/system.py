@@ -7,11 +7,42 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import optiland.backend as be
 from optiland.visualization.system.lens import Lens2D, Lens3D
 from optiland.visualization.system.mirror import Mirror3D
 from optiland.visualization.system.surface import Surface2D, Surface3D
 from optiland.visualization.system.utils import transform
+
+if TYPE_CHECKING:
+    from optiland.visualization.component_renderer import ComponentRenderer
+
+# Registry for user-defined ComponentRenderer extensions.
+# Built-in component types ("lens", "mirror", "surface") are handled via the
+# internal component_registry on each OpticalSystem instance.
+_CUSTOM_RENDERER_REGISTRY: dict[str, ComponentRenderer] = {}
+
+
+class _CustomRendererAdapter:
+    """Adapts a ComponentRenderer to the plot()-based component interface."""
+
+    def __init__(
+        self,
+        renderer: ComponentRenderer,
+        component_data: dict,
+        projection: str,
+    ) -> None:
+        self._renderer = renderer
+        self._component_data = component_data
+        self._projection = projection
+
+    def plot(self, ax, **kwargs):
+        if self._projection == "2d":
+            self._renderer.render_2d(ax, self._component_data)
+        else:
+            self._renderer.render_3d(ax, self._component_data)
+        return {}
 
 
 class OpticalSystem:
@@ -55,6 +86,37 @@ class OpticalSystem:
             "mirror": {"2d": Surface2D, "3d": Mirror3D},
             "surface": {"2d": Surface2D, "3d": Surface3D},
         }
+
+    @classmethod
+    def register_component_renderer(
+        cls,
+        component_type: str,
+        renderer: ComponentRenderer,
+        *,
+        overwrite: bool = False,
+    ) -> None:
+        """Register a renderer for a custom component type.
+
+        The registered renderer is used when ``_identify_components`` adds a
+        component of this type. Custom types are checked before the built-in
+        registry, so this can also override existing built-in types when
+        ``overwrite=True``.
+
+        Args:
+            component_type: String key identifying the component type.
+            renderer: A ComponentRenderer instance.
+            overwrite: Allow replacing an existing registration.
+
+        Raises:
+            ValueError: If component_type is already registered and
+                overwrite is False.
+        """
+        if component_type in _CUSTOM_RENDERER_REGISTRY and not overwrite:
+            raise ValueError(
+                f"Component type '{component_type}' is already registered. "
+                "Pass overwrite=True to replace it."
+            )
+        _CUSTOM_RENDERER_REGISTRY[component_type] = renderer
 
     def plot(self, ax, theme=None, projection="YZ", show_apertures=True):
         """Plots the components of the optical system on the given
@@ -127,12 +189,17 @@ class OpticalSystem:
 
     def _add_component(self, component_name, *args):
         """Adds a component to the list of components."""
-        if component_name in self.component_registry:
+        if component_name in _CUSTOM_RENDERER_REGISTRY:
+            renderer = _CUSTOM_RENDERER_REGISTRY[component_name]
+            component_data = {"args": args, "projection": self.projection}
+            self.components.append(
+                _CustomRendererAdapter(renderer, component_data, self.projection)
+            )
+        elif component_name in self.component_registry:
             component_class = self.component_registry[component_name][self.projection]
+            self.components.append(component_class(*args))
         else:
             raise ValueError(f"Component {component_name} not found in registry.")
-
-        self.components.append(component_class(*args))
 
     def _get_lens_surface(self, surface, *args):
         """Gets the lens surface based on the projection type."""
