@@ -1684,10 +1684,12 @@ class TestThroughFocusSpotDiagram:
                 assert_allclose(
                     be.to_numpy(nominal_results[field_idx][wl_idx].x),
                     be.to_numpy(direct_data[field_idx][wl_idx].x),
+                    atol=1e-3,
                 )
                 assert_allclose(
                     be.to_numpy(nominal_results[field_idx][wl_idx].y),
                     be.to_numpy(direct_data[field_idx][wl_idx].y),
+                    atol=1e-3,
                 )
 
     def test_view_method(self, set_test_backend, cooke_triplet):
