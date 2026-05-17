@@ -116,7 +116,7 @@ For more details, see the [installation guide](https://optiland.readthedocs.io/e
 | **📈 Tolerancing** | Monte Carlo and parametric sensitivity analysis to evaluate robustness and manufacturability. |
 | **📚 Material Library** | Integrated access to refractiveindex.info. Support for custom dispersion models and material creation. |
 | **🖼️ Visualization** | 2D plots via matplotlib, 3D interactive scenes with VTK, and debugging tools to inspect ray behavior. |
-| **🧩 Interoperability** | Import Zemax files, save/load systems in JSON, use full Python API for scripting and automation. |
+| **🧩 Interoperability** | Import/Export Zemax (.zmx), CODE V (.seq), and OSLO (.len) files, save/load systems in JSON, use full Python API for scripting and automation. |
 | **🚀 Performance** | GPU-accelerated ray tracing (150M+ ray-surfaces/s), Numba-optimized NumPy backend, JIT-compiled computations. |
 | **🤖 ML Integration** | Compatible with PyTorch pipelines for deep learning, differentiable modeling, and end-to-end training. |
 
@@ -136,7 +136,6 @@ Optiland is continually evolving to provide new functionalities for optical desi
 - [ ] **Non-sequential Ray Tracing** (Ghost analysis, stray light, etc.)
 - [ ] **Physical Optics Propagation** (Diffraction, beam clipping, Gaussian beam evolution)
 - [ ] **Multi-Path Sequential Ray Tracing**
-- [ ] **Thin Film Design** (Coatings, polarization effects)
 - [ ] **Additional Freeforms** (Superconic, etc.)
 
 ### Optimization & Algorithms

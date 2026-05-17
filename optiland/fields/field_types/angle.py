@@ -6,6 +6,7 @@ Kramer Harrison, 2025
 from __future__ import annotations
 
 import optiland.backend as be
+from optiland.utils import globalize_coordinates
 
 from .base import BaseFieldDefinition
 
@@ -46,15 +47,20 @@ class AngleField(BaseFieldDefinition):
             y0 = be.array(Py) * EPD / 2 * be.array(vy) + y
             z0 = be.full_like(Px, z)
         else:
-            z0 = optic.surfaces.positions[0]
-            x0 = -be.tan(be.radians(field_x)) * (EPL - z0)
-            y0 = -be.tan(be.radians(field_y)) * (EPL - z0)
+            dist_to_ep = EPL - optic.surfaces.positions[0]
+            x_local = be.atleast_1d(be.array(-be.tan(be.radians(field_x)) * dist_to_ep))
+            y_local = be.atleast_1d(be.array(-be.tan(be.radians(field_y)) * dist_to_ep))
+            z_local = obj.geometry.sag(x_local, y_local)
+
+            # Globalize the local coordinates
+            x0, y0, z0 = globalize_coordinates(obj, x_local, y_local, z_local)
+
             if be.size(x0) == 1:
-                x0 = be.full_like(Px, x0)
+                x0 = be.full_like(be.atleast_1d(Px), x0)
             if be.size(y0) == 1:
-                y0 = be.full_like(Px, y0)
+                y0 = be.full_like(be.atleast_1d(Px), y0)
             if be.size(z0) == 1:
-                z0 = be.full_like(Px, z0)
+                z0 = be.full_like(be.atleast_1d(Px), z0)
         return x0, y0, z0
 
     def get_paraxial_object_position(self, optic, Hy, y1, EPL):

@@ -14,13 +14,14 @@ from typing import TYPE_CHECKING
 import optiland.backend as be
 from optiland.distribution import create_distribution
 from optiland.rays import PolarizedRays, RayGenerator
+from optiland.raytrace.base import BaseRayTracer
 
 if TYPE_CHECKING:
     from optiland._types import DistributionType
     from optiland.distribution import BaseDistribution
 
 
-class RealRayTracer:
+class RealRayTracer(BaseRayTracer):
     """Class to trace real rays through an optical system
 
     This class is responsible for building rays (via a ray generator) and tracing these
@@ -31,7 +32,7 @@ class RealRayTracer:
     """
 
     def __init__(self, optic):
-        self.optic = optic
+        super().__init__(optic)
         self.ray_generator = RayGenerator(optic)
         self.ray_aiming_config = {
             "mode": "paraxial",

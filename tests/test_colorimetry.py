@@ -1,13 +1,13 @@
+from __future__ import annotations
+
 import matplotlib
 import matplotlib.pyplot as plt
-import numpy as np
 import pytest
 
 import optiland.backend as be
 from optiland.colorimetry import core
 from optiland.colorimetry.plotting import plot_cie_1931_chromaticity_diagram
 from tests.utils import assert_allclose
-
 
 matplotlib.use("Agg")  # use non-interactive backend for testing
 

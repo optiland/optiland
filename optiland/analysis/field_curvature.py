@@ -51,6 +51,8 @@ class FieldCurvature(BaseAnalysis):
         self,
         fig_to_plot_on: Figure | None = None,
         figsize: tuple[float, float] = (8, 5.5),
+        *,
+        show: bool = True,
     ) -> tuple[Figure, Axes]:
         """Displays a plot of the field curvature analysis.
 
@@ -59,6 +61,8 @@ class FieldCurvature(BaseAnalysis):
                 If None, a new figure will be created. Defaults to None.
             figsize (tuple[float, float], optional): The size of the figure.
                 Defaults to (8, 5.5).
+            show (bool): If True (default), calls plt.show(). Set False for
+                headless use.
         Returns:
             tuple: The current figure and its axes.
         """
@@ -107,6 +111,8 @@ class FieldCurvature(BaseAnalysis):
 
         if is_gui_embedding and hasattr(current_fig, "canvas"):
             current_fig.canvas.draw_idle()
+        if show and not is_gui_embedding:
+            plt.show()
         return current_fig, ax
 
     def _generate_data(self):

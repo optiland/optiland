@@ -18,13 +18,12 @@ from optiland.fileio.zemax.reader.source import ZemaxFileSourceHandler
 from optiland.geometries import ToroidalGeometry
 from optiland.materials import Material
 from optiland.optic import Optic
-
 from tests.utils import assert_allclose
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def zemax_file():
@@ -34,13 +33,15 @@ def zemax_file():
 
 @pytest.fixture
 def zemax_dir():
-    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                        "zemax_files")
+    return os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "zemax_files"
+    )
 
 
 # ---------------------------------------------------------------------------
 # ZemaxFileSourceHandler
 # ---------------------------------------------------------------------------
+
 
 class TestZemaxFileSourceHandler:
     def test_is_url(self):
@@ -85,6 +86,7 @@ class TestZemaxFileSourceHandler:
 # ---------------------------------------------------------------------------
 # ZemaxDataParser
 # ---------------------------------------------------------------------------
+
 
 class TestZemaxDataParser:
     def setup_method(self):
@@ -134,10 +136,47 @@ class TestZemaxDataParser:
         self.parser._read_diameter(["DIAM", "8.5", "1", "0", "0", "1", '""'])
         assert self.parser._current_surf_data["diameter"] == 8.5
 
+    def test_read_config_data_legacy_short_ftyp(self):
+        # Legacy ZEMAX (e.g. VERS 6133) writes FTYP with only 1-2 tokens
+        # while modern files emit 8. Verify the parser falls back to
+        # sensible defaults instead of raising IndexError.
+        self.parser._read_config_data(["FTYP", "0"])
+        fields = self.parser.data_model.fields
+        # angle-type field (default for legacy on-axis layout)
+        assert fields["type"] == "angle"
+        # one on-axis field seeded so downstream KeyError 'x'/'y' is avoided
+        assert fields["num_fields"] == 1
+        assert fields["x"] == [0.0]
+        assert fields["y"] == [0.0]
+
+    def test_read_config_data_empty_tokens(self):
+        # FTYP positions present but empty (some malformed files do this) —
+        # _safe_int should treat empty as missing and apply defaults.
+        self.parser._read_config_data(
+            ["FTYP", "", "", "", "", "", "", "", ""]
+        )
+        fields = self.parser.data_model.fields
+        assert fields["type"] == "angle"
+        assert fields["num_fields"] == 1
+        assert fields["object_space_telecentric"] is False
+        assert fields["afocal_image_space"] is False
+
+    def test_read_config_data_non_integer_tokens(self):
+        # FTYP positions present but non-integer text — _safe_int should
+        # swallow the ValueError and apply defaults.
+        self.parser._read_config_data(
+            ["FTYP", "x", "x", "x", "x", "x", "x", "x", "x"]
+        )
+        fields = self.parser.data_model.fields
+        assert fields["type"] == "angle"
+        assert fields["num_fields"] == 1
+        assert fields["afocal_image_space"] is False
+
 
 # ---------------------------------------------------------------------------
 # End-to-end reader tests
 # ---------------------------------------------------------------------------
+
 
 class TestEndToEnd:
     def test_load_zemax_file(self, zemax_file):
@@ -172,6 +211,7 @@ class TestEndToEnd:
 # ZemaxToOpticConverter extended tests
 # ---------------------------------------------------------------------------
 
+
 class TestZemaxToOpticConverterExtended:
     def test_configure_aperture_floating_stop_no_diameter(self):
         zemax_data = {
@@ -193,7 +233,8 @@ class TestZemaxToOpticConverterExtended:
         converter.optic = Optic()
         converter._configure_surfaces()
         with pytest.raises(
-            ValueError, match="Floating stop aperture specified but no stop diameter found"
+            ValueError,
+            match="Floating stop aperture specified but no stop diameter found",
         ):
             converter._configure_aperture()
 
@@ -210,14 +251,18 @@ class TestZemaxToOpticConverterExtended:
             converter._configure_aperture()
 
     def test_configure_surface_coefficients_unsupported_type(self):
-        converter = ZemaxToOpticConverter({
-            "surfaces": {},
-            "aperture": {"EPD": 10},
-            "fields": {"type": "angle", "x": [0], "y": [0]},
-            "wavelengths": {"primary_index": 0, "data": [0.55]},
-        })
+        converter = ZemaxToOpticConverter(
+            {
+                "surfaces": {},
+                "aperture": {"EPD": 10},
+                "fields": {"type": "angle", "x": [0], "y": [0]},
+                "wavelengths": {"primary_index": 0, "data": [0.55]},
+            }
+        )
         with pytest.raises(ValueError, match="Unsupported Zemax surface type"):
-            converter._configure_surface_coefficients({"type": "unsupported_surface_type"})
+            converter._configure_surface_coefficients(
+                {"type": "unsupported_surface_type"}
+            )
 
     def test_configure_fields_vignette_warning(self, capsys):
         zemax_data = {
@@ -269,8 +314,12 @@ class TestZemaxToOpticConverterExtended:
         assert surf.geometry.radius == 100.0
         cs = surf.geometry.cs
         assert (
-            cs.x != 0 or cs.y != 0 or cs.z != 0
-            or cs.rx != 0 or cs.ry != 0 or cs.rz != 0
+            cs.x != 0
+            or cs.y != 0
+            or cs.z != 0
+            or cs.rx != 0
+            or cs.ry != 0
+            or cs.rz != 0
         )
 
     def test_configure_surfaces_toroidal(self):
@@ -296,6 +345,108 @@ class TestZemaxToOpticConverterExtended:
         assert surf.geometry.R_yz == 50.0
         assert surf.geometry.R_rot == 60.0
 
+    def test_configure_surfaces_paraxial(self):
+        # PARAXIAL surface in zemax → 'paraxial' surface_type in Optiland.
+        # PARM 1 carries the focal length (Zemax convention).
+        zemax_data = {
+            "surfaces": {
+                0: {
+                    "type": "standard",
+                    "radius": be.inf,
+                    "thickness": be.inf,
+                    "conic": 0.0,
+                    "material": "Air",
+                },
+                1: {
+                    "type": "paraxial",
+                    "radius": be.inf,
+                    "thickness": 100.0,
+                    "conic": 0.0,
+                    "param_0": 100.0,  # focal length
+                    "is_stop": True,
+                    "material": "Air",
+                },
+                2: {
+                    "type": "standard",
+                    "radius": be.inf,
+                    "thickness": 0.0,
+                    "conic": 0.0,
+                    "material": "Air",
+                },
+            },
+            "aperture": {"EPD": 10},
+            "fields": {"type": "angle", "x": [0], "y": [0]},
+            "wavelengths": {"primary_index": 0, "data": [0.55]},
+        }
+        optic = ZemaxToOpticConverter(zemax_data).convert()
+        # Surface 1 should be paraxial with f=100
+        paraxial_surf = optic.surfaces[1]
+        assert paraxial_surf.surface_type == "paraxial"
+        assert paraxial_surf.interaction_model.f == 100.0
+        # Paraxial EFL must trace to 100 mm
+        efl = float(optic.paraxial.f2())
+        assert_allclose(efl, 100.0, rtol=1e-6)
+
+    def test_configure_surfaces_paraxial_with_coordinate_break(self):
+        # A coordinate_break anywhere in the surface list forces the CB code
+        # path inside _configure_surfaces, which has its own paraxial f-injection
+        # block. Exercise it explicitly.
+        zemax_data = {
+            "surfaces": {
+                0: {
+                    "type": "standard",
+                    "radius": be.inf,
+                    "thickness": be.inf,
+                    "conic": 0.0,
+                    "material": "Air",
+                },
+                1: {
+                    "type": "coordinate_break",
+                    "param_0": 0.0,
+                    "param_1": 0.0,
+                    "thickness": 0.0,
+                    "param_2": 0.0,
+                    "param_3": 0.0,
+                    "param_4": 0.0,
+                    "conic": 0.0,
+                },
+                2: {
+                    "type": "paraxial",
+                    "radius": be.inf,
+                    "thickness": 50.0,
+                    "conic": 0.0,
+                    "param_0": 50.0,
+                    "is_stop": True,
+                    "material": "Air",
+                },
+                3: {
+                    "type": "standard",
+                    "radius": be.inf,
+                    "thickness": 0.0,
+                    "conic": 0.0,
+                    "material": "Air",
+                },
+            },
+            "aperture": {"EPD": 10},
+            "fields": {"type": "angle", "x": [0], "y": [0]},
+            "wavelengths": {"primary_index": 0, "data": [0.55]},
+        }
+        optic = ZemaxToOpticConverter(zemax_data).convert()
+        # Surface 1 in the resulting Optic corresponds to the paraxial element
+        # (surface 0 is the object plane, the coordinate_break is consumed).
+        paraxial_surf = optic.surfaces[1]
+        assert paraxial_surf.surface_type == "paraxial"
+        assert paraxial_surf.interaction_model.f == 50.0
+
+    def test_configure_surface_coefficients_paraxial_returns_none(self):
+        converter = ZemaxToOpticConverter({
+            "surfaces": {},
+            "aperture": {"EPD": 10},
+            "fields": {"type": "angle", "x": [0], "y": [0]},
+            "wavelengths": {"primary_index": 0, "data": [0.55]},
+        })
+        assert converter._configure_surface_coefficients({"type": "paraxial"}) is None
+
     def test_configure_surfaces_infinity_thickness(self):
         zemax_data = {
             "surfaces": {
@@ -319,24 +470,31 @@ class TestZemaxToOpticConverterExtended:
 # Zemax Surfaces
 # ---------------------------------------------------------------------------
 
+
 class TestZemaxSurfaces:
     def test_get_handler_error(self):
         from optiland.fileio.zemax.surfaces import get_handler
-        with pytest.raises(NotImplementedError, match="Zemax surface type 'NON_EXISTENT_SURFACE' is not supported"):
+
+        with pytest.raises(
+            NotImplementedError,
+            match="Zemax surface type 'NON_EXISTENT_SURFACE' is not supported",
+        ):
             get_handler("NON_EXISTENT_SURFACE")
 
     def test_base_surface_handler_radius(self):
-        from optiland.fileio.zemax.surfaces import _radius, _curvature
+        from optiland.fileio.zemax.surfaces import _curvature, _radius
+
         # Test _radius helper (Zemax CURV → Optiland RAD)
         assert _radius(0.0) == float(be.inf)
         assert _radius(0.02) == 50.0
-        
+
         # Test _curvature helper (Optiland RAD → Zemax CURV)
         assert _curvature(float(be.inf)) == 0.0
         assert _curvature(50.0) == 0.02
 
     def test_standard_surface_handler_defaults(self):
         from optiland.fileio.zemax.surfaces import StandardSurfaceHandler
+
         handler = StandardSurfaceHandler()
         data = {"radius": 100.0, "conic": 0.0}
         params = handler.parse(data)

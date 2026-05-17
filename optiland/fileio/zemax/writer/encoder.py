@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from optiland.fileio.zemax.model import ZemaxDataModel
 
 # ---------------------------------------------------------------------------
-# Aperture type → Zemax operand
+# Aperture type -> Zemax operand
 # ---------------------------------------------------------------------------
 _AP_TYPE_TO_OPERAND: dict[str, str] = {
     "EPD": "ENPD",

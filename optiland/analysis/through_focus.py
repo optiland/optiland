@@ -109,13 +109,17 @@ class ThroughFocusAnalysis(ABC):
         self._defocus_image_plane(self.nominal_focus)
 
     @abstractmethod
-    def view(self):
+    def view(self, *, show: bool = True):
         """Visualizes or prints the results of the through-focus analysis.
 
         This abstract method must be implemented by subclasses. It defines
         how the collected `self.results` (containing analysis data from all
         focal planes) should be presented to the user, for example, by
         plotting graphs or printing a formatted table.
+
+        Args:
+            show (bool): If True (default), calls plt.show(). Set False for
+                headless use.
         """
         pass  # pragma: no cover
 
@@ -140,8 +144,10 @@ class ThroughFocusAnalysis(ABC):
         to the optical system, and performs the specific analysis defined in
         `_perform_analysis_at_focus`. The results are stored in `self.results`.
         """
-        for position in self.positions:
-            self._defocus_image_plane(position)
-            result = self._perform_analysis_at_focus()
-            self.results.append(result)
-        self._reset_focus()
+        try:
+            for position in self.positions:
+                self._defocus_image_plane(position)
+                result = self._perform_analysis_at_focus()
+                self.results.append(result)
+        finally:
+            self._reset_focus()

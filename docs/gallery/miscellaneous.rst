@@ -10,6 +10,7 @@ or unique functionality of Optiland.
 
     miscellaneous/combining_lenses
     miscellaneous/codev_import_demo
+    miscellaneous/oslo_import_demo
     miscellaneous/aperture_demo
     miscellaneous/float_by_stop_size
     miscellaneous/custom_aperture_sizes

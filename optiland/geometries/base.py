@@ -99,6 +99,19 @@ class BaseGeometry(ABC):
         """
         pass  # pragma: no cover
 
+    def set_radius(self, value: float) -> None:
+        """Set the radius of curvature.
+
+        Args:
+            value (float): The new radius of curvature.
+
+        Raises:
+            AttributeError: If the geometry type does not support setting a radius.
+        """
+        raise AttributeError(
+            f"Geometry type '{self.__class__.__name__}' does not support set_radius()."
+        )
+
     def update_normalization(self, semi_aperture: float) -> None:
         """Update the normalization attributes of the geometry based on
         its defined normalization_mode ('auto' or 'manual').

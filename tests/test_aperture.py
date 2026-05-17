@@ -15,7 +15,6 @@ from optiland.optic import Optic
 
 from .utils import assert_allclose
 
-
 # ── Factory tests ─────────────────────────────────────────────────────────────
 
 
@@ -53,7 +52,9 @@ def test_confirm_invalid_ap_type(set_test_backend):
         ("float_by_stop_size", True, True),
     ],
 )
-def test_capability_flags(set_test_backend, ap_type, expected_telecentric, expected_scalable):
+def test_capability_flags(
+    set_test_backend, ap_type, expected_telecentric, expected_scalable
+):
     """Confirm supports_telecentric and is_scalable match expectations."""
     ap = make_system_aperture(ap_type, 5.0)
     assert ap.supports_telecentric is expected_telecentric

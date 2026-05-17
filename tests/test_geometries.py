@@ -2128,7 +2128,9 @@ def forbes_system():
 
     lens.surfaces.add(index=0, thickness=0.055)
     lens.surfaces.add(index=1, thickness=26.5)
-    lens.surfaces.add(index=2, thickness=4.0, radius=be.inf, material=H_K3, is_stop=True)
+    lens.surfaces.add(
+        index=2, thickness=4.0, radius=be.inf, material=H_K3, is_stop=True
+    )
     lens.surfaces.add(
         index=3,
         thickness=25.0,

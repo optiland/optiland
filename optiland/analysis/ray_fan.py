@@ -58,6 +58,8 @@ class RayFan(BaseAnalysis):
         self,
         fig_to_plot_on: plt.Figure = None,
         figsize: tuple[float, float] = (10, 3.33),
+        *,
+        show: bool = True,
     ):
         """
         Displays the ray fan plot, either in a new window or on a provided GUI figure.
@@ -67,6 +69,8 @@ class RayFan(BaseAnalysis):
                 If None, a new figure will be created. Defaults to None.
             figsize (tuple[float, float], optional): The size of the figure.
                 Defaults to (10, 3.33).
+            show (bool): If True (default), calls plt.show(). Set False for
+                headless use.
         Returns:
             tuple: The current figure and its axes.
         """
@@ -156,6 +160,8 @@ class RayFan(BaseAnalysis):
         current_fig.tight_layout()
         if is_gui_embedding and hasattr(current_fig, "canvas"):
             current_fig.canvas.draw_idle()
+        if show and not is_gui_embedding:
+            plt.show()
         return current_fig, current_fig.get_axes()
 
     def _remove_distortion(self, data):

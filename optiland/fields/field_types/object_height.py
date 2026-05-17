@@ -6,6 +6,7 @@ Kramer Harrison, 2025
 from __future__ import annotations
 
 import optiland.backend as be
+from optiland.utils import globalize_coordinates
 
 from .base import BaseFieldDefinition
 
@@ -36,11 +37,13 @@ class ObjectHeightField(BaseFieldDefinition):
         self._validate_object_infinite(optic)
         obj = optic.object_surface
         max_field = optic.fields.max_field
-        field_x = max_field * Hx
-        field_y = max_field * Hy
-        x0 = be.array(field_x)
-        y0 = be.array(field_y)
-        z0 = obj.geometry.sag(x0, y0) + obj.geometry.cs.z
+        x_local = be.atleast_1d(be.array(max_field * Hx))
+        y_local = be.atleast_1d(be.array(max_field * Hy))
+        z_local = obj.geometry.sag(x_local, y_local)
+
+        # Globalize the local coordinates
+        x0, y0, z0 = globalize_coordinates(obj, x_local, y_local, z_local)
+
         return x0, y0, z0
 
     def get_paraxial_object_position(self, optic, Hy, y1, EPL):

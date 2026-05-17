@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import optiland.backend as be
 from optiland.apodization import BaseApodization
-from optiland.geometries import Plane, StandardGeometry
+from optiland.geometries import StandardGeometry
 from optiland.materials import IdealMaterial
 
 if TYPE_CHECKING:
@@ -44,14 +44,12 @@ class OpticUpdater:
 
         """
         surface = self.optic.surfaces[surface_number]
-
-        # change geometry from plane to standard
-        if isinstance(surface.geometry, Plane):
+        try:
+            surface.geometry.set_radius(value)
+        except AttributeError:
+            # Plane geometry does not support set_radius; replace with StandardGeometry
             cs = surface.geometry.cs
-            new_geometry = StandardGeometry(cs, radius=value, conic=0)
-            surface.geometry = new_geometry
-        else:
-            surface.geometry.radius = value
+            surface.geometry = StandardGeometry(cs, radius=value, conic=0)
 
     def set_conic(self, value, surface_number):
         """Set the conic constant of a surface.
