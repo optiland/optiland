@@ -25,8 +25,10 @@ class TestImageSimulation:
         return img
 
     def test_engine_init(self, optic, source_image):
-        engine = ImageSimulationEngine(optic, source_image)
-        assert engine.source_image.shape == (3, 32, 32)  # Transposed to (C, H, W)
+        engine = ImageSimulationEngine(optic)
+
+        assert engine.source_image is None
+        assert engine.simulated_image is None
         assert engine.config is not None
 
     def test_engine_run(self, optic, source_image):
@@ -39,15 +41,19 @@ class TestImageSimulation:
             "oversample": 1,
             "wavelengths": [0.55],  # Mono
         }
-        engine = ImageSimulationEngine(optic, source_image, config=config)
-        result = engine.run()
+        engine = ImageSimulationEngine(optic, config=config)
+        result = engine.run(source_image)
+
+        assert result.shape == (1, 1, 32, 32)
+        assert not be.any(be.isnan(result))
 
         # Let's check typical RGB case
         config["wavelengths"] = [0.65, 0.55, 0.45]
-        engine = ImageSimulationEngine(optic, source_image, config=config)
-        result = engine.run()
+        engine = ImageSimulationEngine(optic, config=config)
+        result = engine.run(source_image)
 
-        assert result.shape == (32, 32, 3)
+        assert result.shape == (1, 3, 32, 32)
+        assert not be.any(be.isnan(result))
         assert be.max(result) > 0  # Should have some signal
 
     def test_distortion_warper(self, optic):

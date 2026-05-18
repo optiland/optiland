@@ -2048,20 +2048,33 @@ class TorchBackend(AbstractBackend):
 
         Args:
             tensor: Input tensor.
-            pad_width: Padding per axis as ``((pt, pb), (pl, pr))``.
-            mode: Only ``'constant'`` is supported.
+            pad_width: Padding per axis.
+            mode: Padding mode.
             constant_values: Value used for constant padding.
 
         Returns:
             Tensor: Padded tensor.
-
-        Raises:
-            NotImplementedError: If mode is not ``'constant'``.
         """
-        if mode != "constant":
-            raise NotImplementedError("Only constant mode supported")
-        (pt, pb), (pl, pr) = pad_width
-        return F.pad(tensor, (pl, pr, pt, pb), mode="constant", value=constant_values)
+        if len(pad_width) == 2:
+            (pt, pb), (pl, pr) = pad_width
+        elif len(pad_width) == 4:
+            if pad_width[0] != (0, 0) or pad_width[1] != (0, 0):
+                raise NotImplementedError(
+                    "Padding batch or channel dimensions is not supported"
+                )
+            (pt, pb), (pl, pr) = pad_width[2:]
+        else:
+            raise ValueError("pad_width must have length 2 or 4")
+
+        if mode == "constant":
+            return F.pad(
+                tensor, (pl, pr, pt, pb), mode="constant", value=constant_values
+            )
+
+        if mode in ("reflect", "replicate", "circular"):
+            return F.pad(tensor, (pl, pr, pt, pb), mode=mode)
+
+        raise NotImplementedError(f"Unsupported padding mode: {mode}")
 
     def vectorize(self, pyfunc: Callable[..., Any]) -> Callable[..., Any]:
         """Vectorize a scalar Python function over tensor inputs.
