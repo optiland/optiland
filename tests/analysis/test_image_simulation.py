@@ -79,3 +79,44 @@ class TestImageSimulation:
 
         resized_coeffs = gen.resize_coefficient_map(coeffs, (64, 64))
         assert resized_coeffs.shape == (2, 64, 64)
+
+    def test_engine_prepare_grayscale(self, optic):
+        image = np.ones((32, 32), dtype=np.float32)
+
+        engine = ImageSimulationEngine(optic)
+        prepared = engine._prepare_source_image(image)
+
+        assert prepared.shape == (1, 1, 32, 32)
+
+    def test_engine_rejects_invalid_input(self, optic):
+        engine = ImageSimulationEngine(optic)
+
+        invalid_rgb = np.ones((3, 32, 32), dtype=np.float32)
+        invalid_batch = np.ones((2, 2, 32, 32), dtype=np.float32)
+
+        with pytest.raises(ValueError, match="3D source_image"):
+            engine._prepare_source_image(invalid_rgb)
+
+        with pytest.raises(ValueError, match="4D source_image"):
+            engine._prepare_source_image(invalid_batch)
+
+    def test_engine_view_validation(self, optic, source_image):
+        engine = ImageSimulationEngine(optic)
+
+        with pytest.raises(RuntimeError, match="Call run"):
+            engine.view(show=False)
+
+        config = {
+            "psf_grid_shape": (3, 3),
+            "psf_size": 32,
+            "num_rays": 32,
+            "n_components": 2,
+            "oversample": 1,
+            "wavelengths": [0.65, 0.55, 0.45],
+        }
+
+        engine = ImageSimulationEngine(optic, config=config)
+        engine.run(source_image)
+
+        with pytest.raises(IndexError, match="index must be between"):
+            engine.view(index=1, show=False)

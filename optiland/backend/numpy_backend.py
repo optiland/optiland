@@ -984,7 +984,11 @@ class NumpyBackend(AbstractBackend):
         """
         a = self.array(in1)
         b = self.array(in2)
-        return _fftconvolve(a, b, mode=mode, axes=(-2, -1))
+
+        if a.ndim >= 2 and b.ndim >= 2:
+            return _fftconvolve(a, b, mode=mode, axes=(-2, -1))
+
+        return _fftconvolve(a, b, mode=mode)
 
     # ------------------------------------------------------------------
     # Random number generation
