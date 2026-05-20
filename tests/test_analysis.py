@@ -25,17 +25,17 @@ matplotlib.use("Agg")  # use non-interactive backend for testing
 
 
 @pytest.fixture
-def cooke_triplet():
+def cooke_triplet(set_test_backend):
     return CookeTriplet()
 
 
 @pytest.fixture
-def telescope_objective():
+def telescope_objective(set_test_backend):
     return TripletTelescopeObjective()
 
 
 @pytest.fixture
-def triplet_four_fields():
+def triplet_four_fields(set_test_backend):
     lens = Optic()
 
     lens.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
@@ -917,7 +917,7 @@ def test_generate_field_data_global(set_test_backend, cooke_triplet):
 
 
 @pytest.fixture
-def test_system_irradiance_v1():
+def test_system_irradiance_v1(set_test_backend):
     class TestSystemIrradianceV1(Optic):
         def __init__(self):
             super().__init__()
@@ -938,7 +938,7 @@ def test_system_irradiance_v1():
 
 
 @pytest.fixture
-def perfect_mirror_system():
+def perfect_mirror_system(set_test_backend):
     class PerfectMirror(Optic):
         def __init__(self):
             super().__init__()
@@ -1813,7 +1813,7 @@ def read_zmx_file(file_path, skip_lines, cols=(0, 1)):
 
 
 @pytest.fixture
-def extended_source():
+def extended_source(set_test_backend):
     """Fixture to provide an instance of SMFSource."""
     # Using default behavior: divergence calculated from MFD and Wavelength
     # This matches the diffraction-limited physics of a perfect Gaussian beam.
@@ -1826,7 +1826,7 @@ def extended_source():
 
 
 @pytest.fixture
-def system_1():
+def system_1(set_test_backend):
     """A simple placeholder test system for RadiantIntensity analysis."""
 
     class TestSystemForIntensity(Optic):

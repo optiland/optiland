@@ -18,12 +18,13 @@ def _apply_backend(backend_name: str) -> None:
 @pytest.fixture(params=be.list_available_backends(), ids=lambda b: f"backend={b}")
 def set_test_backend(request):
     """Fixture to set the backend for each test and ensure proper device configuration."""
+    old_backend = be.get_backend()
     _apply_backend(request.param)
 
     yield
 
-    # Reset the backend to numpy after the test
-    be.set_backend("numpy")
+    # Restore the previous backend
+    be.set_backend(old_backend)
 
 
 @pytest.fixture(
@@ -53,8 +54,9 @@ def set_test_backend_class(request):
             def test_a(self, cached_analysis): ...
             def test_b(self, cached_analysis): ...
     """
+    old_backend = be.get_backend()
     _apply_backend(request.param)
 
     yield
 
-    be.set_backend("numpy")
+    be.set_backend(old_backend)
