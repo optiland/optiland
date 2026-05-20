@@ -1218,7 +1218,7 @@ class TestIncoherentIrradiance:
 
         # Check that the warning was printed
         mock_print.assert_any_call(
-            "[IncoherentIrradiance] Warning: res parameter ignored - derived from px_size instead â†’ (5,5) pixels"
+            "[IncoherentIrradiance] Warning: res parameter ignored - derived from px_size instead → (5,5) pixels"
         )
         fig, axes = irr.view()
         assert fig is not None
