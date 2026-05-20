@@ -13,6 +13,12 @@ from optiland.optimization.variable.grid_sag import GridSagVariable
 from optiland.surfaces.standard_surface import Surface
 
 
+@pytest.fixture(autouse=True)
+def _reset_backend():
+    yield
+    be.set_backend("numpy")
+
+
 @pytest.fixture
 def grid_sag_optic():
     """Creates an Optic with a GridSagGeometry surface."""

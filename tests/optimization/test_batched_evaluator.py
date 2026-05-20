@@ -900,6 +900,7 @@ class TestTorchAutograd:
         be.set_backend("torch")
         be.grad_mode.enable()
         yield
+        be.grad_mode.disable()
         be.set_backend(original)
 
     def test_sum_squared_supports_backward(self):
