@@ -74,7 +74,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --dev --all-groups
+          uv sync --dev --all-extras
 
       - name: Run tests with coverage
         run: |

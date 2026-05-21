@@ -309,3 +309,37 @@ class TestOpticToZemaxConverterExtended:
 
         assert _is_air(IdealMaterial(1.0)) is True
         assert _is_air(IdealMaterial(1.5)) is False
+
+
+# ---------------------------------------------------------------------------
+# GLAS encoding
+# ---------------------------------------------------------------------------
+
+class TestGlasEncoding:
+    def test_encode_catalog_glass(self):
+        from optiland.fileio.zemax.writer.encoder import ZemaxFileEncoder
+        from optiland.fileio.zemax.model import ZemaxDataModel
+
+        encoder = ZemaxFileEncoder(ZemaxDataModel())
+        glas = {"name": "N-BK7"}
+        res = encoder._encode_glas(glas)
+        assert res == "  GLAS N-BK7 0 0 0 0 0 0 0 0 0 0"
+
+    def test_encode_mirror(self):
+        from optiland.fileio.zemax.writer.encoder import ZemaxFileEncoder
+        from optiland.fileio.zemax.model import ZemaxDataModel
+
+        encoder = ZemaxFileEncoder(ZemaxDataModel())
+        glas = {"name": "MIRROR"}
+        res = encoder._encode_glas(glas)
+        assert res == "  GLAS MIRROR 0 0 0 0 0 0 0 0 0 0"
+
+    def test_encode_model_glass(self):
+        from optiland.fileio.zemax.writer.encoder import ZemaxFileEncoder
+        from optiland.fileio.zemax.model import ZemaxDataModel
+
+        encoder = ZemaxFileEncoder(ZemaxDataModel())
+        glas = {"name": "MODEL", "n": 1.5, "V": 50.0}
+        res = encoder._encode_glas(glas)
+        # Use startswith to allow for exact scientific notation format
+        assert res.startswith("  GLAS MODEL 1 0 1.50000000E+00 5.00000000E+01 0 0 0 0 0 0")

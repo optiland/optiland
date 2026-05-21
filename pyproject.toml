@@ -28,6 +28,13 @@ dependencies = [
 ]
 license = { text = "MIT License" }
 
+[project.optional-dependencies]
+prescription-console = ["rich>=13.0"]
+prescription-pdf = ["reportlab>=4.0"]
+prescription = ["rich>=13.0", "reportlab>=4.0"]
+gui = ["PySide6", "qtconsole"]
+torch = ["torch"]
+
 [project.urls]
 Homepage = "https://github.com/optiland/optiland"
 Repository = "https://github.com/optiland/optiland"
@@ -41,7 +48,7 @@ optiland = "optiland_gui.run_gui:main"
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["optiland", "optiland_gui"] # Auto-discovers subpackages
+packages = ["optiland", "optiland_gui"]
 
 [tool.hatch.metadata.files]
 "optiland/database" = ["*.csv", "*.yml", "**/*.yml", "*.npy"]
@@ -70,12 +77,9 @@ required-imports = ["from __future__ import annotations"]
 dev = [
     "pytest>=8.3.5",
     "codecov>=2.1.13",
-    "torch",
     "pytest-cov>=7.0.0",
     "pytest-xdist>=3.6",
 ]
-gui = ["PySide6", "qtconsole"]
-torch = ["torch"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

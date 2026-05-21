@@ -159,6 +159,7 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
 
    api/api_introduction
    api/api_analysis
+   api/api_prescription
    api/api_backend
    api/api_coatings
    api/api_core

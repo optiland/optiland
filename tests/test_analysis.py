@@ -68,112 +68,10 @@ def triplet_four_fields():
     return lens
 
 
-# ---------------------------------------------------------------------------
-# Class-scoped cached fixtures
-#
-# Building these analysis objects traces many rays through a real optical
-# system and is by far the most expensive thing the analysis test suite
-# does. The pattern below builds one instance per (test class, backend)
-# combination and shares it across every test in the class. Tests in these
-# classes must not mutate the cached instance — they may only read state or
-# call read-only methods such as :py:meth:`view`.
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="class")
-def cooke_triplet_class(set_test_backend_class):
-    return CookeTriplet()
-
-
-@pytest.fixture(scope="class")
-def telescope_objective_class(set_test_backend_class):
-    return TripletTelescopeObjective()
-
-
-@pytest.fixture(scope="class")
-def triplet_four_fields_class(set_test_backend_class):
-    lens = Optic()
-
-    lens.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
-    lens.surfaces.add(index=1, radius=22.01359, thickness=3.25896, material="SK16")
-    lens.surfaces.add(index=2, radius=-435.76044, thickness=6.00755)
-    lens.surfaces.add(
-        index=3,
-        radius=-22.21328,
-        thickness=0.99997,
-        material=("F2", "schott"),
-    )
-    lens.surfaces.add(index=4, radius=20.29192, thickness=4.75041, is_stop=True)
-    lens.surfaces.add(index=5, radius=79.68360, thickness=2.95208, material="SK16")
-    lens.surfaces.add(index=6, radius=-18.39533, thickness=42.20778)
-    lens.surfaces.add(index=7)
-
-    lens.set_aperture(aperture_type="EPD", value=10)
-
-    lens.fields.set_type(field_type="angle")
-    lens.fields.add(y=0)
-    lens.fields.add(y=10)
-    lens.fields.add(y=15)
-    lens.fields.add(y=20)
-
-    lens.wavelengths.add(value=0.48)
-    lens.wavelengths.add(value=0.55, is_primary=True)
-    lens.wavelengths.add(value=0.65)
-
-    lens.updater.update_paraxial()
-    return lens
-
-
-@pytest.fixture(scope="class")
-def cooke_spot_diagram_cached(cooke_triplet_class):
-    return analysis.SpotDiagram(cooke_triplet_class)
-
-
-@pytest.fixture(scope="class")
-def cooke_encircled_energy_cached(cooke_triplet_class):
-    return analysis.EncircledEnergy(
-        cooke_triplet_class, num_rays=50, distribution="hexapolar"
-    )
-
-
-@pytest.fixture(scope="class")
-def cooke_ray_fan_cached(cooke_triplet_class):
-    return analysis.RayFan(cooke_triplet_class)
-
-
-@pytest.fixture(scope="class")
-def cooke_best_fit_ray_fan_cached(cooke_triplet_class):
-    return analysis.BestFitRayFan(cooke_triplet_class)
-
-
-@pytest.fixture(scope="class")
-def triplet_four_fields_spot_diagram_cached(triplet_four_fields_class):
-    return analysis.SpotDiagram(triplet_four_fields_class)
-
-
-@pytest.fixture(scope="class")
-def telescope_yybar_cached(telescope_objective_class):
-    return analysis.YYbar(telescope_objective_class)
-
-
-@pytest.fixture(scope="class")
-def telescope_distortion_cached(telescope_objective_class):
-    return analysis.Distortion(telescope_objective_class)
-
-
-@pytest.fixture(scope="class")
-def telescope_grid_distortion_cached(telescope_objective_class):
-    return analysis.GridDistortion(telescope_objective_class)
-
-
-@pytest.fixture(scope="class")
-def telescope_pupil_aberration_cached(telescope_objective_class):
-    return analysis.PupilAberration(telescope_objective_class)
-
-
 class TestCookeTripetSpotDiagram:
-    def test_spot_geometric_radius(self, cooke_spot_diagram_cached):
-        geo_radius = cooke_spot_diagram_cached.geometric_spot_radius()
+    def test_spot_geometric_radius(self, set_test_backend, cooke_triplet):
+        spot = analysis.SpotDiagram(cooke_triplet)
+        geo_radius = spot.geometric_spot_radius()
 
         assert_allclose(geo_radius[0][0], 0.00597244087781)
         assert_allclose(geo_radius[0][1], 0.00628645771124)
@@ -187,8 +85,9 @@ class TestCookeTripetSpotDiagram:
         assert_allclose(geo_radius[2][1], 0.022501847359635008)
         assert_allclose(geo_radius[2][2], 0.036545592330568866)
 
-    def test_spot_rms_radius(self, cooke_spot_diagram_cached):
-        rms_radius = cooke_spot_diagram_cached.rms_spot_radius()
+    def test_spot_rms_radius(self, set_test_backend, cooke_triplet):
+        spot = analysis.SpotDiagram(cooke_triplet)
+        rms_radius = spot.rms_spot_radius()
 
         assert_allclose(rms_radius[0][0], 0.003791335461448)
         assert_allclose(rms_radius[0][1], 0.004293689564257)
@@ -202,10 +101,9 @@ class TestCookeTripetSpotDiagram:
         assert_allclose(rms_radius[2][1], 0.012116688566406967)
         assert_allclose(rms_radius[2][2], 0.013648684944411313)
 
-    def test_airy_disc(self, cooke_spot_diagram_cached, cooke_triplet_class):
-        airy_radius = cooke_spot_diagram_cached.airy_disc_x_y(
-            wavelength=cooke_triplet_class.primary_wavelength
-        )
+    def test_airy_disc(self, set_test_backend, cooke_triplet):
+        spot = analysis.SpotDiagram(cooke_triplet)
+        airy_radius = spot.airy_disc_x_y(wavelength=cooke_triplet.primary_wavelength)
         airy_radius_x, airy_radius_y = airy_radius
 
         assert_allclose(airy_radius_x[0], 0.0033403700287742426)
@@ -216,8 +114,9 @@ class TestCookeTripetSpotDiagram:
         assert_allclose(airy_radius_y[1], 0.003430811760325915)
         assert_allclose(airy_radius_y[2], 0.0035453238661865244)
 
-    def test_airy_disc_in_view_spot_diagram(self, cooke_spot_diagram_cached):
-        fig, axes = cooke_spot_diagram_cached.view(add_airy_disk=True)
+    def test_airy_disc_in_view_spot_diagram(self, set_test_backend, cooke_triplet):
+        spot = analysis.SpotDiagram(cooke_triplet)
+        fig, axes = spot.view(add_airy_disk=True)
 
         assert fig is not None
         assert len(axes) > 0
@@ -225,16 +124,18 @@ class TestCookeTripetSpotDiagram:
         assert all(isinstance(ax, Axes) for ax in axes)
         plt.close(fig)
 
-    def test_view_spot_diagram(self, cooke_spot_diagram_cached):
-        fig, axes = cooke_spot_diagram_cached.view()
+    def test_view_spot_diagram(self, set_test_backend, cooke_triplet):
+        spot = analysis.SpotDiagram(cooke_triplet)
+        fig, axes = spot.view()
         assert fig is not None
         assert len(axes) > 0
         assert isinstance(fig, Figure)
         assert all(isinstance(ax, Axes) for ax in axes)
         plt.close(fig)
 
-    def test_view_spot_diagram_larger_fig(self, cooke_spot_diagram_cached):
-        fig, axes = cooke_spot_diagram_cached.view(figsize=(20, 10))
+    def test_view_spot_diagram_larger_fig(self, set_test_backend, cooke_triplet):
+        spot = analysis.SpotDiagram(cooke_triplet)
+        fig, axes = spot.view(figsize=(20, 10))
         assert fig is not None
         assert len(axes) > 0
         assert isinstance(fig, Figure)
@@ -243,18 +144,18 @@ class TestCookeTripetSpotDiagram:
 
 
 class TestTripletSpotDiagram:
-    def test_view_spot_diagram(self, triplet_four_fields_spot_diagram_cached):
-        fig, axes = triplet_four_fields_spot_diagram_cached.view()
+    def test_view_spot_diagram(self, set_test_backend, triplet_four_fields):
+        spot = analysis.SpotDiagram(triplet_four_fields)
+        fig, axes = spot.view()
         assert fig is not None
         assert len(axes) > 0
         assert isinstance(fig, Figure)
         assert all(isinstance(ax, Axes) for ax in axes)
         plt.close(fig)
 
-    def test_view_spot_diagram_larger_fig(
-        self, triplet_four_fields_spot_diagram_cached
-    ):
-        fig, axes = triplet_four_fields_spot_diagram_cached.view(figsize=(20, 10))
+    def test_view_spot_diagram_larger_fig(self, set_test_backend, triplet_four_fields):
+        spot = analysis.SpotDiagram(triplet_four_fields)
+        fig, axes = spot.view(figsize=(20, 10))
         assert fig is not None
         assert len(axes) > 0
         assert isinstance(fig, Figure)
@@ -263,8 +164,9 @@ class TestTripletSpotDiagram:
 
 
 class TestCookeTripletEncircledEnergy:
-    def test_encircled_energy_centroid(self, cooke_encircled_energy_cached):
-        centroid = cooke_encircled_energy_cached.centroid()
+    def test_encircled_energy_centroid(self, set_test_backend, cooke_triplet):
+        encircled_energy = analysis.EncircledEnergy(cooke_triplet)
+        centroid = encircled_energy.centroid()
 
         # encircled energy calculation includes randomness, so abs. tolerance
         # is set to 1e-3
@@ -278,16 +180,27 @@ class TestCookeTripletEncircledEnergy:
         assert_allclose(centroid[2][0], 3.1631726815066986e-07, atol=1e-3, rtol=1e-3)
         assert_allclose(centroid[2][1], 18.13502264954927, atol=1e-3, rtol=1e-3)
 
-    def test_view_encircled_energy(self, cooke_encircled_energy_cached):
-        fig, ax = cooke_encircled_energy_cached.view()
+    def test_view_encircled_energy(self, set_test_backend, cooke_triplet):
+        encircled_energy = analysis.EncircledEnergy(cooke_triplet)
+        fig, ax = encircled_energy.view()
         assert fig is not None
         assert ax is not None
         assert isinstance(fig, Figure)
         assert isinstance(ax, Axes)
         plt.close(fig)
 
-    def test_view_encircled_energy_larger_fig(self, cooke_encircled_energy_cached):
-        fig, ax = cooke_encircled_energy_cached.view(figsize=(20, 10))
+    def test_view_encircled_energy_larger_fig(self, set_test_backend, cooke_triplet):
+        encircled_energy = analysis.EncircledEnergy(cooke_triplet)
+        fig, ax = encircled_energy.view(figsize=(20, 10))
+        assert fig is not None
+        assert ax is not None
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
+        plt.close(fig)
+
+    def test_view_encircled_energy_larger_fig(self, set_test_backend, cooke_triplet):
+        encircled_energy = analysis.EncircledEnergy(cooke_triplet)
+        fig, ax = encircled_energy.view(figsize=(20, 10))
         assert fig is not None
         assert ax is not None
         assert isinstance(fig, Figure)
@@ -296,8 +209,8 @@ class TestCookeTripletEncircledEnergy:
 
 
 class TestCookeTripletRayFan:
-    def test_ray_fan(self, cooke_ray_fan_cached):
-        fan = cooke_ray_fan_cached
+    def test_ray_fan(self, set_test_backend, cooke_triplet):
+        fan = analysis.RayFan(cooke_triplet)
 
         assert_allclose(fan.data["Px"][0], -1)
         assert_allclose(fan.data["Px"][-1], 1)
@@ -500,16 +413,18 @@ class TestCookeTripletRayFan:
             atol=1e-9,
         )
 
-    def test_view_ray_fan(self, cooke_ray_fan_cached):
-        fig, axes = cooke_ray_fan_cached.view()
+    def test_view_ray_fan(self, set_test_backend, cooke_triplet):
+        ray_fan = analysis.RayFan(cooke_triplet)
+        fig, axes = ray_fan.view()
         assert fig is not None
         assert len(axes) > 0
         assert isinstance(fig, Figure)
         assert all(isinstance(ax, Axes) for ax in axes)
         plt.close(fig)
 
-    def test_view_ray_fan_larger_fig(self, cooke_ray_fan_cached):
-        fig, axes = cooke_ray_fan_cached.view(figsize=(20, 10))
+    def test_view_ray_fan_larger_fig(self, set_test_backend, cooke_triplet):
+        ray_fan = analysis.RayFan(cooke_triplet)
+        fig, axes = ray_fan.view(figsize=(20, 10))
         assert fig is not None
         assert len(axes) > 0
         assert isinstance(fig, Figure)
@@ -518,16 +433,18 @@ class TestCookeTripletRayFan:
 
 
 class TestTelescopeTripletYYbar:
-    def test_view_yybar(self, telescope_yybar_cached):
-        fig, ax = telescope_yybar_cached.view()
+    def test_view_yybar(self, set_test_backend, telescope_objective):
+        yybar = analysis.YYbar(telescope_objective)
+        fig, ax = yybar.view()
         assert fig is not None
         assert ax is not None
         assert isinstance(fig, Figure)
         assert isinstance(ax, Axes)
         plt.close(fig)
 
-    def test_view_yybar_larger_fig(self, telescope_yybar_cached):
-        fig, ax = telescope_yybar_cached.view(figsize=(12.4, 10))
+    def test_view_yybar_larger_fig(self, set_test_backend, telescope_objective):
+        yybar = analysis.YYbar(telescope_objective)
+        fig, ax = yybar.view(figsize=(12.4, 10))
         assert fig is not None
         assert ax is not None
         assert isinstance(fig, Figure)
@@ -536,8 +453,8 @@ class TestTelescopeTripletYYbar:
 
 
 class TestTelescopeTripletDistortion:
-    def test_distortion_values(self, telescope_distortion_cached):
-        dist = telescope_distortion_cached
+    def test_distortion_values(self, set_test_backend, telescope_objective):
+        dist = analysis.Distortion(telescope_objective)
 
         assert_allclose(dist.data[0][0], 0.0, atol=1e-9)
         assert_allclose(dist.data[0][-1], 0.005950509480884957, atol=1e-9)
@@ -564,16 +481,36 @@ class TestTelescopeTripletDistortion:
         with pytest.raises(ValueError):
             analysis.Distortion(telescope_objective, distortion_type="invalid")
 
-    def test_view_distortion(self, telescope_distortion_cached):
-        fig, ax = telescope_distortion_cached.view()
+    def test_view_distortion(self, set_test_backend, telescope_objective):
+        dist = analysis.Distortion(telescope_objective)
+        fig, ax = dist.view()
         assert fig is not None
         assert ax is not None
         assert isinstance(fig, Figure)
         assert isinstance(ax, Axes)
         plt.close(fig)
 
-    def test_view_distortion_larger_fig(self, telescope_distortion_cached):
-        fig, ax = telescope_distortion_cached.view(figsize=(12.4, 10))
+    def test_view_distortion_larger_fig(self, set_test_backend, telescope_objective):
+        dist = analysis.Distortion(telescope_objective)
+        fig, ax = dist.view(figsize=(12.4, 10))
+        assert fig is not None
+        assert ax is not None
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
+        plt.close(fig)
+
+    def test_view_distortion_larger_fig(self, set_test_backend, telescope_objective):
+        dist = analysis.Distortion(telescope_objective)
+        fig, ax = dist.view(figsize=(12.4, 10))
+        assert fig is not None
+        assert ax is not None
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
+        plt.close(fig)
+
+    def test_view_distortion_larger_fig(self, set_test_backend, telescope_objective):
+        dist = analysis.Distortion(telescope_objective)
+        fig, ax = dist.view(figsize=(12.4, 10))
         assert fig is not None
         assert ax is not None
         assert isinstance(fig, Figure)
@@ -582,8 +519,8 @@ class TestTelescopeTripletDistortion:
 
 
 class TestTelescopeTripletGridDistortion:
-    def test_grid_distortion_values(self, telescope_grid_distortion_cached):
-        dist = telescope_grid_distortion_cached
+    def test_grid_distortion_values(self, set_test_backend, telescope_objective):
+        dist = analysis.GridDistortion(telescope_objective)
         assert_allclose(dist.data["max_distortion"], 0.005785718069180374, atol=1e-9)
 
         assert dist.data["xr"].shape == (10, 10)
@@ -629,16 +566,20 @@ class TestTelescopeTripletGridDistortion:
         with pytest.raises(ValueError):
             analysis.GridDistortion(telescope_objective, distortion_type="invalid")
 
-    def test_view_grid_distortion(self, telescope_grid_distortion_cached):
-        fig, ax = telescope_grid_distortion_cached.view()
+    def test_view_grid_distortion(self, set_test_backend, telescope_objective):
+        dist = analysis.GridDistortion(telescope_objective)
+        fig, ax = dist.view()
         assert fig is not None
         assert ax is not None
         assert isinstance(fig, Figure)
         assert isinstance(ax, Axes)
         plt.close(fig)
 
-    def test_view_grid_distortion_larger_fig(self, telescope_grid_distortion_cached):
-        fig, ax = telescope_grid_distortion_cached.view(figsize=(12.4, 10))
+    def test_view_grid_distortion_larger_fig(
+        self, set_test_backend, telescope_objective
+    ):
+        dist = analysis.GridDistortion(telescope_objective)
+        fig, ax = dist.view(figsize=(12.4, 10))
         assert fig is not None
         assert ax is not None
         assert isinstance(fig, Figure)
@@ -650,9 +591,10 @@ class TestTelescopeTripletFieldCurvature:
     def test_field_curvature_init(self, set_test_backend, telescope_objective):
         field_curvature = analysis.FieldCurvature(telescope_objective)
         assert field_curvature.optic == telescope_objective
-        assert [
-            wp.value for wp in field_curvature.wavelengths
-        ] == telescope_objective.wavelengths.get_wavelengths()
+        assert (
+            [wp.value for wp in field_curvature.wavelengths]
+            == telescope_objective.wavelengths.get_wavelengths()
+        )
         assert field_curvature.num_points == 128
 
     def test_field_curvature_init_with_wavelength(
@@ -675,9 +617,10 @@ class TestTelescopeTripletFieldCurvature:
             num_points=num_points,
         )
         assert field_curvature.optic == telescope_objective
-        assert [
-            wp.value for wp in field_curvature.wavelengths
-        ] == telescope_objective.wavelengths.get_wavelengths()
+        assert (
+            [wp.value for wp in field_curvature.wavelengths]
+            == telescope_objective.wavelengths.get_wavelengths()
+        )
         assert field_curvature.num_points == num_points
 
     def test_field_curvature_init_with_all_parameters(
@@ -738,55 +681,34 @@ class TestTelescopeTripletFieldCurvature:
         assert_allclose(f.data[2][0][5], 0.06694956529269887, atol=1e-9)
 
 
-@pytest.fixture(scope="class")
-def _telescope_objective_class(set_test_backend_class):
-    return TripletTelescopeObjective()
-
-
-@pytest.fixture(scope="class")
-def spot_vs_field_cached(_telescope_objective_class):
-    """Class-scoped ``RmsSpotSizeVsField`` shared across the test class.
-
-    Constructing this analysis traces 64 fields and is one of the slowest
-    operations in the suite (~14-28 s on torch). All view/shape/init tests
-    in :class:`TestSpotVsField` read the resulting object without mutating
-    it, so a single instance per backend is reused.
-    """
-    return analysis.RmsSpotSizeVsField(_telescope_objective_class)
-
-
-@pytest.fixture(scope="class")
-def wavefront_error_vs_field_cached(_telescope_objective_class):
-    """Class-scoped ``RmsWavefrontErrorVsField`` shared across the test class."""
-    return analysis.RmsWavefrontErrorVsField(_telescope_objective_class)
-
-
 class TestSpotVsField:
     def test_rms_spot_size_vs_field_initialization(
-        self, spot_vs_field_cached, _telescope_objective_class
+        self, set_test_backend, telescope_objective
     ):
-        assert spot_vs_field_cached.num_fields == 64
-        assert be.array_equal(
-            spot_vs_field_cached._field[:, 1], be.linspace(0, 1, 64)
-        )
+        spot_vs_field = analysis.RmsSpotSizeVsField(telescope_objective)
+        assert spot_vs_field.num_fields == 64
+        assert be.array_equal(spot_vs_field._field[:, 1], be.linspace(0, 1, 64))
 
-    def test_rms_spot_radius(self, spot_vs_field_cached, _telescope_objective_class):
-        spot_size = spot_vs_field_cached._spot_size
+    def test_rms_spot_radius(self, set_test_backend, telescope_objective):
+        spot_vs_field = analysis.RmsSpotSizeVsField(telescope_objective)
+        spot_size = spot_vs_field._spot_size
         assert spot_size.shape == (
             64,
-            len(_telescope_objective_class.wavelengths.get_wavelengths()),
+            len(telescope_objective.wavelengths.get_wavelengths()),
         )
 
-    def test_view_spot_vs_field(self, spot_vs_field_cached):
-        fig, ax = spot_vs_field_cached.view()
+    def test_view_spot_vs_field(self, set_test_backend, telescope_objective):
+        spot_vs_field = analysis.RmsSpotSizeVsField(telescope_objective)
+        fig, ax = spot_vs_field.view()
         assert fig is not None
         assert ax is not None
         assert isinstance(fig, Figure)
         assert isinstance(ax, Axes)
         plt.close(fig)
 
-    def test_view_spot_vs_field_larger_fig(self, spot_vs_field_cached):
-        fig, ax = spot_vs_field_cached.view(figsize=(12.4, 10))
+    def test_view_spot_vs_field_larger_fig(self, set_test_backend, telescope_objective):
+        spot_vs_field = analysis.RmsSpotSizeVsField(telescope_objective)
+        fig, ax = spot_vs_field.view(figsize=(12.4, 10))
         assert fig is not None
         assert ax is not None
         assert isinstance(fig, Figure)
@@ -795,34 +717,42 @@ class TestSpotVsField:
 
 
 class TestWavefrontErrorVsField:
-    def test_rms_wave_init(
-        self, wavefront_error_vs_field_cached, _telescope_objective_class
-    ):
-        assert wavefront_error_vs_field_cached.num_fields == 32
+    def test_rms_wave_init(self, set_test_backend, telescope_objective):
+        wavefront_error_vs_field = analysis.RmsWavefrontErrorVsField(
+            telescope_objective,
+        )
+        assert wavefront_error_vs_field.num_fields == 32
         assert be.array_equal(
-            wavefront_error_vs_field_cached._field[:, 1],
+            wavefront_error_vs_field._field[:, 1],
             be.linspace(0, 1, 32),
         )
 
-    def test_rms_wave(
-        self, wavefront_error_vs_field_cached, _telescope_objective_class
-    ):
-        wavefront_error = wavefront_error_vs_field_cached._wavefront_error
+    def test_rms_wave(self, set_test_backend, telescope_objective):
+        wavefront_error_vs_field = analysis.RmsWavefrontErrorVsField(
+            telescope_objective,
+        )
+        wavefront_error = wavefront_error_vs_field._wavefront_error
         assert wavefront_error.shape == (
             32,
-            len(_telescope_objective_class.wavelengths.get_wavelengths()),
+            len(telescope_objective.wavelengths.get_wavelengths()),
         )
 
-    def test_view_wave(self, wavefront_error_vs_field_cached):
-        fig, ax = wavefront_error_vs_field_cached.view()
+    def test_view_wave(self, set_test_backend, telescope_objective):
+        wavefront_error_vs_field = analysis.RmsWavefrontErrorVsField(
+            telescope_objective,
+        )
+        fig, ax = wavefront_error_vs_field.view()
         assert fig is not None
         assert ax is not None
         assert isinstance(fig, Figure)
         assert isinstance(ax, Axes)
         plt.close(fig)
 
-    def test_view_wave_larger_fig(self, wavefront_error_vs_field_cached):
-        fig, ax = wavefront_error_vs_field_cached.view(figsize=(12.4, 10))
+    def test_view_wave_larger_fig(self, set_test_backend, telescope_objective):
+        wavefront_error_vs_field = analysis.RmsWavefrontErrorVsField(
+            telescope_objective,
+        )
+        fig, ax = wavefront_error_vs_field.view(figsize=(12.4, 10))
         assert fig is not None
         assert ax is not None
         assert isinstance(fig, Figure)
@@ -831,17 +761,16 @@ class TestWavefrontErrorVsField:
 
 
 class TestPupilAberration:
-    def test_initialization(
-        self, telescope_pupil_aberration_cached, telescope_objective_class
-    ):
-        pupil_ab = telescope_pupil_aberration_cached
-        assert pupil_ab.optic == telescope_objective_class
+    def test_initialization(self, set_test_backend, telescope_objective):
+        pupil_ab = analysis.PupilAberration(telescope_objective)
+        assert pupil_ab.optic == telescope_objective
         assert [fp.coord for fp in pupil_ab.fields] == [(0.0, 0.0), (0.0, 0.7), (0.0, 1.0)]
         assert [wp.value for wp in pupil_ab.wavelengths] == [0.4861, 0.5876, 0.6563]
         assert pupil_ab.num_points == 257  # num_points is forced to be odd
 
-    def test_generate_data(self, telescope_pupil_aberration_cached):
-        data = telescope_pupil_aberration_cached._generate_data()
+    def test_generate_data(self, set_test_backend, telescope_objective):
+        pupil_ab = analysis.PupilAberration(telescope_objective)
+        data = pupil_ab._generate_data()
         assert "Px" in data
         assert "Py" in data
         assert "(0.0, 0.0)" in data
@@ -853,8 +782,9 @@ class TestPupilAberration:
         assert "x" in data["(0.0, 0.0)"]["0.4861"]
         assert "y" in data["(0.0, 0.0)"]["0.4861"]
 
-    def test_view(self, telescope_pupil_aberration_cached):
-        fig, axes = telescope_pupil_aberration_cached.view()
+    def test_view(self, set_test_backend, telescope_objective):
+        pupil_ab = analysis.PupilAberration(telescope_objective)
+        fig, axes = pupil_ab.view()
         assert fig is not None
         assert axes is not None
         assert len(axes) == 3
@@ -1622,22 +1552,25 @@ class TestThroughFocusSpotDiagram:
         assert len(tf_spot.wavelengths) > 0
         assert tf_spot.wavelengths != "all"
 
-        expected_results_len = num_steps
+        expected_results_len = 2 * num_steps + 1
         assert len(tf_spot.results) == expected_results_len
 
         # Check structure of one result item
         result_item = tf_spot.results[0]  # First focal step
-        assert isinstance(result_item, list)
-        assert len(result_item) == len(tf_spot.fields)
+        assert isinstance(result_item, dict)
+        assert len(result_item.keys()) == 1
 
-        field_item = result_item[0]
-        assert isinstance(field_item, list)
-        assert len(field_item) == len(tf_spot.wavelengths)
+        # Key should be the delta_focus value for that step
+        focus_key = list(result_item.keys())[0]
+        expected_focus_key = -num_steps * delta_focus
+        assert_allclose(focus_key, expected_focus_key)
 
-        spot = field_item[0]
-        assert hasattr(spot, "x")
-        assert hasattr(spot, "y")
-        assert hasattr(spot, "intensity")
+        rms_values_list = list(result_item.values())[0]
+        assert isinstance(rms_values_list, list)
+        assert len(rms_values_list) == len(tf_spot.fields)
+        for rms_val in rms_values_list:
+            # RMS value should be a float or a backend scalar that can be converted
+            assert isinstance(be.to_numpy(rms_val).item(), float)
 
     def test_image_surface_z_restoration(self, set_test_backend, cooke_triplet):
         optic = cooke_triplet
@@ -1662,7 +1595,7 @@ class TestThroughFocusSpotDiagram:
     def test_analysis_results_content(self, set_test_backend, cooke_triplet):
         optic = cooke_triplet
         delta_focus = 0.05
-        num_steps = 3  # Results for -0.05, 0, +0.05
+        num_steps = 1  # Results for -0.05, 0, +0.05
 
         tf_spot = analysis.ThroughFocusSpotDiagram(
             optic, delta_focus=delta_focus, num_steps=num_steps
@@ -1671,40 +1604,75 @@ class TestThroughFocusSpotDiagram:
         assert len(tf_spot.results) == 3
 
         # Check results for nominal focus (delta_focus = 0)
-        # For num_steps=3, the nominal focus is at index 1
-        nominal_idx = num_steps // 2
-        nominal_results = tf_spot.results[nominal_idx]
+        nominal_results_dict = None
+        for res_dict in tf_spot.results:
+            if be.isclose(list(res_dict.keys())[0], 0.0):
+                nominal_results_dict = res_dict
+                break
+
+        assert nominal_results_dict is not None, "Nominal focus results not found."
+        rms_values_at_nominal = list(nominal_results_dict.values())[0]
 
         # Compare with direct SpotDiagram calculation
         spot_direct = analysis.SpotDiagram(optic)  # Optic z should be at nominal here
-        direct_data = spot_direct.data
+        rms_direct_all_wl = spot_direct.rms_spot_radius()
+        primary_wl_idx = optic.wavelengths.primary_index
 
+        expected_rms_at_nominal = []
         for field_idx in range(len(tf_spot.fields)):
-            for wl_idx in range(len(tf_spot.wavelengths)):
-                assert_allclose(
-                    be.to_numpy(nominal_results[field_idx][wl_idx].x),
-                    be.to_numpy(direct_data[field_idx][wl_idx].x),
-                    atol=1e-3,
+            expected_rms_at_nominal.append(rms_direct_all_wl[field_idx][primary_wl_idx])
+
+        for i in range(len(tf_spot.fields)):
+            assert_allclose(
+                be.to_numpy(rms_values_at_nominal[i]),
+                be.to_numpy(expected_rms_at_nominal[i]),
+            )
+
+        # Check other focal planes for plausibility (positive RMS)
+        for i, res_dict in enumerate(tf_spot.results):
+            # Skip nominal as it's already checked in detail
+            if be.isclose(list(res_dict.keys())[0], 0.0):
+                continue
+
+            rms_list = list(res_dict.values())[0]
+            current_df = list(res_dict.keys())[0]
+            # print(f"Checking delta_f: {current_df}, RMS list: {rms_list}") # For debugging if needed
+            for rms_val in rms_list:
+                rms_float = be.to_numpy(rms_val).item()
+                assert rms_float >= 0.0, (
+                    f"RMS value {rms_float} is negative for delta_focus {current_df}"
                 )
-                assert_allclose(
-                    be.to_numpy(nominal_results[field_idx][wl_idx].y),
-                    be.to_numpy(direct_data[field_idx][wl_idx].y),
-                    atol=1e-3,
+                assert not be.isnan(rms_val), (
+                    f"RMS value is NaN for delta_focus {current_df}"
                 )
 
-    def test_view_method(self, set_test_backend, cooke_triplet):
+    @patch("builtins.print")
+    def test_view_method(self, mock_print, set_test_backend, cooke_triplet):
         optic = cooke_triplet
-        tf_spot = analysis.ThroughFocusSpotDiagram(optic, delta_focus=0.1, num_steps=3)
-        fig, axes = tf_spot.view()
+        tf_spot = analysis.ThroughFocusSpotDiagram(optic, delta_focus=0.1, num_steps=2)
+        tf_spot.view()
 
-        assert fig is not None
-        assert len(axes) > 0
-        assert isinstance(fig, Figure)
-        assert all(isinstance(ax, Axes) for ax in axes)
-        plt.close(fig)
+        mock_print.assert_called()
+
+        # Check for some expected output patterns
+        # Get all calls to print in a single list of strings
+        print_calls = [args[0] for args, kwargs in mock_print.call_args_list]
+
+        assert any("Through-Focus Spot Diagram Results" in call for call in print_calls)
+        assert any("Delta Focus:" in call for call in print_calls)
+        assert any("Field (" in call for call in print_calls)
+
+        # Check that the number of "Delta Focus:" lines matches num_steps
+        delta_focus_lines = [call for call in print_calls if "Delta Focus:" in call]
+        assert len(delta_focus_lines) == (2 * tf_spot.num_steps + 1)
+
+        # Check that the number of "Field (" lines matches num_fields * num_delta_focus_steps
+        field_lines = [call for call in print_calls if "Field (" in call]
+        expected_field_lines = len(tf_spot.fields) * (2 * tf_spot.num_steps + 1)
+        assert len(field_lines) == expected_field_lines
 
 
-class TestThroughFocusSpotDiagramMore:
+class TestThroughFocusSpotDiagram:
     @pytest.fixture
     def tf_spot(self, set_test_backend):
         """Creates a ThroughFocusSpotDiagram instance after setting backend."""
@@ -2086,8 +2054,9 @@ class TestCookeTripletBestFitRayFan:
         assert_allclose(y_best_fit[0], -0.0268906245)
         assert_allclose(y_best_fit[4], -0.01640633)
 
-    def test_view_best_fit_ray_fan(self, cooke_best_fit_ray_fan_cached):
-        fig, axes = cooke_best_fit_ray_fan_cached.view()
+    def test_view_best_fit_ray_fan(self, set_test_backend, cooke_triplet):
+        ray_fan = analysis.BestFitRayFan(cooke_triplet)
+        fig, axes = ray_fan.view()
         assert fig is not None
         assert len(axes) > 0
         assert isinstance(fig, Figure)

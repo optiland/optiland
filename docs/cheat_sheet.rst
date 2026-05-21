@@ -225,6 +225,20 @@ Optiland offers a suite of tools to evaluate performance:
 * ``PSF``: Point spread function.
 * ``FieldCurvature``, ``Distortion``: Field performance.
 * *(Many classes have a ``.view()`` method for plotting)*.
+* **Prescription Report Generator**: Create detailed system reports including system overview, first-order properties, surface geometry, materials, and aberrations:
+
+    .. code-block:: python
+
+        from optiland.prescription import Prescription
+
+        # Print formatted report directly to console (requires rich)
+        Prescription(lens).view()
+
+        # Save to plain text report
+        Prescription(lens).save("prescription.txt")
+
+        # Save to professional PDF report (requires reportlab)
+        Prescription(lens).save("prescription.pdf")
 
 See the :ref:`Example Gallery <example_gallery>` for a full overview of available analysis tools and their usage.
 

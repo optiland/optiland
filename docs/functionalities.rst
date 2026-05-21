@@ -28,6 +28,8 @@ Analysis Tools
   Visualize spatially resolved Jones matrix elements at the exit pupil to assess polarization properties.
 - **Comprehensive Optical Analysis**:
   Generate spot diagrams, ray aberration fans, OPD maps, distortion plots, and more.
+- **Optical Prescription Report Generation**:
+  Generate professional system reports listing system overview, first-order properties, surface geometry, materials, and Seidel aberrations. Reports can be styled in the console (via Rich), saved as plain text, or compiled into high-quality PDFs.
 - **Wavefront Analysis**:
   Decompose wavefronts into Zernike polynomials, compute RMS/peak error, and visualize wavefront error maps, with support for both focal (spherical reference) and afocal (planar reference) systems.
 - **PSF and MTF Computation**:
