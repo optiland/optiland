@@ -440,10 +440,12 @@ class MaterialRegistry:
         )
         mask = ~built_in.apply(
             lambda r: (
-                r["filename_no_ext"].lower(),
-                r.get("catalog_dir", "").lower(),
-            )
-            in shadow_keys,
+                (
+                    r["filename_no_ext"].lower(),
+                    r.get("catalog_dir", "").lower(),
+                )
+                in shadow_keys
+            ),
             axis=1,
         )
         self._combined_cache = pd.concat([built_in[mask], user_df], ignore_index=True)
