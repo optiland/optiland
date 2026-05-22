@@ -22,6 +22,53 @@ This approach allows for accurate refractive index prediction across the visible
 
 For a detailed walkthrough of the model derivation and validation, please refer to the :doc:`Abbe Material Model Building <../references/AbbeMaterial_Model_Building>` notebook.
 
+Catalog-Scoped Lookup
+---------------------
+
+:class:`~optiland.materials.material.Material` accepts an optional ``catalog=``
+keyword (e.g. ``"schott"``, ``"ohara"``) to restrict lookup to a specific
+manufacturer.  The ``match_policy`` keyword controls fuzzy-match behavior:
+
+.. code-block:: python
+
+   from optiland.materials import Material, MatchPolicy
+
+   glass = Material("N-BK7", catalog="schott")              # exact-catalog lookup
+   glass = Material("N-BK7", match_policy=MatchPolicy.BEST) # silent fuzzy
+   glass = Material("N-BK7", catalog="schott",
+                    match_policy=MatchPolicy.STRICT)         # raise on non-exact
+
+Discovery and User Catalogs
+----------------------------
+
+:class:`~optiland.materials.catalog.MaterialCatalog` is a read-only view into
+any registered catalog:
+
+.. code-block:: python
+
+   from optiland.materials import MaterialCatalog
+
+   MaterialCatalog.available()              # list all catalogs
+   MaterialCatalog("schott").list()         # all Schott glass names
+   MaterialCatalog("schott").search("bk7") # fuzzy search within catalog
+   MaterialCatalog("schott").get("N-BK7")  # returns a Material instance
+
+:class:`~optiland.materials.registry.MaterialRegistry` is the global singleton
+that manages built-in and user-registered materials:
+
+.. code-block:: python
+
+   from optiland.materials import MaterialRegistry
+
+   reg = MaterialRegistry.instance()
+   reg.register("MyGlass", "internal", yaml_payload_dict)  # programmatic
+   reg.register_file("path/to/my_glass.yml")               # single YAML file
+   reg.load_catalog("~/.optiland/catalogs/my_company/")    # directory
+
+User YAML files must follow the `refractiveindex.info <https://refractiveindex.info>`_
+format.  Files placed under ``~/.optiland/catalogs/<catalog_name>/`` are
+auto-discovered on the first registry access.
+
 .. autosummary::
    :toctree: materials/
    :caption: Material Modules
@@ -30,3 +77,6 @@ For a detailed walkthrough of the model derivation and validation, please refer 
    materials.ideal
    materials.material_file
    materials.material
+   materials.material_spec
+   materials.catalog
+   materials.registry
