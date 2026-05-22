@@ -329,8 +329,13 @@ class MaterialRegistry:
             raise ValueError(msg)
 
         best_score = filtered_df["similarity_score"].iloc[0]
-        n_exact = int((filtered_df["similarity_score"] == 0).sum())
-        ambiguous_exact = best_score == 0 and n_exact > 1
+        exact_mask = filtered_df["similarity_score"] == 0
+        n_exact_files = (
+            int(filtered_df.loc[exact_mask, "filename"].nunique())
+            if exact_mask.any()
+            else 0
+        )
+        ambiguous_exact = best_score == 0 and n_exact_files > 1
 
         if best_score > 0 or ambiguous_exact:
             if catalog is not None:

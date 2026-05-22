@@ -1,4 +1,7 @@
-This learning guide breaks down Optiland into a series of tutorials that cover the basic concepts and functionalities of the package. Each tutorial is a self-contained Jupyter notebook that demonstrates how to perform a specific task using Optiland. The tutorials are designed to be followed sequentially, starting with an introduction to Optiland and progressing to more advanced topics.
+This guide is Optiland's primary learning path. Tutorials are grouped thematically and follow a
+progressive arc where concepts from earlier sections inform later ones. Each notebook is
+self-contained and runnable; you do not need to execute prior notebooks to run any given one.
+New to Optiland? Start with :ref:`start_here` to find the path that fits your goals.
 
 
 1. Introduction to Optiland
@@ -13,6 +16,8 @@ This learning guide breaks down Optiland into a series of tutorials that cover t
    examples/Tutorial_1d_Material_Database
    examples/Tutorial_1e_Non_Rotationally_Symmetric_Systems
    examples/Tutorial_1f_Differentiable_Ray_Tracing_Hello_World
+   examples/Tutorial_1g_Material_Catalog_and_Registry
+   examples/Tutorial_1h_Prescription_Generator
 
 
 2. Real Raytracing & Analysis
@@ -59,6 +64,7 @@ This learning guide breaks down Optiland into a series of tutorials that cover t
    examples/Tutorial_5b_Advanced_Optimization
    examples/Tutorial_5c_Optimization_Case_Study
    examples/Tutorial_5d_User_Defined_Optimization
+   examples/Tutorial_5e_Differentiable_Optimization
 
 
 6. Coatings & Polarization
@@ -130,9 +136,14 @@ This learning guide breaks down Optiland into a series of tutorials that cover t
 12. Machine Learning in Optical Design
 --------------------------------------
 
+.. note::
+   The following tutorials are hosted in the `LensAI repository <https://github.com/HarrisonKramer/LensAI>`_.
+   For in-repo differentiable modeling examples, see :ref:`Tutorial_1f
+   <examples/Tutorial_1f_Differentiable_Ray_Tracing_Hello_World>` and
+   :ref:`Tutorial_5e <examples/Tutorial_5e_Differentiable_Optimization>`.
+
 These examples demonstrate how Optiland can be used in conjunction with machine learning to solve optical design problems.
 Concepts in machine and deep learning are also covered.
-Note that these are hosted on the `LensAI repository <https://github.com/HarrisonKramer/LensAI>`_.
 
 .. toctree::
    :maxdepth: 1

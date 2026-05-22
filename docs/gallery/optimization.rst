@@ -26,6 +26,7 @@ to improve optical systems using classical numerical methods.
     optimization/shgo
     optimization/custom_scaler
     optimization/nurbs_freeform_telescope
+    optimization/reciprocal_radii_optimization
 
 Torch Optimization
 ------------------

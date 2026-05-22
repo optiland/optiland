@@ -1,12 +1,34 @@
-Quickstart
-==========
+.. _quickstart:
 
-.. _first_script:
+Quickstart — Your First 5 Minutes
+==================================
 
-Once you have installed Optiland, you can start designing and analyzing optical systems. Here is a simple example which loads and visualizes a Cooke Triplet lens system.
+This page takes you from a fresh install to a working, optimized optical system. Each section is
+self-contained: run any block in a Python script or Jupyter notebook.
 
-Optiland "Hello, World"
------------------------
+----
+
+1. Install
+----------
+
+.. code-block:: bash
+
+   pip install optiland
+
+For GPU-accelerated differentiable ray tracing also install PyTorch:
+
+.. code-block:: bash
+
+   pip install optiland[torch]           # CPU-only PyTorch
+   # or manually for CUDA:
+   pip install torch --index-url https://download.pytorch.org/whl/cu118
+
+----
+
+2. Hello, World
+---------------
+
+Load and visualize a Cooke Triplet in 3D — two lines of code:
 
 .. code-block:: python
 
@@ -16,35 +38,127 @@ Optiland "Hello, World"
    lens.draw3D()
 
 .. figure:: images/cooke.png
-   :alt: Cooke Triplet Lens System
+   :alt: Cooke Triplet 3D visualization
    :align: center
 
-   This shows the resulting 3D visualization of the Cooke triplet lens system.
+   3D visualization of the Cooke Triplet lens system.
 
-Running the GUI
+Print the surface table (similar to a Lens Data Editor):
+
+.. code-block:: python
+
+   lens.info()
+
+----
+
+3. Build from Scratch
+---------------------
+
+Create a simple biconvex singlet in 8 lines:
+
+.. code-block:: python
+
+   from optiland import optic
+
+   lens = optic.Optic(name="Singlet")
+   lens.surfaces.add(index=0, radius=float("inf"), thickness=float("inf"))  # object at infinity
+   lens.surfaces.add(index=1, radius=50.0, thickness=5.0, material="N-BK7", is_stop=True)
+   lens.surfaces.add(index=2, radius=-50.0, thickness=0.0)
+   lens.surfaces.add(index=3)  # image plane
+   lens.set_aperture(aperture_type="EPD", value=10.0)
+   lens.fields.set_type("angle")
+   lens.fields.add(y=0.0)
+   lens.wavelengths.add(value=0.5876, is_primary=True)
+   lens.updater.image_solve()   # moves image surface to paraxial focus
+
+----
+
+4. Trace Rays
+-------------
+
+Trace a bundle of rays and inspect the image-plane coordinates:
+
+.. code-block:: python
+
+   rays = lens.trace(Hx=0, Hy=0, wavelength=0.5876, num_rays=64, distribution="hexapolar")
+   print("x range:", rays.x.min(), "to", rays.x.max())
+   print("y range:", rays.y.min(), "to", rays.y.max())
+
+Trace a single ray specified by normalized field and pupil coordinates:
+
+.. code-block:: python
+
+   # chief ray for the on-axis field
+   ray = lens.trace_generic(Hx=0, Hy=0, Px=0, Py=0, wavelength=0.5876)
+
+----
+
+5. Spot Diagram
 ---------------
 
-Optiland includes a Graphical User Interface (GUI) for interactive design and analysis. Once the package is installed, you can launch the application from any terminal or console on your system by simply running the command:
+Visualize the geometric ray spread at the image plane:
 
-.. code-block:: bash
+.. code-block:: python
 
-   optiland
+   from optiland.analysis import SpotDiagram
 
-This will start the main application window. For development or troubleshooting, you can also run the GUI module directly using Python's ``-m`` flag:
+   spot = SpotDiagram(lens)
+   spot.view()
 
-.. code-block:: bash
+The resulting plot shows the ray scatter for each field and wavelength. A tighter cluster indicates
+better image quality.
 
-   python -m optiland_gui.run_gui
+----
 
-For a more detailed guide on using the GUI, including an overview of its components and basic operations, please see the :ref:`gui_quickstart`.
+6. One-Step Optimization
+------------------------
 
-Optiland for Beginners
-----------------------
+Minimize RMS spot size by varying two radii:
 
-This script is the first of the learning guide series. It introduces the basic concepts of Optiland and demonstrates how to create a simple lens system.
+.. code-block:: python
 
-.. toctree::
-   :maxdepth: 1
-   :titlesonly:
+   from optiland.optimization import OptimizationProblem, LeastSquares
 
-   Optiland for Beginners <examples/Tutorial_1a_Optiland_for_Beginners>
+   problem = OptimizationProblem()
+   problem.add_variable(lens, "radius", surface_number=1)
+   problem.add_variable(lens, "radius", surface_number=2)
+   problem.add_operand(
+       operand_type="rms_spot_size",
+       target=0.0,
+       weight=1,
+       input_data={"optic": lens, "Hx": 0, "Hy": 0, "wavelength": 0.55,
+                   "distribution": "hexapolar", "num_rays": 6, "surface_number": -1},
+   )
+   optimizer = LeastSquares(problem)
+   result = optimizer.optimize()
+   print("Final merit:", result.cost)
+
+----
+
+7. Save and Load
+----------------
+
+Serialize the optimized design to JSON and reload it in a new session:
+
+.. code-block:: python
+
+   from optiland.fileio import save_optiland_file, load_optiland_file
+
+   save_optiland_file(lens, "singlet.json")
+   lens2 = load_optiland_file("singlet.json")
+   lens2.info()
+
+----
+
+8. What Next?
+-------------
+
+You have installed Optiland, built a lens, traced rays, run a spot diagram, optimized, and saved your
+design — all in under 5 minutes.
+
+Choose where to go next based on your goals:
+
+- :ref:`start_here` — persona-based routing for students, engineers, researchers, and contributors
+- :doc:`cheat_sheet` — 20 copy-paste snippets for the most common tasks
+- :doc:`learning_guide` — 60+ tutorials covering every feature in depth
+- `Example Gallery <gallery/introduction.html>`_ — visual showcase of designs and analyses

@@ -208,6 +208,24 @@ Custom operands, variables and optimization algorithms can be added by subclassi
 .. tip::
    See the :ref:`Learning Guide <example_gallery>` for demonstrations of custom optimization algorithms and user-defined operands.
 
+How to Extend This
+------------------
+
+**Scenario:** Add a new optimization operand to Optiland.
+
+**Step 1:** Add a new function to ``optiland/optimization/operand/operand.py``.
+**Step 2:** Register the function in the ``OPERAND_REGISTRY`` dict at the bottom of that file.
+**Step 3:** Add tests in ``tests/test_optimization/test_operand.py``.
+
+To add a new **variable type**: subclass ``VariableBehavior`` in
+``optiland/optimization/variable.py`` and register the new type in the ``Variable`` class.
+
+To add a new **optimizer**: subclass ``OptimizerGeneric`` in
+``optiland/optimization/optimizer/scipy/base.py``.
+
+For step-by-step guidance, see :ref:`extension_recipes`.
+For a worked example, see :ref:`Tutorial_5d <examples/Tutorial_5d_User_Defined_Optimization>`.
+
 
 .. raw:: html
 

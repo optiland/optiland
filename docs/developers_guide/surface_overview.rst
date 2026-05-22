@@ -69,3 +69,19 @@ The surface framework is designed for extensibility:
 - The factories can be extended to handle new component types.
 
 For more detailed information on surface geometry and coatings, see their dedicated sections in this guide.
+
+How to Extend This
+------------------
+
+**Scenario:** Add a new surface geometry type to Optiland.
+
+**Step 1:** Create a new file in ``optiland/geometries/my_geometry.py``.
+**Step 2:** Subclass ``BaseGeometry`` (closed-form intersection) or ``NewtonRaphsonGeometry``
+(iterative intersection) and implement ``distance(rays)``, ``sag(x, y)``, and ``surface_normal(rays)``.
+**Step 3:** Register in ``optiland/geometries/__init__.py``.
+**Step 4:** Add the geometry type string to ``optiland/surfaces/factories/geometry_factory.py``
+for JSON serialisation support.
+**Step 5:** Add tests in ``tests/test_geometries/test_my_geometry.py``.
+
+For a complete worked example, see :ref:`Tutorial_10a <examples/Tutorial_10a_Custom_Surface_Types>`.
+For step-by-step guidance, see :ref:`extension_recipes`.

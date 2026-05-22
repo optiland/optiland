@@ -71,3 +71,18 @@ Adding new geometries is straightforward:
 
 .. tip::
    See the **Surface Overview** section for how geometries integrate with surfaces.
+
+How to Extend This
+------------------
+
+**Scenario:** Add a new geometry class to Optiland.
+
+**Step 1:** Create a new file in ``optiland/geometries/my_geometry.py``.
+**Step 2:** Subclass ``BaseGeometry`` and implement ``distance(rays)``, ``sag(x, y)``, and
+``surface_normal(rays)``. For iterative intersection, subclass ``NewtonRaphsonGeometry`` and
+implement ``sag(x, y)`` and ``_surface_normal(x, y)`` only.
+**Step 3:** Register in ``optiland/geometries/__init__.py``.
+**Step 4:** Add tests in ``tests/test_geometries/test_my_geometry.py``.
+
+For a complete worked example, see :ref:`Tutorial_10a <examples/Tutorial_10a_Custom_Surface_Types>`.
+For step-by-step guidance, see :ref:`extension_recipes`.

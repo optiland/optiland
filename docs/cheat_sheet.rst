@@ -1,283 +1,277 @@
-Optiland Cheat Sheet
-====================
+.. _cheat_sheet:
 
-Optiland is a Python library for designing, analyzing, and optimizing optical systems. This guide covers the fundamental concepts to get you started.
+API Cheat Sheet
+===============
 
-Core Concepts
--------------
+Copy-paste snippets for the 20 most common Optiland tasks.
+New to these concepts? See the :ref:`glossary` first.
 
-At its heart, Optiland revolves around a few key components:
+----
 
-* **Optic** Object: This is the main container for your entire optical system. It holds all the surfaces, aperture definitions, field points, and wavelength information.
-  
-  * Example: ``my_system = optic.Optic()``
+1. Install and import
+---------------------
 
-* **SurfaceGroup** (``optiland.surfaces.SurfaceGroup``): Manages the collection of surfaces within an ``Optic`` object.
+.. code-block:: bash
 
-* **Surfaces** (``Surface``): These represent the individual optical surfaces (lenses, mirrors, image planes, etc.). Each surface has a geometry, material properties on either side, and can optionally have coatings, physical apertures, or be designated as the system's aperture stop.
-  
-  * **Object Surface** (``ObjectSurface``): The first surface in your system, representing the object being imaged. It can be at a finite distance or at infinity.
-  * **Image Surface** (``ImageSurface``): The final surface where the image is formed.
-  * **Standard Surface** (``StandardGeometry``): Spherical or conic surfaces.
-  * **Aspheric & Freeform Surfaces**: Optiland supports various complex geometries like ``EvenAsphere``, ``OddAsphere``, ``PolynomialGeometry``, ``ChebyshevPolynomialGeometry``, ``ZernikePolynomialGeometry``, and more...
-  * **Paraxial Surface** (``ParaxialSurface``): A thin lens approximation defined by its focal length, useful for initial layouts.
+   pip install optiland
 
-* **Materials** (``Material``): Define the optical properties of the media between surfaces, primarily the refractive index (``n``) and optionally the extinction coefficient (``k``) as a function of wavelength.
-  
-  * Optiland can use data from the `refractiveindex.info <https://refractiveindex.info>`_ database (``MaterialFile``) or allow you to define ideal materials (``IdealMaterial``) or materials based on index (nd) and Abbe number (Vd) (``AbbeMaterial``). The ``AbbeMaterial`` supports both a legacy polynomial model and a new, more accurate Buchdahl model (recommended).
+.. code-block:: python
 
-* **Geometries** (``BaseGeometry``): These define the mathematical shape of a surface (e.g., plane, sphere, asphere).
+   from optiland import optic
+   import optiland.backend as be
 
-* **Aperture** (``BaseSystemAperture``): Defines the system's limiting aperture. This can be specified as Entrance Pupil Diameter (EPD), Image Space F-number (imageFNO), Object Space Numerical Aperture (objectNA), or Float by Stop Size (float_by_stop_size).
+----
 
-* **Fields** (``Field``, ``FieldGroup``): Define the points in the object plane that are being imaged. Can be specified by angle or object height. Vignetting can also be applied.
+2. Load a sample lens
+---------------------
 
-* **Wavelengths** (``Wavelength``, ``WavelengthGroup``): Specify the wavelengths of light used for analysis, including a primary wavelength. All wavelengths are internally converted to microns (µm).
+.. code-block:: python
 
-* **Coordinate Systems** (``CoordinateSystem``): Each surface has its own local coordinate system (LCS) defined by its position (x, y, z) and rotation (rx, ry, rz) relative to a reference system.
+   from optiland.samples.objectives import CookeTriplet, ReverseTelephoto
 
-* **Apodization** (``BaseApodization``): Defines the intensity distribution within the pupil. This is uniform (``UniformApodization``) by default, but other options include Gaussian (``GaussianApodization``).
+   lens = CookeTriplet()
+   lens.info()   # print surface table
 
-**Numerical Backend**
+----
 
-* Optiland can use **NumPy** (default) or **PyTorch**.
-* PyTorch allows for automatic differentiation.
-    * Switch with:
+3. Build a simple singlet from scratch
+---------------------------------------
 
-        .. code-block:: python
+.. code-block:: python
 
-            import optiland.backend as be
-            be.set_backend("torch")  # or "numpy"
+   from optiland import optic
 
-Basic Workflow: Defining an Optical System
-------------------------------------------
+   lens = optic.Optic()
+   lens.surfaces.add(index=0, radius=float("inf"), thickness=float("inf"))  # object at infinity
+   lens.surfaces.add(index=1, radius=50.0, thickness=5.0, material="N-BK7", is_stop=True)
+   lens.surfaces.add(index=2, radius=-50.0, thickness=45.0)
+   lens.surfaces.add(index=3)  # image plane
+   lens.set_aperture(aperture_type="EPD", value=10.0)
+   lens.fields.set_type("angle")
+   lens.fields.add(y=0.0)
+   lens.wavelengths.add(value=0.5876, is_primary=True)
+   lens.updater.image_solve()
 
-1.  **Import Optiland:**
+----
 
-    .. code-block:: python
+4. Add a surface
+-----------------
 
-        from optiland import optic
-        from optiland import materials # if using specific materials
-        import optiland.backend as be  # backend for numerical operations - either numpy or torch
+.. code-block:: python
 
-2.  **Create an** ``Optic`` **Instance:**
+   # Insert a surface at index 2 with radius, thickness, and material
+   lens.surfaces.add(index=2, radius=-435.76, thickness=6.0, material=("F2", "schott"))
 
-    .. code-block:: python
+----
 
-        my_lens = optic.Optic(name="My Cooke Triplet")
+5. Set aperture, field, and wavelength
+---------------------------------------
 
-3.  **Add Surfaces** (``add_surface``): Surfaces are added sequentially.
-    * The **first surface (index 0)** is typically the object surface.
+.. code-block:: python
 
-        .. code-block:: python
+   lens.set_aperture(aperture_type="EPD", value=10.0)
+   # alternatives: "imageFNO", "objectNA", "float_by_stop_size"
 
-            my_lens.surfaces.add(index=0, radius=np.inf, thickness=np.inf) # Object at infinity
+   lens.fields.set_type("angle")   # or "object_height"
+   lens.fields.add(y=0.0)
+   lens.fields.add(y=14.0)
+   lens.fields.add(y=20.0)
 
-    * Add optical surfaces with their properties:
+   lens.wavelengths.add(value=0.4861)                    # F-line
+   lens.wavelengths.add(value=0.5876, is_primary=True)   # d-line
+   lens.wavelengths.add(value=0.6563)                    # C-line
 
-        .. code-block:: python
+----
 
-            my_lens.surfaces.add(index=1, radius=22.01359, thickness=3.25896, material="SK16")
-            my_lens.surfaces.add(index=2, radius=-435.76044, thickness=6.00755) # Air gap by default
-            my_lens.surfaces.add(index=3, radius=-22.21328, thickness=0.99997, material=("F2", "schott"), is_stop=True) # Stop surface
-            # ... more surfaces ...
+6. Switch backend (NumPy ↔ PyTorch)
+-------------------------------------
 
-    * The **last surface** is the image plane.
+.. code-block:: python
 
-        .. code-block:: python
+   import optiland.backend as be
 
-            my_lens.surfaces.add(index=N) # N is the index after the last optical surface
+   be.set_backend("torch")    # enable PyTorch (autograd, GPU)
+   be.set_backend("numpy")    # revert to NumPy (default)
 
-4.  **Set System Aperture** (``set_aperture``):
+   # GPU and precision (PyTorch only)
+   be.set_device("cuda")
+   be.set_precision("float64")
 
-    .. code-block:: python
+----
 
-        my_lens.set_aperture(aperture_type="EPD", value=10.0)  # Entrance Pupil Diameter of 10 mm
-        # Or: my_lens.set_aperture(aperture_type="imageFNO", value=5.0)
-        # Or: my_lens.set_aperture(aperture_type="float_by_stop_size", value=7.6), specifies diameter of the stop surface
-
-5.  **Define Field of View** (``set_field_type``, ``add_field``):
-
-    .. code-block:: python
-
-        my_lens.fields.set_type(field_type="angle") # Field specified by angle
-        my_lens.fields.add(y=0.0)  # On-axis field
-        my_lens.fields.add(y=14.0) # Off-axis field at 14 degrees
-        my_lens.fields.add(y=20.0)
-        # Or for object height:
-        # my_lens.fields.set_type(field_type="object_height")
-        # my_lens.fields.add(y=10.0) # Object height of 10 mm
-
-6.  **Define Wavelengths** (``add_wavelength``):
-
-    .. code-block:: python
-
-        my_lens.wavelengths.add(value=0.4861) # F-line (blue) in µm
-        my_lens.wavelengths.add(value=0.5876, is_primary=True) # d-line (yellow), primary
-        my_lens.wavelengths.add(value=0.6563) # C-line (red)
-
-7.  **(Optional) Image Plane Solve** (``image_solve``): Moves the image surface to the paraxial focus.
-
-    .. code-block:: python
-
-        my_lens.image_solve()
-
-Coordinate System & Sign Conventions
-------------------------------------
-
-Understanding Optiland's coordinate system and sign conventions is crucial:
-
-* **Global Coordinate System (GCS)**: A fixed reference frame.
-* **Local Coordinate System (LCS)**: Each surface has its own LCS.
-* **Light Propagation**: From **left to right**, along the positive **z-axis**.
-* **Surface Vertex**: Surface 1 typically at GCS origin (z=0). Others at their LCS origin.
-* **Thickness**: Axial separation to the *next* surface. **Positive** means to the right.
-* **Radius of Curvature (R)**:
-    * **Positive R**: Center of curvature to the **right** (convex to left).
-    * **Negative R**: Center of curvature to the **left** (concave to left).
-    * **Infinite R**: Planar surface.
-* **Tilts and Decenters**: The rotation matrix (of the global CS) is given by ``R = Rz @ Ry @ Rx``.
-* **Ray Parameters**:
-    * **Height (y)**: Positive above the optical axis.
-    * **Slope (u - paraxial)**: Positive if traveling upwards.
-    * **Direction Cosines (L, M, N - real)**: Components of the unit vector.
-* **Angles**: Positive clockwise.
-
-Ray Tracing
------------
-
-Optiland uses *normalized coordinates* for both the field and pupil to define rays in a general, system-independent way:
-
-- **Field Coordinates** (`Hx`, `Hy`): Define the ray's starting field position. `(0, 0)` corresponds to the optical axis, and `(±1, ±1)` spans the full normalized field of view.
-- **Pupil Coordinates** (`Px`, `Py`): Define the ray's position in the entrance pupil. `(0, 0)` corresponds to the chief ray, and `(±1, ±1)` spans the full normalized entrance pupil.
-
-Optiland can trace both paraxial and real rays.
-
-* **Paraxial Rays**:
-
-    * For first-order calculations. Access through ``optic.paraxial``.
-    * Example:
-
-        .. code-block:: python
-
-            heights, slopes = lens.paraxial.trace(Hy, Py)
-
-* **Real Rays**:
-
-    * For detailed analysis, including aberrations.
-
-    * Example: Trace a bundle of rays
-
-        .. code-block:: python
-
-            optic.trace(Hx, Hy, wavelength, num_rays, distribution)
-
-    * Example: Trace a specific ray, defined by the normalized field and pupil coordinates.
-
-        .. code-block:: python
-
-            optic.trace_generic(Hx, Hy, Px, Py, wavelength)
-
-* **Advanced Ray Tracing** (``RealRays``, ``surface_group.trace``): For more control, create a ``RealRays`` object and trace using ``optic.surfaces.trace(rays)``.
-
-    * Example:
-
-        .. code-block:: python
-
-            from optiland.rays import RealRays
-            import optiland.backend as be
-            # Assume 'my_lens' is an existing Optic object
-            # Create a grid of rays at z=0 (e.g., entrance pupil plane)
-            x_coords = be.linspace(-5.0, 5.0, 3) # Adjust range based on EPD
-            y_coords = be.linspace(-5.0, 5.0, 3)
-            X, Y = be.meshgrid(x_coords, y_coords)
-            # Create a collimated ray bundle (traveling along +z)
-            x_in = X.reshape(-1)
-            y_in = Y.reshape(-1)
-            z_in = be.zeros_like(x_in)
-            L_in = be.zeros_like(x_in)
-            M_in = be.zeros_like(x_in)
-            N_in = be.ones_like(x_in)
-            intensity = be.ones_like(x_in)
-            # Create the RealRays object
-            primary_wl = my_lens.wavelengths.primary_wavelength.value
-            rays_in = RealRays(x=x_in, y=y_in, z=z_in,
-                               L=L_in, M=M_in, N=N_in,
-                               wavelength=primary_wl, intensity=intensity)
-            # Trace the manually created rays
-            rays_out = my_lens.surfaces.trace(rays_in)
-            # Get x, y coordinates at the image plane (last surface)
-            x_image = my_lens.surfaces.x[-1,:]
-            y_image = my_lens.surfaces.y[-1,:]
-
-* **Ray Distributions** (``distribution.py``): Specify pupil distribution (e.g., ``'hexapolar'``, ``'uniform'``, ``'random'``).
-
-Analysis Tools
---------------
-
-Optiland offers a suite of tools to evaluate performance:
-
-* ``Aberrations``: Seidel & chromatic. (``my_lens.aberrations.seidels()``)
-* ``SpotDiagram``: Geometric ray spread.
-* ``RayFan``: Transverse ray aberrations.
-* ``OPD``: Wavefront errors.
-* ``MTF``: Image contrast vs. frequency.
-* ``PSF``: Point spread function.
-* ``FieldCurvature``, ``Distortion``: Field performance.
-* *(Many classes have a ``.view()`` method for plotting)*.
-* **Prescription Report Generator**: Create detailed system reports including system overview, first-order properties, surface geometry, materials, and aberrations:
-
-    .. code-block:: python
-
-        from optiland.prescription import Prescription
-
-        # Print formatted report directly to console (requires rich)
-        Prescription(lens).view()
-
-        # Save to plain text report
-        Prescription(lens).save("prescription.txt")
-
-        # Save to professional PDF report (requires reportlab)
-        Prescription(lens).save("prescription.pdf")
-
-See the :ref:`Example Gallery <example_gallery>` for a full overview of available analysis tools and their usage.
-
-Visualization
--------------
-
-* **2D Layout** (``optic.draw()``):
-
-    .. code-block:: python
-
-        my_lens.draw(num_rays=5, distribution='line_y')
-
-* **3D Layout** (``optic.draw3D()``):
-
-    .. code-block:: python
-
-        my_lens.draw3D(num_rays=24, distribution='ring')
-
-* **Lens Data Table** (``optic.info()``): Prints surface data in a tabular format, resembling the commonly found Lens Data Editor (LDE).
-
-    .. code-block:: python
-
-        my_lens.info()
-
-GUI Keyboard Shortcuts
+7. Draw the lens (2D)
 ----------------------
 
-* **Ctrl+K**: Open the VS Code-style **Command Palette** for quick access to actions and tools.
-* **1 / 2**: Load layout presets 1 and 2, respectively.
+.. code-block:: python
 
-Advanced Features (Brief Overview)
-----------------------------------
+   lens.draw(num_rays=5, distribution="line_y")
 
-* **Coatings** (``coatings.py``): Model anti-reflection or reflective coatings (``SimpleCoating``, ``FresnelCoating``).
-* **Thin Films** (``thin_film/*``): Define and optimize multilayer thin-film stacks, including tolerancing and Needle Synthesis.
-* **Polarization** (``polarized_rays.py``, ``jones.py``): Trace polarized light and apply Jones calculus for polarizing elements.
-* **Pickups** (``pickup.py``): Link a parameter of one surface to another (e.g., make radius of S2 = -radius of S1).
-* **Solves** (``solves``): Automatically adjust parameters to meet certain conditions (e.g., ``QuickFocusSolve`` adjusts image plane for best focus).
-* **Optimization** (``optimization/*``): Define merit functions with operands and variables to optimize system designs.
-* **Tolerancing** (``tolerancing/*``): Analyze the impact of manufacturing errors using sensitivity analysis and Monte Carlo simulations.
+----
 
-This cheat sheet should provide a solid starting point. Happy designing! ✨
+8. Draw the lens (3D)
+----------------------
+
+.. code-block:: python
+
+   lens.draw3D(num_rays=24, distribution="ring")
+
+----
+
+9. Trace rays manually
+-----------------------
+
+.. code-block:: python
+
+   # Trace a distribution of rays for a given field and wavelength
+   rays = lens.trace(Hx=0, Hy=0, wavelength=0.5876, num_rays=64, distribution="hexapolar")
+   print(rays.x, rays.y)   # image-plane x, y coordinates
+
+   # Trace a single ray defined by normalized field + pupil coordinates
+   ray = lens.trace_generic(Hx=0, Hy=1, Px=0, Py=0, wavelength=0.5876)
+
+----
+
+10. Spot diagram
+-----------------
+
+.. code-block:: python
+
+   from optiland.analysis import SpotDiagram
+
+   spot = SpotDiagram(lens)
+   spot.view()
+
+----
+
+11. Ray fan plot
+-----------------
+
+.. code-block:: python
+
+   from optiland.analysis import RayFan
+
+   fan = RayFan(lens)
+   fan.view()
+
+----
+
+12. Wavefront / Zernike decomposition
+---------------------------------------
+
+.. code-block:: python
+
+   from optiland.wavefront import Wavefront, ZernikeOPD
+
+   wf = Wavefront(lens, field=(0, 0), wavelength="primary")
+   wf.view()
+
+   zfit = ZernikeOPD(lens, field=(0, 0), wavelength="primary", num_terms=37)
+   zfit.view()
+
+----
+
+13. PSF and MTF
+----------------
+
+.. code-block:: python
+
+   from optiland.psf import FFTPSF
+   from optiland.mtf import FFTMTF
+
+   psf = FFTPSF(lens, field=(0, 0), wavelength="primary")
+   psf.view()
+
+   mtf = FFTMTF(lens)
+   mtf.view()
+
+----
+
+14. Paraxial properties (EFL, f/#, pupil positions)
+-----------------------------------------------------
+
+.. code-block:: python
+
+   print("EFL:", lens.paraxial.f2())
+   print("f/#:", lens.paraxial.FNO())
+   print("EPD:", lens.paraxial.EPD())
+   print("EPL:", lens.paraxial.EPL())   # entrance pupil location
+   print("XPL:", lens.paraxial.XPL())   # exit pupil location
+   print("Magnification:", lens.paraxial.magnification())
+
+----
+
+15. Define an optimization variable
+-------------------------------------
+
+.. code-block:: python
+
+   from optiland.optimization import OptimizationProblem
+
+   problem = OptimizationProblem()
+   problem.add_variable(lens, "radius", surface_number=1)
+   problem.add_variable(lens, "thickness", surface_number=1)
+
+----
+
+16. Define an operand
+----------------------
+
+.. code-block:: python
+
+   input_data = {"optic": lens}
+   problem.add_operand(operand_type="f2", target=50.0, weight=1, input_data=input_data)
+   problem.add_operand(operand_type="rms_spot_size", target=0.0, weight=1,
+                       input_data={"optic": lens, "field_index": 1, "wavelength_index": 0,
+                                   "distribution": "hexapolar", "num_rays": 100})
+
+----
+
+17. Run local optimization
+---------------------------
+
+.. code-block:: python
+
+   from optiland.optimization import LeastSquares
+
+   optimizer = LeastSquares(problem)
+   result = optimizer.optimize()
+   print(result)
+
+----
+
+18. Run global optimization
+----------------------------
+
+.. code-block:: python
+
+   from optiland.optimization import DualAnnealing
+
+   optimizer = DualAnnealing(problem)
+   result = optimizer.optimize()
+   print(result)
+
+----
+
+19. Save / load system (JSON)
+------------------------------
+
+.. code-block:: python
+
+   from optiland.fileio import save_optiland_file, load_optiland_file
+
+   save_optiland_file(lens, "my_lens.json")
+   lens2 = load_optiland_file("my_lens.json")
+
+----
+
+20. Generate a prescription report
+------------------------------------
+
+.. code-block:: python
+
+   from optiland.prescription import Prescription
+
+   p = Prescription(lens)
+   p.view()                         # Rich console output
+   p.save("prescription.txt")       # plain text
+   p.save("prescription.pdf")       # PDF (requires reportlab)

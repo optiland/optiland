@@ -21,22 +21,6 @@
 <p align="center"><em>The Optiland GUI showing a reverse telephoto system.</em></p>
 
 
-## Contents
-
-1. [Introduction](#introduction)
-2. [Documentation](#documentation)
-3. [Installation](#installation)
-4. [Core capabilities](#core-capabilities)
-5. [Learning Guide](#learning-guide)
-6. [Roadmap](#roadmap)
-7. [Get Involved](#get-involved)
-8. [Contributing](#contributing)
-9. [License](#license)
-10. [Contact and Support](#contact-and-support)
-
-
----
-
 ## Introduction
 
 **Optiland** is an open-source optical design platform built in Python, tailored for both classical lens systems and modern computational optics. It provides a robust and extensible interface for constructing, optimizing and analyzing optical systems, from standard refractive or reflective layouts to advanced freeform assemblies.
@@ -53,17 +37,11 @@ Whether you're developing prototypes in research or refining production systems,
 
 Under the hood, Optiland uses NumPy for fast CPU calculations and PyTorch for GPU acceleration and automatic differentiation. Switch between engines depending on your use case with the same interface.
 
-**Quickstart**  
-1. [Quickstart Tutorial](https://optiland.readthedocs.io/en/latest/examples/Tutorial_1a_Optiland_for_Beginners.html) – build your first lens in 5 minutes  
-2. [Full Learning Guide](https://optiland.readthedocs.io/en/latest/learning_guide.html) – in-depth guide to mastering Optiland 
-3. [Example Gallery](https://optiland.readthedocs.io/en/latest/gallery/introduction.html) – visual showcase of designs and core features
-4. [Cheat Sheet](https://optiland.readthedocs.io/en/latest/cheat_sheet.html) - an up-to-date cheat sheet to get you started ASAP with your first optical system
-
----
-
-## Documentation
-
-Optiland's full documentation is available on [Read the Docs](https://optiland.readthedocs.io/).
+**Get started in 5 minutes:**
+```python
+pip install optiland
+```
+→ [5-minute quickstart](https://optiland.readthedocs.io/en/latest/quickstart.html) · [Example Gallery](https://optiland.readthedocs.io/en/latest/gallery/introduction.html) · [Full Learning Guide](https://optiland.readthedocs.io/en/latest/learning_guide.html)
 
 
 
