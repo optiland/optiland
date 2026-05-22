@@ -46,13 +46,17 @@ def _levenshtein(s1: str, s2: str) -> int:
     return dist[-1][-1]
 
 
-def _catalog_dir_from_filename(filename: str) -> str:
+def _catalog_dir_from_filename(filename: str, group: str = "") -> str:
     """Extract the manufacturer catalog name from a filename path.
 
-    Built-in filenames follow ``group/catalog/name.yml``; the catalog is the
-    second-to-last path segment.
+    For glass entries whose path starts with ``glass/``, the manufacturer is
+    always the second path segment (``glass/{manufacturer}/...``), regardless
+    of nesting depth.  For all other entries the species name is the
+    second-to-last segment.
     """
     parts = filename.replace("\\", "/").split("/")
+    if group.lower() == "glass" and parts[0].lower() == "glass" and len(parts) >= 3:
+        return parts[1]
     return parts[-2] if len(parts) >= 3 else ""
 
 
@@ -415,7 +419,10 @@ class MaterialRegistry:
             return self._combined_cache
 
         built_in = self.built_in_df.copy()
-        built_in["catalog_dir"] = built_in["filename"].apply(_catalog_dir_from_filename)
+        built_in["catalog_dir"] = built_in.apply(
+            lambda r: _catalog_dir_from_filename(r["filename"], r.get("group", "")),
+            axis=1,
+        )
 
         if not self._user_entries:
             self._combined_cache = built_in
@@ -505,7 +512,10 @@ class MaterialRegistry:
 
         # Check built-in
         bi = self.built_in_df
-        bi_catalog_dirs = bi["filename"].apply(_catalog_dir_from_filename).str.lower()
+        bi_catalog_dirs = bi.apply(
+            lambda r: _catalog_dir_from_filename(r["filename"], r.get("group", "")),
+            axis=1,
+        ).str.lower()
         if (
             (bi["filename_no_ext"].str.lower() == name_lower)
             & (bi_catalog_dirs == catalog_lower)

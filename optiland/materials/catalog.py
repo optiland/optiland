@@ -7,6 +7,9 @@ Kramer Harrison, 2025
 
 from __future__ import annotations
 
+import pathlib
+from importlib import resources
+
 from optiland.materials.material_spec import MatchPolicy
 from optiland.materials.registry import MaterialRegistry
 
@@ -48,13 +51,16 @@ class MaterialCatalog:
     def available(cls) -> list[str]:
         """Return sorted list of glass manufacturer catalog names.
 
-        Only the ``'glass'`` group is returned — these are the manufacturer
-        books (Schott, Ohara, Hikari, etc.) that optical designers typically
-        browse.  To list species in other groups use
-        :meth:`~optiland.materials.registry.MaterialRegistry.list_catalogs`
+        The list is derived directly from the subdirectory names under the
+        built-in ``data-nk/glass/`` directory, which is the authoritative
+        source of manufacturer catalogs.  To list species in non-glass groups
+        use :meth:`~optiland.materials.registry.MaterialRegistry.list_catalogs`
         directly with ``group='main'``, ``'organic'``, or ``'other'``.
         """
-        return MaterialRegistry.instance().list_catalogs(group="glass")
+        glass_dir = pathlib.Path(
+            str(resources.files("optiland.database").joinpath("data-nk/glass"))
+        )
+        return sorted(d.name for d in glass_dir.iterdir() if d.is_dir())
 
     def list(self) -> list[str]:
         """Return sorted list of material names in this catalog."""
