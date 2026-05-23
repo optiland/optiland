@@ -51,6 +51,8 @@ New to Optiland? Start with :ref:`start_here` to find the path that fits your go
    examples/Tutorial_4b_Raytracing_Aspheres_and_Freeforms
    examples/Tutorial_4c_Zoom_Lenses_and_Multi_Configuration
    examples/Tutorial_4d_Lens_Catalogue_Integration
+   examples/Tutorial_4e_Lithographic_Projection_System
+   examples/Tutorial_4f_Three_Mirror_Anastigmat
 
 
 5. Polarization & Coatings
