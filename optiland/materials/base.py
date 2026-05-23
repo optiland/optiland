@@ -11,6 +11,7 @@ Kramer Harrison, 2024
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from contextlib import suppress
 
 import numpy as np
 
@@ -46,7 +47,7 @@ class BaseMaterial(ABC):
     """
 
     _registry = {}
-    _MAX_VALUE_KEY_ARRAY_SIZE = 64
+    _MAX_VALUE_KEY_ARRAY_SIZE = 1024
 
     def __init__(self, propagation_model: BasePropagationModel | None = None):
         """Initializes the material and its caches.
@@ -91,6 +92,15 @@ class BaseMaterial(ABC):
         # that changes on in-place writes.
         if hasattr(value, "data_ptr"):
             try:
+                sample = ()
+                num_el = value.numel()
+                if num_el > 0:
+                    flat_val = value.flatten()
+                    sample = (
+                        flat_val[0].item(),
+                        flat_val[num_el // 2].item(),
+                        flat_val[-1].item(),
+                    )
                 return (
                     "tensor-meta",
                     int(value.data_ptr()),
@@ -102,24 +112,39 @@ class BaseMaterial(ABC):
                     str(value.dtype),
                     str(value.device) if hasattr(value, "device") else None,
                     int(getattr(value, "_version", 0)),
+                    sample,
                 )
             except Exception:
                 pass
 
         if isinstance(value, np.ndarray):
+            sample = ()
+            if value.size > 0:
+                sample = (
+                    value.flat[0],
+                    value.flat[value.size // 2],
+                    value.flat[-1],
+                )
             return (
                 "ndarray-meta",
                 int(value.__array_interface__["data"][0]),
                 tuple(value.shape),
                 tuple(value.strides),
                 str(value.dtype),
+                sample,
             )
 
+        sample = ()
+        shape = getattr(value, "shape", ())
+        if hasattr(value, "__getitem__") and len(shape) > 0:
+            with suppress(Exception):
+                sample = (value[0], value[len(value) // 2], value[-1])
         return (
             "array-meta",
             id(value),
-            tuple(getattr(value, "shape", ())),
+            tuple(shape),
             str(getattr(value, "dtype", type(value))),
+            sample,
         )
 
     def _create_cache_key(self, wavelength: float | be.ndarray, **kwargs) -> tuple:
