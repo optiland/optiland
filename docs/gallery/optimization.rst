@@ -16,6 +16,10 @@ to improve optical systems using classical numerical methods.
 .. nbgallery::
     optimization/rms_spot_size
     optimization/wavefront_error
+    optimization/asphere
+    optimization/beam_expander
+    optimization/freeform
+    optimization/glass_expert_example
     optimization/undo
     optimization/pickups
     optimization/constrained
@@ -25,7 +29,6 @@ to improve optical systems using classical numerical methods.
     optimization/basin_hopping
     optimization/shgo
     optimization/custom_scaler
-    optimization/nurbs_freeform_telescope
     optimization/reciprocal_radii_optimization
 
 Torch Optimization

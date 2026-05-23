@@ -161,4 +161,4 @@ Choose where to go next based on your goals:
 - :ref:`start_here` — persona-based routing for students, engineers, researchers, and contributors
 - :doc:`cheat_sheet` — 20 copy-paste snippets for the most common tasks
 - :doc:`learning_guide` — 60+ tutorials covering every feature in depth
-- `Example Gallery <gallery/introduction.html>`_ — visual showcase of designs and analyses
+- :doc:`Example Gallery <gallery/introduction>` — visual showcase of designs and analyses

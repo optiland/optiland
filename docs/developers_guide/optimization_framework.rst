@@ -224,7 +224,7 @@ To add a new **optimizer**: subclass ``OptimizerGeneric`` in
 ``optiland/optimization/optimizer/scipy/base.py``.
 
 For step-by-step guidance, see :ref:`extension_recipes`.
-For a worked example, see :ref:`Tutorial_5d <examples/Tutorial_5d_User_Defined_Optimization>`.
+For a worked example, see :doc:`../examples/Tutorial_3c_User_Defined_Optimization`.
 
 
 .. raw:: html
@@ -332,4 +332,4 @@ Developers might interact with or extend the GlassExpert in several ways:
 
 GlassExpert provides a powerful way to tackle mixed continuous-categorical optimization problems common in lens design, where selecting the right materials is as critical as defining the right shapes and distances. 
 
-Refer to `Tutorial_7e_Glass_Expert.ipynb <https://optiland.readthedocs.io/en/latest/examples/Tutorial_7e_Glass_Expert.html>`_ for a practical example.
+Refer to :doc:`../examples/Tutorial_3e_Glass_Expert_Categorical_Optimization` for a practical example.

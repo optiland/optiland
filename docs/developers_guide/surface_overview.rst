@@ -83,5 +83,5 @@ How to Extend This
 for JSON serialisation support.
 **Step 5:** Add tests in ``tests/test_geometries/test_my_geometry.py``.
 
-For a complete worked example, see :ref:`Tutorial_10a <examples/Tutorial_10a_Custom_Surface_Types>`.
+For a complete worked example, see :doc:`../examples/Tutorial_8a_Custom_Surface_Types`.
 For step-by-step guidance, see :ref:`extension_recipes`.

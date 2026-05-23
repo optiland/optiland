@@ -56,7 +56,7 @@ so it can be created from a string identifier (needed for JSON serialisation).
 
 **Step 5:** Add tests in ``tests/test_geometries/test_my_geometry.py`` using both backends.
 
-See :ref:`Tutorial_10a <examples/Tutorial_10a_Custom_Surface_Types>` for a worked example.
+See :doc:`../examples/Tutorial_8a_Custom_Surface_Types` for a worked example.
 
 ----
 
@@ -144,7 +144,7 @@ Recipe 4: Add a New Analysis Class
 
 **Step 4:** Add tests in ``tests/test_analysis/test_my_analysis.py``.
 
-See :doc:`analysis_framework` and :ref:`Tutorial_3a <examples/Tutorial_3a_Common_Aberration_Analyses>` for context.
+See :doc:`analysis_framework` and :doc:`../examples/Tutorial_2c_Aberration_Analyses` for context.
 
 ----
 
@@ -168,7 +168,7 @@ in the operand registry at the bottom of that file:
 
 **Step 2:** Add tests in ``tests/test_optimization/test_operand.py``.
 
-See :doc:`optimization_framework` and :ref:`Tutorial_5d <examples/Tutorial_5d_User_Defined_Optimization>` for context.
+See :doc:`optimization_framework` and :doc:`../examples/Tutorial_3c_User_Defined_Optimization` for context.
 
 ----
 

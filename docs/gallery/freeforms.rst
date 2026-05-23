@@ -13,3 +13,4 @@ This section demonstrates the capabilities of the Optiland library for designing
     freeform/forbes_surface
     freeform/nurbs_undulated_window
     freeform/nurbs_parabolic_mirror
+    freeform/nurbs_freeform_telescope

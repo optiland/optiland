@@ -84,5 +84,5 @@ implement ``sag(x, y)`` and ``_surface_normal(x, y)`` only.
 **Step 3:** Register in ``optiland/geometries/__init__.py``.
 **Step 4:** Add tests in ``tests/test_geometries/test_my_geometry.py``.
 
-For a complete worked example, see :ref:`Tutorial_10a <examples/Tutorial_10a_Custom_Surface_Types>`.
+For a complete worked example, see :doc:`../examples/Tutorial_8a_Custom_Surface_Types`.
 For step-by-step guidance, see :ref:`extension_recipes`.
