@@ -242,7 +242,9 @@ class ZemaxDataParser:
         # Fall back to AbbeMaterial if catalog lookup failed
         if not isinstance(self._current_surf_data["material"], BaseMaterial):
             self._current_surf_data["material"] = AbbeMaterial(
-                self._current_surf_data["index"], self._current_surf_data["abbe"]
+                self._current_surf_data["index"],
+                self._current_surf_data["abbe"],
+                model="buchdahl",
             )
 
     def _read_stop(self, data: list[str]) -> None:
