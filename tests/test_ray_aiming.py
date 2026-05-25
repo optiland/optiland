@@ -1,18 +1,27 @@
 from __future__ import annotations
 
+import math
+
 import numpy as np
+import pytest
 
 import optiland.backend as be
 from optiland.optic import Optic
+from optiland.rays import RealRays
 from optiland.rays.ray_aiming.iterative import IterativeRayAimer
+from optiland.rays.ray_aiming.paraxial import ParaxialRayAimer
 from optiland.rays.ray_aiming.robust import RobustRayAimer
 from optiland.samples.objectives import (
+    CookeTriplet,
     ProjectionLens120FOV,
     ProjectionLens160FOV,
     ReverseTelephoto,
     WideAngle100FOV,
     WideAngle170FOV,
 )
+from optiland.samples.simple import SingletStopSurf2
+
+from .utils import assert_allclose
 
 
 def test_iterative_aimer_infinite(set_test_backend):
@@ -185,3 +194,183 @@ def test_instantiate_wide_angle_lenses(set_test_backend):
     assert ProjectionLens120FOV() is not None
     assert ProjectionLens160FOV() is not None
     assert WideAngle170FOV() is not None
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for issue #613: ray aiming must be invariant under a rigid
+# translation of every surface along z.
+
+def _shift_optic(optic: Optic, dz: float) -> None:
+    """Translate every finite-z surface of *optic* along z by *dz*.
+
+    Reassigns rather than using ``+=`` so torch's autograd doesn't reject the
+    update on leaf tensors that require grad.
+    """
+    for surf in optic.surfaces.surfaces:
+        z = float(be.to_numpy(surf.geometry.cs.z))
+        if math.isfinite(z):
+            surf.geometry.cs.z = surf.geometry.cs.z + dz
+
+
+def _issue_613_reproducer() -> Optic:
+    """The exact optic from issue #613: finite-conjugate object-height fields
+    with a float-by-stop-size aperture and flat air-to-air surfaces, so a
+    paraxially aimed ray reaches the stop without refraction."""
+    system = Optic()
+    system.surfaces.add(index=0, thickness=10, comment="start")
+    system.surfaces.add(index=1, thickness=10, comment="flat")
+    system.surfaces.add(index=2, thickness=10, comment="aperture")
+    system.surfaces.add(index=3, thickness=0, comment="end")
+    system.wavelengths.add(value=0.55)
+    system.surfaces[2].is_stop = True
+    system.fields.set_type(field_type="object_height")
+    system.fields.add(y=0)
+    system.fields.add(y=3)
+    system.set_aperture(aperture_type="float_by_stop_size", value=4.0)
+    return system
+
+
+def _trace_aimed_chief_ray_to_stop(optic: Optic, Hy: float) -> float:
+    """Aim a paraxial chief ray for field ``(0, Hy)``, trace it through every
+    surface up to the stop, and return its y in the stop's local frame."""
+    wavelength = optic.primary_wavelength
+    aimer = ParaxialRayAimer(optic)
+    x0, y0, z0, L, M, N = aimer.aim_rays(
+        (be.array([0.0]), be.array([Hy])),
+        be.array([wavelength]),
+        (be.array([0.0]), be.array([0.0])),
+    )
+    rays = RealRays(
+        x=be.copy(x0), y=be.copy(y0), z=be.copy(z0),
+        L=be.copy(L), M=be.copy(M), N=be.copy(N),
+        intensity=be.array([1.0]),
+        wavelength=be.array([wavelength]),
+    )
+    stop_index = optic.surfaces.stop_index
+    for i in range(1, stop_index + 1):
+        optic.surfaces[i].trace(rays)
+    optic.surfaces[stop_index].geometry.cs.localize(rays)
+    return float(be.to_numpy(rays.y)[0])
+
+
+@pytest.mark.parametrize(
+    "build",
+    [CookeTriplet, ReverseTelephoto, SingletStopSurf2, _issue_613_reproducer],
+    ids=["CookeTriplet", "ReverseTelephoto", "SingletStopSurf2", "issue613"],
+)
+@pytest.mark.parametrize("dz", [25.0, -15.0])
+def test_epl_shifts_by_translation(set_test_backend, build, dz):
+    """``EPL()`` is a global z and must shift by exactly ``dz``."""
+    epl_ref = float(build().paraxial.EPL())
+    shifted = build()
+    _shift_optic(shifted, dz)
+    assert_allclose(float(shifted.paraxial.EPL()), epl_ref + dz)
+
+
+@pytest.mark.parametrize(
+    "build",
+    [CookeTriplet, ReverseTelephoto, SingletStopSurf2, _issue_613_reproducer],
+    ids=["CookeTriplet", "ReverseTelephoto", "SingletStopSurf2", "issue613"],
+)
+@pytest.mark.parametrize("dz", [25.0, -15.0])
+def test_epd_invariant_under_translation(set_test_backend, build, dz):
+    """``EPD()`` is a length, unchanged by rigid translation."""
+    epd_ref = float(build().paraxial.EPD())
+    shifted = build()
+    _shift_optic(shifted, dz)
+    assert_allclose(float(shifted.paraxial.EPD()), epd_ref)
+
+
+@pytest.mark.parametrize(
+    "build",
+    [CookeTriplet, ReverseTelephoto, SingletStopSurf2],
+    ids=["CookeTriplet", "ReverseTelephoto", "SingletStopSurf2"],
+)
+@pytest.mark.parametrize("dz", [25.0, -15.0])
+def test_paraxial_chief_ray_invariant_under_translation(set_test_backend, build, dz):
+    """Chief-ray heights and slopes at every surface are translation-invariant.
+    The aimer consumes these via ``Paraxial.chief_ray``."""
+    y_ref, u_ref = build().paraxial.chief_ray()
+    shifted = build()
+    _shift_optic(shifted, dz)
+    y_shifted, u_shifted = shifted.paraxial.chief_ray()
+    assert_allclose(y_shifted, y_ref)
+    assert_allclose(u_shifted, u_ref)
+
+
+@pytest.mark.parametrize(
+    "build",
+    [CookeTriplet, ReverseTelephoto, SingletStopSurf2],
+    ids=["CookeTriplet", "ReverseTelephoto", "SingletStopSurf2"],
+)
+@pytest.mark.parametrize("dz", [25.0, -15.0])
+def test_paraxial_marginal_ray_invariant_under_translation(
+    set_test_backend, build, dz
+):
+    """Marginal-ray heights and slopes at every surface are translation-invariant."""
+    y_ref, u_ref = build().paraxial.marginal_ray()
+    shifted = build()
+    _shift_optic(shifted, dz)
+    y_shifted, u_shifted = shifted.paraxial.marginal_ray()
+    assert_allclose(y_shifted, y_ref)
+    assert_allclose(u_shifted, u_ref)
+
+
+@pytest.mark.parametrize("dz", [0.0, 30.0, -30.0, 1000.0])
+@pytest.mark.parametrize("Hy", [0.0, 0.5, 1.0])
+def test_paraxial_aimer_hits_stop_center_after_translation(set_test_backend, dz, Hy):
+    """Issue #613 verbatim: paraxially aimed chief rays must intersect the
+    stop center regardless of where the system sits along z."""
+    optic = _issue_613_reproducer()
+    if dz:
+        _shift_optic(optic, dz)
+    assert_allclose(_trace_aimed_chief_ray_to_stop(optic, Hy), 0.0, atol=1e-9)
+
+
+@pytest.mark.parametrize("dz", [0.0, 50.0, -25.0])
+def test_paraxial_aimer_infinite_object_chief_ray_matches_reference(
+    set_test_backend, dz
+):
+    """For an infinite-conjugate system (AngleField), where the aimed chief
+    ray actually lands at the stop must not depend on axial translation."""
+    optic_ref = CookeTriplet()
+    shifted = CookeTriplet()
+    if dz:
+        _shift_optic(shifted, dz)
+    for Hy in (0.0, 0.5, 1.0):
+        y_ref = _trace_aimed_chief_ray_to_stop(optic_ref, Hy)
+        y_shifted = _trace_aimed_chief_ray_to_stop(shifted, Hy)
+        assert_allclose(y_shifted, y_ref, atol=1e-9)
+
+
+@pytest.mark.parametrize("dz", [30.0, -10.0, 1000.0])
+def test_float_by_stop_epd_invariant_under_translation(set_test_backend, dz):
+    """``FloatByStopAperture.compute_epd`` returned a negative number after
+    ``move_z`` in #613 because EPL and obj_z were in different coordinate
+    systems. After the fix the computed EPD must match the reference and stay
+    positive."""
+    optic_ref = _issue_613_reproducer()
+    epd_ref = float(optic_ref.aperture.compute_epd(optic_ref.paraxial))
+    shifted = _issue_613_reproducer()
+    _shift_optic(shifted, dz)
+    epd_shifted = float(shifted.aperture.compute_epd(shifted.paraxial))
+    assert_allclose(epd_shifted, epd_ref)
+    assert epd_shifted > 0
+
+
+@pytest.mark.parametrize("AimerCls", [IterativeRayAimer, RobustRayAimer])
+@pytest.mark.parametrize("dz", [0.0, 40.0])
+def test_real_aimer_converges_after_translation(set_test_backend, AimerCls, dz):
+    """Iterative/Robust aimers seed from the paraxial aimer, so a broken EPL
+    used to feed a poor initial guess. Both must still converge to non-NaN
+    rays after the system is translated."""
+    optic = ReverseTelephoto()
+    if dz:
+        _shift_optic(optic, dz)
+    aimer = AimerCls(optic, tol=1e-8)
+    x, y, z, _, _, _ = aimer.aim_rays(
+        (0.0, 1.0), optic.primary_wavelength, (0.0, 1.0)
+    )
+    assert not be.any(be.isnan(x))
+    assert not be.any(be.isnan(y))
+    assert not be.any(be.isnan(z))
