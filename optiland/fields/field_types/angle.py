@@ -40,9 +40,11 @@ class AngleField(BaseFieldDefinition):
         if obj.is_infinite:
             EPD = optic.paraxial.EPD()
             offset = self._get_starting_z_offset(optic)
-            x = -be.tan(be.radians(field_x)) * (offset + EPL)
-            y = -be.tan(be.radians(field_y)) * (offset + EPL)
-            z = optic.surfaces.positions[1] - offset
+            z_surf1 = optic.surfaces.positions[1]
+            dist_to_ep = offset + EPL - z_surf1
+            x = -be.tan(be.radians(field_x)) * dist_to_ep
+            y = -be.tan(be.radians(field_y)) * dist_to_ep
+            z = z_surf1 - offset
             x0 = be.array(Px) * EPD / 2 * be.array(vx) + x
             y0 = be.array(Py) * EPD / 2 * be.array(vy) + y
             z0 = be.full_like(Px, z)
@@ -78,8 +80,8 @@ class AngleField(BaseFieldDefinition):
         """
         max_field = be.array(optic.fields.max_field)
         field_y = max_field * be.array(Hy)
-        y = -be.tan(be.radians(field_y)) * EPL
         z = optic.surfaces.positions[1]
+        y = -be.tan(be.radians(field_y)) * (EPL - z)
         y0 = y1 + y
         z0 = be.ones_like(y1) * z
         return y0, z0

@@ -207,8 +207,7 @@ class Paraxial:
         """Calculate the entrance pupil location (EPL) in global coordinates.
 
         Returns:
-            Entrance pupil position relative to the first surface
-                (which lies at z=0 by definition in its local coordinate system).
+            Entrance pupil position as a global z coordinate.
 
         """
         stop_index = self.surfaces.stop_index
@@ -225,8 +224,10 @@ class Paraxial:
         skip = self.surfaces.num_surfaces - stop_index
         y, u = self.trace_generic(y0, u0, z0[0], wavelength, reverse=True, skip=skip)
 
+        # y[-1] / u[-1] gives the EPL relative to the first physical surface
+        # (surface index 1); shift by its global z to return a global coordinate.
         loc_relative = y[-1] / u[-1]
-        return loc_relative[0]
+        return loc_relative[0] + pos[1, 0]
 
     def EPD(self) -> ScalarOrArray:
         """Calculate the entrance pupil diameter (EPD).
