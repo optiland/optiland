@@ -90,7 +90,7 @@ class RealReferenceStrategy(StopSizeStrategy):
 
     def _trace_real_marginal_ray(self) -> float:
         wavelength = self.optic.primary_wavelength
-        EPL = float(self.optic.paraxial.EPL())
+        EPL = float(self.optic.paraxial.entrance_pupil_z())
         EPD = float(self.optic.paraxial.EPD())
 
         stop_index = self.optic.surfaces.stop_index

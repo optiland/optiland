@@ -259,12 +259,36 @@ def _trace_aimed_chief_ray_to_stop(optic: Optic, Hy: float) -> float:
     ids=["CookeTriplet", "ReverseTelephoto", "SingletStopSurf2", "issue613"],
 )
 @pytest.mark.parametrize("dz", [25.0, -15.0])
-def test_epl_shifts_by_translation(set_test_backend, build, dz):
-    """``EPL()`` is a global z and must shift by exactly ``dz``."""
+def test_epl_is_invariant_under_translation(set_test_backend, build, dz):
+    """``EPL()`` returns a value relative to the first physical surface, so it
+    must be unchanged by a rigid translation of every surface along z.
+
+    This guards the *convention*. The authoritative regression test for the
+    end-to-end bug in issue #613 is
+    ``test_paraxial_chief_ray_invariant_under_translation`` below — a future
+    contributor mis-routing the relative value into a global-coordinate
+    expression will be caught there, not here.
+    """
     epl_ref = float(build().paraxial.EPL())
     shifted = build()
     _shift_optic(shifted, dz)
-    assert_allclose(float(shifted.paraxial.EPL()), epl_ref + dz)
+    assert_allclose(float(shifted.paraxial.EPL()), epl_ref)
+
+
+@pytest.mark.parametrize(
+    "build",
+    [CookeTriplet, ReverseTelephoto, SingletStopSurf2, _issue_613_reproducer],
+    ids=["CookeTriplet", "ReverseTelephoto", "SingletStopSurf2", "issue613"],
+)
+@pytest.mark.parametrize("dz", [25.0, -15.0])
+def test_entrance_pupil_global_z_shifts_by_translation(set_test_backend, build, dz):
+    """``entrance_pupil_z()`` returns a global z and must shift by exactly
+    ``dz`` under rigid translation. This is the helper internal consumers
+    use; if it ever stops tracking translation, issue #613 returns."""
+    z_ref = float(build().paraxial.entrance_pupil_z())
+    shifted = build()
+    _shift_optic(shifted, dz)
+    assert_allclose(float(shifted.paraxial.entrance_pupil_z()), z_ref + dz)
 
 
 @pytest.mark.parametrize(

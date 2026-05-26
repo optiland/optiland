@@ -204,10 +204,20 @@ class Paraxial:
         return self.F2() - self.f1()
 
     def EPL(self) -> ScalarOrArray:
-        """Calculate the entrance pupil location (EPL) in global coordinates.
+        """Calculate the entrance pupil location (EPL).
+
+        This value is relative to the first physical surface (index 1),
+        matching the convention of other first-order quantities on this
+        class (``XPL`` is relative to the image surface, ``N1anti`` /
+        ``N2anti`` relative to their respective reference surfaces). The
+        prescription report and the ``EPL`` optimization operand both
+        surface this value as-is. Call sites that need a global z (object
+        space, surface positions, ray launch points) should call
+        :meth:`entrance_pupil_z` instead.
 
         Returns:
-            Entrance pupil position as a global z coordinate.
+            Entrance pupil position relative to the first surface
+                (which lies at z=0 by definition in its local coordinate system).
 
         """
         stop_index = self.surfaces.stop_index
@@ -224,10 +234,24 @@ class Paraxial:
         skip = self.surfaces.num_surfaces - stop_index
         y, u = self.trace_generic(y0, u0, z0[0], wavelength, reverse=True, skip=skip)
 
-        # y[-1] / u[-1] gives the EPL relative to the first physical surface
-        # (surface index 1); shift by its global z to return a global coordinate.
         loc_relative = y[-1] / u[-1]
-        return loc_relative[0] + pos[1, 0]
+        return loc_relative[0]
+
+    def entrance_pupil_z(self) -> ScalarOrArray:
+        """Entrance pupil location as a global z coordinate.
+
+        ``EPL()`` returns a value relative to the first physical surface (per
+        the documented convention). Call sites that mix the pupil location
+        with other global coordinates (object z, surface positions, ray
+        launch points) should use this helper so the conversion lives in one
+        place. Issue #613 was caused by call sites silently assuming EPL was
+        global; routing them through this helper makes the convention
+        explicit at the boundary.
+        """
+        if self.surfaces.stop_index == 1:
+            # Special-case branch of EPL() already returns a global z.
+            return self.EPL()
+        return self.EPL() + self.surfaces.positions[1, 0]
 
     def EPD(self) -> ScalarOrArray:
         """Calculate the entrance pupil diameter (EPD).
@@ -338,7 +362,7 @@ class Paraxial:
             ua = 0
         else:
             obj_z = self.optic.object_surface.geometry.cs.z
-            z = self.EPL() - obj_z
+            z = self.entrance_pupil_z() - obj_z
             ya = 0
             ua = EPD / (2 * z)
 
@@ -399,9 +423,8 @@ class Paraxial:
             # For infinite conjugates, chief ray is defined by angle in object space.
             # We find its height at the first surface by propagating from the EPL,
             # where its height is zero.
-            EPL = self.EPL()
             z_surf1 = self.surfaces.positions[1, 0]
-            y1_start = u_obj_start * (z_surf1 - EPL)
+            y1_start = u_obj_start * (z_surf1 - self.entrance_pupil_z())
             u1_start = u_obj_start
             z1_start = z_surf1
             return self.trace_generic(y1_start, u1_start, z1_start, wavelength)
