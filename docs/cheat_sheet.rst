@@ -194,9 +194,17 @@ New to these concepts? See the :ref:`glossary` first.
    print("EFL:", lens.paraxial.f2())
    print("f/#:", lens.paraxial.FNO())
    print("EPD:", lens.paraxial.EPD())
-   print("EPL:", lens.paraxial.EPL())   # entrance pupil location
-   print("XPL:", lens.paraxial.XPL())   # exit pupil location
+   print("EPL:", lens.paraxial.EPL())   # entrance pupil location, relative to surface 1
+   print("XPL:", lens.paraxial.XPL())   # exit pupil location, relative to the image surface
    print("Magnification:", lens.paraxial.magnification())
+
+.. note::
+
+   ``EPL()`` is measured **relative to the first physical surface** (surface 1),
+   matching the convention of ``XPL()`` (relative to the image surface) and the
+   other first-order quantities. If you need the entrance pupil as a **global**
+   z coordinate — e.g. to compare against object or surface positions — use
+   ``lens.paraxial.entrance_pupil_z()``.
 
 ----
 
