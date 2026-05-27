@@ -154,9 +154,7 @@ class RealImageHeightField(BaseFieldDefinition):
             optic, val_x, val_y, zeros, zeros, 0, 0
         )
 
-        EPL = optic.paraxial.EPL()
-        # EPL is relative to the first surface (index 1)
-        z_pupil = optic.surfaces.positions[1] + EPL
+        z_pupil = optic.paraxial.entrance_pupil_z()
 
         x1 = be.zeros_like(x0)
         y1 = be.zeros_like(y0)
