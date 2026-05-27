@@ -51,13 +51,9 @@ class ParaxialRayTracer(BaseRayTracer):
         y0, z0 = self.optic.fields.field_definition.get_paraxial_object_position(
             self.optic, Hy, y1, EPL
         )
-        # z0 is a global z (object frame), so EPL must be promoted to global
-        # before subtracting. The stop-at-surface-1 branch of EPL() already
-        # returns a global z; otherwise EPL is relative to surface 1.
-        if self.optic.surfaces.stop_index == 1:
-            epl_global = EPL
-        else:
-            epl_global = EPL + self.optic.surfaces.positions[1, 0]
+        # z0 is a global z (object frame); promote EPL (relative to surface
+        # 1) to the same frame before subtracting.
+        epl_global = EPL + self.optic.surfaces.positions[1, 0]
         u0 = (y1 - y0) / (epl_global - z0)
         rays = ParaxialRays(y0, u0, z0, wavelength)
 

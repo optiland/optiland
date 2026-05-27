@@ -19,7 +19,7 @@ from optiland.samples.objectives import (
     WideAngle100FOV,
     WideAngle170FOV,
 )
-from optiland.samples.simple import SingletStopSurf2
+from optiland.samples.simple import Edmund_49_847, SingletStopSurf2
 
 from .utils import assert_allclose
 
@@ -289,6 +289,23 @@ def test_entrance_pupil_global_z_shifts_by_translation(set_test_backend, build, 
     shifted = build()
     _shift_optic(shifted, dz)
     assert_allclose(float(shifted.paraxial.entrance_pupil_z()), z_ref + dz)
+
+
+def test_epl_is_zero_when_stop_is_surface_1_with_shifted_optic(set_test_backend):
+    """When the stop coincides with surface 1, the entrance pupil sits *on*
+    surface 1, so its location in surface 1's local frame is 0 — independent
+    of where surface 1 is in global z. This test shifts the whole optic so
+    ``positions[1, 0] != 0``; the previous code returned ``positions[1, 0]``
+    from the ``stop_index == 1`` branch, which silently mixed conventions
+    and only happened to agree with the docstring when surface 1 was at the
+    origin."""
+    optic = Edmund_49_847()
+    _shift_optic(optic, dz=25.0)
+    assert optic.surfaces.stop_index == 1
+    pos1 = float(be.to_numpy(optic.surfaces.positions[1, 0]))
+    assert_allclose(pos1, 25.0)
+    assert_allclose(float(optic.paraxial.EPL()), 0.0)
+    assert_allclose(float(optic.paraxial.entrance_pupil_z()), 25.0)
 
 
 @pytest.mark.parametrize(

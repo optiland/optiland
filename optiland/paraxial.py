@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import optiland.backend as be
 from optiland.fields import ParaxialImageHeightField
 from optiland.raytrace.paraxial_ray_tracer import ParaxialRayTracer
 
@@ -222,7 +223,11 @@ class Paraxial:
         """
         stop_index = self.surfaces.stop_index
         if stop_index == 1:
-            return self.surfaces.positions[1, 0]
+            # Entrance pupil coincides with surface 1, so its location in
+            # surface 1's local frame is zero. (The earlier ``positions[1, 0]``
+            # return here mixed conventions — it agreed with the relative
+            # convention only when surface 1 was at the origin.)
+            return be.array(0.0)
 
         y0 = 0
         u0 = 0.1
@@ -248,9 +253,6 @@ class Paraxial:
         global; routing them through this helper makes the convention
         explicit at the boundary.
         """
-        if self.surfaces.stop_index == 1:
-            # Special-case branch of EPL() already returns a global z.
-            return self.EPL()
         return self.EPL() + self.surfaces.positions[1, 0]
 
     def EPD(self) -> ScalarOrArray:
