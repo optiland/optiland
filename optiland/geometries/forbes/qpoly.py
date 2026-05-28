@@ -163,8 +163,7 @@ def change_basis_qbfs_to_pn(cs: list[float]) -> be.array:
 
 
 def _initialize_alphas_q(cs, x, alphas, j=0):
-    """Initializes the alpha array for Clenshaw's algorithm.
-    """
+    """Initializes the alpha array for Clenshaw's algorithm."""
     if alphas is not None:
         return alphas
     n_modes = max(len(cs), 2)
@@ -324,8 +323,7 @@ def _clenshaw_qbfs_der_functional(cs, usq, j=1):
 def compute_z_zprime_qbfs(
     coefs: list[float], u: be.array, usq: be.array
 ) -> tuple[be.array, be.array]:
-    """Computes the raw Q-BFS polynomial sum and its derivative w.r.t. u.
-    """
+    """Computes the raw Q-BFS polynomial sum and its derivative w.r.t. u."""
     coefs = _trim_trailing_zeros(coefs)
     if len(coefs) == 0:
         zeros = be.zeros_like(u)
@@ -532,8 +530,7 @@ def _compute_m_gt0_components(ams, bms, u, t, usq):
 
 
 def compute_z_zprime_q2d(cm0, ams, bms, u, t):
-    """Computes the polynomial sum components for a Q2D surface.
-    """
+    """Computes the polynomial sum components for a Q2D surface."""
     usq = u * u
     zeros = be.zeros_like(u)
 
@@ -579,8 +576,7 @@ def q2d_nm_coeffs_to_ams_bms(nms: list[tuple[int, int]], coefs: list[float]):
 
 
 def clenshaw_q2d(cns, m, usq, alphas=None):
-    """Evaluates the Q2D Clenshaw alpha table for azimuthal order ``m``.
-    """
+    """Evaluates the Q2D Clenshaw alpha table for azimuthal order ``m``."""
     cns = _trim_trailing_zeros(cns)
     if be.get_backend() == "torch":
         ds = change_basis_q2d_to_pnm(cns, m)
@@ -635,8 +631,7 @@ def _clenshaw_q2d_functional(ds, m, usq):
 
 
 def clenshaw_q2d_der(cns, m, usq, j=1, alphas=None):
-    """Computes derivatives of Q-2D polynomials using Clenshaw's method.
-    """
+    """Computes derivatives of Q-2D polynomials using Clenshaw's method."""
     cns = _trim_trailing_zeros(cns)
     if be.get_backend() == "torch":
         return _clenshaw_q2d_der_functional(cns, m, usq, j)
