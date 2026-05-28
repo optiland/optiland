@@ -20,6 +20,8 @@ from optiland.geometries.forbes.qpoly import (
     clenshaw_q2d_der,
     clenshaw_qbfs,
     clenshaw_qbfs_der,
+    compute_z_q2d,
+    compute_z_qbfs,
     compute_z_zprime_q2d,
     compute_z_zprime_qbfs,
     q2d_nm_coeffs_to_ams_bms,
@@ -302,6 +304,96 @@ class TestGeometrySagWithTrailingZeros:
         x = be.array([0.5, 1.0, 2.0, 3.5])
         y = be.array([0.2, -0.4, 1.0, 2.0])
         assert_allclose(g_tight.sag(x, y), g_padded.sag(x, y))
+
+
+# ---------------------------------------------------------------------------
+# Sag-only helpers (PR 2)
+# ---------------------------------------------------------------------------
+
+
+class TestSagOnlyHelpers:
+    """compute_z_qbfs / compute_z_q2d must agree exactly with the sag
+    component returned by compute_z_zprime_{qbfs,q2d}."""
+
+    def test_compute_z_qbfs_matches_zprime(self, set_test_backend):
+        u = be.array([0.05, 0.2, 0.6, 0.95])
+        usq = u * u
+        cs = [1.6e-4, 3e-5, -1.5e-5, 8e-6]
+        s_only = compute_z_qbfs(cs, usq)
+        s_zp, _ = compute_z_zprime_qbfs(cs, u, usq)
+        assert_allclose(s_only, s_zp)
+
+    def test_compute_z_qbfs_empty(self, set_test_backend):
+        usq = be.array([0.1, 0.4])
+        s = compute_z_qbfs([], usq)
+        assert_allclose(s, be.zeros_like(usq))
+
+    def test_compute_z_q2d_matches_zprime(self, set_test_backend):
+        u = be.array([0.1, 0.3, 0.7])
+        t = be.array([0.2, 0.9, 1.7])
+        cm0 = [1e-3, -3e-4]
+        ams = [[2e-4, 1e-4], [], [5e-5]]  # m=1, m=2 (empty), m=3
+        bms = [[1e-4], [-2e-4], []]
+        s_m0_only, s_mgt0_only = compute_z_q2d(cm0, ams, bms, u, t)
+        s_m0_zp, _, s_mgt0_zp, _, _ = compute_z_zprime_q2d(cm0, ams, bms, u, t)
+        assert_allclose(s_m0_only, s_m0_zp)
+        assert_allclose(s_mgt0_only, s_mgt0_zp)
+
+    def test_compute_z_q2d_empty(self, set_test_backend):
+        u = be.array([0.1, 0.5])
+        t = be.array([0.0, 1.0])
+        s_m0, s_mgt0 = compute_z_q2d([], [], [], u, t)
+        assert_allclose(s_m0, be.zeros_like(u))
+        assert_allclose(s_mgt0, be.zeros_like(u))
+
+
+class TestForbesQ2dSagRoutingBitParity:
+    """ForbesQ2dGeometry.sag() must produce numerically identical sag
+    after being routed through compute_z_q2d, compared to evaluating it
+    via compute_z_zprime_q2d directly (the pre-PR2 path).
+    """
+
+    def test_q2d_sag_matches_direct_zprime_path(self, set_test_backend):
+        from optiland.coordinate_system import CoordinateSystem
+        from optiland.geometries import ForbesQ2dGeometry, ForbesSurfaceConfig
+        from optiland.geometries.forbes.qpoly import (
+            compute_z_zprime_q2d as _zp,
+        )
+
+        cs = CoordinateSystem()
+        cfg = ForbesSurfaceConfig(
+            radius=25.0,
+            conic=-0.5,
+            terms={
+                ("a", 0, 0): 1.2e-3,  # m=0, n=0
+                ("a", 0, 1): -4e-4,  # m=0, n=1
+                ("a", 1, 0): 2e-4,  # cos m=1, n=0
+                ("b", 1, 0): 1e-4,  # sin m=1, n=0
+                ("a", 2, 0): 3e-5,  # cos m=2, n=0
+                ("b", 2, 1): -1e-5,  # sin m=2, n=1
+            },
+            norm_radius=8.0,
+        )
+        geom = ForbesQ2dGeometry(cs, surface_config=cfg)
+
+        x = be.array([0.0, 1.0, 2.5, 4.0, -3.0])
+        y = be.array([0.0, 0.8, -1.5, 2.0, 1.2])
+        sag_new = geom.sag(x, y)
+
+        # Reconstruct the pre-PR2 expression directly from compute_z_zprime_q2d.
+        r2 = x**2 + y**2
+        rho = be.sqrt(r2 + 1e-14)
+        u = rho / geom.norm_radius
+        safe_x = be.where(rho < 1e-14, x + 1e-12, x)
+        theta = be.arctan2(y, safe_x)
+        s_m0, _, s_mgt0, _, _ = _zp(
+            geom.cm0_coeffs, geom.ams_coeffs, geom.bms_coeffs, u, theta
+        )
+        ccf, _ = geom._conic_correction_factor(r2)
+        usq = u**2
+        dep = (usq * (1 - usq)) * ccf * s_m0 + ccf * s_mgt0
+        sag_expected = geom._base_sag(r2) + be.where(u > 1, 0.0, dep)
+        assert_allclose(sag_new, sag_expected)
 
 
 # Mark Q2D regression tests on numpy backend — torch import not available
