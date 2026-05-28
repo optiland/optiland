@@ -395,7 +395,4 @@ class TestForbesQ2dSagRoutingBitParity:
         sag_expected = geom._base_sag(r2) + be.where(u > 1, 0.0, dep)
         assert_allclose(sag_new, sag_expected)
 
-
-# Mark Q2D regression tests on numpy backend — torch import not available
-# in some local environments; parametrized backend fixture covers both.
 pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
