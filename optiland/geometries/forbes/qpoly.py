@@ -549,6 +549,145 @@ def _compute_m_gt0_components(ams, bms, u, t, usq):
     return poly_sum_m_gt0, dr_m_gt0, dt_m_gt0
 
 
+def _harmonic_powers(X, Y, m_max):
+    """Compute Re/Im parts of (X + iY)**k for k = 0 .. m_max.
+
+    Iteratively applies the complex-multiplication recurrence
+
+        H_c[k+1] = X * H_c[k] - Y * H_s[k]
+        H_s[k+1] = X * H_s[k] + Y * H_c[k]
+
+    Backend-agnostic and singularity-free at the origin (no division
+    by ``r``); autograd-safe (purely functional list construction).
+
+    Args:
+        X: Normalized x-coordinate (be.array).
+        Y: Normalized y-coordinate (be.array).
+        m_max: Highest azimuthal order needed (inclusive).
+
+    Returns:
+        tuple[list[be.array], list[be.array]]: ``(H_c, H_s)`` each of
+            length ``m_max + 1``.
+    """
+    ones = be.ones_like(X) if hasattr(X, "shape") else be.array(1.0)
+    zeros = be.zeros_like(X) if hasattr(X, "shape") else be.array(0.0)
+    H_c = [ones]
+    H_s = [zeros]
+    for _ in range(m_max):
+        c_prev, s_prev = H_c[-1], H_s[-1]
+        H_c.append(X * c_prev - Y * s_prev)
+        H_s.append(X * s_prev + Y * c_prev)
+    return H_c, H_s
+
+
+def _q2d_cartesian_eval(X, Y, cm0, ams, bms):
+    """Evaluate the Q2D polynomial sum P(X, Y) and its Cartesian derivatives.
+
+    P is the dimensionless polynomial part of the Forbes Q2D departure,
+
+        P(X, Y) = u**2 * (1 - u**2) * S_cm0(u**2)
+                + sum_{m>=1} [ Re((X + iY)**m) * S_a_m(u**2)
+                             + Im((X + iY)**m) * S_b_m(u**2) ],
+
+    with ``u**2 = X**2 + Y**2``. Derivatives are computed in normalized
+    Cartesian coordinates via harmonic powers, so the result is regular
+    at ``X = Y = 0`` (no polar ``1/r`` artifact). The caller is
+    responsible for applying the conic-correction factor, the base-sag
+    derivative, and the chain rule from ``X = x / R_n`` to physical
+    coordinates.
+
+    Args:
+        X: Normalized x-coordinate (be.array).
+        Y: Normalized y-coordinate (be.array).
+        cm0: m=0 (Qbfs-style) coefficient sequence; trimmed internally.
+        ams: Per-m cosine coefficient families (index ``i`` is m == i+1).
+        bms: Per-m sine coefficient families, same layout as ``ams``.
+
+    Returns:
+        tuple: ``(P, dP_dX, dP_dY)`` as be.arrays, broadcast to
+            ``X`` / ``Y`` shape.
+    """
+    usq = X * X + Y * Y
+
+    # m == 0 envelope: P_m0 = u^2 (1 - u^2) * S_cm0(u^2)
+    cm0 = _trim_trailing_zeros(cm0)
+    if cm0:
+        # Reuse derivative Clenshaw to get S and dS/du^2 in one sweep.
+        alphas_m0 = clenshaw_qbfs_der(cm0, usq, j=1)
+        if len(cm0) > 1:
+            s_cm0 = 2 * (alphas_m0[0, 0] + alphas_m0[0, 1])
+            dsdu2_cm0 = 2 * (alphas_m0[1, 0] + alphas_m0[1, 1])
+        else:
+            s_cm0 = 2 * alphas_m0[0, 0]
+            dsdu2_cm0 = 2 * alphas_m0[1, 0]
+        env = usq * (1 - usq)
+        P_m0 = env * s_cm0
+        # d/dX [ u^2(1-u^2) * S ] = 2X * [ (1 - 2u^2) S + u^2(1-u^2) dS/du^2 ]
+        radial_chain = (1 - 2 * usq) * s_cm0 + env * dsdu2_cm0
+        dP_m0_dX = 2 * X * radial_chain
+        dP_m0_dY = 2 * Y * radial_chain
+    else:
+        zeros = be.zeros_like(usq)
+        P_m0 = zeros
+        dP_m0_dX = zeros
+        dP_m0_dY = zeros
+
+    # m >= 1: harmonic powers + per-m radial Clenshaw.
+    m_max = max(len(ams), len(bms))
+    if m_max == 0:
+        return P_m0, dP_m0_dX, dP_m0_dY
+
+    H_c, H_s = _harmonic_powers(X, Y, m_max)
+
+    P_terms, dPx_terms, dPy_terms = [], [], []
+    for m_idx in range(m_max):
+        m = m_idx + 1
+        a_coef = _trim_trailing_zeros(ams[m_idx]) if m_idx < len(ams) else []
+        b_coef = _trim_trailing_zeros(bms[m_idx]) if m_idx < len(bms) else []
+        if not a_coef and not b_coef:
+            continue
+
+        s_a = s_b = dsdu2_a = dsdu2_b = 0.0
+        if a_coef:
+            alphas_a = clenshaw_q2d_der(a_coef, m, usq, j=1)
+            s_a = q2d_sum_from_alphas(alphas_a[0], m, len(a_coef))
+            dsdu2_a = q2d_sum_from_alphas(alphas_a[1], m, len(a_coef))
+        if b_coef:
+            alphas_b = clenshaw_q2d_der(b_coef, m, usq, j=1)
+            s_b = q2d_sum_from_alphas(alphas_b[0], m, len(b_coef))
+            dsdu2_b = q2d_sum_from_alphas(alphas_b[1], m, len(b_coef))
+
+        Hc_m = H_c[m]
+        Hs_m = H_s[m]
+        Hc_mm1 = H_c[m - 1]
+        Hs_mm1 = H_s[m - 1]
+
+        P_terms.append(Hc_m * s_a + Hs_m * s_b)
+        # d/dX [ H_c[m] S_a + H_s[m] S_b ]
+        #   = m*H_c[m-1]*S_a + H_c[m]*2X*dS_a + m*H_s[m-1]*S_b + H_s[m]*2X*dS_b
+        dPx_terms.append(
+            m * (Hc_mm1 * s_a + Hs_mm1 * s_b)
+            + 2 * X * (Hc_m * dsdu2_a + Hs_m * dsdu2_b)
+        )
+        # d/dY [ H_c[m] S_a + H_s[m] S_b ]
+        #   = -m*H_s[m-1]*S_a + H_c[m]*2Y*dS_a + m*H_c[m-1]*S_b + H_s[m]*2Y*dS_b
+        dPy_terms.append(
+            m * (-Hs_mm1 * s_a + Hc_mm1 * s_b)
+            + 2 * Y * (Hc_m * dsdu2_a + Hs_m * dsdu2_b)
+        )
+
+    if P_terms:
+        P_mgt0 = be.sum(be.stack(P_terms), axis=0)
+        dPx_mgt0 = be.sum(be.stack(dPx_terms), axis=0)
+        dPy_mgt0 = be.sum(be.stack(dPy_terms), axis=0)
+    else:
+        P_mgt0 = be.zeros_like(usq)
+        dPx_mgt0 = be.zeros_like(usq)
+        dPy_mgt0 = be.zeros_like(usq)
+
+    return P_m0 + P_mgt0, dP_m0_dX + dPx_mgt0, dP_m0_dY + dPy_mgt0
+
+
 def _compute_m_gt0_sag_only(ams, bms, u, t, usq):
     """Sag-only counterpart of :func:`_compute_m_gt0_components`.
 

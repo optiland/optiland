@@ -13,6 +13,8 @@ import pytest
 
 import optiland.backend as be
 from optiland.geometries.forbes.qpoly import (
+    _harmonic_powers,
+    _q2d_cartesian_eval,
     _trim_trailing_zeros,
     change_basis_q2d_to_pnm,
     change_basis_qbfs_to_pn,
@@ -395,4 +397,275 @@ class TestForbesQ2dSagRoutingBitParity:
         sag_expected = geom._base_sag(r2) + be.where(u > 1, 0.0, dep)
         assert_allclose(sag_new, sag_expected)
 
+
+# ---------------------------------------------------------------------------
+# PR 3 — harmonic powers + Cartesian Q2D derivatives
+# ---------------------------------------------------------------------------
+
+
+class TestHarmonicPowers:
+    """Sanity-check the (X + iY)**m recurrence used to build the
+    rotationally-equivariant Cartesian derivative path."""
+
+    def test_recurrence_matches_complex_power(self, set_test_backend):
+        rng = np.random.default_rng(0)
+        X_np = rng.uniform(-0.7, 0.7, size=11)
+        Y_np = rng.uniform(-0.7, 0.7, size=11)
+        X = be.array(X_np)
+        Y = be.array(Y_np)
+        Hc, Hs = _harmonic_powers(X, Y, 5)
+        for m in range(6):
+            ref = (X_np + 1j * Y_np) ** m
+            assert_allclose(Hc[m], be.array(ref.real))
+            assert_allclose(Hs[m], be.array(ref.imag))
+
+    def test_origin_is_regular(self, set_test_backend):
+        # At X = Y = 0 we expect (1, 0) for m = 0 and (0, 0) for m >= 1.
+        X = be.array(0.0)
+        Y = be.array(0.0)
+        Hc, Hs = _harmonic_powers(X, Y, 4)
+        assert float(be.to_numpy(Hc[0])) == 1.0
+        for m in range(1, 5):
+            assert float(be.to_numpy(Hc[m])) == 0.0
+            assert float(be.to_numpy(Hs[m])) == 0.0
+
+
+def _fd_partials(fn, x, y, h=1e-6):
+    """Centered finite differences of a scalar-valued ``fn(x, y)``."""
+    return (fn(x + h, y) - fn(x - h, y)) / (2 * h), (fn(x, y + h) - fn(x, y - h)) / (
+        2 * h
+    )
+
+
+class TestQ2dCartesianEvalFD:
+    """`_q2d_cartesian_eval` derivatives must match centered finite
+    differences of the underlying polynomial value."""
+
+    def _coeffs(self):
+        cm0 = [1.0e-3, -5.0e-4, 2.0e-4]
+        ams = [
+            [3.0e-4, -1.0e-4],  # m=1
+            [],  # m=2: empty cosine family
+            [4.0e-5],  # m=3
+        ]
+        bms = [
+            [],  # m=1: empty sine family
+            [2.0e-4, -1.0e-4],  # m=2
+            [],  # m=3
+        ]
+        return cm0, ams, bms
+
+    def test_fd_parity_away_from_origin(self, set_test_backend):
+        cm0, ams, bms = self._coeffs()
+
+        def P_only(x, y):
+            X = be.array(x)
+            Y = be.array(y)
+            P, _, _ = _q2d_cartesian_eval(X, Y, cm0, ams, bms)
+            return float(be.to_numpy(P))
+
+        for x0, y0 in [(0.4, 0.2), (-0.3, 0.6), (0.7, -0.5), (0.1, 0.05)]:
+            X = be.array(x0)
+            Y = be.array(y0)
+            _, dPdX, dPdY = _q2d_cartesian_eval(X, Y, cm0, ams, bms)
+            fd_x, fd_y = _fd_partials(P_only, x0, y0, h=1e-6)
+            assert_allclose(dPdX, be.array(fd_x), rtol=1e-5, atol=1e-9)
+            assert_allclose(dPdY, be.array(fd_y), rtol=1e-5, atol=1e-9)
+
+    def test_fd_parity_near_and_at_origin(self, set_test_backend):
+        cm0, ams, bms = self._coeffs()
+
+        def P_only(x, y):
+            X = be.array(x)
+            Y = be.array(y)
+            P, _, _ = _q2d_cartesian_eval(X, Y, cm0, ams, bms)
+            return float(be.to_numpy(P))
+
+        for x0, y0 in [(0.0, 0.0), (1e-8, 0.0), (0.0, 1e-8), (1e-4, 1e-4)]:
+            X = be.array(x0)
+            Y = be.array(y0)
+            _, dPdX, dPdY = _q2d_cartesian_eval(X, Y, cm0, ams, bms)
+            # Use a step that is large compared to x0/y0 so the FD itself
+            # is well-conditioned (h >> |x0| keeps the centered difference
+            # in the smooth region around the origin).
+            h = max(1e-5, abs(x0) * 10, abs(y0) * 10)
+            fd_x, fd_y = _fd_partials(P_only, x0, y0, h=h)
+            assert_allclose(dPdX, be.array(fd_x), rtol=1e-4, atol=1e-9)
+            assert_allclose(dPdY, be.array(fd_y), rtol=1e-4, atol=1e-9)
+
+
+class TestForbesQ2dCartesianNormal:
+    """The Cartesian-normal path on ``ForbesQ2dGeometry`` must agree
+    with the polar path away from the origin and remain finite at the
+    origin (where the polar path applies a separate ``where``-blend)."""
+
+    def _build(self):
+        from optiland.coordinate_system import CoordinateSystem
+        from optiland.geometries import ForbesQ2dGeometry, ForbesSurfaceConfig
+
+        cfg = ForbesSurfaceConfig(
+            radius=25.0,
+            conic=-0.5,
+            terms={
+                ("a", 0, 0): 1.2e-3,
+                ("a", 0, 1): -4.0e-4,
+                ("a", 1, 0): 2.0e-4,
+                ("a", 1, 1): -8.0e-5,
+                ("b", 1, 0): 1.0e-4,
+                ("a", 2, 0): 3.0e-5,
+                ("b", 2, 1): -1.0e-5,
+                ("a", 3, 0): 5.0e-6,
+            },
+            norm_radius=8.0,
+        )
+        return ForbesQ2dGeometry(CoordinateSystem(), cfg)
+
+    def test_cartesian_matches_polar_away_from_origin(self, set_test_backend):
+        geom = self._build()
+        x = be.array([0.5, 1.0, 2.5, -3.0, 4.5])
+        y = be.array([0.3, -0.7, 1.4, 2.0, -0.5])
+        polar = geom._surface_normal_analytical(x, y)
+        cart = geom._surface_normal_analytical_cartesian(x, y)
+        # Tolerances loose enough to cover the polar (1/r) path's own
+        # round-off but tight enough to catch a real disagreement.
+        assert_allclose(cart[0], polar[0], rtol=1e-8, atol=1e-10)
+        assert_allclose(cart[1], polar[1], rtol=1e-8, atol=1e-10)
+
+    def test_cartesian_finite_at_exact_origin(self, set_test_backend):
+        geom = self._build()
+        x = be.array(0.0)
+        y = be.array(0.0)
+        dfdx, dfdy = geom._surface_normal_analytical_cartesian(x, y)
+        v_x = float(be.to_numpy(dfdx))
+        v_y = float(be.to_numpy(dfdy))
+        assert np.isfinite(v_x)
+        assert np.isfinite(v_y)
+        # At origin only the m=1 family contributes to the slope. With
+        # ('a', 1, 0) > 0 the X-slope must be > 0 and ('b', 1, 0) > 0
+        # gives a positive Y-slope.
+        assert v_x > 0.0
+        assert v_y > 0.0
+
+    def test_cartesian_fd_parity_at_and_near_origin(self, set_test_backend):
+        geom = self._build()
+
+        def sag(x_, y_):
+            return float(be.to_numpy(geom.sag(be.array(x_), be.array(y_))))
+
+        # FD step h must be large enough to avoid catastrophic cancellation
+        # in float64 sag evaluations (the sag itself is ~ 1e-6 mm near the
+        # axis), but small enough that the O(h^2) truncation error stays
+        # below the asserted tolerance.  h = 1e-3 mm is a safe sweet spot
+        # for this geometry: sag changes are well above eps_f64 * |sag|.
+        h = 1.0e-3
+        for x0, y0 in [(0.0, 0.0), (1e-6, 0.0), (0.0, 1e-6), (1e-4, 1e-4)]:
+            dfdx, dfdy = geom._surface_normal_analytical_cartesian(
+                be.array(x0), be.array(y0)
+            )
+            fd_x = (sag(x0 + h, y0) - sag(x0 - h, y0)) / (2 * h)
+            fd_y = (sag(x0, y0 + h) - sag(x0, y0 - h)) / (2 * h)
+            assert_allclose(dfdx, be.array(fd_x), rtol=1e-5, atol=1e-9)
+            assert_allclose(dfdy, be.array(fd_y), rtol=1e-5, atol=1e-9)
+
+    def test_default_is_cartesian(self, set_test_backend):
+        geom = self._build()
+        assert geom._use_cartesian_normal is True
+
+    def test_cartesian_switch_dispatches(self, set_test_backend):
+        geom = self._build()
+        x = be.array([0.5, 1.2, -0.4])
+        y = be.array([0.3, -0.8, 1.0])
+        # Default is Cartesian — dispatch must match the explicit call.
+        default = geom._surface_normal_analytical(x, y)
+        cart = geom._surface_normal_analytical_cartesian(x, y)
+        assert_allclose(default[0], cart[0])
+        assert_allclose(default[1], cart[1])
+
+        # Toggling off must route through the legacy polar path, which
+        # away from origin agrees with Cartesian.
+        geom._use_cartesian_normal = False
+        try:
+            polar = geom._surface_normal_analytical(x, y)
+        finally:
+            geom._use_cartesian_normal = True
+        assert_allclose(cart[0], polar[0], rtol=1e-8, atol=1e-10)
+        assert_allclose(cart[1], polar[1], rtol=1e-8, atol=1e-10)
+
+    def test_cartesian_handles_asymmetric_families(self, set_test_backend):
+        from optiland.coordinate_system import CoordinateSystem
+        from optiland.geometries import ForbesQ2dGeometry, ForbesSurfaceConfig
+
+        # Only cosine-m=2 and only sine-m=3 families — exercises the
+        # asymmetric a-only / b-only family path inside the Cartesian
+        # evaluator.
+        cfg = ForbesSurfaceConfig(
+            radius=25.0,
+            conic=0.0,
+            terms={
+                ("a", 2, 0): 2.0e-4,
+                ("a", 2, 1): -1.0e-4,
+                ("b", 3, 0): 1.0e-4,
+            },
+            norm_radius=8.0,
+        )
+        geom = ForbesQ2dGeometry(CoordinateSystem(), cfg)
+
+        # The Cartesian helper must run without IndexError on the
+        # asymmetric per-m families.
+        x = be.array([0.3, 1.5, -2.0, 0.0])
+        y = be.array([0.4, -0.5, 1.2, 0.0])
+        dfdx, dfdy = geom._surface_normal_analytical_cartesian(x, y)
+        assert np.all(np.isfinite(be.to_numpy(dfdx)))
+        assert np.all(np.isfinite(be.to_numpy(dfdy)))
+
+        # Away from origin, Cartesian must match polar.
+        x_off = be.array([0.3, 1.5, -2.0])
+        y_off = be.array([0.4, -0.5, 1.2])
+        polar = geom._surface_normal_analytical(x_off, y_off)
+        cart = geom._surface_normal_analytical_cartesian(x_off, y_off)
+        assert_allclose(cart[0], polar[0], rtol=1e-8, atol=1e-10)
+        assert_allclose(cart[1], polar[1], rtol=1e-8, atol=1e-10)
+
+
+class TestForbesQ2dCartesianTorchAutograd:
+    """The Cartesian normal must remain autograd-differentiable through
+    both Q coefficients and (x, y), even at the exact origin where the
+    polar path produces NaN gradients."""
+
+    def test_autograd_origin_finite_gradients(self, set_test_backend):
+        if be.get_backend() != "torch":
+            pytest.skip("autograd path is torch-only")
+
+        import torch
+
+        from optiland.coordinate_system import CoordinateSystem
+        from optiland.geometries import ForbesQ2dGeometry, ForbesSurfaceConfig
+
+        cfg = ForbesSurfaceConfig(
+            radius=25.0,
+            conic=-0.3,
+            terms={
+                ("a", 0, 0): 1.0e-3,
+                ("a", 1, 0): 2.0e-4,
+                ("b", 1, 0): 1.5e-4,
+                ("a", 2, 0): 3.0e-5,
+            },
+            norm_radius=8.0,
+        )
+        geom = ForbesQ2dGeometry(CoordinateSystem(), cfg)
+
+        x = torch.tensor(0.0, dtype=torch.float64, requires_grad=True)
+        y = torch.tensor(0.0, dtype=torch.float64, requires_grad=True)
+        dfdx, dfdy = geom._surface_normal_analytical_cartesian(x, y)
+        # The Cartesian derivatives at origin should themselves be finite.
+        assert torch.isfinite(dfdx).all()
+        assert torch.isfinite(dfdy).all()
+        # And backpropagating through them should not produce NaN.
+        (dfdx + dfdy).backward()
+        assert torch.isfinite(x.grad).all()
+        assert torch.isfinite(y.grad).all()
+
+
+# Mark Q2D regression tests on numpy backend — torch import not available
+# in some local environments; parametrized backend fixture covers both.
 pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")

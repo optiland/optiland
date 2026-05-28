@@ -34,6 +34,7 @@ from optiland.coordinate_system import CoordinateSystem
 from optiland.geometries.newton_raphson import NewtonRaphsonGeometry
 
 from .qpoly import (
+    _q2d_cartesian_eval,
     clenshaw_q2d,
     clenshaw_qbfs,
     compute_z_q2d,
@@ -444,6 +445,17 @@ class ForbesQNormalSlopeGeometry(ForbesGeometryBase):
 
 
 class ForbesQ2dGeometry(ForbesGeometryBase):
+    # Default surface-normal path: direct-Cartesian (harmonic powers).
+    # Regular at the origin with finite autograd gradients — the legacy
+    # polar path's `1/r` artefact produced NaN gradients at the vertex.
+    # The polar path with its `_surface_normal_analytical_vertex`
+    # `where`-blend remains available as a fallback by setting
+    # ``_use_cartesian_normal = False`` per-instance; it is kept for
+    # one release as a safety net per the PR-series guidance, and may
+    # be removed in a follow-up once Cartesian has bedded in. See
+    # issue #617.
+    _use_cartesian_normal: bool = True
+
     r"""Forbes Q2D freeform surface.
 
     The Q2D surface is defined by a departure $\delta(u, \theta)$ from a base conic:
@@ -609,9 +621,64 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
             df_dy_vertex = sum_b1 / self.norm_radius
         return df_dx_vertex, df_dy_vertex
 
+    def _surface_normal_analytical_cartesian(self, x_in, y_in):
+        """Direct-Cartesian surface-derivative path for ``ForbesQ2dGeometry``.
+
+        Uses :func:`_q2d_cartesian_eval` (harmonic powers + per-m radial
+        Clenshaw) to obtain the dimensionless polynomial value and its
+        Cartesian derivatives without ever forming a ``1/r`` factor. The
+        base conic sag and conic-correction factor terms still go through
+        the existing rotationally-symmetric helpers; their chain rule
+        from polar to Cartesian uses a safe ``rho`` because
+        ``dconic/drho`` and ``dbase/drho`` both vanish at least linearly
+        at the axis, so the limit is finite and the safe-division
+        artifact is bounded.
+
+        Returns:
+            tuple: ``(df_dx, df_dy)``.
+        """
+        r2 = x_in**2 + y_in**2
+        # Use the regularized rho everywhere so the gradient through
+        # sqrt(r2) is finite at the origin (autograd-safe path).
+        rho_safe = be.sqrt(r2 + _EPSILON**2)
+        r2_safe = rho_safe**2
+        X = x_in / self.norm_radius
+        Y = y_in / self.norm_radius
+        u2 = X * X + Y * Y
+
+        P, dP_dX, dP_dY = _q2d_cartesian_eval(
+            X, Y, self.cm0_coeffs, self.ams_coeffs, self.bms_coeffs
+        )
+        # Convert dP/dX, dP/dY (w.r.t. normalized coords) to physical.
+        dP_dx = dP_dX / self.norm_radius
+        dP_dy = dP_dY / self.norm_radius
+
+        conic_factor, dconic_d_rho = self._conic_correction_factor(r2_safe)
+        cos_t = x_in / rho_safe
+        sin_t = y_in / rho_safe
+        dconic_dx = dconic_d_rho * cos_t
+        dconic_dy = dconic_d_rho * sin_t
+
+        # Departure derivative inside the unit disk (clipped to zero outside).
+        d_dep_dx = dconic_dx * P + conic_factor * dP_dx
+        d_dep_dy = dconic_dy * P + conic_factor * dP_dy
+        d_dep_dx = be.where(u2 > 1, 0.0, d_dep_dx)
+        d_dep_dy = be.where(u2 > 1, 0.0, d_dep_dy)
+
+        d_base_dr = self._base_sag_derivative(rho_safe, r2_safe)
+        d_base_dx = d_base_dr * cos_t
+        d_base_dy = d_base_dr * sin_t
+
+        return d_base_dx + d_dep_dx, d_base_dy + d_dep_dy
+
     def _surface_normal_analytical(self, x_in, y_in):
         """
         Computes the analytical surface derivatives for the numpy backend.
+
+        Dispatches to the direct-Cartesian harmonic-powers path when
+        ``_use_cartesian_normal`` is set (regular at the origin); the
+        default polar path with explicit vertex ``where``-blend is
+        otherwise used. See class-level docstring on the switch.
 
         This method is fully vectorized and uses a `where` clause to combine
         the stable vertex calculation with the general non-vertex calculation.
@@ -624,6 +691,9 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
             tuple[float or array_like, float or array_like]: The analytical surface
                                                 derivatives for the numpy backend.
         """
+        if self._use_cartesian_normal:
+            return self._surface_normal_analytical_cartesian(x_in, y_in)
+
         df_dx_vertex, df_dy_vertex = self._surface_normal_analytical_vertex()
 
         r2 = x_in**2 + y_in**2
