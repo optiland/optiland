@@ -92,9 +92,7 @@ def test_add_perturbation(setup_tolerancing, set_test_backend):
     assert added_perturbation.optic == optic
     assert added_perturbation.type == variable_type
     # Check that adding the perturbation definition doesn't apply it yet
-    assert_allclose(
-        optic.surfaces[surface_number].geometry.radius, original_radius
-    )
+    assert_allclose(optic.surfaces[surface_number].geometry.radius, original_radius)
 
 
 def test_add_compensator(setup_tolerancing, set_test_backend):

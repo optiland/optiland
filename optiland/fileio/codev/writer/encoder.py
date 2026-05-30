@@ -106,7 +106,7 @@ class CodeVFileEncoder:
         data = wl_data.get("data", [])
         if not data:
             return
-        # Convert µm → nm
+        # Convert µm -> nm
         nm_values = [v * 1000.0 for v in data]
         lines.append("WL " + _fmt_list(nm_values))
 

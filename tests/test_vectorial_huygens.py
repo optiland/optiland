@@ -190,9 +190,7 @@ def test_vectorial_strehl_matches_scalar_on_axis(generic_optic, set_test_backend
         image_size=64,
     )
 
-    assert_allclose(
-        psf_vectorial.strehl_ratio(), psf_scalar.strehl_ratio(), atol=0.01
-    )
+    assert_allclose(psf_vectorial.strehl_ratio(), psf_scalar.strehl_ratio(), atol=0.01)
 
 
 # ---------------------------------------------------------------------------

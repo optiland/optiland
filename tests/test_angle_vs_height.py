@@ -1,4 +1,5 @@
 """Tests for the Incident Angle vs. Height Plot Analysis module."""
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -138,7 +139,9 @@ class TestFieldIncidentAngleVsHeight:
         assert analysis.optic is cooke_triplet
         assert analysis.surface_idx == -1
         assert analysis.axis == 1
-        assert [wp.value for wp in analysis.wavelengths] == [cooke_triplet.primary_wavelength]
+        assert [wp.value for wp in analysis.wavelengths] == [
+            cooke_triplet.primary_wavelength
+        ]
         assert analysis.pupil == (0.0, 0.0)
         assert analysis.num_points == 128
 

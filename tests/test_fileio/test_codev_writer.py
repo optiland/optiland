@@ -13,21 +13,17 @@ import pytest
 
 from optiland.fileio import load_codev_file, save_codev_file
 from optiland.fileio.codev.model import CodeVDataModel
-from optiland.fileio.codev.reader.converter import CodeVToOpticConverter
 from optiland.fileio.codev.writer.encoder import CodeVFileEncoder
 from optiland.fileio.codev.writer.exporter import CodeVWriter
 from optiland.fileio.codev.writer.formatter import OpticToCodeVConverter
 from optiland.optic import Optic
-
 from tests.utils import assert_allclose
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-_DIR = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "codev_files"
-)
+_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "codev_files")
 
 
 def _seq(name: str) -> str:
@@ -41,8 +37,11 @@ def _make_singlet() -> Optic:
     optic = Optic()
     optic.surfaces.add(index=0, thickness=1e10)
     optic.surfaces.add(
-        index=1, radius=50.0, thickness=5.0,
-        material=Material("N-BK7", "schott"), is_stop=True,
+        index=1,
+        radius=50.0,
+        thickness=5.0,
+        material=Material("N-BK7", "schott"),
+        is_stop=True,
     )
     optic.surfaces.add(index=2, radius=-50.0, thickness=45.0)
     optic.surfaces.add(index=3)
@@ -102,10 +101,7 @@ class TestOpticToCodeVConverter:
         optic = _make_singlet()
         model = OpticToCodeVConverter(optic).convert()
         # Find the surface with glass
-        glass_surfs = [
-            s for s in model.surfaces.values()
-            if s.get("glass") is not None
-        ]
+        glass_surfs = [s for s in model.surfaces.values() if s.get("glass") is not None]
         assert len(glass_surfs) >= 1
         glass = glass_surfs[0]["glass"]
         assert "name" in glass
@@ -211,7 +207,9 @@ class TestCodeVFileEncoder:
         model = OpticToCodeVConverter(optic).convert()
         lines = CodeVFileEncoder(model).encode()
         # Fictitious glass is written as Nd:Vd on the surface line
-        s_lines = [l for l in lines if l.strip().startswith("S ") or l.startswith("S  ")]
+        s_lines = [
+            l for l in lines if l.strip().startswith("S ") or l.startswith("S  ")
+        ]
         assert any(":" in line for line in s_lines)
 
 
@@ -293,9 +291,7 @@ class TestRoundTrip:
 
     def test_roundtrip_aperture_value(self):
         o1, o2 = self._round_trip("cooke_triplet.seq")
-        assert_allclose(
-            float(o1.aperture.value), float(o2.aperture.value), rtol=1e-5
-        )
+        assert_allclose(float(o1.aperture.value), float(o2.aperture.value), rtol=1e-5)
 
     def test_roundtrip_surface_count(self):
         o1, o2 = self._round_trip("cooke_triplet.seq")
@@ -307,18 +303,18 @@ class TestRoundTrip:
 
     def test_roundtrip_fno(self):
         o1, o2 = self._round_trip("fno_fields.seq")
-        assert_allclose(
-            float(o1.aperture.value), float(o2.aperture.value), rtol=1e-4
-        )
+        assert_allclose(float(o1.aperture.value), float(o2.aperture.value), rtol=1e-4)
 
 
 # ---------------------------------------------------------------------------
 # OpticToCodeVConverter Extended
 # ---------------------------------------------------------------------------
 
+
 class TestOpticToCodeVConverterExtended:
     def test_convert_aperture_codev(self):
         from optiland.aperture import ImageFNOAperture
+
         optic = Optic()
         optic.aperture = ImageFNOAperture(4.0)
         conv = OpticToCodeVConverter(optic)
@@ -327,9 +323,11 @@ class TestOpticToCodeVConverterExtended:
 
     def test_warn_unknown_aperture_codev(self):
         optic = Optic()
+
         class UnknownAp:
             ap_type = "unknown"
             value = 0.0
+
         optic.aperture = UnknownAp()
         optic.surfaces.add(index=0, thickness=0.0)
         conv = OpticToCodeVConverter(optic)
@@ -344,10 +342,13 @@ class TestOpticToCodeVConverterExtended:
 
     def test_glass_fictitious_codev(self):
         from optiland.materials import IdealMaterial
+
         optic = Optic()
         # Add 3 surfaces: Obj, Real, Img
         optic.surfaces.add(index=0, thickness=0.0)
-        optic.surfaces.add(index=1, radius=50.0, thickness=5.0, material=IdealMaterial(1.7))
+        optic.surfaces.add(
+            index=1, radius=50.0, thickness=5.0, material=IdealMaterial(1.7)
+        )
         optic.surfaces.add(index=2, thickness=0.0)
         optic.add_wavelength(0.5876, is_primary=True)
         conv = OpticToCodeVConverter(optic)

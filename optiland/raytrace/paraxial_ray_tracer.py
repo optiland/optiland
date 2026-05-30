@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 import optiland.backend as be
 from optiland.rays.paraxial_rays import ParaxialRays
+from optiland.raytrace.base import BaseRayTracer
 from optiland.surfaces import ObjectSurface
 
 if TYPE_CHECKING:
@@ -19,7 +20,7 @@ if TYPE_CHECKING:
     from optiland.optic import Optic
 
 
-class ParaxialRayTracer:
+class ParaxialRayTracer(BaseRayTracer):
     """Class to trace paraxial rays through an optical system"""
 
     def __init__(self, optic: Optic):
@@ -28,7 +29,7 @@ class ParaxialRayTracer:
         Args:
             optic: The optical system to be traced.
         """
-        self.optic = optic
+        super().__init__(optic)
 
     def trace(self, Hy: ScalarOrArray, Py: ScalarOrArray, wavelength: ScalarOrArray):
         """Trace paraxial ray through the optical system based on specified field
@@ -50,7 +51,11 @@ class ParaxialRayTracer:
         y0, z0 = self.optic.fields.field_definition.get_paraxial_object_position(
             self.optic, Hy, y1, EPL
         )
-        u0 = (y1 - y0) / (EPL - z0)
+        # z0 is a global z (object frame); use the global entrance-pupil z so
+        # both terms share a frame. EPL above stays relative — that is what
+        # get_paraxial_object_position expects.
+        epl_global = self.optic.paraxial.entrance_pupil_z()
+        u0 = (y1 - y0) / (epl_global - z0)
         rays = ParaxialRays(y0, u0, z0, wavelength)
 
         self.optic.surfaces.trace(rays)

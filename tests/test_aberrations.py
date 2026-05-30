@@ -259,3 +259,40 @@ class TestSimpleSinglet:
 
         # Other Seidel coefficients are expected to be zero for on-axis field
         assert_allclose(S[1:], [0, 0, 0, 0], atol=1e-8)
+
+
+class TestReflectiveSystemSeidels:
+    """Regression test for upstream issue #347.
+
+    For systems containing mirrors, the post-mirror refractive index must be
+    treated as sign-flipped (Welford / Smith convention). Without this, every
+    `(n[k] - n[k-1])` term in the Seidel formulas evaluates to zero across
+    reflective surfaces, collapsing the first four Seidel sums to zero — even
+    though mirrors do contribute aberrations.
+
+    This also captures the addition of the conic constants to the Seidel
+    aberrations via the `_get_conic_term` method.
+
+    These values were compared to analytical solution derived by hand. Comparison
+    to ZOS shows a sign difference (expected due to convention) and small
+    deviation for spherical only. This is likely due to numerical methods used
+    in ZOS, but further investigation required to confirm this.
+
+    TODO: Add another test using a system with larger aberrations. Consider
+    adding an objective test using an independent ray tracer.
+    """
+
+    def test_hubble_seidels_are_not_all_zero(self, set_test_backend):
+        from optiland.samples.telescopes import HubbleTelescope
+
+        S = HubbleTelescope().aberrations.seidels()
+        assert_allclose(
+            S,
+            [
+                -2.80642537e-06,
+                3.37323248e-04,
+                -1.45177194e-03,
+                -1.28411858e-02,
+                7.59541065e-04,
+            ],
+        )

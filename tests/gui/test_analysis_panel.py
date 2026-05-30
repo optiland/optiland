@@ -137,8 +137,8 @@ class TestAnalysisErrorsUseToast:
 
     def test_validation_uses_toast_for_empty_system(self, qapp):
         """System with no surfaces should trigger a toast, not a dialog."""
-        from optiland_gui.analysis_panel import AnalysisPanel
         from optiland.optic import Optic
+        from optiland_gui.analysis_panel import AnalysisPanel
 
         empty_optic = Optic()
         conn = MagicMock()

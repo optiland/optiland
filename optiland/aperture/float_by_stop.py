@@ -77,10 +77,10 @@ class FloatByStopAperture(BaseSystemAperture):
             return self._value / y[stop_index]
         else:
             obj_z = paraxial.optic.object_surface.geometry.cs.z
-            epl = paraxial.EPL()
+            epl_global = paraxial.entrance_pupil_z()
             y, _ = paraxial.trace_generic(0.0, 0.1, obj_z, wavelength)
             u0 = 0.1 * self._value / y[stop_index]
-            return u0 * (epl - obj_z)
+            return u0 * (epl_global - obj_z)
 
     def scale(self, factor: float) -> FloatByStopAperture:
         """Return a new :class:`FloatByStopAperture` with value scaled by *factor*.

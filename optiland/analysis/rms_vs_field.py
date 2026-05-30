@@ -58,6 +58,8 @@ class RmsSpotSizeVsField(SpotDiagram):
         self,
         fig_to_plot_on: Figure | None = None,
         figsize: tuple[float, float] = (7, 4.5),
+        *,
+        show: bool = True,
     ) -> tuple[Figure, Axes]:
         """
         Plots the RMS spot size versus the normalized Y field coordinate for each
@@ -72,6 +74,8 @@ class RmsSpotSizeVsField(SpotDiagram):
         figsize : tuple of float, optional
             Size of the figure to create if `fig_to_plot_on` is None.
             Default is (7, 4.5).
+        show : bool, optional
+            If True (default), calls plt.show(). Set False for headless use.
 
         Returns
         -------
@@ -115,6 +119,8 @@ class RmsSpotSizeVsField(SpotDiagram):
 
         if is_gui_embedding and hasattr(current_fig, "canvas"):
             current_fig.canvas.draw_idle()
+        if show and not is_gui_embedding:
+            plt.show()
         return current_fig, ax
 
 
@@ -153,6 +159,8 @@ class RmsWavefrontErrorVsField(Wavefront):
         self,
         fig_to_plot_on: Figure | None = None,
         figsize: tuple[float, float] = (7, 4.5),
+        *,
+        show: bool = True,
     ) -> tuple[Figure, Axes]:
         """View the RMS wavefront error versus field coordinate."""
         is_gui_embedding = fig_to_plot_on is not None
@@ -184,6 +192,8 @@ class RmsWavefrontErrorVsField(Wavefront):
 
         if is_gui_embedding and hasattr(current_fig, "canvas"):
             current_fig.canvas.draw_idle()
+        if show and not is_gui_embedding:
+            plt.show()
         return current_fig, ax
 
     def _rms_wavefront_error(self):

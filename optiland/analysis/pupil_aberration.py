@@ -66,6 +66,8 @@ class PupilAberration(BaseAnalysis):
         self,
         fig_to_plot_on: Figure | None = None,
         figsize: tuple[float, float] = (10, 3.33),
+        *,
+        show: bool = True,
     ) -> tuple[Figure, NDArray[np.object_]]:
         """
         Displays the pupil aberration plots for each field and wavelength.
@@ -77,6 +79,8 @@ class PupilAberration(BaseAnalysis):
         figsize : tuple of float, optional
             Size of the figure in inches as (width, height). Used only if a new
             Figure is created.
+        show : bool, optional
+            If True (default), calls plt.show(). Set False for headless use.
 
         Returns
         -------
@@ -175,6 +179,8 @@ class PupilAberration(BaseAnalysis):
         current_fig.tight_layout()
         if is_gui_embedding and hasattr(current_fig, "canvas"):
             current_fig.canvas.draw_idle()
+        if show and not is_gui_embedding:
+            plt.show()
         return current_fig, axs
 
     def _generate_data(self) -> dict[str, Any]:

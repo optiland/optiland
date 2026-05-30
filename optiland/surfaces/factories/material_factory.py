@@ -11,6 +11,7 @@ Kramer Harrison, 2025
 from __future__ import annotations
 
 from optiland.materials import BaseMaterial, IdealMaterial, Material
+from optiland.materials.material_spec import MaterialSpec
 
 
 class MaterialFactory:
@@ -28,7 +29,8 @@ class MaterialFactory:
 
         Args:
             index (int): The index of the surface within the surface group.
-            material_spec (BaseMaterial | tuple | str): The material specification.
+            material_spec (BaseMaterial | MaterialSpec | tuple | str | dict):
+                The material specification.
             surface_group (SurfaceGroup): The surface group containing the surfaces.
 
         Returns:
@@ -60,12 +62,17 @@ class MaterialFactory:
         """Creates a post-surface material instance based on the given specification.
 
         Args:
-            material_spec (BaseMaterial | tuple | str): The material specification.
-                - If an instance of `BaseMaterial`, it is returned as-is.
-                - If a tuple, it is expected to contain (name, reference) and will
-                  be used to create a `Material` instance.
-                - If a string, it is interpreted as a material name, with special
-                  handling for 'air' and 'mirror'.
+            material_spec (BaseMaterial | MaterialSpec | tuple | str | dict):
+                The material specification.
+                - ``BaseMaterial`` instance: used directly.
+                - ``MaterialSpec`` dataclass: resolved via ``spec.to_material()``.
+                - ``dict``: deserialized via ``MaterialSpec.from_dict``.
+                - 2-tuple ``(name, reference)``: creates a ``Material``.
+                - 3-tuple ``(name, reference, catalog)``: creates a ``Material``
+                  with the given catalog.
+                - ``str`` ``"air"``: returns ``IdealMaterial(1.0, 0.0)``.
+                - ``str`` ``"mirror"``: returns ``None`` (handled upstream).
+                - ``str`` other: creates ``Material(name)``.
 
         Returns:
             BaseMaterial: The created material instance.
@@ -76,8 +83,24 @@ class MaterialFactory:
         if isinstance(material_spec, BaseMaterial):
             return material_spec
 
+        if isinstance(material_spec, MaterialSpec):
+            return material_spec.to_material()
+
+        if isinstance(material_spec, dict):
+            return MaterialSpec.from_dict(material_spec).to_material()
+
         if isinstance(material_spec, tuple):
-            return Material(name=material_spec[0], reference=material_spec[1])
+            if len(material_spec) == 2:
+                return Material(name=material_spec[0], reference=material_spec[1])
+            if len(material_spec) == 3:
+                return Material(
+                    name=material_spec[0],
+                    reference=material_spec[1],
+                    catalog=material_spec[2],
+                )
+            raise ValueError(
+                f"Material tuple must have 2 or 3 elements, got {len(material_spec)}"
+            )
 
         if isinstance(material_spec, str):
             if material_spec.lower() == "air":

@@ -72,6 +72,8 @@ class YYbar(BaseAnalysis):
         self,
         fig_to_plot_on: Figure | None = None,
         figsize: tuple[float, float] = (7, 5.5),
+        *,
+        show: bool = True,
     ) -> tuple[Figure, Axes]:
         """Visualize the Y Y-bar diagram.
 
@@ -79,6 +81,8 @@ class YYbar(BaseAnalysis):
             fig_to_plot_on (plt.Figure, optional): Existing figure to plot on.
                 Creates a new figure if None.
             figsize (tuple, optional): Figure size if creating a new figure.
+            show (bool): If True (default), calls plt.show(). Set False for
+                headless use.
 
         Returns:
             tuple: Matplotlib Figure and Axes objects.
@@ -91,6 +95,8 @@ class YYbar(BaseAnalysis):
 
         self._plot_diagram(ax)
         self._finalize_plot(fig, ax, is_embedding)
+        if show and not is_embedding:
+            plt.show()
         return fig, ax
 
     def _has_valid_data(self) -> bool:

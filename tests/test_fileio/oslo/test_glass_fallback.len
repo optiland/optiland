@@ -1,0 +1,37 @@
+// OSLO 5.00 0 0 0
+// Tests glass names that need fallback to the built-in catalog (SF18, LAKN6)
+// and manufacturer prefix stripping (H_LAF2).
+LEN NEW "glass_fallback_test" 10.0 5
+EBR  2.0
+ANG  5.0
+DES  ""
+UNI  1.0
+AIR
+TH   1.0e+10
+AP  8.748866e+08
+NXT
+GLA LAKN6
+RD   100.0
+TH   5.0
+AP  2.0
+NXT
+GLA SF18
+RD   -80.0
+TH   2.0
+AP  2.0
+NXT
+AIR
+RD   -200.0
+TH   1.0
+AP  2.0
+NXT
+GLA H_LAF2
+RD   60.0
+TH   4.0
+AP  2.0
+NXT
+AIR
+TH   0.0
+WV 0.58756 0.48613 0.65627
+WW 1.0 1.0 1.0
+END  5

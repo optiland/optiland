@@ -5,6 +5,7 @@ instances can be serialized to a dictionary and deserialized back into
 fully functional objects, including the correct resolution of all
 internal dependencies.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -32,7 +33,10 @@ grin_material.propagation_model = GRINPropagation()
 case_ideal_grin = (grin_material, GRINPropagation)
 
 # Case 3: AbbeMaterial with the default HomogeneousPropagation model.
-case_abbe_default = (AbbeMaterial(n=1.5168, abbe=64.17, model="polynomial"), HomogeneousPropagation)
+case_abbe_default = (
+    AbbeMaterial(n=1.5168, abbe=64.17, model="polynomial"),
+    HomogeneousPropagation,
+)
 
 
 # --- Helper Function for File-Based Materials ---

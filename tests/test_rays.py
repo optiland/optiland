@@ -17,8 +17,16 @@ from optiland.samples.objectives import TessarLens
 from tests.utils import assert_allclose
 
 
+class _ConcreteRays(BaseRays):
+    def trace_on_surface(self, surface):
+        pass
+
+    def record_on_surface(self, surface):
+        pass
+
+
 def test_translate(set_test_backend):
-    rays = BaseRays()
+    rays = _ConcreteRays()
     rays.x = 1.0
     rays.y = 2.0
     rays.z = 3.0

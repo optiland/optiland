@@ -1,4 +1,5 @@
 """Tests for GridSagVariable"""
+
 from __future__ import annotations
 
 import pytest
@@ -10,6 +11,12 @@ from optiland.materials.ideal import IdealMaterial
 from optiland.optic import Optic
 from optiland.optimization.variable.grid_sag import GridSagVariable
 from optiland.surfaces.standard_surface import Surface
+
+
+@pytest.fixture(autouse=True)
+def _reset_backend():
+    yield
+    be.set_backend("numpy")
 
 
 @pytest.fixture
@@ -42,9 +49,7 @@ def test_grid_sag_variable_update_value(grid_sag_optic):
     variable = GridSagVariable(grid_sag_optic, 0)
     new_sag = be.asarray([[1, 1, 1], [1, 0, 1], [1, 1, 1]])
     variable.update_value(new_sag)
-    assert be.allclose(
-        grid_sag_optic.surfaces[0].geometry.sag_grid, new_sag
-    )
+    assert be.allclose(grid_sag_optic.surfaces[0].geometry.sag_grid, new_sag)
 
 
 @pytest.mark.parametrize("backend", be.list_available_backends())
@@ -52,7 +57,6 @@ def test_grid_sag_variable_torch_backend(backend, grid_sag_optic):
     """Test GridSagVariable with the PyTorch backend."""
     be.set_backend(backend)
     if be.get_backend() == "torch":
-
         variable = GridSagVariable(grid_sag_optic, 0)
         original_sag = variable.get_value()
 

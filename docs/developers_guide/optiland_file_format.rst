@@ -21,7 +21,7 @@ Key Features
   - Aperture
   - Surface groups, including all surfaces and their respective properties
   - Pickups and solves
-- **Interoperability**: Optiland files can be generated from, as well as written to, Zemax `.zmx` and CODE V `.seq` files, enabling easy migration of designs into Optiland.
+- **Interoperability**: Optiland files can be generated from, as well as written to, Zemax `.zmx`, CODE V `.seq`, and OSLO `.len` files, enabling easy migration of designs into Optiland.
 - **Extensible**: Additional properties or components can be serialized without altering the core structure, allowing the format to evolve alongside Optiland.
 
 Core Functionality
@@ -61,17 +61,18 @@ Example Workflow
 
    optic = load_optiland_file("example_design.json")
 
-Interoperability with Zemax and CODE V
+Interoperability with Zemax, CODE V and OSLO
 -----------------------------------
 
-Optiland can generate its file format from Zemax `.zmx` and CODE V `.seq` files. This feature simplifies transitioning optical
+Optiland can generate its file format from Zemax `.zmx`, CODE V `.seq`, and OSLO `.len` files. This feature simplifies transitioning optical
 designs from these platforms to Optiland, preserving the integrity of system properties. 
 
 .. IMPORTANT::
-   Not all Zemax or CODE V features are supported in the Optiland file format (e.g., specific geometry types or complex 
-   field definitions). However, core optical properties are maintained during conversion. If you experience any 
-   unexpected issues during the conversion process, please kindly report them by opening a new issue on the 
-   `Optiland GitHub repository <https://github.com/optiland/optiland>`_.
+   Tracking the file formats of commercial optical design tools (Zemax, CODE V, OSLO) is a non-trivial task as these formats 
+   are not always publicly documented and are subject to change. While we strive to maintain high fidelity during 
+   import and export, users may occasionally encounter functional limitations or minor bugs. We strongly encourage 
+   the community to report any issues or submit pull requests on our `GitHub repository <https://github.com/optiland/optiland>`_ 
+   to help improve these modules collectively.
 
 Future Extensions
 -----------------

@@ -25,9 +25,9 @@ def create_simple_lens(infinite=True):
     optic.wavelengths.add(0.55)
 
     if infinite:
-        optic.object_surface.geometry.cs.z = -float("inf")
+        optic.object_surface.geometry.cs.z = be.array(-float("inf"))
     else:
-        optic.object_surface.geometry.cs.z = -200.0
+        optic.object_surface.geometry.cs.z = be.array(-200.0)
 
     optic.fields.set_type("real_image_height")
     optic.fields.add(y=5.0, x=0.0)  # Sets max_field to 5.0

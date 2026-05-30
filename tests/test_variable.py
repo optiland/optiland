@@ -619,9 +619,7 @@ class TestForbesQ2dCoeffVariable:
         forbes_var_new.update_value(0.9)
         assert_allclose(forbes_var_new.get_value(), 0.9)
         assert key in self.optic.surfaces[1].geometry.freeform_coeffs
-        assert_allclose(
-            self.optic.surfaces[1].geometry.freeform_coeffs[key], 0.9
-        )
+        assert_allclose(self.optic.surfaces[1].geometry.freeform_coeffs[key], 0.9)
 
     def test_string_representation(self, set_test_backend):
         assert str(self.forbes_var) == "Forbes Q-2D Coeff (n=2, m=2, cos), Surface 1"

@@ -86,9 +86,9 @@ class BuchdahlModel(AbbeModel):
 
     ALPHA = 2.5
 
-    def __init__(self, index: float, abbe: float):
-        self.index = float(index)
-        self.abbe = float(abbe)
+    def __init__(self, index, abbe):
+        self.index = be.array([index])
+        self.abbe = be.array([abbe])
         self.v1, self.v2, self.v3 = self._calculate_buchdahl_coefficients()
 
     @property

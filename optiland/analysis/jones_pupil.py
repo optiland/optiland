@@ -66,6 +66,8 @@ class JonesPupil(BaseAnalysis):
         self,
         fig_to_plot_on: Figure | None = None,
         figsize: tuple[float, float] = (16, 8),
+        *,
+        show: bool = True,
     ) -> tuple[Figure, list[Axes]]:
         """Displays the Jones pupil plots.
 
@@ -73,6 +75,8 @@ class JonesPupil(BaseAnalysis):
             fig_to_plot_on: An existing Matplotlib figure to plot on. If None,
                 a new figure is created. Defaults to None.
             figsize: The figure size for the output window. Defaults to (16, 8).
+            show (bool): If True (default), calls plt.show(). Set False for
+                headless use.
 
         Returns:
             A tuple containing the Matplotlib figure and a list of its axes.
@@ -140,6 +144,9 @@ class JonesPupil(BaseAnalysis):
         fig.suptitle(f"Jones Pupil - Field: {field_val}, Wavelength: {wl_val:.4f} µm")
         fig.tight_layout()
 
+        is_gui_embedding = fig_to_plot_on is not None
+        if show and not is_gui_embedding:
+            plt.show()
         return fig, fig.get_axes()
 
     def _generate_data(self):
