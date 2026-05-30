@@ -29,11 +29,11 @@ from optiland.materials.base import BaseMaterial
 
 
 class ModelMaterial(BaseMaterial):
-    """6th-order Buchdahl model glass.
+    r"""6th-order Buchdahl model glass.
 
     The refractive index is evaluated as:
 
-        n(lambda) = nd + sum(nu_k * omega**k), k = 1..6
+        n(lambda) = nd + sum(nu_k * omega**k), k=1..6
 
     where:
 
@@ -52,11 +52,15 @@ class ModelMaterial(BaseMaterial):
     are then solved exactly from the F-C, g-F, and reference-wavelength
     equations.
 
+    The reference partial dispersion P_ref is defined as::
+
+        P_ref = (n(lambda_ref) - nd) / ((nd - 1) / vd)
+
     Args:
         nd (float): Refractive index at the d-line, 0.5875618 um.
         vd (float): Abbe number at the d-line.
         dPgF (float): Deviation of relative partial dispersion.
-        P_ref (float | None): Optional relative partial dispersion at
+        P_ref (float | None): Optional reference partial dispersion at
             ``lambda_ref``.
         lambda_ref (float | None): Optional reference wavelength in microns.
     """
@@ -72,7 +76,14 @@ class ModelMaterial(BaseMaterial):
         "Regression_Matrix_IR_Routing.npy",
     )
 
-    def __init__(self, nd: float, vd: float, dPgF: float, P_ref=None, lambda_ref=None):
+    def __init__(
+        self,
+        nd: float,
+        vd: float,
+        dPgF: float,
+        P_ref: float | None = None,
+        lambda_ref: float | None = None,
+    ) -> None:
         super().__init__()
         self.nd = nd
         self.vd = vd
@@ -107,7 +118,7 @@ class ModelMaterial(BaseMaterial):
         omega = be.array(omega)
         n = be.full_like(omega, nd)
         for k, coeff in enumerate(coeffs, start=1):
-            n += coeff * omega**k
+            n = n + coeff * omega**k
 
         return n
 
@@ -160,11 +171,19 @@ class ModelMaterial(BaseMaterial):
         Returns the nonlinear chromatic coordinate omega for the given wavelengths.
         """
         if self.lambda_ref is not None and self.p_ref is not None:
+            # IR-routing optimized runtime-regression alpha;
+            # see docs/Buchdahl_model_material_details/IR_Routing.ipynb
+            # section "Fit And Regression Matrix"
             ALPHA = 1.11016949153
         else:
+            # Visible-routing optimized runtime-regression alpha;
+            # see: docs/Buchdahl_model_material_details/Visible_Routing.ipynb
+            # section "6th-Order Regression-Level Alpha Sweep"
             ALPHA = 1.49152542373
 
         D_LINE = 0.5875618  # Fraunhofer d-line wavelength in microns
+
+        # Convert wavelength to omega using the second equation in the docstring.
         d_wl = wavelength - D_LINE
         omega = d_wl / (1 + ALPHA * d_wl)
         return omega
@@ -174,7 +193,9 @@ class ModelMaterial(BaseMaterial):
         Solve lower-order Buchdahl coefficients from the exact anchors.
 
         In the visible route, ``higher_orders`` contains nu3..nu6 and this method
-        solves nu1..nu2. In the IR route, ``higher_orders`` contains nu4..nu6 and
+        solves nu1..nu2.
+
+        In the IR route, ``higher_orders`` contains nu4..nu6 and
         this method solves nu1..nu3.
 
         Returns:
@@ -184,13 +205,29 @@ class ModelMaterial(BaseMaterial):
         OMEGA_C = self._get_omega(0.6562725)  # Fraunhofer C-line wavelength in microns
         OMEGA_g = self._get_omega(0.4358343)  # Fraunhofer g-line wavelength in microns
 
+        # dn_FC = n_F - n_C = (nd - 1) / vd, definition of Abbe number
         dn_FC = (self.nd - 1.0) / self.vd
+
+        # Pgf is the partial dispersion, and dPgF is its deviation from the normal line.
+        # Please refer to: https://optics.ansys.com/hc/en-us/articles/42661781831571-How-to-use-the-Model-Glass
+        # normal line: Pgf_normal = 0.6438 - 0.001682 * vd is given by Schott:
+        # https://wp.optics.arizona.edu/optomech/wp-content/uploads/sites/53/2016/10/tie-29_refractive_index_v2_us.pdf
         PgF = 0.6438 - 0.001682 * self.vd + self.dPgf
+
+        # Pgf is also represented by: PgF = (n_g - n_F) / (n_F - n_C)
         dn_gF = PgF * dn_FC
+
+        # IR routing:
         if self.lambda_ref is not None and self.p_ref is not None:
             OMEGA_ref = self._get_omega(self.lambda_ref)
+
+            # dn_ref = n(lambda_ref) - nd = P_ref * ((nd - 1) / vd),
+            # see definition of P_ref in the docstring
             dn_ref = self.p_ref * dn_FC
 
+            # Matrix for solving nu1..nu3 from the three exact anchors and the predicted
+            # higher-order coefficients. Please refer to the section "Theory" in the
+            # notebook: Optiland\docs\Buchdahl_model_material_details\IR_Routing.ipynb.
             M = be.array(
                 [
                     [
@@ -217,7 +254,12 @@ class ModelMaterial(BaseMaterial):
 
             rhs = be.array([dn_FC - core_FC, dn_gF - core_gF, dn_ref - core_ref])
             return be.linalg.solve(M, rhs)
+        # Visible routing:
         else:
+            # Similar way as the IR routing to solve nu1..nu2 from the two exact anchors
+            # and the predicted higher-order coefficients. Please refer to the section
+            # "Theory" in the notebook:
+            # Optiland\docs\Buchdahl_model_material_details\Visible_Routing.ipynb.
             M = be.array(
                 [
                     [OMEGA_F - OMEGA_C, OMEGA_F**2 - OMEGA_C**2],
@@ -245,9 +287,13 @@ class ModelMaterial(BaseMaterial):
         """
         feature = self._get_feature_vector()
 
+        # IR routing's nu4..nu6 are predicted from the 35-dimensional regression matrix:
+        # [nu4, nu5, nu6] = feature @ Regression_Matrix_IR_Routing.npy
         if self.lambda_ref is not None and self.p_ref is not None:
             reg_mat = be.load(str(self.REGRESSION_MATRIX))
             return be.matmul(feature, reg_mat)
+        # Visible routing's nu3..nu6 are predicted from the 20-dimensional matrix:
+        # [nu3, nu4, nu5, nu6] = feature @ Regression_Matrix_Visible_Routing.npy
         else:
             reg_mat = be.load(str(self.REGRESSION_MATRIX_VISIBLE))
             return be.matmul(feature, reg_mat)
@@ -277,17 +323,21 @@ class ModelMaterial(BaseMaterial):
         """
 
         nd, vd, dPgF = self.nd, self.vd, self.dPgf
+
+        # IR routing's feature vector is the total-degree <= 3 polynomial basis of nd,
+        # vd, dPgF, and P_ref.
         if self.lambda_ref is not None and self.p_ref is not None:
             x = be.array([nd, vd, dPgF, self.p_ref])
-            feats = be.array([1.0, x[0], x[1], x[2], x[3]])
+            feats = [be.array(1.0), x[0], x[1], x[2], x[3]]
             for i in range(4):
                 for j in range(i, 4):
-                    feats = be.append(feats, x[i] * x[j])
+                    feats.append(x[i] * x[j])
             for i in range(4):
                 for j in range(i, 4):
                     for k in range(j, 4):
-                        feats = be.append(feats, x[i] * x[j] * x[k])
-            return feats
+                        feats.append(x[i] * x[j] * x[k])
+            return be.stack(feats)
+        # Visible routing's feature vector is a fixed 20-elements vector
         else:
             feats = be.array(
                 [
@@ -319,11 +369,11 @@ class ModelMaterial(BaseMaterial):
         """
         Returns the reference partial dispersion P_ref at a given wavelength.
 
-        This is an optional parameter that can be used in the regression model. If not
-        provided, it defaults to zero.
-
         Args:
             wavelength (float): The wavelength at which to evaluate P_ref.
+
+        Returns:
+            float: The reference partial dispersion at the given wavelength.
         """
         n_ref = self._calculate_n(wavelength)
 
