@@ -8,6 +8,14 @@ and perform paraxial and aberration analyses. Instances of the Optic class
 are used as arguments to various analysis, optimization, and visualization
 functions in Optiland.
 
+Optic holds and coordinates:
+  - surfaces (SurfaceGroup)
+  - aperture, fields, wavelengths, polarization, apodization
+  - paraxial analysis (Paraxial)
+  - aberration analysis (Aberrations)
+  - real ray tracing (RealRayTracer)
+  - pickup and solve managers
+
 Kramer Harrison, 2024
 """
 
@@ -78,6 +86,8 @@ class Optic:
         fields (FieldGroup): The group of fields defined for the system.
         wavelengths (WavelengthGroup): The group of wavelengths used for
             analysis.
+        surfaces (SurfaceGroup): The group of surfaces that make up the
+            optical system.
         paraxial (Paraxial): A helper class for paraxial analysis of the
             optical system.
         aberrations (Aberrations): A helper class for analyzing aberrations.

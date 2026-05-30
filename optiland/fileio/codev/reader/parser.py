@@ -19,7 +19,7 @@ from optiland.fileio.codev.model import CodeVDataModel
 from optiland.materials import AbbeMaterial, BaseMaterial, Material
 from optiland.physical_apertures import RadialAperture
 
-# Ordered aspheric coefficient letter keys (4th–20th order)
+# Ordered aspheric coefficient letter keys (4th-20th order)
 _ASPH_KEYS = ("A", "B", "C", "D", "E", "F", "G", "H", "J")
 
 # Tokens that start a surface definition line
@@ -70,7 +70,7 @@ class CodeVDataParser:
         self._global_table: dict[str, Any] = {
             "TITLE": self._read_title,
             "TIT": self._read_title,
-            "INI": lambda t: None,  # designer initials — ignored
+            "INI": lambda t: None,  # designer initials - ignored
             "DIM": self._read_dim,
             "RDM": self._read_rdm,
             "EPD": self._read_epd,
@@ -355,14 +355,14 @@ class CodeVDataParser:
         self.data_model.aperture["NAO"] = float(tokens[1])
 
     def _read_wl(self, tokens: list[str]) -> None:
-        # Wavelengths in nm → convert to µm
+        # Wavelengths in nm -> convert to µm
         self.data_model.wavelengths["data"] = [float(v) / 1000.0 for v in tokens[1:]]
 
     def _read_wtw(self, tokens: list[str]) -> None:
         self.data_model.wavelengths["weights"] = [float(v) for v in tokens[1:]]
 
     def _read_ref(self, tokens: list[str]) -> None:
-        # 1-based → 0-based
+        # 1-based -> 0-based
         self.data_model.wavelengths["primary_index"] = int(tokens[1]) - 1
 
     def _read_field_cmd(self, tokens: list[str]) -> None:
@@ -473,11 +473,11 @@ class CodeVDataParser:
         if ":" in token:
             try:
                 nd_str, vd_str = token.split(":", 1)
-                return AbbeMaterial(float(nd_str), float(vd_str))
+                return AbbeMaterial(float(nd_str), float(vd_str), model="buchdahl")
             except (ValueError, TypeError):
                 pass
 
-        # Legacy NNN.VVV decimal glass code (e.g. 569.631 → Nd=1.569, Vd=63.1)
+        # Legacy NNN.VVV decimal glass code (e.g. 569.631 -> Nd=1.569, Vd=63.1)
         # Also handles extended-precision forms like 517000.520000
         if re.match(r"^\d+\.\d+$", token):
             try:
@@ -485,17 +485,17 @@ class CodeVDataParser:
                 nd = 1.0 + int(int_str[:3]) / 1000.0
                 vd = int(dec_str[:3].ljust(3, "0")) / 10.0
                 if 1.0 < nd < 4.0 and 0.0 < vd < 200.0:
-                    return AbbeMaterial(nd, vd)
+                    return AbbeMaterial(nd, vd, model="buchdahl")
             except (ValueError, IndexError):
                 pass
 
-        # 6-digit glass code: NNN VVV → Nd = 1 + NNN/1000, Vd = VVV/10
-        # e.g. 516800 → Nd=1.516, Vd=80.0
+        # 6-digit glass code: NNN VVV -> Nd = 1 + NNN/1000, Vd = VVV/10
+        # e.g. 516800 -> Nd=1.516, Vd=80.0
         if len(token) == 6 and token.isdigit():
             try:
                 nd = 1.0 + int(token[:3]) / 1000.0
                 vd = int(token[3:]) / 10.0
-                return AbbeMaterial(nd, vd)
+                return AbbeMaterial(nd, vd, model="buchdahl")
             except ValueError:
                 pass
 

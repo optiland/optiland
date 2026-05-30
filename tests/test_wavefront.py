@@ -61,7 +61,9 @@ class TestOPDFan:
         opd_fan = OPDFan(optic)
         assert opd_fan.num_rays == 100
         assert [fp.coord for fp in opd_fan.fields] == optic.fields.get_field_coords()
-        assert [wp.value for wp in opd_fan.wavelengths] == optic.wavelengths.get_wavelengths()
+        assert [
+            wp.value for wp in opd_fan.wavelengths
+        ] == optic.wavelengths.get_wavelengths()
         assert isinstance(opd_fan.distribution, distribution.CrossDistribution)
         arr = be.linspace(-1, 1, opd_fan.num_rays)
         assert be.all(opd_fan.pupil_coord == arr)
@@ -247,50 +249,68 @@ class TestZernikeOPD:
 
 def test_finite_conjugate_angle_field_opd(set_test_backend):
     """
-    Test that OPD for finite conjugate systems with AngleField is correctly 
+    Test that OPD for finite conjugate systems with AngleField is correctly
     calculated without artificial tilt.
 
-    This was added after a bug was found where the OPD was calculated with an 
+    This was added after a bug was found where the OPD was calculated with an
     artificial tilt for finite conjugate systems with AngleField.
     """
     # Create a simple finite conjugate system
     optic = Optic()
-    optic.surfaces.add(index=0, thickness=100.0) # Object to lens
-    optic.surfaces.add(index=1, radius=50.0, thickness=5.0, material='BK7', is_stop=True)
-    optic.surfaces.add(index=2, radius=-50.0, thickness=95.0) # lens to image
-    
-    optic.set_aperture('EPD', 10.0)
+    optic.surfaces.add(index=0, thickness=100.0)  # Object to lens
+    optic.surfaces.add(
+        index=1, radius=50.0, thickness=5.0, material="BK7", is_stop=True
+    )
+    optic.surfaces.add(index=2, radius=-50.0, thickness=95.0)  # lens to image
+
+    optic.set_aperture("EPD", 10.0)
     optic.wavelengths.add(0.55, is_primary=True)
-    
+
     # 1. Set field type to angle
-    optic.fields.set_type('angle')
-    optic.fields.add(y=5.0) # 5 degrees
-    
-    opd_angle = OPD(optic, field=(0, 1), wavelength='primary', num_rays=10, distribution='line_y', remove_tilt=False)
+    optic.fields.set_type("angle")
+    optic.fields.add(y=5.0)  # 5 degrees
+
+    opd_angle = OPD(
+        optic,
+        field=(0, 1),
+        wavelength="primary",
+        num_rays=10,
+        distribution="line_y",
+        remove_tilt=False,
+    )
     data_angle = opd_angle.get_data((0, 1), optic.primary_wavelength)
-    
+
     # 2. Set field type to object height
     # EPL is at surface 1 (z=0). Object is at z=-100.
     EPL = optic.paraxial.EPL()
     obj_z = optic.surfaces.positions[0].item()
     dist = EPL - obj_z
     h_obj = dist * be.tan(be.radians(5.0))
-    
+
     optic2 = Optic()
     optic2.surfaces.add(index=0, thickness=100.0)
-    optic2.surfaces.add(index=1, radius=50.0, thickness=5.0, material='BK7', is_stop=True)
+    optic2.surfaces.add(
+        index=1, radius=50.0, thickness=5.0, material="BK7", is_stop=True
+    )
     optic2.surfaces.add(index=2, radius=-50.0, thickness=95.0)
-    optic2.set_aperture('EPD', 10.0)
+    optic2.set_aperture("EPD", 10.0)
     optic2.wavelengths.add(0.55, is_primary=True)
-    
-    optic2.fields.set_type('object_height')
+
+    optic2.fields.set_type("object_height")
     optic2.fields.add(y=h_obj)
-    
-    opd_height = OPD(optic2, field=(0, 1), wavelength='primary', num_rays=10, distribution='line_y', remove_tilt=False)
+
+    opd_height = OPD(
+        optic2,
+        field=(0, 1),
+        wavelength="primary",
+        num_rays=10,
+        distribution="line_y",
+        remove_tilt=False,
+    )
     data_height = opd_height.get_data((0, 1), optic2.primary_wavelength)
-    
+
     # Verify that OPD values are close
     assert_allclose(data_angle.opd, data_height.opd, atol=1.0)
-    
+
     # Check RMS
     assert_allclose(opd_angle.rms(), opd_height.rms(), rtol=0.1)

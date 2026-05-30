@@ -1,4 +1,5 @@
 """Unit tests for the GrinPropagation model."""
+
 from __future__ import annotations
 
 import pytest

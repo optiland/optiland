@@ -36,6 +36,7 @@ from optiland.geometries.newton_raphson import NewtonRaphsonGeometry
 from .qpoly import (
     clenshaw_q2d,
     clenshaw_qbfs,
+    compute_z_q2d,
     compute_z_zprime_q2d,
     compute_z_zprime_qbfs,
     q2d_nm_coeffs_to_ams_bms,
@@ -556,7 +557,7 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
         safe_x = be.where(rho < _EPSILON, x + 1e-12, x)
         theta = be.arctan2(y, safe_x)
 
-        poly_sum_m0, _, poly_sum_m_gt0, _, _ = compute_z_zprime_q2d(
+        poly_sum_m0, poly_sum_m_gt0 = compute_z_q2d(
             self.cm0_coeffs, self.ams_coeffs, self.bms_coeffs, u, theta
         )
         conic_correction_factor, _ = self._conic_correction_factor(r2)

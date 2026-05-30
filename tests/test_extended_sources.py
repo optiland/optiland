@@ -435,9 +435,7 @@ class TestExtendedSourceOptic:
 
     def test_set_radius_through_wrapper(self, optic, ext_optic):
         ext_optic.updater.set_radius(100.0, surface_number=1)
-        assert float(optic.surfaces[1].geometry.radius) == pytest.approx(
-            100.0
-        )
+        assert float(optic.surfaces[1].geometry.radius) == pytest.approx(100.0)
 
     def test_set_thickness_through_wrapper(self, optic, ext_optic):
         ext_optic.updater.set_thickness(99.0, surface_number=1)

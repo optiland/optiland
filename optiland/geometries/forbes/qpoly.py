@@ -23,6 +23,48 @@ def kronecker(i: int, j: int) -> int:
     return 1 if i == j else 0
 
 
+def _trim_trailing_zeros(coefs):
+    """Drop trailing exact-zero entries from a coefficient sequence.
+
+    Only *trailing* exact-zero entries are removed;
+    interior zeros are preserved. Returns an empty list when all entries
+    are zero or the input is empty/``None``.
+
+    Args:
+        coefs: A sequence of scalar coefficients.
+
+    Returns:
+        list: A list of coefficients with trailing zeros removed.
+    """
+    if coefs is None:
+        return []
+    try:
+        n = len(coefs)
+    except TypeError:
+        # Scalar (or 0-d tensor) — wrap in a single-element list, trimming
+        # if it is zero.
+        try:
+            return [] if bool(coefs == 0) else [coefs]
+        except Exception:
+            return [coefs]
+    while n > 0:
+        v = coefs[n - 1]
+        try:
+            is_zero = bool(v == 0)
+        except Exception:
+            is_zero = False
+        if not is_zero:
+            break
+        n -= 1
+    if n == 0:
+        return []
+    if isinstance(coefs, (list, tuple)):
+        return list(coefs[:n])
+    # NumPy array or Torch tensor — keep entries by reference so that any
+    # autograd graph attached to surviving entries is preserved.
+    return [coefs[i] for i in range(n)]
+
+
 @cache
 def gamma_func(n: int, m: int) -> float:
     """Recursive gamma function for Q2D polynomials."""
@@ -87,7 +129,12 @@ def f_qbfs(n: int) -> float:
 def change_basis_qbfs_to_pn(cs: list[float]) -> be.array:
     """
     Changes the basis of Q-BFS coefficients to orthonormal Pn coefficients.
+
+    Trailing exact-zero entries are removed before basis conversion;
+    they would not contribute to the polynomial sum, and keeping them
+    drives the Clenshaw recurrence to needlessly high order.
     """
+    cs = _trim_trailing_zeros(cs)
     m = len(cs) - 1
     if m < 0:
         return be.array(cs)
@@ -119,7 +166,8 @@ def _initialize_alphas_q(cs, x, alphas, j=0):
     """Initializes the alpha array for Clenshaw's algorithm."""
     if alphas is not None:
         return alphas
-    shape = (len(cs), *be.shape(x)) if hasattr(x, "shape") else (len(cs),)
+    n_modes = max(len(cs), 2)
+    shape = (n_modes, *be.shape(x)) if hasattr(x, "shape") else (n_modes,)
     if j != 0:
         shape = (j + 1, *shape)
     zeros = be.zeros(shape)
@@ -144,7 +192,11 @@ def _clenshaw_qbfs_recurrence(bs, usq, alphas):
 
 
 def clenshaw_qbfs(cs: list[float], usq: be.array, alphas: be.array = None):
-    """Computes the sum of Q-BFS polynomials using Clenshaw's algorithm."""
+    """Computes the sum of Q-BFS polynomials using Clenshaw's algorithm.
+
+    Trailing exact-zero coefficients are trimmed before evaluation.
+    """
+    cs = _trim_trailing_zeros(cs)
     bs = change_basis_qbfs_to_pn(cs)
     m = len(bs) - 1
     if m < 0:
@@ -183,7 +235,13 @@ def _clenshaw_qbfs_functional(bs, usq):
 
 
 def clenshaw_qbfs_der(cs, usq, j=1, alphas=None):
-    """Computes derivatives of Q-BFS polynomials using Clenshaw's method."""
+    """Computes derivatives of Q-BFS polynomials using Clenshaw's method.
+
+    Trailing exact-zero coefficients are trimmed before evaluation. When
+    the derivative order ``j`` exceeds the trimmed polynomial degree the
+    higher-order alpha tables are returned as zero.
+    """
+    cs = _trim_trailing_zeros(cs)
     if be.get_backend() == "torch":
         return _clenshaw_qbfs_der_functional(cs, usq, j)
 
@@ -262,11 +320,32 @@ def _clenshaw_qbfs_der_functional(cs, usq, j=1):
     return be.stack(all_alphas_tensors)
 
 
+def compute_z_qbfs(coefs: list[float], usq: be.array) -> be.array:
+    """Sag-only Q-BFS polynomial sum (no derivative table built).
+
+    Equivalent to the first return value of :func:`compute_z_zprime_qbfs`
+    but skips the j=1 Clenshaw pass entirely. Use this from ``sag()``
+    code paths where the derivative is not needed.
+
+    Args:
+        coefs: Q-BFS coefficient sequence (trailing zeros are trimmed).
+        usq: Squared normalized radius ``u**2``.
+
+    Returns:
+        be.array: The raw Q-BFS polynomial sum at each ``usq`` sample.
+    """
+    coefs = _trim_trailing_zeros(coefs)
+    if len(coefs) == 0:
+        return be.zeros_like(usq) if hasattr(usq, "shape") else be.array(0.0)
+    return clenshaw_qbfs(coefs, usq)
+
+
 def compute_z_zprime_qbfs(
     coefs: list[float], u: be.array, usq: be.array
 ) -> tuple[be.array, be.array]:
     """Computes the raw Q-BFS polynomial sum and its derivative w.r.t. u."""
-    if coefs is None or len(coefs) == 0:
+    coefs = _trim_trailing_zeros(coefs)
+    if len(coefs) == 0:
         zeros = be.zeros_like(u)
         return zeros, zeros
 
@@ -356,6 +435,7 @@ def change_basis_q2d_to_pnm(cns: list[float], m: int) -> be.array:
     """
     Changes the basis of Q2D coefficients to orthonormal Pnm coefficients.
     """
+    cns = _trim_trailing_zeros(cns)
     m = abs(m)
     n_max = len(cns) - 1
     if n_max < 0:
@@ -404,10 +484,14 @@ def q2d_sum_from_alphas(alphas: be.array, m: int, num_coeffs: int) -> be.array:
     """
     Computes the final sum from the alpha coefficients returned by Clenshaw's
     method, applying the special summation rule for m=1.
+
+    The m==1 correction reads ``alphas[3]``; the read is also guarded by
+    the actual alpha-table length, so a caller passing a stale
+    ``num_coeffs`` does not over-index.
     """
     s = 0.5 * alphas[0]
     # special case for m=1, as in Forbes' papers
-    if m == 1 and num_coeffs - 1 > 2:
+    if m == 1 and num_coeffs - 1 > 2 and be.shape(alphas)[0] > 3:
         s -= 2 / 5 * alphas[3]
     return s
 
@@ -427,6 +511,12 @@ def _compute_m_gt0_components(ams, bms, u, t, usq):
 
     for m_idx, (a_coef, b_coef) in enumerate(zip(ams, bms, strict=False)):
         m = m_idx + 1
+        # Trim trailing zeros independently per family so the m==1 special
+        # case in q2d_sum_from_alphas reads a correctly sized alpha table
+        # and does not over index when the user supplied vector ends in
+        # zeros.
+        a_coef = _trim_trailing_zeros(a_coef)
+        b_coef = _trim_trailing_zeros(b_coef)
 
         s_a, s_b, s_prime_a, s_prime_b = 0, 0, 0, 0
         if a_coef:
@@ -459,11 +549,69 @@ def _compute_m_gt0_components(ams, bms, u, t, usq):
     return poly_sum_m_gt0, dr_m_gt0, dt_m_gt0
 
 
+def _compute_m_gt0_sag_only(ams, bms, u, t, usq):
+    """Sag-only counterpart of :func:`_compute_m_gt0_components`.
+
+    Skips the derivative Clenshaw pass and the radial / azimuthal
+    derivative accumulators; only the m>0 polynomial sum is returned.
+    """
+    poly_sum_terms = []
+    for m_idx, (a_coef, b_coef) in enumerate(zip(ams, bms, strict=False)):
+        m = m_idx + 1
+        a_coef = _trim_trailing_zeros(a_coef)
+        b_coef = _trim_trailing_zeros(b_coef)
+
+        s_a, s_b = 0, 0
+        if a_coef:
+            alphas_a = clenshaw_q2d(a_coef, m, usq)
+            s_a = q2d_sum_from_alphas(alphas_a, m, len(a_coef))
+        if b_coef:
+            alphas_b = clenshaw_q2d(b_coef, m, usq)
+            s_b = q2d_sum_from_alphas(alphas_b, m, len(b_coef))
+
+        um = u**m
+        cost = be.cos(m * t)
+        sint = be.sin(m * t)
+        poly_sum_terms.append(um * (cost * s_a + sint * s_b))
+
+    if poly_sum_terms:
+        return be.sum(be.stack(poly_sum_terms), axis=0)
+    return be.zeros_like(u)
+
+
+def compute_z_q2d(cm0, ams, bms, u, t):
+    """Sag-only Q2D polynomial sum (no derivative table built).
+
+    Returns the pair ``(poly_sum_m0, poly_sum_m_gt0)`` — the same first
+    and third entries as :func:`compute_z_zprime_q2d` would return, but
+    without the j=1 Clenshaw pass over each per-m family. Use this from
+    ``sag()`` code paths where the derivative is not needed.
+
+    Args:
+        cm0: m==0 Qbfs-style coefficient sequence.
+        ams: Per-m cosine coefficient families (index ``i`` is m == i+1).
+        bms: Per-m sine coefficient families, same layout as ``ams``.
+        u: Normalized radius.
+        t: Azimuth in radians.
+
+    Returns:
+        tuple: ``(poly_sum_m0, poly_sum_m_gt0)``.
+    """
+    usq = u * u
+    zeros = be.zeros_like(u)
+
+    cm0 = _trim_trailing_zeros(cm0)
+    poly_sum_m0 = zeros if not cm0 else compute_z_qbfs(cm0, usq)
+    poly_sum_m_gt0 = _compute_m_gt0_sag_only(ams, bms, u, t, usq)
+    return poly_sum_m0, poly_sum_m_gt0
+
+
 def compute_z_zprime_q2d(cm0, ams, bms, u, t):
     """Computes the polynomial sum components for a Q2D surface."""
     usq = u * u
     zeros = be.zeros_like(u)
 
+    cm0 = _trim_trailing_zeros(cm0)
     poly_sum_m0, d_poly_sum_m0_du = zeros, zeros
     if cm0:
         poly_sum_m0, d_poly_sum_m0_du = compute_z_zprime_qbfs(cm0, u, usq)
@@ -505,6 +653,8 @@ def q2d_nm_coeffs_to_ams_bms(nms: list[tuple[int, int]], coefs: list[float]):
 
 
 def clenshaw_q2d(cns, m, usq, alphas=None):
+    """Evaluates the Q2D Clenshaw alpha table for azimuthal order ``m``."""
+    cns = _trim_trailing_zeros(cns)
     if be.get_backend() == "torch":
         ds = change_basis_q2d_to_pnm(cns, m)
         all_alphas_list = _clenshaw_q2d_functional(ds, m, usq)
@@ -559,6 +709,7 @@ def _clenshaw_q2d_functional(ds, m, usq):
 
 def clenshaw_q2d_der(cns, m, usq, j=1, alphas=None):
     """Computes derivatives of Q-2D polynomials using Clenshaw's method."""
+    cns = _trim_trailing_zeros(cns)
     if be.get_backend() == "torch":
         return _clenshaw_q2d_der_functional(cns, m, usq, j)
 

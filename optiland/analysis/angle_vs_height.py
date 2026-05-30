@@ -219,6 +219,8 @@ class BaseAngleVsHeightAnalysis(BaseAnalysis, abc.ABC):
         title: str = None,
         cmap: str | Colormap = "viridis",
         line_style: str = "-",
+        *,
+        show: bool = True,
     ) -> tuple[plt.Figure, Axes]:
         """Displays a plot of the incident angle vs. image height analysis.
 
@@ -232,6 +234,8 @@ class BaseAngleVsHeightAnalysis(BaseAnalysis, abc.ABC):
             cmap (str, optional): The colormap for the plot line.
                 Defaults to 'viridis'.
             line_style (str, optional): Matplotlib plot style. Defaults to '-'.
+            show (bool): If True (default), calls plt.show(). Set False for
+                headless use.
 
         Returns:
             tuple: A tuple containing the figure and axes objects used for plotting.
@@ -315,7 +319,8 @@ class BaseAngleVsHeightAnalysis(BaseAnalysis, abc.ABC):
 
         if is_gui_embedding and hasattr(current_fig, "canvas"):
             current_fig.canvas.draw_idle()
-
+        if show and not is_gui_embedding:
+            plt.show()
         return current_fig, ax
 
 

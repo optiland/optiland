@@ -7,6 +7,7 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+import abc
 from typing import TYPE_CHECKING
 
 import optiland.backend as be
@@ -17,7 +18,7 @@ if TYPE_CHECKING:
     from optiland.surfaces.standard_surface import Surface
 
 
-class BaseRays:
+class BaseRays(abc.ABC):
     """Base class for rays in a 3D space.
 
     Attributes:
@@ -27,6 +28,7 @@ class BaseRays:
 
     """
 
+    @abc.abstractmethod
     def trace_on_surface(self, surface: Surface) -> BaseRays:
         """Dispatch tracing to the appropriate surface method.
 
@@ -37,8 +39,8 @@ class BaseRays:
             BaseRays: The traced rays.
 
         """
-        raise NotImplementedError
 
+    @abc.abstractmethod
     def record_on_surface(self, surface: Surface) -> None:
         """Dispatch recording to the appropriate surface method.
 
@@ -46,7 +48,6 @@ class BaseRays:
             surface (Surface): The surface to record onto.
 
         """
-        raise NotImplementedError
 
     def translate(self, dx: ArrayLike, dy: ArrayLike, dz: ArrayLike):
         """Shifts the rays in the x, y, and z directions.

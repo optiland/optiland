@@ -86,12 +86,12 @@ class ParaxialRayAimer(BaseRayAimer):
             x1 = Px * vx + x0
             y1 = Py * vy + y0
         else:
-            EPL = self.optic.paraxial.EPL()
             EPD = self.optic.paraxial.EPD()
+            epl_global = self.optic.paraxial.entrance_pupil_z()
 
             x1 = Px * EPD * vx / 2
             y1 = Py * EPD * vy / 2
-            z1 = be.full_like(Px, EPL)
+            z1 = be.full_like(Px, epl_global)
 
         mag = be.sqrt((x1 - x0) ** 2 + (y1 - y0) ** 2 + (z1 - z0) ** 2)
 

@@ -77,7 +77,9 @@ def test_scale_polynomial():
     # Cij * x^i * y^j
     # i=1, j=1 -> xy. s^(1-(1+1)) = s^-1.
     coeffs = [[0, 0], [0, 1e-3]]  # C11
-    lens.surfaces.add(index=0, radius=10, surface_type="polynomial", coefficients=coeffs)
+    lens.surfaces.add(
+        index=0, radius=10, surface_type="polynomial", coefficients=coeffs
+    )
     lens.updater.scale_system(2.0)
 
     surface = lens.surfaces[0]

@@ -138,3 +138,18 @@ Potential Future Backends
 
 .. note::
    For new contributions or questions about the backend layer, please open an issue or pull request on our GitHub repository. We welcome feedback and improvements!
+
+How to Extend This
+------------------
+
+**Scenario:** Add a backend-agnostic utility function to Optiland.
+
+**Step 1:** Write the function using only ``import optiland.backend as be`` — never import
+``numpy`` or ``torch`` directly inside Optiland modules.
+**Step 2:** If the function needs a backend-specific API (e.g., ``torch.autograd.grad``), add
+abstract and concrete implementations to ``AbstractBackend``, ``NumpyBackend``, and
+``TorchBackend`` in ``optiland/backend/``.
+**Step 3:** Test on both backends using the ``set_test_backend`` fixture from
+``tests/conftest.py`` and ``assert_allclose`` from ``tests/utils.py``.
+
+For step-by-step guidance, see :ref:`extension_recipes`.

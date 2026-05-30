@@ -74,4 +74,7 @@ class TestSurfaceService:
         # Should not raise and should not change the surface
         original_type = mock_connector._optic.surface_group.surfaces[1].surface_type
         service.set_surface_type(1, "not_a_real_type")
-        assert mock_connector._optic.surface_group.surfaces[1].surface_type == original_type
+        assert (
+            mock_connector._optic.surface_group.surfaces[1].surface_type
+            == original_type
+        )

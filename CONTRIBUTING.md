@@ -1,5 +1,7 @@
 # Contributing to Optiland
 
+> For a deep dive into Optiland's architecture and step-by-step extension recipes, see the [Developer's Guide](https://optiland.readthedocs.io/en/latest/developers_guide/introduction.html) on Read the Docs.
+
 Thank you for your interest in contributing to **Optiland**! Contributions are welcome in many forms, including but not limited to:
 
 - Bug reports and feature requests.

@@ -1,4 +1,5 @@
 """Unit tests for the GridSagGeometry class."""
+
 from __future__ import annotations
 
 import pytest

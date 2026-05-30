@@ -41,6 +41,10 @@ class ConcreteReferenceStrategy(ReferenceStrategy):
         """Mock implementation for the abstract method."""
         pass  # Not needed for testing the base class methods
 
+    def _create_reference_geometry(self, rays):
+        """Mock implementation for the abstract method."""
+        pass
+
 
 class TestReferenceStrategy:
     """Tests for the abstract ReferenceStrategy base class."""
@@ -349,7 +353,7 @@ def test_create_strategy(optic, distribution, set_test_backend):
 
     # Test best_fit_sphere strategy creation
     bfs_strategy = create_strategy("best_fit_sphere", optic, distribution)
-    assert isinstance(bfs_strategy, CentroidReferenceSphereStrategy)
+    assert isinstance(bfs_strategy, BestFitSphereStrategy)
 
 
 class TestBestFitSphereStrategy:

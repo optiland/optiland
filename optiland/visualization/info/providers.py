@@ -9,6 +9,7 @@ Kramer Harrison, 2025
 
 from __future__ import annotations
 
+import abc
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -17,12 +18,12 @@ if TYPE_CHECKING:
     from optiland.visualization.system.surface import Surface2D
 
 
-class BaseInfoProvider:
+class BaseInfoProvider(abc.ABC):
     """Base class for information providers."""
 
+    @abc.abstractmethod
     def get_info(self, obj: any) -> str:
         """Returns informational text for the given object."""
-        raise NotImplementedError
 
 
 class SurfaceInfoProvider(BaseInfoProvider):

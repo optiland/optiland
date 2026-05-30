@@ -35,6 +35,148 @@ from .utils import assert_allclose
 # TODO: add tests for non-air object and image spaces
 
 
+class Lens:
+    """Base class to calculate paraxial properties. Formulas from Fundamentals Of
+    Optics, Jenkins & White, 4th ed, Ch. 5.6. Note that a Gaussian coordinate system is
+    used in the source. Variables n1, n2 and n3 are n, n' and n'' in the source, and
+    stand for the refractive index in the object, lens, and image media, respectively.
+    P, P1 and P2 are powers, not principal planes, as per source."""
+
+    n1: float
+    n2: float
+    n3: float
+    d: float
+
+    @property
+    def P1(self):
+        raise NotImplementedError
+
+    @property
+    def P2(self):
+        raise NotImplementedError
+
+    @property
+    def P(self) -> float:
+        return self.P1 + self.P2 - self.d / self.n2 * self.P1 * self.P2
+
+    @property
+    def F1(self) -> float:
+        return -self.n1 / self.P * (1 - self.d / self.n2 * self.P2)
+
+    @property
+    def F2(self) -> float:
+        return self.n3 / self.P * (1 - self.d / self.n2 * self.P1)
+
+    @property
+    def f1(self) -> float:
+        return (
+            -self.n1 / self.P
+        )  # Swapped sign wrt source. Reason: use cartesian coordinates
+
+    @property
+    def f2(self) -> float:
+        return self.n3 / self.P
+
+    @property
+    def PP1(self) -> float:
+        """Principal plane. IN J&W defined wrt first lens surface"""
+        return self.n1 / self.P * self.d / self.n2 * self.P2
+
+    @property
+    def PP2(self) -> float:
+        """Principal plane. IN J&W defined wrt last lens surface"""
+        return -self.n3 / self.P * self.d / self.n2 * self.P1
+
+
+class ThickLens(Lens):
+    """Calculate the properties of an immersed thick lens made of two spherical surfaces with radii
+    r1 and r2, a distance d apart."""
+
+    r1: float
+    r2: float
+
+    def __init__(
+        self, n1: float, n2: float, n3: float, r1: float, r2: float, d: float
+    ) -> None:
+        self.n1, self.n2, self.n3 = n1, n2, n3
+        self.r1, self.r2 = r1, r2
+        self.d = d
+
+    @property
+    def P1(self) -> float:
+        return (self.n2 - self.n1) / self.r1
+
+    @property
+    def P2(self) -> float:
+        return (self.n3 - self.n2) / self.r2
+
+
+class CompoundLens(Lens):
+    """Calculate the properties of a system of two immersed thin lenses with focal lengths
+    f1 and f2, a distance d apart. The focal lengths are the equivalent in air, and the
+    actual focal lengths will be adjusted according to immersion."""
+
+    _f1: float
+    _f2: float
+
+    def __init__(
+        self, n1: float, n2: float, n3: float, f1: float, f2: float, d: float
+    ) -> None:
+        self.n1, self.n2, self.n3 = n1, n2, n3
+        self._f1, self._f2 = f1, f2
+        self.d = d
+
+    @property
+    def P1(self) -> float:
+        return 1 / self._f1
+
+    @property
+    def P2(self) -> float:
+        return 1 / self._f2
+
+
+class Mirror:
+    """Simple class to describe a mirror, uses sign convention as in JAMES P. C.
+    SOUTHALL, MIRRORS, PRISMS AND LENSES, THE MACMILLAN COMPANY, 1918"""
+
+    r: float
+
+    def __init__(self, r: float, n: float) -> None:
+        self.r = r
+        self.n = n
+
+    @property
+    def P(self) -> float:
+        # Sign convention as in source
+        return -2 * self.n / self.r
+
+
+class ThickMirror:
+    """Class to describe a 'Thick Mirror', a mirror with a lens in front of it. The
+    light passes back and forth through the lens after reflecting in the mirror. The
+    formula for the effective power of the system is described in JAMES P. C. SOUTHALL,
+    MIRRORS, PRISMS AND LENSES, THE MACMILLAN COMPANY, 1918, p. 379."""
+
+    lens: ThickLens
+    mirror: Mirror
+
+    def __init__(self, lens: ThickLens, mirror: Mirror, d: float) -> None:
+        self.lens = lens
+        self.mirror = mirror
+        self.d = d
+
+    @property
+    def _c(self) -> float:
+        return (self.d - self.lens.PP2) / self.lens.n3
+
+    @property
+    def P(self) -> float:
+        c = self._c
+        P1 = self.lens.P
+        P2 = self.mirror.P
+        return (1 - c * P1) * (2 * P1 + P2 - c * P1 * P2)
+
+
 def get_optic_data():
     return [
         (
@@ -696,105 +838,6 @@ def test_negative_lens():
     )
 
 
-class Lens:
-    """Base class to calculate paraxial properties. Formulas from Fundamentals Of
-    Optics, Jenkins & White, 4th ed, Ch. 5.6. Note that a Gaussian coordinate system is
-    used in the source. Variables n1, n2 and n3 are n, n' and n'' in the source, and
-    stand for the refractive index in the object, lens, and image media, respectively.
-    P, P1 and P2 are powers, not principal planes, as per source."""
-
-    n1: float
-    n2: float
-    n3: float
-    d: float
-
-    @property
-    def P1(self):
-        raise NotImplementedError
-
-    @property
-    def P2(self):
-        raise NotImplementedError
-
-    @property
-    def P(self) -> float:
-        return self.P1 + self.P2 - self.d / self.n2 * self.P1 * self.P2
-
-    @property
-    def F1(self) -> float:
-        return -self.n1 / self.P * (1 - self.d / self.n2 * self.P2)
-
-    @property
-    def F2(self) -> float:
-        return self.n3 / self.P * (1 - self.d / self.n2 * self.P1)
-
-    @property
-    def f1(self) -> float:
-        return (
-            -self.n1 / self.P
-        )  # Swapped sign wrt source. Reason: use cartesian coordinates
-
-    @property
-    def f2(self) -> float:
-        return self.n3 / self.P
-
-    @property
-    def PP1(self) -> float:
-        """Principal plane. IN J&W defined wrt first lens surface"""
-        return self.n1 / self.P * self.d / self.n2 * self.P2
-
-    @property
-    def PP2(self) -> float:
-        """Principal plane. IN J&W defined wrt last lens surface"""
-        return -self.n3 / self.P * self.d / self.n2 * self.P1
-
-
-class ThickLens(Lens):
-    """Calculate the properties of an immersed thick lens made of two spherical surfaces with radii
-    r1 and r2, a distance d apart."""
-
-    r1: float
-    r2: float
-
-    def __init__(
-        self, n1: float, n2: float, n3: float, r1: float, r2: float, d: float
-    ) -> None:
-        self.n1, self.n2, self.n3 = n1, n2, n3
-        self.r1, self.r2 = r1, r2
-        self.d = d
-
-    @property
-    def P1(self) -> float:
-        return (self.n2 - self.n1) / self.r1
-
-    @property
-    def P2(self) -> float:
-        return (self.n3 - self.n2) / self.r2
-
-
-class CompoundLens(Lens):
-    """Calculate the properties of a system of two immersed thin lenses with focal lengths
-    f1 and f2, a distance d apart."""
-
-    _f1: float
-    _f2: float
-
-    def __init__(
-        self, n1: float, n2: float, n3: float, f1: float, f2: float, d: float
-    ) -> None:
-        self.n1, self.n2, self.n3 = n1, n2, n3
-        self._f1, self._f2 = f1, f2
-        self.d = d
-
-    @property
-    def P1(self) -> float:
-        return self.n1 / self._f1
-
-    @property
-    def P2(self) -> float:
-        return self.n3 / self._f2
-
-
 @pytest.mark.parametrize("n1", [1.0, 1.33])
 @pytest.mark.parametrize("n2", [1.5, 1.8])
 @pytest.mark.parametrize("n3", [1.33, 1.5, 1.0])
@@ -840,7 +883,7 @@ def test_compound_lens(n1, n2, n3, f1, f2, d, set_test_backend):
     lens.surfaces.add(
         index=1,
         surface_type="paraxial",
-        f=f1 / n1,
+        f=f1,
         thickness=d,
         material=IdealMaterial(n2),
         is_stop=True,
@@ -848,7 +891,7 @@ def test_compound_lens(n1, n2, n3, f1, f2, d, set_test_backend):
     lens.surfaces.add(
         index=2,
         surface_type="paraxial",
-        f=f2 / n3,
+        f=f2,
         thickness=0.0,
         material=IdealMaterial(n3),
         is_stop=False,
@@ -862,4 +905,371 @@ def test_compound_lens(n1, n2, n3, f1, f2, d, set_test_backend):
     assert_allclose(
         [cl.F1, cl.F2, cl.f1, cl.f2, cl.PP1, cl.PP2],
         [px.F1(), px.F2(), px.f1(), px.f2(), px.P1(), px.P2()],
+    )
+
+
+@pytest.mark.parametrize("n1", [1.0, 1.33])
+@pytest.mark.parametrize("n2", [1.5, 2.0])
+@pytest.mark.parametrize("n3", [1.0, 1.33])
+@pytest.mark.parametrize("r1", [100, -50])
+@pytest.mark.parametrize("r2", [50, -100])
+@pytest.mark.parametrize("rm", [250, -100])
+@pytest.mark.parametrize("d1", [1.0, 5.0])
+@pytest.mark.parametrize("d2", [5.0, 10])
+def test_thick_mirror(n1, n2, n3, r1, r2, rm, d1, d2):
+    thick_lens = ThickLens(n1, n2, n3, r1, r2, d1)
+    mirror = Mirror(rm, n3)
+    thick_mirror = ThickMirror(thick_lens, mirror, d2)
+    lens = Optic()
+
+    lens.surfaces.add(
+        index=0, radius=be.inf, thickness=be.inf, material=IdealMaterial(n1)
+    )
+    lens.surfaces.add(
+        index=1, radius=r1, thickness=d1, is_stop=True, material=IdealMaterial(n2)
+    )
+    lens.surfaces.add(
+        index=2, radius=r2, thickness=d2, is_stop=False, material=IdealMaterial(n3)
+    )
+    lens.surfaces.add(
+        index=3, radius=rm, thickness=-d2, is_stop=False, material="mirror"
+    )
+    lens.surfaces.add(
+        index=4, radius=r2, thickness=-d1, is_stop=False, material=IdealMaterial(n2)
+    )
+    lens.surfaces.add(
+        index=5, radius=r1, thickness=0.0, is_stop=False, material=IdealMaterial(n1)
+    )
+    lens.surfaces.add(index=lens.surfaces.num_surfaces, material=IdealMaterial(n1))
+    lens.set_aperture(aperture_type="float_by_stop_size", value=5)
+    lens.fields.add(0.0)
+    lens.fields.set_type("angle")
+    lens.wavelengths.add(value=0.55, is_primary=True)
+
+    # Adjust sign to account for sign convention in source:
+    assert -n1 / thick_mirror.P == pytest.approx(lens.paraxial.f2())
+
+
+@pytest.mark.parametrize("n1", [1.0, 1.33])
+@pytest.mark.parametrize("n2", [1.0, 1.2])
+@pytest.mark.parametrize("f", [50.0, -75.0, -100.0, 225.0])
+@pytest.mark.parametrize("d", [0.0, 1.0, 2.0, 5.0, 10.0, 100.0])
+def test_mirrored_lens(n1, n2, f, d, set_test_backend):
+    """Test to ensure that a lens system consisting of a paraxial lens and mirror yield
+    the same results as an unfolded lens system, with the exception of sign swaps"""
+    cl = CompoundLens(n1, n2, n1, f, f, 2 * d)
+    lens = Optic()
+    lens.surfaces.add(
+        index=0, radius=be.inf, thickness=be.inf, material=IdealMaterial(n1)
+    )
+    lens.surfaces.add(
+        index=1,
+        surface_type="paraxial",
+        f=f,
+        thickness=d,
+        material=IdealMaterial(n2),
+        is_stop=True,
+    )
+    lens.surfaces.add(
+        index=2,
+        surface_type="paraxial",
+        material="mirror",
+        f=be.inf,
+        thickness=-d,
+        is_stop=False,
+    )
+    lens.surfaces.add(
+        index=3,
+        surface_type="paraxial",
+        f=-f,
+        thickness=0.0,
+        material=IdealMaterial(n1),
+        is_stop=False,
+    )
+
+    lens.surfaces.add(index=4, material=IdealMaterial(n1))
+    lens.wavelengths.add(value=0.55, is_primary=True)
+    lens.fields.add(y=0)
+    lens.fields.set_type(field_type="angle")
+    lens.set_aperture(aperture_type="float_by_stop_size", value=5)
+    px = lens.paraxial
+    assert_allclose(
+        [cl.f1, cl.F1, cl.PP1, cl.f2, cl.F2, cl.PP2],
+        [px.f1(), px.F1(), px.P1(), -px.f2(), -px.F2(), -px.P2()],
+    )
+
+
+def _get_paraxial_items(paraxial: Paraxial):
+    return [getattr(paraxial, item)() for item in ("f1", "f2", "F1", "F2", "P1", "P2")]
+
+
+@pytest.mark.parametrize(
+    "paraxial_surfaces, real_surfaces",
+    [
+        (
+            (  # Case 1: single mirror
+                {
+                    "radius": be.inf,
+                    "thickness": be.inf,
+                    "material": IdealMaterial(2.0),
+                },
+                {
+                    "surface_type": "paraxial",
+                    "f": -50,
+                    "is_stop": True,
+                    "thickness": 0.0,
+                    "material": "mirror",
+                },
+                {"material": IdealMaterial(2.0)},
+            ),
+            (
+                {
+                    "radius": be.inf,
+                    "thickness": be.inf,
+                    "material": IdealMaterial(2.0),
+                },
+                {
+                    "radius": -100.0,
+                    "is_stop": True,
+                    "thickness": 0.0,
+                    "material": "mirror",
+                },
+                {"material": IdealMaterial(2.0)},
+            ),
+        ),
+        (
+            (  # Case 2: Backward propagation through paraxial surface
+                {
+                    "radius": be.inf,
+                    "thickness": be.inf,
+                    "material": IdealMaterial(1.5),
+                },
+                {
+                    "surface_type": "paraxial",
+                    "f": 50,
+                    "is_stop": True,
+                    "thickness": 10.0,
+                    "material": IdealMaterial(2.0),
+                },
+                {
+                    "surface_type": "paraxial",
+                    "f": be.inf,
+                    "is_stop": False,
+                    "thickness": -10.0,
+                    "material": "mirror",
+                },
+                {
+                    "surface_type": "paraxial",
+                    "f": -50,
+                    "is_stop": False,
+                    "thickness": 0.0,
+                    "material": IdealMaterial(1.5),
+                },
+                {"material": IdealMaterial(1.5)},
+            ),
+            (
+                {
+                    "radius": be.inf,
+                    "thickness": be.inf,
+                    "material": IdealMaterial(1.5),
+                },
+                {
+                    "radius": 100,
+                    "is_stop": True,
+                    "thickness": 0.0,
+                    "material": IdealMaterial(2.5),
+                },
+                {
+                    "radius": -50,
+                    "is_stop": True,
+                    "thickness": 10.0,
+                    "material": IdealMaterial(2.0),
+                },
+                {
+                    "radius": be.inf,
+                    "is_stop": False,
+                    "thickness": -10.0,
+                    "material": "mirror",
+                },
+                {
+                    "radius": -50,
+                    "is_stop": False,
+                    "thickness": 0.0,
+                    "material": IdealMaterial(2.5),
+                },
+                {
+                    "radius": 100,
+                    "is_stop": False,
+                    "thickness": 0.0,
+                    "material": IdealMaterial(1.5),
+                },
+                {"material": IdealMaterial(1.5)},
+            ),
+        ),
+        (
+            (  # Case 3: Case 2 with opposite focal lengths
+                {
+                    "radius": be.inf,
+                    "thickness": be.inf,
+                    "material": IdealMaterial(1.5),
+                },
+                {
+                    "surface_type": "paraxial",
+                    "f": -50,
+                    "is_stop": True,
+                    "thickness": 10.0,
+                    "material": IdealMaterial(2.0),
+                },
+                {
+                    "surface_type": "paraxial",
+                    "f": be.inf,
+                    "is_stop": False,
+                    "thickness": -10.0,
+                    "material": "mirror",
+                },
+                {
+                    "surface_type": "paraxial",
+                    "f": 50,
+                    "is_stop": False,
+                    "thickness": 0.0,
+                    "material": IdealMaterial(1.5),
+                },
+                {"material": IdealMaterial(1.5)},
+            ),
+            (
+                {
+                    "radius": be.inf,
+                    "thickness": be.inf,
+                    "material": IdealMaterial(1.5),
+                },
+                {
+                    "radius": -100,
+                    "is_stop": True,
+                    "thickness": 0.0,
+                    "material": IdealMaterial(2.5),
+                },
+                {
+                    "radius": 50,
+                    "is_stop": True,
+                    "thickness": 10.0,
+                    "material": IdealMaterial(2.0),
+                },
+                {
+                    "radius": be.inf,
+                    "is_stop": False,
+                    "thickness": -10.0,
+                    "material": "mirror",
+                },
+                {
+                    "radius": 50,
+                    "is_stop": False,
+                    "thickness": 0.0,
+                    "material": IdealMaterial(2.5),
+                },
+                {
+                    "radius": -100,
+                    "is_stop": False,
+                    "thickness": 0.0,
+                    "material": IdealMaterial(1.5),
+                },
+                {"material": IdealMaterial(1.5)},
+            ),
+        ),
+        (
+            (  # Case 3: Double paraxial mirror, one with glass substrate
+                {
+                    "radius": be.inf,
+                    "thickness": be.inf,
+                    "material": IdealMaterial(1.0),
+                },
+                {
+                    "surface_type": "paraxial",
+                    "f": -50,
+                    "is_stop": True,
+                    "thickness": -20.0,
+                    "material": "mirror",
+                },
+                {
+                    "surface_type": "paraxial",
+                    "f": be.inf,
+                    "is_stop": False,
+                    "thickness": -4.0,
+                    "material": IdealMaterial(1.5),
+                },
+                {
+                    "surface_type": "paraxial",
+                    "f": 50.0,
+                    "is_stop": False,
+                    "thickness": 4,
+                    "material": "mirror",
+                },
+                {
+                    "surface_type": "paraxial",
+                    "f": be.inf,
+                    "is_stop": False,
+                    "thickness": 0.0,
+                    "material": IdealMaterial(1.0),
+                },
+                {"material": IdealMaterial(1.0)},
+            ),
+            (
+                {
+                    "radius": be.inf,
+                    "thickness": be.inf,
+                    "material": IdealMaterial(1.0),
+                },
+                {
+                    "radius": -100,
+                    "is_stop": True,
+                    "thickness": -20.0,
+                    "material": "mirror",
+                },
+                {
+                    "radius": be.inf,
+                    "is_stop": False,
+                    "thickness": -4.0,
+                    "material": IdealMaterial(1.5),
+                },
+                {
+                    "radius": 100.0,
+                    "is_stop": False,
+                    "thickness": 4,
+                    "material": "mirror",
+                },
+                {
+                    "radius": be.inf,
+                    "is_stop": False,
+                    "thickness": 0.0,
+                    "material": IdealMaterial(1.0),
+                },
+                {"material": IdealMaterial(1.0)},
+            ),
+        ),
+    ],
+)
+def test_equivalence(paraxial_surfaces, real_surfaces, set_test_backend):
+    paraxial_lens = Optic()
+
+    for surface_args in paraxial_surfaces:
+        paraxial_lens.surfaces.add(
+            index=paraxial_lens.surfaces.num_surfaces, **surface_args
+        )
+
+    paraxial_lens.wavelengths.add(value=0.55, is_primary=True)
+    paraxial_lens.fields.add(y=0)
+    paraxial_lens.fields.set_type(field_type="angle")
+    paraxial_lens.set_aperture(aperture_type="float_by_stop_size", value=5)
+
+    real_lens = Optic()
+    for surface_args in real_surfaces:
+        real_lens.surfaces.add(index=real_lens.surfaces.num_surfaces, **surface_args)
+
+    real_lens.wavelengths.add(value=0.55, is_primary=True)
+    real_lens.fields.add(y=0)
+    real_lens.fields.set_type(field_type="angle")
+    real_lens.set_aperture(aperture_type="float_by_stop_size", value=5)
+
+    assert_allclose(
+        _get_paraxial_items(paraxial_lens.paraxial),
+        _get_paraxial_items(real_lens.paraxial),
     )
