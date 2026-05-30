@@ -117,7 +117,7 @@ Optiland is continually evolving to provide new functionalities for optical desi
 - [ ] **Additional Freeforms** (Superconic, etc.)
 
 ### Optimization & Algorithms
-- [ ] **Global Optimization Routines** (Genetic Algorithms, Particle Swarm, etc.)
+- [ ] **Global Optimization Routines** (Genetic Algorithms, etc.)
 - [ ] **AI-Assisted Starting Points** (Database lookup or ML-based design initialization)
 
 ### Engineering & Interoperability
