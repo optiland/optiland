@@ -27,6 +27,7 @@ to improve optical systems using classical numerical methods.
     optimization/orthogonal_descent
     optimization/global
     optimization/basin_hopping
+    optimization/particle_swarm_optimization
     optimization/shgo
     optimization/custom_scaler
     optimization/reciprocal_radii_optimization
