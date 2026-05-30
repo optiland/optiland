@@ -104,9 +104,7 @@ class TestIterativeRayAimer(unittest.TestCase):
         x0, y0, z0, L0, M0, N0 = paraxial_aimer.aim_rays(fields, wavelengths, pupil)
         rays0 = import_rays(x0, y0, z0, L0, M0, N0, wavelengths)
         trace_to_stop(self.optic, rays0)
-        stop_r = self.optic.surfaces[
-            self.optic.surfaces.stop_index
-        ].aperture.r_max
+        stop_r = self.optic.surfaces[self.optic.surfaces.stop_index].aperture.r_max
         error0 = np.abs(rays0.y - stop_r)
 
         # ITERATIVE

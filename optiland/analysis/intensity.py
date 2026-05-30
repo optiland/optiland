@@ -440,6 +440,7 @@ class RadiantIntensity(BaseAnalysis):
         cross_section_color="red",
         *,
         normalize=None,
+        show: bool = True,
     ):
         """
         Display radiant intensity maps and/or cross-sections.
@@ -678,5 +679,6 @@ class RadiantIntensity(BaseAnalysis):
 
         if not is_gui_embedding and hasattr(fig, "canvas"):
             fig.canvas.draw_idle()
-
+        if show and not is_gui_embedding:
+            plt.show()
         return fig, axs

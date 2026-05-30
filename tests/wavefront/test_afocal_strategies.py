@@ -70,9 +70,7 @@ def test_afocal_best_fit_strategy():
     optic.surfaces.add(
         radius=float("inf"), thickness=10, material="air", index=1, is_stop=True
     )
-    optic.surfaces.add(
-        radius=float("inf"), thickness=20, index=2
-    )  # Image plane
+    optic.surfaces.add(radius=float("inf"), thickness=20, index=2)  # Image plane
 
     optic.set_aperture("EPD", 10)
     optic.fields.set_type("angle")
@@ -102,9 +100,7 @@ def test_focal_regression():
     optic.surfaces.add(
         radius=100, thickness=10, material="N-BK7", index=1, is_stop=True
     )
-    optic.surfaces.add(
-        radius=-100, thickness=100, index=2
-    )  # Image near focus
+    optic.surfaces.add(radius=-100, thickness=100, index=2)  # Image near focus
 
     optic.set_aperture("EPD", 10)
     optic.fields.set_type("angle")

@@ -101,9 +101,7 @@ class TestValidateOperandInputData:
         assert "Invalid JSON" in err
 
     def test_validate_seidel_requires_two_keys(self, service):
-        err = service.validate_operand_input_data(
-            "seidel", '{"surface_number": 1}'
-        )
+        err = service.validate_operand_input_data("seidel", '{"surface_number": 1}')
         assert err is not None
         assert "seidel_number" in err
 

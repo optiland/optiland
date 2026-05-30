@@ -112,6 +112,9 @@ class DistortionWarper:
         """
         Warps the input image using the provided distortion grid.
         """
+        image = be.array(image)
+        distortion_grid = be.array(distortion_grid)
+
         # grid_sample expects (N, C, H, W) input
         ndim = image.ndim
 
@@ -119,10 +122,15 @@ class DistortionWarper:
             # (H, W) -> (1, 1, H, W)
             img_input = image[None, None, :, :]
         elif ndim == 3:
-            # (C, H, W) -> (1, C, H, W)
-            img_input = image[None, :, :, :]
-        else:
+            # (B, H, W) -> (B, 1, H, W)
+            img_input = image[:, None, :, :]
+        elif ndim == 4:
+            # (B, C, H, W)
             img_input = image
+        else:
+            raise ValueError(
+                "image must have shape (H, W), (B, H, W), or (B, C, H, W)."
+            )
 
         N = img_input.shape[0]
         if distortion_grid.shape[0] != N:
@@ -140,7 +148,6 @@ class DistortionWarper:
         # Restore shape
         if ndim == 2:
             return output[0, 0]
-        elif ndim == 3:
-            return output[0]
-        else:
-            return output
+        if ndim == 3:
+            return output[:, 0, :, :]
+        return output

@@ -5,20 +5,23 @@ including variables, operands, and the optimizer.
 
 Corentin Nannini, 2025
 """
+from __future__ import annotations
 
-import pytest
+from types import SimpleNamespace
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-from types import SimpleNamespace
+import pytest
+
 import optiland.backend as be
+import optiland.thin_film.optimization.optimizer as optimizer_module
 from optiland.materials import IdealMaterial
 from optiland.thin_film import ThinFilmStack
-import optiland.thin_film.optimization.optimizer as optimizer_module
 from optiland.thin_film.optimization import (
-    ThinFilmOptimizer,
     LayerThicknessVariable,
     ThinFilmOperand,
+    ThinFilmOptimizer,
 )
 
 

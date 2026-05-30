@@ -11,6 +11,7 @@ Kramer Harrison, 2024
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from contextlib import suppress
 
 import numpy as np
 
@@ -46,6 +47,7 @@ class BaseMaterial(ABC):
     """
 
     _registry = {}
+    _MAX_VALUE_KEY_ARRAY_SIZE = 1024
 
     def __init__(self, propagation_model: BasePropagationModel | None = None):
         """Initializes the material and its caches.
@@ -70,10 +72,89 @@ class BaseMaterial(ABC):
     def __eq__(self, value: object) -> bool:
         return isinstance(value, type(self)) and value.to_dict() == self.to_dict()
 
+    @classmethod
+    def _array_size(cls, value) -> int | None:
+        """Return the total element count for array-like values if available."""
+        shape = getattr(value, "shape", None)
+        if shape is None:
+            return None
+
+        try:
+            return int(np.prod(shape, dtype=np.int64))
+        except Exception:
+            return None
+
+    @staticmethod
+    def _array_metadata_key(value) -> tuple:
+        """Build an O(1) hash key for large arrays without
+        materializing all elements."""
+        # Torch tensors expose stable storage metadata and a version counter
+        # that changes on in-place writes.
+        if hasattr(value, "data_ptr"):
+            try:
+                sample = ()
+                num_el = value.numel()
+                if num_el > 0:
+                    flat_val = value.flatten()
+                    sample = (
+                        flat_val[0].item(),
+                        flat_val[num_el // 2].item(),
+                        flat_val[-1].item(),
+                    )
+                return (
+                    "tensor-meta",
+                    int(value.data_ptr()),
+                    tuple(value.shape),
+                    tuple(value.stride()) if hasattr(value, "stride") else None,
+                    int(value.storage_offset())
+                    if hasattr(value, "storage_offset")
+                    else 0,
+                    str(value.dtype),
+                    str(value.device) if hasattr(value, "device") else None,
+                    int(getattr(value, "_version", 0)),
+                    sample,
+                )
+            except Exception:
+                pass
+
+        if isinstance(value, np.ndarray):
+            sample = ()
+            if value.size > 0:
+                sample = (
+                    value.flat[0],
+                    value.flat[value.size // 2],
+                    value.flat[-1],
+                )
+            return (
+                "ndarray-meta",
+                int(value.__array_interface__["data"][0]),
+                tuple(value.shape),
+                tuple(value.strides),
+                str(value.dtype),
+                sample,
+            )
+
+        sample = ()
+        shape = getattr(value, "shape", ())
+        if hasattr(value, "__getitem__") and len(shape) > 0:
+            with suppress(Exception):
+                sample = (value[0], value[len(value) // 2], value[-1])
+        return (
+            "array-meta",
+            id(value),
+            tuple(shape),
+            str(getattr(value, "dtype", type(value))),
+            sample,
+        )
+
     def _create_cache_key(self, wavelength: float | be.ndarray, **kwargs) -> tuple:
         """Creates a hashable cache key from wavelength and kwargs."""
         if be.is_array_like(wavelength):
-            wavelength_key = tuple(np.ravel(be.to_numpy(wavelength)))
+            size = self._array_size(wavelength)
+            if size is not None and size <= self._MAX_VALUE_KEY_ARRAY_SIZE:
+                wavelength_key = tuple(np.ravel(be.to_numpy(wavelength)))
+            else:
+                wavelength_key = self._array_metadata_key(wavelength)
         else:
             wavelength_key = wavelength
         return (wavelength_key,) + tuple(sorted(kwargs.items()))

@@ -152,13 +152,12 @@ class TestDistributionPoints:
 
     @pytest.mark.parametrize(
         "num_points", [1, 3, 5]
-    )  # Corresponds to radius_dict keys in GaussianQuadrature's _get_radius
-    @pytest.mark.parametrize("is_symmetric", [True, False])
+    )
     def test_gaussian_quadrature_distribution(
-        self, backend, num_points, is_symmetric
+        self, backend, num_points
     ):  # num_points here is num_rings for GaussianQuad
         be.set_backend(backend)
-        dist = GaussianQuadrature(is_symmetric=is_symmetric)
+        dist = GaussianQuadrature()
         dist.generate_points(
             num_rings=num_points
         )  # num_points in test param is num_rings for method

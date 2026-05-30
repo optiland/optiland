@@ -72,7 +72,7 @@ class ObjectNAAperture(BaseSystemAperture):
         obj_z = paraxial.optic.object_surface.geometry.cs.z
         n0 = paraxial.optic.object_surface.material_post.n(wavelength)
         u0 = be.arcsin(self._value / n0)
-        z = paraxial.EPL() - obj_z
+        z = paraxial.entrance_pupil_z() - obj_z
         return 2 * z * be.tan(u0)
 
     def scale(self, factor: float) -> ObjectNAAperture:

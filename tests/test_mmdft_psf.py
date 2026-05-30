@@ -10,7 +10,7 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
 import optiland.backend as be
-from optiland.psf import ScalarFFTPSF, MMDFTPSF
+from optiland.psf import MMDFTPSF, ScalarFFTPSF
 from optiland.samples.objectives import CookeTriplet
 
 from .utils import assert_allclose

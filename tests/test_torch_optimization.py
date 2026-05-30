@@ -397,7 +397,11 @@ class TestTorchOptimizerScaledSpace:
         def _legacy_array(self, x):
             if isinstance(x, torch.Tensor):
                 return x
-            if isinstance(x, (list, tuple)) and len(x) > 0 and isinstance(x[0], np.ndarray):
+            if (
+                isinstance(x, (list, tuple))
+                and len(x) > 0
+                and isinstance(x[0], np.ndarray)
+            ):
                 x = np.array(x)
             return torch.tensor(
                 x,

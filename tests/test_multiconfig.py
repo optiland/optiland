@@ -45,9 +45,7 @@ def test_set_unique_radius(base_optic):
     mc.current_config(0).updater.update()
     mc.current_config(1).updater.update()
 
-    assert (
-        mc.current_config(0).surfaces[1].geometry.radius == -100
-    )  # Original
+    assert mc.current_config(0).surfaces[1].geometry.radius == -100  # Original
     assert mc.current_config(1).surfaces[1].geometry.radius == 300
 
     # Modify global, config 1 should NOT change

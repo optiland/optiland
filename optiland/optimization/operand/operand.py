@@ -115,6 +115,13 @@ class OperandRegistry:
             func (function): The function to be registered.
             overwrite (bool): Whether to overwrite an existing registration.
 
+        Example:
+            >>> def my_operand(optic, surface_number):
+            ...     return optic.surfaces[surface_number].geometry.radius
+            >>> operand_registry.register("my_radius", my_operand)
+            >>> # Now usable in OptimizationProblem:
+            >>> # problem.add_operand("my_radius", target=10.0, input_data={...})
+
         """
         if name in self._registry and not overwrite:
             raise ValueError(f'Operand "{name}" is already registered.')

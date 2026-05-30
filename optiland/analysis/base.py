@@ -49,13 +49,16 @@ class BaseAnalysis(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def view(self, figsize=None, **kwargs):
-        """Abstract method to visualize the analysis data.
-
-        This method must be implemented by subclasses.
+    def view(self, figsize=None, *, show: bool = True, **kwargs):
+        """Visualize the analysis data.
 
         Args:
-            figsize (tuple, optional): The figure size for the plot.
+            figsize (tuple, optional): Figure size passed to matplotlib.
+            show (bool): If True (default), calls plt.show(). Set to False
+                for headless use (e.g. saving to file, CI environments).
             **kwargs: Additional keyword arguments for customization.
+
+        Returns:
+            The matplotlib Figure object (or a tuple starting with the Figure).
         """
         pass

@@ -74,3 +74,25 @@ The `OpticViewer3D` class includes an optional **dark mode** for 3D plots, offer
 
 .. note::
    The image in the :ref:`developers_guide` shows an example of the dark mode 3D visualization output for a lithographic lens system.
+
+How to Extend This
+------------------
+
+**Scenario:** Add a new 2D or 3D renderer component to Optiland.
+
+**For 2D (Matplotlib):**
+
+**Step 1:** Create a component class in ``optiland/visualization/`` that accepts an ``Optic``
+instance and a Matplotlib ``Axes`` object.
+**Step 2:** Implement a ``draw()`` method that adds Matplotlib artists to the axes.
+**Step 3:** Integrate with ``OpticViewer`` in ``optiland/visualization/optic_viewer.py`` if the
+component should appear in the standard ``lens.draw()`` output.
+
+**For 3D (VTK):**
+
+**Step 1:** Create a component class that generates VTK actors (``vtkActor`` or ``vtkAssembly``).
+**Step 2:** Integrate with ``OpticViewer3D`` in ``optiland/visualization/optic_viewer_3d.py``.
+
+**Step 3:** Add tests in ``tests/test_visualization/``.
+
+For step-by-step guidance, see :ref:`extension_recipes`.

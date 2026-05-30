@@ -169,6 +169,7 @@ class IncoherentIrradiance(BaseAnalysis):
         cross_section: tuple[str, int] | None = None,
         *,
         normalize: bool = True,
+        show: bool = True,
     ) -> tuple[Figure, NDArray[_np.object_]] | None:
         """
         Display a false-colour irradiance map or cross-section plots for the current
@@ -240,6 +241,9 @@ class IncoherentIrradiance(BaseAnalysis):
                 )
 
         self._finalize_figure(fig, cs_info, normalize)
+        is_gui_embedding = fig_to_plot_on is not None
+        if show and not is_gui_embedding:
+            plt.show()
         return fig, axs
 
     # --- Data Generation and Access ---

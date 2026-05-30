@@ -520,9 +520,7 @@ class TestLensInfoViewer:
 
     def test_view_abbe_material(self, set_test_backend):
         lens = ReverseTelephoto()
-        lens.surfaces[2].material_post = AbbeMaterial(
-            1.5, 60, model="polynomial"
-        )
+        lens.surfaces[2].material_post = AbbeMaterial(1.5, 60, model="polynomial")
         viewer = LensInfoViewer(lens)
         viewer.view()
 

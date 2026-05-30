@@ -212,17 +212,17 @@ class TestChiefRayAngleCurvatureSolve:
 class TestQuickfocusSolve:
     def test_quick_focus_solve_constructor(self, set_test_backend):
         optic = CookeTriplet()
-        optic.surfaces[-1].geometry.cs.z = optic.surfaces[
-            -1
-        ].geometry.cs.z - be.array(10)
+        optic.surfaces[-1].geometry.cs.z = optic.surfaces[-1].geometry.cs.z - be.array(
+            10
+        )
         solve = QuickFocusSolve(optic)
         assert solve.optic == optic
 
     def test_quick_focus_solve_apply(self, set_test_backend):
         optic = CookeTriplet()
-        optic.surfaces[-1].geometry.cs.z = optic.surfaces[
-            -1
-        ].geometry.cs.z - be.array(10)
+        optic.surfaces[-1].geometry.cs.z = optic.surfaces[-1].geometry.cs.z - be.array(
+            10
+        )
         thickness = 42.21812063592369
         solve = QuickFocusSolve(optic)
         solve.apply()

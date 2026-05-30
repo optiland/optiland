@@ -142,6 +142,8 @@ class ThroughFocusSpotDiagram(ThroughFocusAnalysis):
         fig_to_plot_on: Figure | None = None,
         figsize_per_plot: tuple[float, float] = (3, 3),
         buffer: float = 1.05,
+        *,
+        show: bool = True,
     ) -> tuple[Figure, list[Axes]] | None:
         """
         Visualizes the through-focus spot diagrams, either in a new window or on a
@@ -155,6 +157,8 @@ class ThroughFocusSpotDiagram(ThroughFocusAnalysis):
                 (width, height). Defaults to (3, 3).
             buffer: Scaling buffer applied to the maximum radius
                 for axis limits. Defaults to 1.05.
+            show (bool): If True (default), calls plt.show(). Set False for
+                headless use.
 
         Returns:
             A tuple containing the figure and a list of axes used for plotting. Or None
@@ -228,6 +232,8 @@ class ThroughFocusSpotDiagram(ThroughFocusAnalysis):
 
         if is_gui_embedding and hasattr(current_fig, "canvas"):
             current_fig.canvas.draw_idle()
+        if show and not is_gui_embedding:
+            plt.show()
         return current_fig, current_fig.get_axes()
 
     def _validate_view_prerequisites(self) -> bool:

@@ -20,7 +20,13 @@ def mock_connector(minimal_optic, qapp):
     conn.COL_CONIC = 5
     conn.COL_SEMI_DIAMETER = 6
     conn.get_column_headers.return_value = [
-        "Type", "Comment", "Radius", "Thickness", "Material", "Conic", "Semi-Diameter"
+        "Type",
+        "Comment",
+        "Radius",
+        "Thickness",
+        "Material",
+        "Conic",
+        "Semi-Diameter",
     ]
     conn.get_surface_count.return_value = 4
     conn.get_optimization_variables.return_value = []
