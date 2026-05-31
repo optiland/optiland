@@ -58,7 +58,7 @@ def _trim_trailing_zeros(coefs):
         n -= 1
     if n == 0:
         return []
-    if isinstance(coefs, (list, tuple)):
+    if isinstance(coefs, list | tuple):
         return list(coefs[:n])
     # NumPy array or Torch tensor — keep entries by reference so that any
     # autograd graph attached to surviving entries is preserved.
