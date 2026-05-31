@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import copy
 from contextlib import suppress
+from copy import deepcopy
 from functools import cached_property
 from typing import TYPE_CHECKING
 
@@ -81,28 +82,66 @@ class SurfaceGroup:
                 self._surfaces[i + 1]._on_upstream_material_change
             )
 
-    def __add__(self, other):
+    def __add__(self, other: SurfaceGroup) -> SurfaceGroup:
         """Add two SurfaceGroup objects together.
 
-        Note that this ignores the image surface of the current group and the object
-        surface of the other group.
+        Drops the image surface of ``self`` (last element) and the object
+        surface of ``other`` (first element), then stitches the remaining
+        surfaces so that ``other``'s first physical surface is placed at the
+        position immediately after ``self``'s last surface (accounting for
+        its thickness).
+
+        ``other`` is never mutated; a deep copy of its surfaces is taken
+        before any coordinate adjustments are applied.
+
+        Note:
+            ``self``'s last surface is treated as the image-plane marker and
+            is dropped from the combined group.  For correct composition,
+            append a flat (radius = ∞) image surface to ``self`` before
+            calling ``__add__``.  If ``self``'s last surface is a real
+            optical element with finite thickness, its propagation space is
+            still honoured via the junction-z calculation even though the
+            surface itself is not retained.
         """
-        # add the offset of the last surface in self to each surface in other
-        offset = self.surfaces[-1].geometry.cs.z if self.surfaces else 0.0
+        # Deep-copy other's surfaces so the original is never mutated and the
+        # combined group does not share mutable objects with other.
+        other_copies = [deepcopy(s) for s in other._surfaces]
 
-        # add object surface distance if finite
-        object_distance = other.surfaces[0].geometry.cs.z
-        if be.isfinite(object_distance):
-            offset = offset - object_distance
+        # Junction z: the position after self's last surface (= self's image plane).
+        # Using last.z + last.thickness correctly handles the case where the last
+        # surface has a finite propagation space before the focal plane.
+        last = self._surfaces[-1]
+        last_z = float(last.geometry.cs.z)
+        last_thickness = last.thickness
+        if hasattr(last_thickness, "item"):
+            last_thickness = last_thickness.item()
 
-        for surf in other.surfaces[1:]:
-            surf.geometry.cs.z = surf.geometry.cs.z + offset
+        if be.isinf(be.array(last_thickness)):
+            junction_z = last_z
+        else:
+            junction_z = last_z + float(last_thickness)
 
-        # remove stop surface from other
-        for surface in other.surfaces:
-            surface.is_stop = False
+        # Compute the global shift for other's surfaces so that other[0]
+        # (the object plane) coincides with junction_z.
+        object_distance = float(other_copies[0].geometry.cs.z)
+        if be.isfinite(be.array(object_distance)):
+            offset = junction_z - object_distance
+        else:
+            offset = junction_z
 
-        return SurfaceGroup(self._surfaces[:-1] + other._surfaces[1:])
+        # Shift other's physical surfaces (index 1 onwards) into the global frame.
+        for surf in other_copies[1:]:
+            surf.geometry.cs.z = be.array(float(surf.geometry.cs.z) + offset)
+
+        # Remove stop from other if self already has one (preserving self's stop).
+        # Otherwise, we keep other's stop surface as the system stop.
+        self_has_stop = any(surf.is_stop for surf in self._surfaces)
+        if self_has_stop:
+            for surface in other_copies:
+                surface.is_stop = False
+
+        # Drop self's image surface (last) and other's object surface (first).
+        return SurfaceGroup(self._surfaces[:-1] + other_copies[1:])
 
     @cached_property
     def surfaces(self):
@@ -472,9 +511,12 @@ class SurfaceGroup:
                         f"thickness at surface {start_index - 1}"
                     )
 
-                new_z = prev_surface.geometry.cs.z + thickness
+                prev_z = prev_surface.geometry.cs.z
+                if hasattr(prev_z, "item"):
+                    prev_z = prev_z.item()
+                new_z = float(prev_z) + thickness
 
-            current_surface.geometry.cs.z = be.array(new_z)
+            current_surface.geometry.cs.z = be.array(float(new_z))
 
     def flip(
         self,
