@@ -248,6 +248,20 @@ def _validate(method: str, backend: str, constraints: Any, controller: Any) -> N
             f"Method {method!r} requires the torch backend. "
             "Call be.set_backend('torch') before calling minimize()."
         )
+    # NullSpaceStrategy requires a stepped optimizer (PER_STEP_CONSTRAINTS).
+    # Reject it for managed methods early to give an actionable message.
+    _managed_methods = _SCIPY_LOCAL_METHODS | _SCIPY_LS_METHODS | _SCIPY_GLOBAL_METHODS
+    if method in _managed_methods and constraints is not None:
+        from optiland.optimization.constraints.null_space import NullSpaceStrategy
+
+        candidates = constraints if isinstance(constraints, list) else [constraints]
+        if any(isinstance(c, NullSpaceStrategy) for c in candidates):
+            raise ConfigurationError(
+                "NullSpaceStrategy requires a stepped optimizer (e.g. 'dls', 'lm', "
+                "'gauss_newton') that declares the PER_STEP_CONSTRAINTS capability. "
+                f"Method {method!r} is a managed (SciPy) optimizer and does not "
+                "support per-step constraint projection."
+            )
 
 
 def _build_evaluator(problem: OptimizationProblem, backend: str, method: str) -> Any:

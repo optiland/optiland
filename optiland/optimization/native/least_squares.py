@@ -38,6 +38,7 @@ _CAPS: frozenset[Capability] = frozenset(
         Capability.OBSERVE,
         Capability.STEP_CONTROL,
         Capability.MUTATE_TERMINATION,
+        Capability.PER_STEP_CONSTRAINTS,
         Capability.BOUNDS,
     }
 )
