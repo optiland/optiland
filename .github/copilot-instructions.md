@@ -6,7 +6,7 @@
 
 ### Key Facts
 - **Version**: 0.6.0
-- **Languages**: Python 3.10-3.13
+- **Languages**: Python 3.11-3.14
 - **Size**: ~25 core modules, 1700+ tests, comprehensive documentation
 - **Dependencies**: numpy, scipy, matplotlib, vtk, pandas, pyyaml, tabulate, numba, requests, seaborn
 - **Optional extras**: `gui` (PySide6), `torch` (PyTorch backend), `dev` (pytest, codecov)
@@ -135,7 +135,7 @@ The CI pipeline runs:
 1. **Lock file validation**: `uv lock --locked`
 2. **Linting**: `uvx ruff check .`  
 3. **Formatting**: `uvx ruff format --check .`
-4. **Testing**: Multi-version tests (Python 3.10-3.13) with coverage
+4. **Testing**: Multi-version tests (Python 3.11-3.14) with coverage
 5. **Build**: `uv build` to verify package creation
 
 ## Development Best Practices
