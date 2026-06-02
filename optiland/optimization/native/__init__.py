@@ -14,3 +14,5 @@ from .base import SteppedOptimizer  # noqa: F401
 
 with contextlib.suppress(ImportError, ModuleNotFoundError):
     from .torch_opt import TorchOptimizer  # noqa: F401
+
+from .least_squares import GaussNewton, LevenbergMarquardt  # noqa: F401
