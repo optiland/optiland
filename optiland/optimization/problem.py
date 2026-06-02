@@ -171,30 +171,69 @@ class OptimizationProblem:
             return be.array([0.0])
         return be.stack(terms)
 
-    def residual_vector(self):
-        """Vector of weighted operand deltas (unsquared).
+    def weighted_residuals(self):
+        """Canonical least-squares residual vector (PR1b correctness fix).
 
-        Returns a 1-D array whose *i*-th element is
-        ``weight_i * delta_i`` for each operand. This is the residual
-        vector **r** needed by least-squares algorithms such as the
-        Damped Least-Squares (Levenberg-Marquardt) optimizer.
+        Returns a 1-D array **r** where::
 
-        Unlike :meth:`fun_array`, the values are *not* squared, so the
-        merit function equals ``sum(residual_vector() ** 2)``.
+            r_i = sqrt(effective_weight_i) * delta_i
+
+        so that ``sum(r ** 2) == sum_squared()`` exactly — including when
+        field or wavelength weights differ from 1.
 
         When batching is enabled, delegates to the
-        :class:`~optiland.optimization.batched_evaluator.BatchedRayEvaluator`
-        which minimises redundant ray traces.
+        :class:`~optiland.optimization.batched_evaluator.BatchedRayEvaluator`.
 
         Returns:
-            be.ndarray: A 1-D array of length ``len(self.operands)``.
+            be.ndarray: A 1-D array whose length equals the number of
+            active (non-zero effective-weight) operands.
         """
         if self._batched_evaluator is not None:
-            return self._batched_evaluator.residual_vector()
-        terms = [op.fun() for op in self.operands]
+            return self._batched_evaluator.weighted_residuals()
+        terms = []
+        for op in self.operands:
+            ew = op.effective_weight()
+            if ew == 0.0:
+                continue
+            terms.append(be.sqrt(be.array(ew)) * op.delta())
         if not terms:
             return be.array([])
         return be.stack(terms)
+
+    def residual_vector(self):
+        """Weighted operand residual vector.
+
+        Delegates to :meth:`weighted_residuals`, which returns the
+        canonical ``sqrt(effective_weight) * delta`` form introduced in
+        PR1b.  A one-time ``UserWarning`` is emitted on multi-field /
+        multi-wavelength problems where the corrected weighting changes
+        results from earlier releases.
+
+        Returns:
+            be.ndarray: A 1-D array of length equal to active operands.
+        """
+        self._emit_residual_notice_once()
+        return self.weighted_residuals()
+
+    _residual_notice_emitted: bool = False
+
+    def _emit_residual_notice_once(self) -> None:
+        if OptimizationProblem._residual_notice_emitted:
+            return
+        for op in self.operands:
+            ew = op.effective_weight()
+            if ew != op.weight:
+                OptimizationProblem._residual_notice_emitted = True
+                warnings.warn(
+                    "residual_vector() now returns sqrt(effective_weight) * delta "
+                    "(canonical least-squares residual, PR1b correctness fix). "
+                    "For multi-field / multi-wavelength problems this changes "
+                    "numerical results vs. previous releases. "
+                    "See CHANGELOG for details.",
+                    UserWarning,
+                    stacklevel=3,
+                )
+                return
 
     def sum_squared(self):
         """Calculate the sum of squared operand weighted deltas.

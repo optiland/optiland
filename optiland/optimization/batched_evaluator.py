@@ -660,6 +660,40 @@ class BatchedRayEvaluator:
 
         return be.stack(computed_residuals)
 
+    def weighted_residuals(self):
+        """Canonical least-squares residual vector (PR1b).
+
+        Returns a 1-D array where element *i* is
+        ``sqrt(effective_weight_i) * delta_i``, so that
+        ``sum(weighted_residuals() ** 2) == sum_squared()`` exactly.
+
+        Uses the same trace-batching strategy as ``fun_array()`` but
+        multiplies by ``sqrt(effective_weight)`` instead of ``weight``.
+        """
+        self._ensure_plan_current()
+
+        num_operands = len(self.problem.operands)
+        raw_values: list = [None] * num_operands
+
+        self._evaluate_generic_jobs(raw_values)
+        self._evaluate_distribution_jobs(raw_values)
+        self._evaluate_direct_operands(raw_values)
+
+        terms = []
+        for i, operand in enumerate(self.problem.operands):
+            ew = operand.effective_weight()
+            if ew == 0.0:
+                continue
+            value = raw_values[i]
+            if value is None:
+                continue
+            delta = self._compute_delta(operand, value)
+            terms.append(be.sqrt(be.array(ew)) * delta)
+
+        if not terms:
+            return be.array([])
+        return be.stack(terms)
+
     def sum_squared(self):
         """Compute the sum of squared weighted deltas.
 
