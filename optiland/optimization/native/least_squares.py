@@ -100,11 +100,14 @@ class LevenbergMarquardt(SteppedOptimizer):
         self._controller = controller
         self._constraints = constraints
 
+        import optiland.backend as be
+
         x0_np = np.asarray(evaluator.read_x(), dtype=float)
         _maybe_emit_weight_notice(evaluator, self._emit_weight_notice)
 
         r0 = evaluator.residuals(x0_np)
-        val0 = float(np.dot(r0, r0))
+        r0_np = np.asarray(be.to_numpy(r0), dtype=float)
+        val0 = float(np.dot(r0_np, r0_np))
 
         state = OptimizationState(
             x=x0_np,

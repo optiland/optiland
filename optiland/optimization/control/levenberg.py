@@ -81,8 +81,10 @@ class LevenbergController:
             ``StepOutcome`` with ``accepted=True`` and ``delta_x`` on success,
             or ``accepted=False`` when all trials fail (λ blow-up).
         """
-        J: np.ndarray = np.asarray(info.jacobian, dtype=float)  # (m, n)
-        r: np.ndarray = np.asarray(info.residuals, dtype=float)  # (m,)
+        from optiland.backend.utils import to_numpy as _to_numpy
+
+        J: np.ndarray = np.asarray(_to_numpy(info.jacobian), dtype=float)  # (m, n)
+        r: np.ndarray = np.asarray(_to_numpy(info.residuals), dtype=float)  # (m,)
         x: np.ndarray = np.asarray(state.x, dtype=float)  # (n,)
 
         JTJ: np.ndarray = J.T @ J  # (n, n)
