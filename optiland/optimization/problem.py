@@ -250,6 +250,33 @@ class OptimizationProblem:
         """RSS of current merit function"""
         return be.sqrt(self.sum_squared())
 
+    def variable_vector(self):
+        """Return current scaled variable values as a 1-D backend array (PR1c).
+
+        This is the canonical way to read the current parameter vector ``x``
+        from the problem's variables for use by evaluators and optimizers.
+
+        Returns:
+            be.ndarray: Shape ``(n_vars,)`` in scaled space.
+        """
+        vals = list(self.variables)
+        if not vals:
+            return be.array([])
+        return be.array([float(be.to_numpy(var.value)) for var in vals])
+
+    def set_variable_vector(self, x) -> None:
+        """Scatter ``x`` back into variables and call ``update_optics()`` (PR1c).
+
+        This is the canonical way for evaluators and optimizers to push a
+        parameter vector into the problem's optical variables.
+
+        Args:
+            x: 1-D array-like of scaled variable values, length ``n_vars``.
+        """
+        for i, var in enumerate(self.variables):
+            var.update(x[i])
+        self.update_optics()
+
     def update_optics(self):
         """Update all optics considered in the optimization problem"""
         unique_optics = set()
