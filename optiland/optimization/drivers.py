@@ -217,11 +217,31 @@ class ManagedDriver:
             if msg:
                 stop_reason = str(msg)
 
+        # Extract actual iterations and evaluations from SciPy's result if available
+        nfev_scipy = n_value_evals[0]
+        njev_scipy = 0
+        iterations_scipy = iteration_counter[0]
+
+        if final_scipy_result is not None:
+            nfev_scipy = getattr(final_scipy_result, "nfev", nfev_scipy)
+            njev_scipy = getattr(final_scipy_result, "njev", njev_scipy)
+            iterations_scipy = getattr(final_scipy_result, "nit", iterations_scipy)
+            is_ls = method == "least_squares"
+            if (iterations_scipy is None or iterations_scipy == 0) and is_ls:
+                has_j = njev_scipy is not None and njev_scipy > 0
+                iterations_scipy = njev_scipy if has_j else nfev_scipy
+
+        # Ensure they are integers and not None
+        iterations_scipy = int(iterations_scipy) if iterations_scipy is not None else 0
+        nfev_scipy = int(nfev_scipy) if nfev_scipy is not None else 0
+        njev_scipy = int(njev_scipy) if njev_scipy is not None else 0
+
         final_state = OptimizationState(
             x=x_final,
             value=final_val,
-            iteration=iteration_counter[0],
-            n_value_evals=n_value_evals[0],
+            iteration=iterations_scipy,
+            n_value_evals=nfev_scipy,
+            n_jac_evals=njev_scipy,
             stop_reason=stop_reason,
         )
 
