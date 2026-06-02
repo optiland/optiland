@@ -6,7 +6,8 @@ coupling lives there.
 
 Method routing (``method`` arg → optimizer family):
 
-- ``"dls"`` / ``"lm"`` → native LevenbergMarquardt (Phase 2, not yet available)
+- ``"dls"`` / ``"lm"`` → native LevenbergMarquardt, stepped, both backends
+- ``"gauss_newton"`` → native GaussNewton, stepped, both backends
 - ``"adam"`` / ``"sgd"`` → TorchOptimizer, stepped, torch only
 - ``"l-bfgs-b"`` / ``"bfgs"`` / ``"slsqp"`` / ``"trust-constr"`` / etc.
   → ScipyLocalAdapter, managed, numpy
@@ -14,7 +15,8 @@ Method routing (``method`` arg → optimizer family):
 - ``"differential_evolution"`` / ``"dual_annealing"`` / ``"shgo"``
   / ``"basin_hopping"`` → ScipyGlobalAdapter, managed, numpy
 
-``method="auto"`` selects ``"adam"`` under torch or ``"l-bfgs-b"`` under numpy.
+``method="auto"`` selects ``"adam"`` under torch, ``"dls"`` for all-equality
+numpy problems (m ≥ n), or ``"l-bfgs-b"`` otherwise (R3-Q4).
 
 Special optimizers (D10): ``GlassExpert``, ``OrthogonalDescent``, and
 ``ParticleSwarm`` are **not** accessible via this facade.  Use them directly.
@@ -177,6 +179,18 @@ def minimize(
     initial_value = float(be.to_numpy(problem.sum_squared()))
 
     # ---- Dispatch to driver -------------------------------------------
+    if resolved in _NATIVE_STEPPED_METHODS:
+        return _run_stepped_native(
+            resolved,
+            problem,
+            evaluator,
+            controller,
+            effective_constraints,
+            stop,
+            all_observers,
+            initial_value,
+            method_options,
+        )
     if resolved in _TORCH_METHODS:
         return _run_stepped_torch(
             resolved,
@@ -211,12 +225,12 @@ def _resolve_method(method: str, problem: OptimizationProblem, backend: str) -> 
     if method == "auto":
         if backend == "torch":
             return "adam"
-        # numpy: check if all-equality and m >= n -> use least_squares
+        # numpy: native DLS for all-equality and m >= n (R3-Q4)
         ops = list(problem.operands)
         n_vars = len(list(problem.variables))
         all_equality = all(op.target is not None for op in ops)
         if all_equality and len(ops) >= n_vars:
-            return "least_squares"
+            return "dls"
         return "l-bfgs-b"
     if method not in _ALL_METHODS:
         raise ConfigurationError(
@@ -229,13 +243,6 @@ def _resolve_method(method: str, problem: OptimizationProblem, backend: str) -> 
 
 
 def _validate(method: str, backend: str, constraints: Any, controller: Any) -> None:
-    if method in _NATIVE_STEPPED_METHODS:
-        raise ConfigurationError(
-            f"Method {method!r} (native Levenberg-Marquardt / Gauss-Newton) "
-            "is implemented in Phase 2 and is not yet available. "
-            "Use 'least_squares' for SciPy DLS, or 'adam'/'l-bfgs-b' for "
-            "gradient-based optimization."
-        )
     if method in _TORCH_METHODS and backend != "torch":
         raise ConfigurationError(
             f"Method {method!r} requires the torch backend. "
@@ -244,7 +251,7 @@ def _validate(method: str, backend: str, constraints: Any, controller: Any) -> N
 
 
 def _build_evaluator(problem: OptimizationProblem, backend: str, method: str) -> Any:
-    if backend == "torch" and method in _TORCH_METHODS:
+    if backend == "torch" and method in (_TORCH_METHODS | _NATIVE_STEPPED_METHODS):
         from optiland.optimization.evaluators.autograd import AutogradEvaluator
 
         return AutogradEvaluator(problem)
@@ -284,9 +291,49 @@ def _build_constraints(
 def _build_controller(method: str, controller: Any) -> Any:
     if controller is not None:
         return controller
+    if method in ("dls", "lm"):
+        from optiland.optimization.control.levenberg import LevenbergController
+
+        return LevenbergController()
     from optiland.optimization.control.identity import IdentityController
 
     return IdentityController()
+
+
+def _run_stepped_native(
+    method: str,
+    problem: OptimizationProblem,
+    evaluator: Any,
+    controller: Any,
+    constraints: Any,
+    stop: Any,
+    observers: list,
+    initial_value: float,
+    method_options: dict,
+) -> OptimizationResult:
+    from optiland.optimization.drivers import SteppedDriver
+    from optiland.optimization.native.least_squares import (
+        GaussNewton,
+        LevenbergMarquardt,
+    )
+
+    optimizer = LevenbergMarquardt() if method in ("dls", "lm") else GaussNewton()
+
+    ctrl = _build_controller(method, controller)
+
+    driver = SteppedDriver()
+    x0 = evaluator.read_x()
+    return driver.run(
+        optimizer,
+        evaluator,
+        x0,
+        controller=ctrl,
+        constraints=constraints,
+        criteria=stop,
+        observers=observers,
+        initial_value=initial_value,
+        method=method,
+    )
 
 
 def _run_stepped_torch(

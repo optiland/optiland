@@ -107,14 +107,16 @@ class TestConfigurationError:
         with pytest.raises(ConfigurationError):
             raise ConfigurationError("test")
 
-    def test_dls_not_implemented(self):
+    def test_dls_available(self):
+        # Phase 2: method="dls" is now implemented (no longer raises).
         lens = CookeTriplet()
         p = optimization.OptimizationProblem()
         p.add_operand("f2", target=50.0, weight=1.0, input_data={"optic": lens})
-        with pytest.raises(ConfigurationError, match="Phase 2"):
-            from optiland.optimization.api import minimize
+        p.add_variable(lens, "radius", surface_number=1)
+        from optiland.optimization.api import minimize
 
-            minimize(p, method="dls")
+        result = minimize(p, method="dls", maxiter=3, disp=False)
+        assert result.method == "dls"
 
     def test_adam_under_numpy_raises(self):
         assert be.get_backend() == "numpy"
@@ -333,7 +335,12 @@ class TestStoppingCriteria:
         c = CostTolerance(tol=0.1)
         s0 = self._make_state(value=1.0)
         c.reset(s0)
-        s1 = self._make_state(value=1.0 + 1e-12)
+        # iteration=0 → never fires (optimizer hasn't moved yet)
+        s0_check = self._make_state(iteration=0, value=1.0 + 1e-12)
+        stop, _ = c.should_stop(s0_check)
+        assert not stop
+        # iteration=1 → fires when change is tiny
+        s1 = self._make_state(iteration=1, value=1.0 + 1e-12)
         stop, reason = c.should_stop(s1)
         assert stop
         assert "cost_tol" in reason
@@ -626,12 +633,13 @@ class TestMinimizeAPI:
         assert hasattr(result, "message")
         assert result.fun == result.value
 
-    def test_minimize_lm_phase2_raises(self):
+    def test_minimize_lm_available(self):
+        # Phase 2: method="lm" is now implemented (no longer raises).
         from optiland.optimization.api import minimize
 
         p = self._make_simple_problem()
-        with pytest.raises(ConfigurationError, match="Phase 2"):
-            minimize(p, method="lm", disp=False)
+        result = minimize(p, method="lm", maxiter=3, disp=False)
+        assert result.method == "lm"
 
     def test_minimize_slsqp(self):
         from optiland.optimization.api import minimize

@@ -69,6 +69,11 @@ class CostTolerance(StoppingBase):
         self._prev = float(be.to_numpy(v)) if hasattr(v, "item") else float(v)
 
     def should_stop(self, state: OptimizationState) -> tuple[bool, str | None]:
+        # Never fire before any accepted step — at iteration 0 the optimizer
+        # has not moved yet, so a zero relative change is expected and
+        # meaningless.
+        if state.iteration == 0:
+            return False, None
         v = state.value
         curr = float(be.to_numpy(v)) if hasattr(v, "item") else float(v)
         if self._prev is None or math.isnan(curr):

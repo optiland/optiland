@@ -44,6 +44,10 @@ from .state import (  # noqa: E402
     OptimizationResult,
     OptimizationState,
 )
+from .native.least_squares import GaussNewton, LevenbergMarquardt  # noqa: E402
+from .control.levenberg import LevenbergController  # noqa: E402
+from .control.line_search import LineSearchController  # noqa: E402
+from .observers.checkpoint import CheckpointObserver  # noqa: E402
 
 import sys
 
