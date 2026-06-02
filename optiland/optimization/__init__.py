@@ -36,6 +36,15 @@ from .optimizer.custom import (
     ParticleSwarm,
 )
 
+from .api import minimize  # noqa: E402
+from .errors import ConfigurationError  # noqa: E402
+from .state import (  # noqa: E402
+    Capability,
+    EvalCapability,
+    OptimizationResult,
+    OptimizationState,
+)
+
 import sys
 
 optimization = sys.modules[__name__]

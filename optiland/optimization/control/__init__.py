@@ -1,0 +1,12 @@
+"""Step-controller subpackage.
+
+Phase 1: IdentityController (pass-through).
+Phase 2: LevenbergController (DLS damping), LineSearchController.
+
+Kramer Harrison, 2026
+"""
+
+from __future__ import annotations
+
+from .base import StepController  # noqa: F401
+from .identity import IdentityController  # noqa: F401
