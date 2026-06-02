@@ -25,8 +25,6 @@ def mock_optic():
 
 class TestInfoProviders:
     def test_surface_info_provider(self, mock_optic):
-
-
         # Mock surface
         surf_2d = MagicMock(spec=surface.Surface2D)
         real_surf = MagicMock()
@@ -49,8 +47,6 @@ class TestInfoProviders:
         assert "Material: Glass" in info
 
     def test_lens_info_provider(self, mock_optic):
-
-
         # Mock Lens2D
         lens_2d = MagicMock(spec=lens.Lens2D)
         s1, s2 = MagicMock(), MagicMock()

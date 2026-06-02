@@ -266,93 +266,51 @@ class CrossDistribution(BaseDistribution):
 
 
 class GaussianQuadrature(BaseDistribution):
-    """GaussianQuadrature class for generating points and weights for Gaussian
-    quadrature distribution.
+    """A class for Gaussian quadrature on circular domains, based on _[1].
 
-    Generates points for Gaussian quadrature. If `is_symmetric` is true,
-    `num_rings` points are generated. If `is_symmetric` is false,
-    `3 * num_rings` points are generated.
+    Generates points in a circular pattern, with optimal placement for Gaussian
+    quadrature over the unit disk. The total number of points is `num_rings *
+    num_spokes`.
 
     Attributes:
-        is_symmetric: Indicates whether the distribution is symmetric about y.
-            Defaults to False.
+        x: Array of x-coordinates of the generated points.
+        y: Array of y-coordinates of the generated points.
+        weights: Array of weights, normalized to 1.0.
 
-    Reference:
-        G. W. Forbes, "Optical system assessment for design: numerical ray
-        tracing in the Gaussian pupil," J. Opt. Soc. Am. A 5, 1943-1956 (1988)
-
+    .. [1] William H. Peirce, "Numerical Integration Over the Planar Annulus,",  Journal
+            of the Society for Industrial and Applied Mathematics, Vol. 5, No. 2 (Jun.,
+            1957), pp. 66-73
     """
 
-    def __init__(self, is_symmetric=False):
-        self.is_symmetric = is_symmetric
-
-    def generate_points(self, num_rings: int):
-        """Generate points for Gaussian quadrature distribution.
-
+    def generate_points(self, num_rings: int, num_spokes: int | None = None):
+        """Generate radially symmetric points.
         Args:
-            num_rings: Number of rings for Gaussian quadrature.
-
+            num_rings (int): Number of rings.
+            num_angles (int | None) : Number of spokes, by default None. If None, the
+                number of spokes is `4 * (num_rings + 1)`. In that case, the integration
+                over the unit disk is exact for polynomials of degree `num_rings` in x
+                and y.
         """
-        radius = self._get_radius(num_rings)
+        from scipy.special import roots_legendre
 
-        if self.is_symmetric:
-            theta = be.array([0.0])
-        else:
-            theta = be.array([-1.04719755, 0.0, 1.04719755])
+        if num_rings < 1 or num_spokes is not None and num_spokes < 1:
+            raise ValueError("The number of ring or spokes has to be ≥ 1")
 
-        self.x = be.outer(radius, be.cos(theta)).flatten()
-        self.y = be.outer(radius, be.sin(theta)).flatten()
+        k = 4 * num_rings + 3 if num_spokes is None else num_spokes - 1
+        theta_i = 2 * be.pi / (k + 1) * be.arange(1, k + 2)
 
-    def _get_radius(self, num_rings: int) -> BEArray:
-        """Get the radius values for the given number of rings.
+        xi, wi = roots_legendre(num_rings)
+        xi = be.array(xi)
+        wi = be.array(wi)
 
-        Args:
-            num_rings: Number of rings for Gaussian quadrature.
+        ri = (0.5 + 0.5 * xi) ** 0.5
+        wi = 0.5 * wi / (k + 1)
 
-        Returns:
-            Radius values for the given number of rings.
+        self.weights = be.tile(wi, k + 1)
 
-        Raises:
-            ValueError: If the number of rings is not between 1 and 6.
-
-        """
-        radius_dict = {
-            1: be.array([0.70711]),
-            2: be.array([0.45970, 0.88807]),
-            3: be.array([0.33571, 0.70711, 0.94196]),
-            4: be.array([0.26350, 0.57446, 0.81853, 0.96466]),
-            5: be.array([0.21659, 0.48038, 0.70711, 0.87706, 0.97626]),
-            6: be.array([0.18375, 0.41158, 0.61700, 0.78696, 0.91138, 0.98300]),
-        }
-        if num_rings not in radius_dict:
-            raise ValueError("Gaussian quadrature must have between 1 and 6 rings.")
-        return radius_dict[num_rings]
-
-    def get_weights(self, num_rings: int) -> BEArray:
-        """Get weights for Gaussian quadrature distribution.
-
-        Args:
-            num_rings: Number of rings for Gaussian quadrature.
-
-        Returns:
-            Array of weights.
-
-        """
-        weights_dict = {
-            1: be.array([0.5]),
-            2: be.array([0.25, 0.25]),
-            3: be.array([0.13889, 0.22222, 0.13889]),
-            4: be.array([0.08696, 0.16304, 0.16304, 0.08696]),
-            5: be.array([0.059231, 0.11966, 0.14222, 0.11966, 0.059231]),
-            6: be.array([0.04283, 0.09019, 0.11698, 0.11698, 0.09019, 0.04283]),
-        }
-        if num_rings not in weights_dict:
-            raise ValueError("Gaussian quadrature must have between 1 and 6 rings.")
-
-        weights = weights_dict[num_rings]
-        weights = weights * 6.0 if self.is_symmetric else weights * 2.0
-
-        return weights
+        ri, theta_i = be.meshgrid(ri, theta_i)
+        self.x = (ri * be.cos(theta_i)).flatten()
+        self.y = (ri * be.sin(theta_i)).flatten()
 
 
 class RingDistribution(BaseDistribution):

@@ -42,3 +42,16 @@ Workflow
 
 .. tip::
    See the :ref:`learning_guide` for specific demonstrations of both sensitivity and Monte Carlo analyses using the tolerancing framework.
+
+How to Extend This
+------------------
+
+**Scenario:** Add a custom tolerance sensitivity class to Optiland.
+
+**Step 1:** Create a new perturbation class in ``optiland/tolerancing/perturbations.py``.
+**Step 2:** Implement ``apply(optic)`` (apply the perturbation to the system) and ``revert(optic)``
+(restore the original state).
+**Step 3:** Pass instances of your perturbation to ``Tolerancing.add_perturbation()``.
+**Step 4:** Add tests in ``tests/test_tolerancing/``.
+
+For step-by-step guidance, see :ref:`extension_recipes`.

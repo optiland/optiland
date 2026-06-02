@@ -85,3 +85,16 @@ Adding a new analysis type is straightforward:
 
 .. tip::
    See individual analysis class documentation for parameter details or the :ref:`example_gallery` example code.
+
+How to Extend This
+------------------
+
+**Scenario:** Add a new analysis class to Optiland.
+
+**Step 1:** Create a new file in ``optiland/analysis/my_analysis.py``.
+**Step 2:** Subclass ``BaseAnalysis`` and implement ``_generate_data()`` (perform ray tracing and
+store results on ``self``) and ``view()`` (plot or print the results).
+**Step 3:** Register in ``optiland/analysis/__init__.py``.
+**Step 4:** Add tests in ``tests/test_analysis/test_my_analysis.py``.
+
+For step-by-step guidance, see :ref:`extension_recipes`.

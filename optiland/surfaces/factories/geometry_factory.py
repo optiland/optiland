@@ -52,6 +52,8 @@ from optiland.surfaces.factories.geometry_configs import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from optiland.coordinate_system import CoordinateSystem
 
 
@@ -388,6 +390,34 @@ geometry_mapper = {
 
 class GeometryFactory:
     """Factory for creating surface geometry objects based on configuration."""
+
+    @classmethod
+    def register(
+        cls,
+        name: str,
+        create_fn: Callable,
+        config_cls: type,
+        *,
+        overwrite: bool = False,
+    ) -> None:
+        """Register a new geometry type.
+
+        Args:
+            name: The surface_type string key (e.g. 'even_asphere').
+            create_fn: A function ``(cs, config) -> geometry`` instance.
+            config_cls: A dataclass whose fields define the accepted kwargs.
+            overwrite: Allow replacing an existing registration.
+
+        Raises:
+            ValueError: If name is already registered and overwrite is False.
+        """
+        if name in geometry_mapper and not overwrite:
+            raise ValueError(
+                f"Geometry type '{name}' is already registered. "
+                "Pass overwrite=True to replace it."
+            )
+        geometry_mapper[name] = create_fn
+        config_registry[name] = config_cls
 
     @staticmethod
     def create(surface_type: str, cs: Any, **kwargs: Any) -> Any:

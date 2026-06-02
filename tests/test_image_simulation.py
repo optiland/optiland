@@ -70,18 +70,19 @@ def test_spatially_variable_simulator(set_test_backend):
     """Test the convolution simulator."""
     sim = SpatiallyVariableSimulator()
 
+    B = 2
     H, W = 64, 64
     P = 16
     K = 2
 
-    source = be.ones((H, W))
+    source = be.ones((B, H, W))
     eigen_psfs = be.ones((K, P, P)) / (P * P)  # simple kernels
     coeffs = be.ones((K, H, W)) * 0.5
     mean_psf = be.ones((P, P)) / (P * P)
 
     result = sim.simulate(source, eigen_psfs, coeffs, mean_psf)
 
-    assert result.shape == (H, W)
+    assert result.shape == (B, H, W)
     assert be.all(result >= 0)
 
 
@@ -93,7 +94,6 @@ def test_image_simulation_engine_run(set_test_backend):
 
     engine = ImageSimulationEngine(
         optic=optic,
-        source_image=source_rgb,
         config={
             "wavelengths": [0.55, 0.55, 0.55],
             "psf_grid_shape": (3, 3),
@@ -105,7 +105,33 @@ def test_image_simulation_engine_run(set_test_backend):
         },
     )
 
-    result = engine.run()
+    result = engine.run(source_rgb)
 
-    assert result.shape == (64, 64, 3)
+    assert result.shape == (1, 3, 64, 64)
+    assert not be.any(be.isnan(result))
+
+
+def test_image_simulation_engine_run_batch(set_test_backend):
+    """Test the full engine pipeline with batched input."""
+    optic = Telephoto()
+    source_np = create_grid_image(64)
+    source_rgb = np.stack([source_np] * 3, axis=0)  # (3, 64, 64)
+    source_batch = np.stack([source_rgb, source_rgb], axis=0).astype(np.float32)
+
+    engine = ImageSimulationEngine(
+        optic=optic,
+        config={
+            "wavelengths": [0.55, 0.55, 0.55],
+            "psf_grid_shape": (3, 3),
+            "psf_size": 32,
+            "num_rays": 32,
+            "n_components": 2,
+            "oversample": 1,
+            "padding": 16,
+        },
+    )
+
+    result = engine.run(source_batch)
+
+    assert result.shape == (2, 3, 64, 64)
     assert not be.any(be.isnan(result))

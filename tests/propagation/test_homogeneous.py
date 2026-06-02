@@ -1,4 +1,5 @@
 """Unit tests for the HomogeneousPropagation model."""
+
 from __future__ import annotations
 
 from optiland import backend as be

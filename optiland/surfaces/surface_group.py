@@ -10,6 +10,7 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+import copy
 from contextlib import suppress
 from functools import cached_property
 from typing import TYPE_CHECKING
@@ -49,6 +50,15 @@ class SurfaceGroup:
 
         self.surface_factory = SurfaceFactory(self)
 
+    def __deepcopy__(self, memo: dict) -> SurfaceGroup:
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            object.__setattr__(result, k, copy.deepcopy(v, memo))
+        result._rewire_observers()
+        return result
+
     def _update_surface_links(self):
         with suppress(KeyError):
             self.__dict__.pop("surfaces")
@@ -59,6 +69,17 @@ class SurfaceGroup:
             if len(surfaces) > 1:
                 for idx, surface in enumerate(surfaces[1:]):
                     surface.previous_surface = surfaces[idx]
+
+    def _rewire_observers(self) -> None:
+        """Re-establish material-change callbacks across the surface chain.
+
+        Called after deepcopy so downstream surfaces are notified when an
+        upstream surface's material changes.
+        """
+        for i in range(len(self._surfaces) - 1):
+            self._surfaces[i + 1].subscribe(
+                self._surfaces[i + 1]._on_upstream_material_change
+            )
 
     def __add__(self, other):
         """Add two SurfaceGroup objects together.

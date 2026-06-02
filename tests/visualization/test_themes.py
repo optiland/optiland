@@ -1,4 +1,5 @@
 """Tests for the visualization themes module."""
+
 from __future__ import annotations
 
 import matplotlib.pyplot as plt

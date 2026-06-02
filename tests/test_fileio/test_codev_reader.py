@@ -17,7 +17,6 @@ from optiland.fileio.codev.reader.converter import CodeVToOpticConverter
 from optiland.fileio.codev.reader.parser import CodeVDataParser, _looks_like_float
 from optiland.materials import AbbeMaterial, Material
 from optiland.optic import Optic
-
 from tests.utils import assert_allclose
 
 # ---------------------------------------------------------------------------
@@ -190,7 +189,7 @@ class TestCodeVDataParser:
         p = tmp_path / "latin1.seq"
         content = "TITLE 'Título latin-1'\nEPD 10.0\nSO 0 0\nSI 0 0"
         p.write_text(content, encoding="latin-1")
-        
+
         parser = CodeVDataParser(str(p))
         model = parser.parse()
         assert model.name == "Título latin-1"
@@ -200,7 +199,7 @@ class TestCodeVDataParser:
         # Test & continuation and ; separator
         content = "TITLE 'Multi'\nEPD &\n 20.0; WL 550; WTW 1.0"
         p.write_text(content)
-        
+
         parser = CodeVDataParser(str(p))
         model = parser.parse()
         assert model.aperture["EPD"] == 20.0
@@ -210,9 +209,9 @@ class TestCodeVDataParser:
     def test_rdm_n_curvature_mode(self, tmp_path):
         p = tmp_path / "rdm.seq"
         # RDM N sets radius_mode to False (curvature mode)
-        content = "RDM N\nS 0.05 5.0" # curvature 0.05 -> radius 20.0
+        content = "RDM N\nS 0.05 5.0"  # curvature 0.05 -> radius 20.0
         p.write_text(content)
-        
+
         parser = CodeVDataParser(str(p))
         model = parser.parse()
         assert model.radius_mode is False
@@ -223,7 +222,7 @@ class TestCodeVDataParser:
         # STO without surface token
         content = "STO\nS 100 5"
         p.write_text(content)
-        
+
         parser = CodeVDataParser(str(p))
         model = parser.parse()
         # The parser handles STO by starting a surface at index 0
@@ -233,7 +232,7 @@ class TestCodeVDataParser:
         p = tmp_path / "fields.seq"
         content = "XAN 0 5 10; YAN 0 10 20; WTF 1 2 3"
         p.write_text(content)
-        
+
         parser = CodeVDataParser(str(p))
         model = parser.parse()
         assert model.fields["type"] == "angle"
@@ -245,7 +244,7 @@ class TestCodeVDataParser:
         p = tmp_path / "ap.seq"
         content = "NA 0.1; NAO 0.2"
         p.write_text(content)
-        
+
         parser = CodeVDataParser(str(p))
         model = parser.parse()
         assert model.aperture["NA"] == 0.1
@@ -255,7 +254,7 @@ class TestCodeVDataParser:
         p = tmp_path / "stoxref.seq"
         content = "SO 0 0\nS 50 5\nSTO S1\nSI 0 0"
         p.write_text(content)
-        
+
         parser = CodeVDataParser(str(p))
         model = parser.parse()
         assert model.sto_surface_index == 1
@@ -264,7 +263,7 @@ class TestCodeVDataParser:
         p = tmp_path / "tilts.seq"
         content = "S 50 5\nXDE 1.0; YDE 2.0; ZDE 3.0\nADE 5.0; BDE 10.0; CDE 15.0"
         p.write_text(content)
-        
+
         parser = CodeVDataParser(str(p))
         model = parser.parse()
         s = model.surfaces[0]
@@ -280,13 +279,13 @@ class TestCodeVDataParser:
         # NNN.VVV, NNNNVV, Nd:Vd
         content = "SO 0 0 '569.631'\nS 0 0 '517642'\nS 0 0 '1.6:50'\nSI 0 0"
         p.write_text(content)
-        
+
         parser = CodeVDataParser(str(p))
         model = parser.parse()
         assert isinstance(model.surfaces[0]["material"], AbbeMaterial)
         assert float(model.surfaces[0]["material"].index.item()) == 1.569
         assert float(model.surfaces[0]["material"].abbe.item()) == 63.1
-        
+
         assert isinstance(model.surfaces[1]["material"], AbbeMaterial)
         assert float(model.surfaces[1]["material"].index.item()) == 1.517
         assert float(model.surfaces[1]["material"].abbe.item()) == 64.2
@@ -301,11 +300,13 @@ class TestCodeVDataParser:
         # UNKNOWN_GLASS should warn
         content = "S 50 5 NBK7\nS 50 5 UNKNOWN_GLASS"
         p.write_text(content)
-        
+
         parser = CodeVDataParser(str(p))
-        with pytest.warns(UserWarning, match="Glass 'UNKNOWN_GLASS' could not be resolved"):
+        with pytest.warns(
+            UserWarning, match="Glass 'UNKNOWN_GLASS' could not be resolved"
+        ):
             model = parser.parse()
-        
+
         assert isinstance(model.surfaces[0]["material"], Material)
         assert model.surfaces[0]["material"].name == "N-BK7"
         assert model.surfaces[1]["material"] is None
@@ -314,7 +315,7 @@ class TestCodeVDataParser:
         p = tmp_path / "prv.seq"
         content = "PRV\nsome data\nEND"
         p.write_text(content)
-        
+
         parser = CodeVDataParser(str(p))
         with pytest.warns(UserWarning, match="Private glass catalog"):
             model = parser.parse()
@@ -378,8 +379,10 @@ class TestCodeVToOpticConverter:
         asph = list(optic.surfaces)[1]
         geom = asph.geometry
         assert hasattr(geom, "coefficients")
+
     def test_init_with_model(self):
         from optiland.fileio.codev.model import CodeVDataModel
+
         model = CodeVDataModel(name="TestModel")
         converter = CodeVToOpticConverter(model)
         assert converter.data["name"] == "TestModel"
@@ -389,10 +392,10 @@ class TestCodeVToOpticConverter:
         data = {
             "surfaces": {
                 1: {"type": "standard", "radius": 50.0, "thickness": 5.0},
-                2: {"type": "image", "radius": 0.0, "thickness": 0.0}
+                2: {"type": "image", "radius": 0.0, "thickness": 0.0},
             },
             "sto_surface_index": 1,
-            "aperture": {"EPD": 10.0}
+            "aperture": {"EPD": 10.0},
         }
         converter = CodeVToOpticConverter(data)
         optic = converter.convert()
@@ -405,9 +408,19 @@ class TestCodeVToOpticConverter:
 
     def test_configure_aperture_fail(self):
         # Must have data but no recognized keys to raise
-        converter = CodeVToOpticConverter({"surfaces": {}, "aperture": {"UNKNOWN": 10.0}})
+        converter = CodeVToOpticConverter(
+            {"surfaces": {}, "aperture": {"UNKNOWN": 10.0}}
+        )
         converter.optic = Optic()
         with pytest.raises(ValueError, match="No valid aperture type found"):
+            converter._configure_aperture()
+
+    def test_aperture_na_raises(self):
+        converter = CodeVToOpticConverter(
+            {"surfaces": {}, "aperture": {"NA": 0.1}}
+        )
+        converter.optic = Optic()
+        with pytest.raises(NotImplementedError, match="image-space numerical aperture"):
             converter._configure_aperture()
 
 

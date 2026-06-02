@@ -18,8 +18,6 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
-from optiland.tolerancing.sensitivity_analysis import SensitivityAnalysis
-
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
     from matplotlib.figure import Figure
@@ -28,34 +26,30 @@ if TYPE_CHECKING:
     from optiland.tolerancing.core import Tolerancing
 
 
-class MonteCarlo(SensitivityAnalysis):
-    """Class for performing Monte Carlo analysis on a tolerancing system.
+class MonteCarlo:
+    """Standalone Monte Carlo analysis for a tolerancing system.
+
+    Unlike SensitivityAnalysis (which sweeps each perturbation in sequence),
+    MonteCarlo applies all perturbations simultaneously from random samples
+    on each iteration.
 
     Args:
-        tolerancing (Tolerancing): The tolerancing system to perform
-            Monte Carlo analysis on.
+        tolerancing: The tolerancing system to analyse.
 
     Attributes:
-        tolerancing (Tolerancing): The tolerancing system to perform
-            Monte Carlo analysis on.
-        operand_names (list): List of operand names in the tolerancing system.
-        _results (pd.DataFrame): DataFrame to store the Monte Carlo analysis
-            results.
-
-    Methods:
-        run(num_iterations): Runs the Monte Carlo analysis for num_iterations.
-        get_results(): Returns the Monte Carlo analysis results.
-        view_histogram(kde=True): Visualizes the Monte Carlo analysis results
-            as histograms.
-        view_cdf(): Visualizes the Monte Carlo analysis results as cumulative
-            distribution functions.
-        view_heatmap(figsize=(8, 6)): Visualizes the correlation between
-            operands in the Monte Carlo analysis results as a heatmap.
+        tolerancing: The tolerancing system.
+        operand_names: List of operand names in the tolerancing system.
+        _results: DataFrame storing the Monte Carlo results.
 
     """
 
-    def __init__(self, tolerancing: Tolerancing):
-        super().__init__(tolerancing)
+    def __init__(self, tolerancing: Tolerancing) -> None:
+        self.tolerancing = tolerancing
+        self.operand_names = [
+            f"{i}: {operand}" for i, operand in enumerate(tolerancing.operands)
+        ]
+        self._results = pd.DataFrame()
+        self._validate()
 
     def run(self, num_iterations: int):
         """Executes the Monte Carlo simulation for a specified number of
@@ -121,6 +115,15 @@ class MonteCarlo(SensitivityAnalysis):
             results.append(result)
 
         self._results = pd.DataFrame(results)
+
+    def get_results(self) -> pd.DataFrame:
+        """Return the Monte Carlo analysis results.
+
+        Returns:
+            pd.DataFrame: The results of the Monte Carlo simulation.
+
+        """
+        return self._results
 
     def view_histogram(self, kde: bool = True) -> tuple[Figure, NDArray[np.object_]]:
         """Displays a histogram of the data.

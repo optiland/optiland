@@ -6,6 +6,7 @@ Kramer Harrison, 2025
 from __future__ import annotations
 
 import optiland.backend as be
+from optiland.utils import globalize_coordinates
 
 from .base import BaseFieldDefinition
 from .paraxial_image_height import ParaxialImageHeightField
@@ -110,8 +111,8 @@ class RealImageHeightField(BaseFieldDefinition):
                 jac_update_x[mask_x] = d_curr_x[mask_x] / d_val_x[mask_x]
 
                 # Store current values before updating val_x
-                prev_val_x = val_x.copy()
-                prev_curr_x = curr_x.copy()
+                prev_val_x = be.copy(val_x)
+                prev_curr_x = be.copy(curr_x)
 
                 # Apply update X
                 val_x -= err_x / jac_update_x
@@ -124,17 +125,17 @@ class RealImageHeightField(BaseFieldDefinition):
                 jac_update_y = be.ones_like(val_y) * jacobian  # Fallback
                 jac_update_y[mask_y] = d_curr_y[mask_y] / d_val_y[mask_y]
 
-                prev_val_y = val_y.copy()  # Save OLD val
-                prev_curr_y = curr_y.copy()
+                prev_val_y = be.copy(val_y)  # Save OLD val
+                prev_curr_y = be.copy(curr_y)
 
                 val_y -= err_y / jac_update_y
             else:
-                prev_val_x = val_x.copy()
-                prev_curr_x = curr_x.copy()
+                prev_val_x = be.copy(val_x)
+                prev_curr_x = be.copy(curr_x)
                 val_x -= err_x / jacobian
 
-                prev_val_y = val_y.copy()
-                prev_curr_y = curr_y.copy()
+                prev_val_y = be.copy(val_y)
+                prev_curr_y = be.copy(curr_y)
                 val_y -= err_y / jacobian
 
         # Generate final ray origins using the converged field parameters
@@ -153,9 +154,7 @@ class RealImageHeightField(BaseFieldDefinition):
             optic, val_x, val_y, zeros, zeros, 0, 0
         )
 
-        EPL = optic.paraxial.EPL()
-        # EPL is relative to the first surface (index 1)
-        z_pupil = optic.surfaces.positions[1] + EPL
+        z_pupil = optic.paraxial.entrance_pupil_z()
 
         x1 = be.zeros_like(x0)
         y1 = be.zeros_like(y0)
@@ -187,18 +186,20 @@ class RealImageHeightField(BaseFieldDefinition):
             z0 = be.full_like(Px, z)
         else:
             # val_x, val_y are object heights
-            x0 = val_x
-            y0 = val_y
+            x_local = be.atleast_1d(be.array(val_x))
+            y_local = be.atleast_1d(be.array(val_y))
 
             # Ensure correct shape
-            if be.size(x0) == 1:
-                x0 = be.full_like(Px, x0)
-            if be.size(y0) == 1:
-                y0 = be.full_like(Px, y0)
+            if be.size(x_local) == 1:
+                x_local = be.full_like(be.atleast_1d(Px), x_local)
+            if be.size(y_local) == 1:
+                y_local = be.full_like(be.atleast_1d(Px), y_local)
 
-            z0 = (
-                optic.object_surface.geometry.sag(x0, y0)
-                + optic.object_surface.geometry.cs.z
+            z_local = optic.object_surface.geometry.sag(x_local, y_local)
+
+            # Globalize the local coordinates
+            x0, y0, z0 = globalize_coordinates(
+                optic.object_surface, x_local, y_local, z_local
             )
         return x0, y0, z0
 

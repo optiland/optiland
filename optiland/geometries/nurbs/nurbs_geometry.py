@@ -277,6 +277,14 @@ class NurbsGeometry(BaseGeometry):
                 )
             self.ndim = be.shape(control_points)[0]
 
+    def set_radius(self, value: float) -> None:
+        """Set the radius of curvature.
+
+        Args:
+            value (float): The new radius of curvature.
+        """
+        self.radius = be.array(value)
+
     def flip(self):
         """Flip the geometry.
 

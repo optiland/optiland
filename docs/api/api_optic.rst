@@ -12,3 +12,5 @@ The ExtendedSourceOptic class is a wrapper around the Optic class that enables e
    optic.optic
    optic.optic_updater
    optic.extended_source_optic
+   optic.context
+

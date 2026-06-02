@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import matplotlib
-import pytest
 import numpy as np
+import pytest
 
 matplotlib.use("Agg")  # ensure non-interactive backend for testing
 
@@ -47,7 +47,9 @@ def optic():
 def polarized_optic():
     """CookeTriplet with horizontal (H) linear polarization enabled."""
     lens = CookeTriplet()
-    state = PolarizationState(is_polarized=True, Ex=1.0, Ey=0.0, phase_x=0.0, phase_y=0.0)
+    state = PolarizationState(
+        is_polarized=True, Ex=1.0, Ey=0.0, phase_x=0.0, phase_y=0.0
+    )
     lens.updater.set_polarization(state)
     return lens
 
@@ -75,7 +77,9 @@ class TestFFTMTFFactoryDispatch:
         mtf = FFTMTF(polarized_optic, num_rays=_NUM_RAYS, grid_size=_GRID_SIZE)
         assert isinstance(mtf, VectorialFFTMTF)
 
-    def test_unpolarized_state_returns_vectorial(self, set_test_backend, unpolarized_state_optic):
+    def test_unpolarized_state_returns_vectorial(
+        self, set_test_backend, unpolarized_state_optic
+    ):
         mtf = FFTMTF(unpolarized_state_optic, num_rays=_NUM_RAYS, grid_size=_GRID_SIZE)
         assert isinstance(mtf, VectorialFFTMTF)
 
@@ -149,7 +153,9 @@ class TestVectorialFFTMTFUsesPSF:
         for psf in mtf.psf:
             assert be.to_numpy(be.min(psf)) >= 0.0
 
-    def test_calculate_psf_uses_vectorial_fft_psf(self, set_test_backend, polarized_optic):
+    def test_calculate_psf_uses_vectorial_fft_psf(
+        self, set_test_backend, polarized_optic
+    ):
         """Verify _calculate_psf produces output from VectorialFFTPSF directly."""
         mtf = VectorialFFTMTF(polarized_optic, num_rays=_NUM_RAYS, grid_size=_GRID_SIZE)
 
@@ -223,32 +229,46 @@ class TestVectorialFFTMTFData:
 
 class TestVectorialFFTMTFPolarizations:
     def test_horizontal_polarization(self, set_test_backend, optic):
-        state = PolarizationState(is_polarized=True, Ex=1.0, Ey=0.0, phase_x=0.0, phase_y=0.0)
+        state = PolarizationState(
+            is_polarized=True, Ex=1.0, Ey=0.0, phase_x=0.0, phase_y=0.0
+        )
         optic.updater.set_polarization(state)
         mtf = VectorialFFTMTF(optic, num_rays=_NUM_RAYS, grid_size=_GRID_SIZE)
         assert mtf.mtf is not None
         assert len(mtf.mtf) > 0
 
     def test_vertical_polarization(self, set_test_backend, optic):
-        state = PolarizationState(is_polarized=True, Ex=0.0, Ey=1.0, phase_x=0.0, phase_y=0.0)
+        state = PolarizationState(
+            is_polarized=True, Ex=0.0, Ey=1.0, phase_x=0.0, phase_y=0.0
+        )
         optic.updater.set_polarization(state)
         mtf = VectorialFFTMTF(optic, num_rays=_NUM_RAYS, grid_size=_GRID_SIZE)
         assert mtf.mtf is not None
 
     def test_unpolarized_state(self, set_test_backend, unpolarized_state_optic):
-        mtf = VectorialFFTMTF(unpolarized_state_optic, num_rays=_NUM_RAYS, grid_size=_GRID_SIZE)
+        mtf = VectorialFFTMTF(
+            unpolarized_state_optic, num_rays=_NUM_RAYS, grid_size=_GRID_SIZE
+        )
         assert mtf.mtf is not None
 
     def test_h_and_v_produce_same_on_axis_mtf(self, set_test_backend, optic):
         """Horizontal and vertical polarizations yield identical on-axis MTF
         for a rotationally symmetric uncoated lens."""
-        state_h = PolarizationState(is_polarized=True, Ex=1.0, Ey=0.0, phase_x=0.0, phase_y=0.0)
+        state_h = PolarizationState(
+            is_polarized=True, Ex=1.0, Ey=0.0, phase_x=0.0, phase_y=0.0
+        )
         optic.updater.set_polarization(state_h)
-        mtf_h = VectorialFFTMTF(optic, fields=[(0, 0)], num_rays=_NUM_RAYS, grid_size=_GRID_SIZE)
+        mtf_h = VectorialFFTMTF(
+            optic, fields=[(0, 0)], num_rays=_NUM_RAYS, grid_size=_GRID_SIZE
+        )
 
-        state_v = PolarizationState(is_polarized=True, Ex=0.0, Ey=1.0, phase_x=0.0, phase_y=0.0)
+        state_v = PolarizationState(
+            is_polarized=True, Ex=0.0, Ey=1.0, phase_x=0.0, phase_y=0.0
+        )
         optic.updater.set_polarization(state_v)
-        mtf_v = VectorialFFTMTF(optic, fields=[(0, 0)], num_rays=_NUM_RAYS, grid_size=_GRID_SIZE)
+        mtf_v = VectorialFFTMTF(
+            optic, fields=[(0, 0)], num_rays=_NUM_RAYS, grid_size=_GRID_SIZE
+        )
 
         assert_allclose(mtf_h.mtf[0][0], mtf_v.mtf[0][0], atol=1e-2)
         assert_allclose(mtf_h.mtf[0][1], mtf_v.mtf[0][1], atol=1e-2)
@@ -267,7 +287,9 @@ class TestVectorialVsScalarConsistency:
             optic, fields=[(0, 0)], num_rays=_NUM_RAYS, grid_size=_GRID_SIZE
         )
 
-        state = PolarizationState(is_polarized=True, Ex=1.0, Ey=0.0, phase_x=0.0, phase_y=0.0)
+        state = PolarizationState(
+            is_polarized=True, Ex=1.0, Ey=0.0, phase_x=0.0, phase_y=0.0
+        )
         optic.updater.set_polarization(state)
         mtf_vec = VectorialFFTMTF(
             optic, fields=[(0, 0)], num_rays=_NUM_RAYS, grid_size=_GRID_SIZE
@@ -311,7 +333,9 @@ class TestVectorialFFTMTFMultiField:
 
 
 class TestVectorialFFTMTFStrategies:
-    @pytest.mark.parametrize("strategy", ["chief_ray", "centroid_sphere", "best_fit_sphere"])
+    @pytest.mark.parametrize(
+        "strategy", ["chief_ray", "centroid_sphere", "best_fit_sphere"]
+    )
     def test_strategy(self, set_test_backend, polarized_optic, strategy):
         mtf = VectorialFFTMTF(
             polarized_optic,

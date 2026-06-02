@@ -16,6 +16,8 @@ from optiland.fileio.optiland_handler import (
     save_obj_to_json,
     save_optiland_file,
 )
+from optiland.fileio.oslo.reader.converter import OsloToOpticConverter as _OsloTC
+from optiland.fileio.oslo.writer.exporter import save_oslo_file
 from optiland.fileio.zemax.reader.converter import ZemaxToOpticConverter as _NewZTC
 from optiland.fileio.zemax.writer.exporter import save_zemax_file
 
@@ -42,6 +44,18 @@ def load_codev_file(source: str):
         An Optic object created from the CODE V file data.
     """
     return _CodeVTC({}).read(source)
+
+
+def load_oslo_file(source: str):
+    """Load an OSLO .len file and return an Optic object.
+
+    Args:
+        source: The path to a local .len file.
+
+    Returns:
+        An Optic object created from the OSLO file data.
+    """
+    return _OsloTC().read(source)
 
 
 # ---------------------------------------------------------------------------
@@ -71,6 +85,9 @@ __all__ = [
     # CODE V
     "load_codev_file",
     "save_codev_file",
+    # OSLO
+    "load_oslo_file",
+    "save_oslo_file",
     # Optiland JSON handler
     "load_obj_from_json",
     "save_obj_to_json",
