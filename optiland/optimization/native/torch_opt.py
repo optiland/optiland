@@ -8,6 +8,8 @@ Design (D9): ``loss.backward()`` is called inside the grad-mode context;
 ``.item()`` is NOT called in the hot loop — ``state.value`` remains a tensor
 until ``OptimizationResult`` is built.
 
+Param ↔ surface sync is delegated to :class:`TorchParameterSync` (WS1).
+
 Kramer Harrison, 2026
 """
 
@@ -16,6 +18,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
+from optiland.optimization.evaluators._param_sync import TorchParameterSync
 from optiland.optimization.state import Capability, OptimizationState
 
 from .base import SteppedOptimizer
@@ -70,10 +73,9 @@ class TorchOptimizer(SteppedOptimizer):
         self._optimizer_name = optimizer_name
         self._lr = lr
         self._gamma = gamma
-        self._params: list[Any] = []
+        self._sync: TorchParameterSync | None = None
         self._torch_opt: Any = None
         self._scheduler: Any = None
-        self._problem: Any = None
 
     # ------------------------------------------------------------------
     # SteppedOptimizer interface
@@ -87,39 +89,32 @@ class TorchOptimizer(SteppedOptimizer):
         controller: StepController,
         constraints: ConstraintStrategy | None,
     ) -> OptimizationState:
-        """Create params, optimizer, and scheduler; return initial state."""
+        """Create sync, optimizer, and scheduler; return initial state."""
         problem = evaluator.problem
-        self._problem = problem
 
-        if not be.grad_mode.requires_grad:
-            be.grad_mode.enable()
+        self._sync = TorchParameterSync(problem)
+        # Load x0 so params reflect the starting point
+        self._sync.load_x(x0)
 
-        # Create nn.Parameter leaf tensors from current variable values
-        self._params = [
-            nn.Parameter(be.array(float(var.value))) for var in problem.variables
-        ]
-
-        # Build the torch optimizer
+        # Build the torch optimizer over sync.params
         if self._optimizer_name == "adam":
-            self._torch_opt = _optim.Adam(self._params, lr=self._lr)
+            self._torch_opt = _optim.Adam(self._sync.params, lr=self._lr)
         elif self._optimizer_name == "sgd":
-            self._torch_opt = _optim.SGD(self._params, lr=self._lr)
+            self._torch_opt = _optim.SGD(self._sync.params, lr=self._lr)
         else:
             raise ValueError(f"Unknown torch optimizer: {self._optimizer_name!r}")
 
         self._scheduler = ExponentialLR(self._torch_opt, gamma=self._gamma)
 
-        # Initial value (no grad needed yet)
+        # Push initial params into surfaces (no grad needed for initial value)
         with torch.no_grad():
-            for i, param in enumerate(self._params):
-                problem.variables[i].update(param)
-            problem.update_optics()
+            self._sync.write_params()
 
         with be.grad_mode.temporary_enable():
             init_val = problem.sum_squared()
 
         return OptimizationState(
-            x=torch.stack([p.detach().clone() for p in self._params]),
+            x=self._sync.read_x(),
             value=init_val.detach(),
             iteration=0,
             n_value_evals=1,
@@ -130,19 +125,15 @@ class TorchOptimizer(SteppedOptimizer):
         self._torch_opt.zero_grad()
 
         with be.grad_mode.temporary_enable():
-            # Push params into variables (maintains autograd graph)
-            for i, param in enumerate(self._params):
-                self._problem.variables[i].update(param)
-            self._problem.update_optics()
-
-            loss = self._problem.sum_squared()
+            self._sync.write_params()
+            loss = self._sync.problem.sum_squared()
             loss.backward()
 
         self._torch_opt.step()
-        self._apply_bounds()
+        self._sync.clamp_bounds()
         self._scheduler.step()
 
-        state.x = torch.stack([p.detach().clone() for p in self._params])
+        state.x = self._sync.read_x()
         state.value = loss.detach()
         state.iteration += 1
         state.n_value_evals += 1
@@ -151,18 +142,3 @@ class TorchOptimizer(SteppedOptimizer):
     def converged(self, state: OptimizationState) -> bool:  # noqa: ARG002
         """TorchOptimizer has no intrinsic convergence; criteria own this."""
         return False
-
-    # ------------------------------------------------------------------
-    # Bounds enforcement
-    # ------------------------------------------------------------------
-
-    def _apply_bounds(self) -> None:
-        with torch.no_grad():
-            for i, param in enumerate(self._params):
-                lo, hi = self._problem.variables[i].bounds
-                if lo is not None and hi is not None:
-                    param.data.clamp_(lo, hi)
-                elif lo is not None:
-                    param.data.clamp_(min=lo)
-                elif hi is not None:
-                    param.data.clamp_(max=hi)

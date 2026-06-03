@@ -5,7 +5,7 @@ Uses the stateful forward pass (D4): parameters are pushed into surfaces via
 ``var.update(param)`` each call, then ``sum_squared()`` / ``weighted_residuals()``
 are evaluated through the existing trace pipeline.
 
-**Phase 4 — functional Jacobian fast path** (D4):
+**Phase 4 — functional Jacobian fast path** (D4, experimental):
 The ``"functional"`` and ``"compiled"`` Jacobian modes expose a closure
 ``f(x_tensor) -> r`` that is differentiable via ``torch.autograd``.
 
@@ -17,9 +17,11 @@ The ``"functional"`` and ``"compiled"`` Jacobian modes expose a closure
    computing the Jacobian.  The JIT-compiled graph reduces per-pass overhead
    and provides speedup on long traces.
 
-The ``jacobian_mode`` constructor argument selects the path.  The default
-remains ``"stateful"`` (row-by-row autograd.grad) for backward compatibility;
-switch to ``"functional"`` or ``"compiled"`` for the Phase 4 fast path.
+**Experimental:** ``"functional"`` and ``"compiled"`` modes are opt-in and
+excluded from the all-backends correctness guarantee.  ``"stateful"`` is the
+verified default (F13).
+
+The ``jacobian_mode`` constructor argument selects the path.
 
 Kramer Harrison, 2026
 """
@@ -29,6 +31,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Literal
 
 import optiland.backend as be
+from optiland.optimization.evaluators._param_sync import TorchParameterSync
 from optiland.optimization.state import EvalCapability
 
 if TYPE_CHECKING:
@@ -58,26 +61,23 @@ JacobianMode = Literal["stateful", "functional", "compiled"]
 class AutogradEvaluator:
     """Evaluator for the torch backend using PyTorch autograd.
 
-    Maintains a list of ``nn.Parameter`` objects (one per variable) that
-    serve as the leaf tensors for gradient computation.  Values are propagated
-    into the problem's variables via ``var.update(param)`` before each trace,
-    mirroring ``TorchBaseOptimizer``'s approach.
+    Delegates parameter ↔ surface synchronisation to :class:`TorchParameterSync`
+    (the single shared core, WS1).  The evaluator owns only computation logic.
 
     Args:
         problem: The optimization problem to wrap.
         jacobian_mode: Selects the Jacobian computation strategy.
 
-            * ``"stateful"`` (default) — row-by-row ``torch.autograd.grad``
-              with ``retain_graph``.  Always correct; no extra dependencies.
-            * ``"functional"`` — builds a differentiable closure
-              ``f(x) -> r`` and dispatches to ``torch.func.jacrev`` when
-              the trace is vmap-compatible; otherwise falls back to
-              ``torch.autograd.functional.jacobian`` (same m backward passes
-              but cleaner and ready for future vmap support).
-            * ``"compiled"`` — same as ``"functional"`` but first applies
-              ``torch.compile`` to the forward closure for JIT-compilation of
-              the entire forward pass (variable writes + ray trace + residuals),
-              reducing per-evaluation overhead on long traces.
+            * ``"stateful"`` (default, verified) — row-by-row
+              ``torch.autograd.grad`` with ``retain_graph``.  Always correct;
+              no extra dependencies.
+            * ``"functional"`` (**experimental**) — builds a differentiable
+              closure ``f(x) -> r`` and dispatches to ``torch.func.jacrev``
+              when the trace is vmap-compatible; otherwise falls back to
+              ``torch.autograd.functional.jacobian``.
+            * ``"compiled"`` (**experimental**) — same as ``"functional"`` but
+              first applies ``torch.compile`` to the forward closure for
+              JIT-compilation of the entire forward pass.
     """
 
     def __init__(
@@ -101,16 +101,21 @@ class AutogradEvaluator:
         self.provides: frozenset[EvalCapability] = _PROVIDES
         self.jacobian_mode: JacobianMode = jacobian_mode
 
-        # Leaf tensors — the canonical "x" for this evaluator
-        if not be.grad_mode.requires_grad:
-            be.grad_mode.enable()
-        self._params: list[nn.Parameter] = [
-            nn.Parameter(be.array(float(var.value))) for var in problem.variables
-        ]
+        # Shared param↔surface sync core (WS1)
+        self._sync = TorchParameterSync(problem)
 
         # Phase 4: cached forward closure (built lazily)
         self._forward_fn: Callable | None = None
         self._compiled_fn: Callable | None = None
+
+    # ------------------------------------------------------------------
+    # Convenience proxy — exposing sync.params for legacy callers
+    # ------------------------------------------------------------------
+
+    @property
+    def _params(self) -> list[Any]:
+        """Proxy for tests/internal code that accessed ``_params`` directly."""
+        return self._sync.params
 
     # ------------------------------------------------------------------
     # read / write
@@ -118,20 +123,17 @@ class AutogradEvaluator:
 
     def read_x(self) -> Any:
         """Return current param values stacked as a 1-D detached tensor."""
-        return torch.stack([p.detach().clone() for p in self._params])
+        return self._sync.read_x()
 
     def write_x(self, x: Any) -> None:
         """Sync params from ``x``, then push into variables and update optics.
 
-        ``x`` may be a 1-D tensor or a numpy array; values are written as
-        scalars so the params remain the leaf nodes.
+        Values are loaded via a single vectorised copy per param (no
+        per-element ``.item()`` loop — D9), then the autograd graph is
+        updated via :meth:`TorchParameterSync.write_params`.
         """
-        with torch.no_grad():
-            for i, param in enumerate(self._params):
-                v = x[i]
-                val = float(v.item()) if hasattr(v, "item") else float(v)
-                param.data.fill_(val)
-        for i, param in enumerate(self._params):
+        self._sync.load_x(x)
+        for i, param in enumerate(self._sync.params):
             self.problem.variables[i].update(param)
         self.problem.update_optics()
 
@@ -160,50 +162,26 @@ class AutogradEvaluator:
         detached tensor of shape ``(n,)``.  Does **not** call ``.item()``
         (no device sync in the hot loop — D9).
         """
-        with torch.no_grad():
-            for i, param in enumerate(self._params):
-                v = x[i]
-                val = float(v.item()) if hasattr(v, "item") else float(v)
-                param.data.fill_(val)
-        for param in self._params:
+        self._sync.load_x(x)
+        for param in self._sync.params:
             if param.grad is not None:
                 param.grad.zero_()
 
         with be.grad_mode.temporary_enable():
-            for i, param in enumerate(self._params):
-                self.problem.variables[i].update(param)
-            self.problem.update_optics()
+            self._sync.write_params()
             loss = self.problem.sum_squared()
             loss.backward()
 
-        return torch.stack([p.grad.detach().clone() for p in self._params])
+        return torch.stack([p.grad.detach().clone() for p in self._sync.params])
 
     # ------------------------------------------------------------------
-    # Phase 4 — functional forward closure
+    # Phase 4 — functional forward closure (experimental)
     # ------------------------------------------------------------------
 
     def build_forward_fn(self) -> Callable:
         """Build a differentiable closure ``f(x_tensor) -> r`` (Phase 4).
 
-        The returned function takes a 1-D tensor ``x_tensor`` of shape
-        ``(n,)`` and returns the weighted residual vector ``r`` of shape
-        ``(m,)``.  When ``x_tensor`` has ``requires_grad=True``, ``r``
-        depends on ``x_tensor`` through the autograd graph:
-
-        .. code-block:: text
-
-            x_tensor[i]  →  inverse_scale(x_tensor[i])
-                         →  surface.attr = unscaled        (Python attr write)
-                         →  ray trace reads surface.attr   (tensor op)
-                         →  weighted_residuals()  →  r
-
-        The closure is differentiable via ``torch.autograd`` (both
-        ``autograd.grad`` and ``autograd.functional.jacobian``).  It is
-        *not* vmap-compatible in the general case because surface attribute
-        writes are Python-level side effects that ``torch.func`` transforms
-        cannot functionalize.  ``torch.func.jacrev`` with a vmap-capable
-        trace is therefore attempted opportunistically; a fallback to
-        ``torch.autograd.functional.jacobian`` handles the stateful case.
+        **Experimental** — see class docstring.
 
         Returns:
             A callable ``f(x_tensor: Tensor) -> Tensor``.
@@ -233,27 +211,20 @@ class AutogradEvaluator:
             try:
                 self._compiled_fn = torch.compile(fn)
             except Exception:
-                # torch.compile not supported in this environment; fall back
                 self._compiled_fn = fn
         return self._compiled_fn
 
     def _jacobian_functional(self, x: Any) -> Any:
-        """Jacobian via the functional closure (Phase 4 fast path).
+        """Jacobian via the functional closure (Phase 4 fast path, experimental).
 
         Dispatches in preference order:
 
         1. ``torch.func.jacrev`` — uses vmap-based batched backward passes.
-           Fastest when the trace is vmap-compatible (all tensor ops, no
-           Python-level surface attribute mutations).
         2. ``torch.autograd.functional.jacobian`` — loops m backward passes
-           through the functional closure.  Correct for the stateful case;
-           same compute as the stateful default but through the unified
-           closure (enabling future ``torch.compile`` on the forward graph).
+           through the functional closure.
 
         After computing the Jacobian, the problem state is restored via
-        ``write_x(x)`` so that subsequent evaluations see a clean state
-        (surface attributes are set to ``nn.Parameter``-derived tensors,
-        not the temporary grad-enabled leaf used during differentiation).
+        ``write_x(x)`` so that subsequent evaluations see a clean state.
 
         Args:
             x: Parameter vector (1-D tensor or compatible).
@@ -266,8 +237,9 @@ class AutogradEvaluator:
         else:
             fn = self._get_or_build_forward_fn()
 
-        dtype = self._params[0].dtype if self._params else torch.float64
-        device = self._params[0].device if self._params else torch.device("cpu")
+        params = self._sync.params
+        dtype = params[0].dtype if params else torch.float64
+        device = params[0].device if params else torch.device("cpu")
         x_t = torch.as_tensor(
             x if not isinstance(x, torch.Tensor) else x.detach(),
             dtype=dtype,
@@ -275,7 +247,6 @@ class AutogradEvaluator:
         ).requires_grad_(True)
 
         try:
-            # --- attempt torch.func.jacrev (eliminates Python loop when vmap works) ---
             if hasattr(torch, "func") and hasattr(torch.func, "jacrev"):
                 try:
                     J = torch.func.jacrev(fn)(x_t)
@@ -283,17 +254,13 @@ class AutogradEvaluator:
                         J = J.detach()
                     return J
                 except Exception:
-                    pass  # vmap incompatible; fall through to autograd.functional
+                    pass
 
-            # --- fallback: autograd.functional.jacobian (stateful-safe) ---
             from torch.autograd.functional import jacobian as _jac
 
             J = _jac(fn, x_t, create_graph=False, vectorize=False)
-            # _jac returns a single tensor when fn has one Tensor input
             return J.detach() if isinstance(J, torch.Tensor) and J.requires_grad else J
         finally:
-            # Restore surface state: write params (nn.Parameters) back into
-            # surfaces, replacing any grad-tracked leaf tensors left by fn(x_t).
             self.write_x(x)
 
     # ------------------------------------------------------------------
@@ -305,12 +272,13 @@ class AutogradEvaluator:
 
         Dispatches to the appropriate path based on ``jacobian_mode``:
 
-        * ``"stateful"`` (default) — row-by-row ``torch.autograd.grad`` with
-          ``retain_graph=True`` for all but the last row.  Always correct.
-        * ``"functional"`` — functional closure + ``torch.func.jacrev``
-          (with fallback to ``torch.autograd.functional.jacobian``).
-        * ``"compiled"`` — same as ``"functional"`` but with the forward
-          closure pre-compiled via ``torch.compile``.
+        * ``"stateful"`` (default, verified) — row-by-row
+          ``torch.autograd.grad`` with ``retain_graph=True`` for all but the
+          last row.  Always correct.
+        * ``"functional"`` (**experimental**) — functional closure +
+          ``torch.func.jacrev`` (with fallback).
+        * ``"compiled"`` (**experimental**) — same as ``"functional"`` but
+          with the forward closure pre-compiled via ``torch.compile``.
 
         Args:
             x: Parameter vector (1-D tensor or compatible).
@@ -328,29 +296,29 @@ class AutogradEvaluator:
         Returns a tensor of shape ``(m, n)``.  Each row requires one backward
         pass with ``retain_graph=True`` for all but the last row.
 
-        This is the default stateful path (D4), guaranteed-correct for any
-        trace regardless of vmap compatibility.
+        Device-correct: zero-fill for ``allow_unused`` grads uses
+        ``torch.zeros_like(param)`` so the result stays on the param's device.
         """
-        with torch.no_grad():
-            for i, param in enumerate(self._params):
-                v = x[i]
-                val = float(v.item()) if hasattr(v, "item") else float(v)
-                param.data.fill_(val)
+        self._sync.load_x(x)
 
         with be.grad_mode.temporary_enable():
-            for i, param in enumerate(self._params):
-                self.problem.variables[i].update(param)
-            self.problem.update_optics()
+            self._sync.write_params()
             r = self.problem.weighted_residuals()
 
         m = r.shape[0]
+        params = self._sync.params
         rows = []
         for i in range(m):
             grads = torch.autograd.grad(
-                r[i], self._params, retain_graph=(i < m - 1), allow_unused=True
+                r[i], params, retain_graph=(i < m - 1), allow_unused=True
             )
             row = torch.cat(
-                [g.reshape(-1) if g is not None else torch.zeros(1) for g in grads]
+                [
+                    g.reshape(-1)
+                    if g is not None
+                    else torch.zeros_like(param).reshape(-1)
+                    for g, param in zip(grads, params, strict=True)
+                ]
             )
             rows.append(row)
         return torch.stack(rows)  # (m, n)
