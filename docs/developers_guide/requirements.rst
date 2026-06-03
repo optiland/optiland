@@ -1,7 +1,7 @@
 System Requirements
 ===================
 
-Optiland is a Python-based library, and it is compatible with Python versions **3.10 through 3.13**. 
+Optiland is a Python-based library, and it is compatible with Python versions **3.11 through 3.14**. 
 
 Operating System and Hardware
 -----------------------------

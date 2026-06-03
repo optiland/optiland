@@ -20,7 +20,7 @@ drpaprika, 2025
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from optiland.materials import (
     downsample_glass_map,
@@ -29,6 +29,7 @@ from optiland.materials import (
     plot_glass_map,
 )
 
+from ..live_plotter import LiveOptimizationPlotter
 from .base import OptimizerGeneric
 
 if TYPE_CHECKING:
@@ -269,7 +270,8 @@ class GlassExpert(OptimizerGeneric):
         maxiter: int = 1000,
         tol: float = 1e-3,
         disp: bool = True,
-        callback=None,
+        plot: bool = False,
+        callback: Any = None,
         verbose: bool = True,
         plot_glass_map=False,
     ):
@@ -301,6 +303,7 @@ class GlassExpert(OptimizerGeneric):
             Default is 1e-3.
         disp (bool, optional): Whether to display internal messages from the optimizer.
             Default is True.
+        plot: If True, update live plots during optimization.
         callback (callable, optional): Optional function called at each
             iteration of the optimizer.
         verbose (bool, optional): Whether to print informative messages
@@ -321,8 +324,22 @@ class GlassExpert(OptimizerGeneric):
         self.verbose = verbose
         self.plot_glass_map = plot_glass_map
 
+        live_plotter: LiveOptimizationPlotter | None = None
+        if plot:
+            live_plotter = LiveOptimizationPlotter(self)
+            live_plotter.initialize()
+
+        def _wrapped_callback(*args: Any, **kwargs: Any) -> None:
+            if callback is not None:
+                callback(*args, **kwargs)
+
+            if live_plotter is not None:
+                live_plotter.update()
+
         # Local optimizer params
-        self.opt_params = dict(maxiter=maxiter, tol=tol, disp=disp, callback=callback)
+        self.opt_params = dict(
+            maxiter=maxiter, tol=tol, disp=disp, callback=_wrapped_callback
+        )
 
         # Identify variables
         continuous_variables = [
@@ -361,5 +378,9 @@ class GlassExpert(OptimizerGeneric):
         for var, val in zip(self.problem.variables, result.x, strict=False):
             var.update(val)
         self.problem.update_optics()
+
+        if live_plotter is not None:
+            live_plotter.update()
+            live_plotter.finalize()
 
         return result

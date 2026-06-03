@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from optiland.materials.material import Material
 
 
-class MatchPolicy(str, enum.Enum):
+class MatchPolicy(enum.StrEnum):
     """Controls how Material resolves ambiguous name matches.
 
     Attributes:

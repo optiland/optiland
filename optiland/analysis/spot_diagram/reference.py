@@ -10,7 +10,7 @@ Kramer Harrison, 2025
 from __future__ import annotations
 
 import abc
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 import optiland.backend as be
@@ -22,8 +22,7 @@ if TYPE_CHECKING:
     from .core import SpotData
 
 
-# TODO: Update to StrEnum when Python 3.10 support is dropped
-class SpotReferenceType(str, Enum):
+class SpotReferenceType(StrEnum):
     """Defines the available reference point types for spot centering."""
 
     CHIEF_RAY = "chief_ray"

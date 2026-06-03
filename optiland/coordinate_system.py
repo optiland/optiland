@@ -60,15 +60,69 @@ class CoordinateSystem:
             reference_cs: The reference coordinate system.
         """
 
-        self.x = be.array(x)
-        self.y = be.array(y)
-        self.z = be.array(z)
+        self.x = x
+        self.y = y
+        self.z = z
 
-        self.rx = be.array(rx)
-        self.ry = be.array(ry)
-        self.rz = be.array(rz)
+        self.rx = rx
+        self.ry = ry
+        self.rz = rz
 
         self.reference_cs = reference_cs
+
+    @property
+    def x(self) -> BEArray:
+        """The x-coordinate of the origin, as a backend array."""
+        return self._x
+
+    @x.setter
+    def x(self, value: ScalarOrArray) -> None:
+        self._x = be.array(value)
+
+    @property
+    def y(self) -> BEArray:
+        """The y-coordinate of the origin, as a backend array."""
+        return self._y
+
+    @y.setter
+    def y(self, value: ScalarOrArray) -> None:
+        self._y = be.array(value)
+
+    @property
+    def z(self) -> BEArray:
+        """The z-coordinate of the origin, as a backend array."""
+        return self._z
+
+    @z.setter
+    def z(self, value: ScalarOrArray) -> None:
+        self._z = be.array(value)
+
+    @property
+    def rx(self) -> BEArray:
+        """The rotation around the x-axis, as a backend array."""
+        return self._rx
+
+    @rx.setter
+    def rx(self, value: ScalarOrArray) -> None:
+        self._rx = be.array(value)
+
+    @property
+    def ry(self) -> BEArray:
+        """The rotation around the y-axis, as a backend array."""
+        return self._ry
+
+    @ry.setter
+    def ry(self, value: ScalarOrArray) -> None:
+        self._ry = be.array(value)
+
+    @property
+    def rz(self) -> BEArray:
+        """The rotation around the z-axis, as a backend array."""
+        return self._rz
+
+    @rz.setter
+    def rz(self, value: ScalarOrArray) -> None:
+        self._rz = be.array(value)
 
     def localize(self, rays: RealRays):
         """Localizes the rays in the coordinate system.
