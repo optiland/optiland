@@ -91,6 +91,7 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
    :caption: Core Functionalities
 
    functionalities
+   guide/optimization/index
 
 
 .. toctree::
@@ -143,6 +144,7 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
    developers_guide/analysis_framework
    developers_guide/optimization_framework
    developers_guide/tolerancing_framework
+
    developers_guide/multiconfig_framework
    developers_guide/visualization_framework
    developers_guide/optiland_file_format
