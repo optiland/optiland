@@ -42,6 +42,7 @@ def _build_result(
     backend: str,
     method: str,
     history: list | None,
+    resolved_from: str | None = None,
 ) -> OptimizationResult:
     final_value = _to_float(state.value)
     denom = max(abs(initial_value), 1e-12)
@@ -65,6 +66,7 @@ def _build_result(
         history=history,
         backend=backend,
         method=method,
+        resolved_from=resolved_from,
     )
 
 
@@ -93,6 +95,7 @@ class SteppedDriver:
         observers: list[Observer],
         initial_value: float,
         method: str,
+        resolved_from: str | None = None,
     ) -> OptimizationResult:
         t0 = time.monotonic()
 
@@ -125,6 +128,7 @@ class SteppedDriver:
             evaluator.backend,
             method,
             history,
+            resolved_from=resolved_from,
         )
         for obs in observers:
             obs.on_end(state, result)
@@ -157,6 +161,7 @@ class ManagedDriver:
         initial_value: float,
         method: str,
         method_options: dict,
+        resolved_from: str | None = None,
     ) -> OptimizationResult:
         t0 = time.monotonic()
         problem = evaluator.problem
@@ -253,6 +258,7 @@ class ManagedDriver:
             evaluator.backend,
             method,
             history,
+            resolved_from=resolved_from,
         )
         if final_scipy_result is not None:
             result_success = getattr(final_scipy_result, "success", True)

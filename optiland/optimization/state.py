@@ -94,6 +94,9 @@ class OptimizationResult:
         history: Per-iteration snapshots from HistoryObserver, or None.
         backend: ``"numpy"`` or ``"torch"``.
         method: Resolved method string.
+        resolved_from: If ``method="auto"`` was passed, the original
+            ``"auto"`` string; ``None`` when an explicit method was given.
+            Combine with ``method`` to understand how the solver was chosen.
     """
 
     x: Any
@@ -109,6 +112,7 @@ class OptimizationResult:
     history: list | None
     backend: str
     method: str
+    resolved_from: str | None = None
 
     @property
     def fun(self) -> float:
