@@ -1,49 +1,141 @@
 Optimization
 ============
 
-This section covers the optimization functionality of the Optiland package. The optimization module
-provides a set of tools for optimizing optical systems. It includes a variety of optimization algorithms,
-such as gradient-based and evolutionary algorithms, as well as tools for defining optimization variables
-and objectives.
+.. note::
+   For tutorials and architecture documentation, see :doc:`/guide/optimization/index`.
 
-For thin film and coating specific optimization (e.g., Needle Synthesis), see the :doc:`api_thin_film` module.
+The optimization module is organized as follows:
 
-The optimization module is divided into four subcategories:
-
-1. Core Functionalities - Problem definition and optimizers
-2. Operands - Functions to compute optical performance metrics
-3. Variables - Properties of optical elements that can be optimized
-4. Scaling - Methods to scale optimization variables for better performance
-
-Core Functionalities
---------------------
+Entry Points
+------------
 
 .. autosummary::
    :toctree: optimization/
-   :caption: Optimization Modules
+   :nosignatures:
 
+   optimization.api
    optimization.problem
-   optimization.optimizer.scipy.base
-   optimization.optimizer.scipy.basin_hopping
-   optimization.optimizer.scipy.differential_evolution
-   optimization.optimizer.scipy.dual_annealing
-   optimization.optimizer.scipy.least_squares
-   optimization.optimizer.scipy.orthogonal_descent
-   optimization.optimizer.scipy.shgo
-   optimization.optimizer.scipy.glass_expert
-   optimization.optimizer.torch.base
-   optimization.optimizer.torch.adam
-   optimization.optimizer.torch.sgd
 
+Results & Errors
+----------------
+
+.. autosummary::
+   :toctree: optimization/
+   :nosignatures:
+
+   optimization.state
+   optimization.errors
+
+Native Solvers
+--------------
+
+.. autosummary::
+   :toctree: optimization/native/
+   :nosignatures:
+
+   optimization.native.base
+   optimization.native.least_squares
+   optimization.native.torch_opt
+
+Managed Adapters
+----------------
+
+.. autosummary::
+   :toctree: optimization/managed/
+   :nosignatures:
+
+   optimization.managed.scipy_local
+   optimization.managed.scipy_least_squares
+   optimization.managed.scipy_global
+
+Drivers
+-------
+
+.. autosummary::
+   :toctree: optimization/
+   :nosignatures:
+
+   optimization.drivers
+
+Evaluators
+----------
+
+.. autosummary::
+   :toctree: optimization/evaluators/
+   :nosignatures:
+
+   optimization.evaluators.base
+   optimization.evaluators.finite_difference
+   optimization.evaluators.autograd
+
+Step Controllers
+----------------
+
+.. autosummary::
+   :toctree: optimization/control/
+   :nosignatures:
+
+   optimization.control.base
+   optimization.control.identity
+   optimization.control.levenberg
+   optimization.control.line_search
+
+Stopping Criteria
+-----------------
+
+.. autosummary::
+   :toctree: optimization/stopping/
+   :nosignatures:
+
+   optimization.stopping.base
+   optimization.stopping.criteria
+   optimization.stopping.composite
+
+Observers
+---------
+
+.. autosummary::
+   :toctree: optimization/observers/
+   :nosignatures:
+
+   optimization.observers.base
+   optimization.observers.history
+   optimization.observers.logging
+   optimization.observers.checkpoint
+   optimization.observers.cancel
+
+Constraints
+-----------
+
+.. autosummary::
+   :toctree: optimization/constraints/
+   :nosignatures:
+
+   optimization.constraints.base
+   optimization.constraints.bounds
+   optimization.constraints.null_space
+   optimization.constraints.scipy_native
+
+Standalone Optimizers
+---------------------
+
+These optimizers are not accessible via :func:`~optimization.api.minimize` by design.
+Use them directly.
+
+.. autosummary::
+   :toctree: optimization/optimizer/
+   :nosignatures:
+
+   optimization.optimizer.scipy.glass_expert
+   optimization.optimizer.scipy.orthogonal_descent
+   optimization.optimizer.custom.particle_swarm
 
 Operands
 --------
 
-The `optimization.operand` subpackage contains the following modules:
-
 .. autosummary::
    :toctree: optimization/operand/
-   :caption: Operand Modules
+   :nosignatures:
    :recursive:
 
    optimization.operand.aberration
@@ -51,15 +143,12 @@ The `optimization.operand` subpackage contains the following modules:
    optimization.operand.paraxial
    optimization.operand.ray
 
-
 Variables
 ---------
 
-The `optimization.variable` subpackage contains the following modules:
-
 .. autosummary::
    :toctree: optimization/variable/
-   :caption: Variable Submodules
+   :nosignatures:
    :recursive:
 
    optimization.variable.asphere_coeff
@@ -68,6 +157,7 @@ The `optimization.variable` subpackage contains the following modules:
    optimization.variable.conic
    optimization.variable.decenter
    optimization.variable.forbes_coeff
+   optimization.variable.grid_sag
    optimization.variable.index
    optimization.variable.material
    optimization.variable.norm_radius
@@ -77,19 +167,17 @@ The `optimization.variable` subpackage contains the following modules:
    optimization.variable.reciprocal_radius
    optimization.variable.thickness
    optimization.variable.tilt
-   optimization.variable.variable_manager
+   optimization.variable.torch
    optimization.variable.variable
+   optimization.variable.variable_manager
    optimization.variable.zernike_coeff
-
 
 Scaling
 -------
 
-The `optimization.scaling` subpackage contains the following modules:
-
 .. autosummary::
    :toctree: optimization/scaling/
-   :caption: Scaling Modules
+   :nosignatures:
    :recursive:
 
    optimization.scaling.base
@@ -98,3 +186,25 @@ The `optimization.scaling` subpackage contains the following modules:
    optimization.scaling.log
    optimization.scaling.power
    optimization.scaling.reciprocal
+
+Deprecated (until v0.7.0)
+--------------------------
+
+.. deprecated::
+   These classes emit ``DeprecationWarning`` on construction.
+   Use :func:`~optimization.api.minimize` with the equivalent ``method=`` string instead.
+   See :doc:`/guide/optimization/migration`.
+
+.. autosummary::
+   :toctree: optimization/optimizer/deprecated/
+   :nosignatures:
+
+   optimization.optimizer.scipy.base
+   optimization.optimizer.scipy.basin_hopping
+   optimization.optimizer.scipy.differential_evolution
+   optimization.optimizer.scipy.dual_annealing
+   optimization.optimizer.scipy.least_squares
+   optimization.optimizer.scipy.shgo
+   optimization.optimizer.torch.base
+   optimization.optimizer.torch.adam
+   optimization.optimizer.torch.sgd
