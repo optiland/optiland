@@ -7,7 +7,7 @@ from optiland.optimization.scaling.log import LogScaler
 from optiland.optimization.scaling.power import PowerScaler
 from optiland.optimization.scaling.reciprocal import ReciprocalScaler
 
-from .utils import assert_allclose
+from tests.utils import assert_allclose
 
 
 class TestIdentityScaler:
