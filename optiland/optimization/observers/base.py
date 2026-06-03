@@ -1,7 +1,7 @@
 """Observer protocol.
 
 Observers are *read-only* by contract.  They must not mutate state and must
-not perform expensive device synchronisation on every call (D9).
+not perform expensive device synchronisation on every call.
 
 Kramer Harrison, 2026
 """
@@ -18,9 +18,9 @@ if TYPE_CHECKING:
 class Observer(Protocol):
     """Protocol for per-iteration observers.
 
-    All three hooks are called exactly once per phase:
-    ``on_start`` before the loop, ``on_step`` after each *accepted* step
-    (D11), and ``on_end`` after the final result is built.
+     All three hooks are called exactly once per phase:
+     ``on_start`` before the loop, ``on_step`` after each *accepted* step
+    , and ``on_end`` after the final result is built.
     """
 
     def on_start(self, state: OptimizationState) -> None: ...  # pragma: no cover

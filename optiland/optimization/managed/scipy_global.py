@@ -1,7 +1,7 @@
 """ScipyGlobalAdapter — private core for SciPy global optimizers.
 
 Calls scipy directly without going through deprecated legacy classes —
-no DeprecationWarning is triggered from the facade path (F10).
+no DeprecationWarning is triggered from the facade path.
 
 Kramer Harrison, 2026
 """

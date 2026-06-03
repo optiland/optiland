@@ -5,12 +5,12 @@ evaluations (one baseline + one perturbation per variable). Each single
 evaluation still goes through BatchedRayEvaluator, so the per-evaluation cost
 is already operand-batched.
 
-Design notes (D5): torch autograd is the *fast* path; this evaluator is
+The torch autograd evaluator is the fast path; this evaluator is
 the honest CPU path. It is not slow in practice for the small/dense variable
 counts of classical lens design.
 
 Non-finite evaluations propagate as NaN — they are *not* replaced with
-1e10. The native LM controller (Phase 2) treats NaN as a rejected step.
+1e10. The native LM controller treats NaN as a rejected step.
 
 Kramer Harrison, 2026
 """

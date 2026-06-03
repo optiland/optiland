@@ -16,9 +16,9 @@ Method routing (``method`` arg → optimizer family):
   / ``"basin_hopping"`` → ScipyGlobalAdapter, managed, numpy
 
 ``method="auto"`` selects ``"adam"`` under torch, ``"dls"`` for all-equality
-numpy problems (m ≥ n), or ``"l-bfgs-b"`` otherwise (R3-Q4).
+numpy problems (m ≥ n), or ``"l-bfgs-b"`` otherwise.
 
-Special optimizers (D10): ``GlassExpert``, ``OrthogonalDescent``, and
+Special optimizers: ``GlassExpert``, ``OrthogonalDescent``, and
 ``ParticleSwarm`` are **not** accessible via this facade.  Use them directly.
 
 Kramer Harrison, 2026
@@ -110,7 +110,7 @@ def minimize(
             ``BoxBoundsStrategy`` for stepped optimizers.
         controller: Step controller (stepped family only).  Defaults to
             ``IdentityController`` for torch; ``LevenbergController`` for
-            native LM (Phase 2).
+            native LM.
         stop: Composite stopping criterion.  Defaults to
             ``MaxIter(maxiter) | CostTolerance(tol)``.
         observers: Additional observers to attach (e.g. ``HistoryObserver``).
@@ -147,7 +147,7 @@ def minimize(
 
     Note:
         ``GlassExpert``, ``OrthogonalDescent``, and ``ParticleSwarm`` are not
-        accessible via this facade (D10).  Use those classes directly.
+        accessible via this facade.  Use those classes directly.
 
     Choosing a method:
         **Core rule:** does Optiland run the loop, or do you?  If Optiland →

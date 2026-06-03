@@ -1,4 +1,4 @@
-"""LineSearchController — Armijo backtracking line search (optional, Phase 2).
+"""LineSearchController — Armijo backtracking line search .
 
 Shrinks the step length α by ``rho`` until the Armijo sufficient-decrease
 condition is satisfied::

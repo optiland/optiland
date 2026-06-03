@@ -1,4 +1,4 @@
-"""NullSpaceStrategy — exact CODE V-style constraint projection (Phase 3).
+"""NullSpaceStrategy — exact CODE V-style constraint projection.
 
 Enforces equality constraints ``h(x) = 0`` and active inequality constraints
 via null-space (tangent-space) projection.  Each LM step is:

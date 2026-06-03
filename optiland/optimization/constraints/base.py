@@ -1,9 +1,9 @@
 """ConstraintStrategy protocol and CompositeStrategy.
 
-Strategies are thin adapters over existing constraint mechanisms (D6):
+Strategies are thin adapters over existing constraint mechanisms:
   - ``BoxBoundsStrategy`` reads ``var.bounds``.
   - ``ScipyNativeStrategy`` forwards bounds/constraints to SciPy.
-  - Phase 3: ``NullSpaceStrategy`` for exact projection.
+  - ``NullSpaceStrategy`` for exact projection.
 
 Kramer Harrison, 2026
 """

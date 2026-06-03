@@ -4,11 +4,11 @@ Decomposes ``TorchBaseOptimizer.optimize()`` into ``initialize`` + ``step``
 so that ``SteppedDriver`` owns the loop and observers / criteria integrate
 cleanly.
 
-Design (D9): ``loss.backward()`` is called inside the grad-mode context;
+``loss.backward()`` is called inside the grad-mode context;
 ``.item()`` is NOT called in the hot loop — ``state.value`` remains a tensor
 until ``OptimizationResult`` is built.
 
-Param ↔ surface sync is delegated to :class:`TorchParameterSync` (WS1).
+Param ↔ surface sync is delegated to :class:`TorchParameterSync`.
 
 Kramer Harrison, 2026
 """

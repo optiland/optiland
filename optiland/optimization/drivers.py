@@ -1,9 +1,9 @@
 """Optimization Drivers
 
-Two driver families (D1):
+Two driver families:
 
 * ``SteppedDriver``: owns the loop; calls ``optimizer.step()`` once per
-  accepted iteration.  Used for torch and (Phase 2) native LM.
+  accepted iteration.  Used for torch and native LM.
 * ``ManagedDriver``: delegates the loop to an existing SciPy adapter.
   Threads observers through SciPy's ``callback=`` argument.
 
@@ -76,7 +76,7 @@ def _build_result(
 
 
 class SteppedDriver:
-    """Runs a stepped optimizer (torch / Phase-2 native LM) until a stopping
+    """Runs a stepped optimizer (torch / native LM) until a stopping
     criterion fires or the optimizer signals intrinsic convergence.
 
     The loop is intentionally minimal (~20 lines of real logic).  Optimizers

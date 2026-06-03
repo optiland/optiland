@@ -1,4 +1,4 @@
-"""BoxBoundsStrategy — thin reader of ``var.bounds`` (D6).
+"""BoxBoundsStrategy — thin reader of ``var.bounds``.
 
 Reads bounds from ``variable.bounds`` (already in scaled space) and:
   - applies a clamp in ``apply_to_step`` for stepped optimizers.

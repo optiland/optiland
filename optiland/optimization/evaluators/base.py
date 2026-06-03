@@ -4,8 +4,8 @@ Structural protocols (PEP 544) that every concrete Evaluator must satisfy.
 Using Protocol lets third parties implement their own evaluators without
 importing Optiland base classes.
 
-Design (D3): differentiation provenance (autograd vs finite-diff) belongs to
-the Evaluator, not the optimizer. Optimizers depend on this protocol only.
+Differentiation provenance (autograd vs finite-diff) belongs to the Evaluator,
+not the optimizer. Optimizers depend on this protocol only.
 
 Kramer Harrison, 2026
 """

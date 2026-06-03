@@ -43,7 +43,7 @@ Optiland's optimization and tolerancing workflows quickly.
 1. :doc:`quickstart` — a complete 5-minute tour from install to optimization
 2. :doc:`cheat_sheet` — copy-paste snippets for the 20 most common tasks
 3. :doc:`Tutorial 4d — Lens Catalogue Integration <examples/Tutorial_4d_Lens_Catalogue_Integration>` — import off-the-shelf catalog lenses
-4. :doc:`Tutorial 3d — Optimization Case Study (Cooke Triplet) <examples/Tutorial_3d_Optimization_Case_Study_Cooke_Triplet>` — full optimization workflow
+4. :doc:`Tutorial 3g — Case Study: Cooke Triplet <examples/Tutorial_3g_Cooke_Triplet_Case_Study>` — full optimization workflow
 
 **→** :doc:`Go to the Quickstart <quickstart>`
 
@@ -62,7 +62,7 @@ Optiland into a PyTorch-based research pipeline.
 1. :doc:`Tutorial 7a — Differentiable Ray Tracing Hello World <examples/Tutorial_7a_Differentiable_Ray_Tracing_Hello_World>` — switch to PyTorch and compute gradients
 2. :doc:`Tutorial 7b — Differentiable Lens Optimization <examples/Tutorial_7b_Differentiable_Lens_Optimization>` — gradient-descent optimization with autograd
 3. :ref:`configurable_backend` — backend architecture, device management, and precision control
-4. :doc:`Tutorial 3b — Advanced Optimization <examples/Tutorial_3b_Advanced_Optimization>` — multi-operand merit functions and advanced solvers
+4. :doc:`Tutorial 3b — Choosing a Method <examples/Tutorial_3b_Choosing_a_Method>` — multi-operand merit functions and advanced solvers
 
 **→** :doc:`Start with Tutorial 7a <examples/Tutorial_7a_Differentiable_Ray_Tracing_Hello_World>`
 

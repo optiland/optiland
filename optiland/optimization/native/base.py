@@ -22,7 +22,7 @@ class SteppedOptimizer(ABC):
     """Abstract base for optimizers whose loop is owned by ``SteppedDriver``.
 
     Subclasses must declare ``capabilities`` and override the three abstract
-    methods.  Each ``step()`` call represents **one accepted step** (D11);
+    methods.  Each ``step()`` call represents **one accepted step**;
     inner retries (e.g. LM λ-search) are hidden inside ``step()``.
     """
 

@@ -1,7 +1,7 @@
 """ScipyLeastSquaresAdapter — private core for scipy.optimize.least_squares.
 
 Calls scipy directly without going through the deprecated ``LeastSquares``
-class — no DeprecationWarning is triggered from the facade path (F10).
+class — no DeprecationWarning is triggered from the facade path.
 
 Note: ``scipy.optimize.least_squares`` has no ``callback`` argument, so
 ``on_step`` observers are not fired during the run.  ``on_start`` and

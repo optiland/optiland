@@ -1,12 +1,12 @@
-"""Native Levenberg-Marquardt and Gauss-Newton optimizers (Phase 2).
+"""Native Levenberg-Marquardt and Gauss-Newton optimizers.
 
-Both work with any backend via the Evaluator protocol (D3/D5):
+Both work with any backend via the Evaluator protocol:
 
 - **numpy path**: ``FiniteDiffEvaluator`` + ``LevenbergController``
 - **torch path**: ``AutogradEvaluator`` + ``LevenbergController``
 
 ``LevenbergMarquardt`` delegates the full inner λ-search to the step
-controller; one call to ``step()`` = one *accepted* step (D11).
+controller; one call to ``step()`` = one *accepted* step.
 
 ``GaussNewton`` is the undamped special case (λ → 0): it solves
 ``(JᵀJ)Δ = −Jᵀr`` each step without a trust-region loop, and relies on
@@ -43,7 +43,7 @@ _CAPS: frozenset[Capability] = frozenset(
     }
 )
 
-# Module-level guard: emit the §8 weight-consistency notice at most once per process.
+# Module-level guard: emit the weight-consistency notice at most once per process.
 _weight_notice_emitted: bool = False
 
 
@@ -53,14 +53,14 @@ class LevenbergMarquardt(SteppedOptimizer):
     Works with both numpy (``FiniteDiffEvaluator``) and torch
     (``AutogradEvaluator``) backends via the ``Evaluator`` protocol.
 
-    The step controller owns the damping strategy and the inner λ-search (D11).
+    The step controller owns the damping strategy and the inner λ-search.
     The default controller — ``LevenbergController`` with Moré diagonal
     damping — is wired by ``api.minimize()`` when ``method="dls"`` or
     ``method="lm"``.
 
     Args:
         emit_weight_notice: Emit a one-time ``UserWarning`` on the first run
-            where ``effective_weight ≠ operand.weight`` (§8 fix notice).
+            where ``effective_weight ≠ operand.weight``.
     """
 
     capabilities: frozenset[Capability] = _CAPS
@@ -121,7 +121,7 @@ class LevenbergMarquardt(SteppedOptimizer):
         return state
 
     def step(self, state: OptimizationState) -> OptimizationState:
-        """Execute one accepted LM step (inner λ-search is hidden — D11).
+        """Execute one accepted LM step (inner λ-search is hidden in the controller).
 
         Computes the Jacobian once, delegates the full accept/reject λ-search
         to the controller, applies bounds, and updates state in place.
@@ -295,7 +295,7 @@ class GaussNewton(SteppedOptimizer):
 
 
 def _maybe_emit_weight_notice(evaluator: Any, enabled: bool) -> None:
-    """Emit a one-time notice when non-trivial field/wavelength weights exist (§8)."""
+    """Emit a one-time notice when non-trivial field/wavelength weights exist."""
     global _weight_notice_emitted
     if not enabled or _weight_notice_emitted:
         return
@@ -309,7 +309,7 @@ def _maybe_emit_weight_notice(evaluator: Any, enabled: bool) -> None:
                     "Optimization problem has non-unity field/wavelength weights "
                     "(effective_weight ≠ operand.weight).  The native LM optimizer "
                     "minimises Σ(sqrt(effective_weight)·δ)² which exactly equals "
-                    "sum_squared() (§8 correctness fix).  Results may differ from "
+                    "sum_squared() (correctness fix).  Results may differ from "
                     "pre-Phase-1b runs of LeastSquares on multi-field / "
                     "multi-wavelength systems.",
                     UserWarning,

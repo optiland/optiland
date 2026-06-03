@@ -1,4 +1,4 @@
-"""CheckpointObserver — periodic state snapshots (Phase 2).
+"""CheckpointObserver — periodic state snapshots.
 
 Writes a pickled copy of ``OptimizationState`` to disk every ``every``
 accepted steps so that long runs can be resumed after interruption.

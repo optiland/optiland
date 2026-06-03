@@ -3,43 +3,59 @@
 Optimization
 ============
 
-Optiland supports optimization through different backends.  
-The **NumPy backend** relies on SciPy optimizers, while the **Torch backend**  
-uses PyTorch's native optimization tools.  
+Examples illustrating Optiland's unified optimization framework.
+For architecture details and tutorials, see :doc:`/guide/optimization/index`.
 
-NumPy (SciPy) Optimization
---------------------------
-
-These examples show how Optiland integrates with SciPy's optimizers  
-to improve optical systems using classical numerical methods.  
+Getting Started
+---------------
 
 .. nbgallery::
     optimization/rms_spot_size
     optimization/wavefront_error
-    optimization/asphere
     optimization/beam_expander
-    optimization/freeform
-    optimization/glass_expert_example
-    optimization/undo
-    optimization/pickups
+
+Classical / Stepped (DLS)
+-------------------------
+
+.. nbgallery::
     optimization/constrained
     optimization/bounded_operands
-    optimization/orthogonal_descent
-    optimization/global
-    optimization/basin_hopping
-    optimization/particle_swarm_optimization
-    optimization/shgo
-    optimization/custom_scaler
+
+Variables & Surfaces
+--------------------
+
+.. nbgallery::
+    optimization/asphere
+    optimization/freeform
     optimization/reciprocal_radii_optimization
+    optimization/pickups
+    optimization/custom_scaler
+    optimization/undo
 
-Torch Optimization
-------------------
+Controlling a Run
+-----------------
 
-These examples demonstrate optimization using the Torch backend,  
-taking advantage of PyTorch's autograd and optimizers for differentiable design.  
+.. nbgallery::
+    optimization/history_observer
+    optimization/custom_stopping
+    optimization/checkpoint_observer
+
+Differentiable (Torch)
+-----------------------
 
 .. nbgallery::
     optimization/torch_rms_spot_size
     optimization/torch_constrained
     optimization/torch_module_rms_spot
     optimization/torch_module_custom_objective
+
+Global & Standalone
+--------------------
+
+.. nbgallery::
+    optimization/global
+    optimization/basin_hopping
+    optimization/shgo
+    optimization/particle_swarm_optimization
+    optimization/orthogonal_descent
+    optimization/glass_expert_example

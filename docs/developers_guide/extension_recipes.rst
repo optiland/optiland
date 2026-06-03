@@ -168,7 +168,7 @@ in the operand registry at the bottom of that file:
 
 **Step 2:** Add tests in ``tests/test_optimization/test_operand.py``.
 
-See :doc:`optimization_framework` and :doc:`../examples/Tutorial_3c_User_Defined_Optimization` for context.
+See :doc:`optimization_framework` and :doc:`/guide/optimization/operands_variables` for context.
 
 ----
 

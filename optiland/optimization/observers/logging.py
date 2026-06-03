@@ -1,7 +1,7 @@
 """Console and progress observers.
 
 Both observers respect ``log_every`` to avoid printing on every iteration
-(which would trigger device syncs — D9).  Scalars are synced only when a
+(which would trigger device syncs).  Scalars are synced only when a
 line is actually emitted.
 
 Kramer Harrison, 2026
@@ -60,7 +60,7 @@ class ProgressObserver:
     """Throttled observer suitable for GUI progress bars.
 
     Emits ``on_step`` only every ``log_every`` steps to keep the hot loop
-    free of sync overhead (D9).  The ``step_value`` property returns the
+    free of sync overhead.  The ``step_value`` property returns the
     last emitted merit as a Python float.
 
     Args:

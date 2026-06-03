@@ -34,11 +34,13 @@ New to Optiland? Start with :ref:`start_here` to find the path that fits your go
 .. toctree::
    :maxdepth: 1
 
-   Tutorial 3a: Simple Optimization <examples/Tutorial_3a_Simple_Optimization>
-   Tutorial 3b: Advanced Optimization <examples/Tutorial_3b_Advanced_Optimization>
-   Tutorial 3c: User-Defined Optimization <examples/Tutorial_3c_User_Defined_Optimization>
-   Tutorial 3d: Optimization Case Study: Cooke Triplet <examples/Tutorial_3d_Optimization_Case_Study_Cooke_Triplet>
-   Tutorial 3e: Glass Expert Categorical Optimization <examples/Tutorial_3e_Glass_Expert_Categorical_Optimization>
+   Tutorial 3a: Optimization Basics <examples/Tutorial_3a_Optimization_Basics>
+   Tutorial 3b: Choosing a Method <examples/Tutorial_3b_Choosing_a_Method>
+   Tutorial 3c: Stepped Optimization and DLS/LM <examples/Tutorial_3c_Stepped_Optimization_and_DLS>
+   Tutorial 3d: Inspecting and Controlling a Run <examples/Tutorial_3d_Inspecting_and_Controlling_a_Run>
+   Tutorial 3e: OpticalSystemModule — You Own the Loop <examples/Tutorial_3e_OpticalSystemModule>
+   Tutorial 3f: Standalone and Global Optimizers <examples/Tutorial_3f_Standalone_and_Global_Optimizers>
+   Tutorial 3g: Case Study — Cooke Triplet <examples/Tutorial_3g_Cooke_Triplet_Case_Study>
 
 
 4. Off-Axis & Complex Systems

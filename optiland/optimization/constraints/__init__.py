@@ -1,11 +1,11 @@
 """Constraint strategy subpackage — thin adapters over existing mechanisms.
 
-Phase 1 strategies (D6):
+Available strategies:
   - ``BoxBoundsStrategy``: reads ``var.bounds``; applies clamp + SciPy handoff.
   - ``ScipyNativeStrategy``: forwards bounds/constraints directly to SciPy.
   - ``CompositeStrategy``: chains multiple strategies.
 
-Phase 3 — exact CODE V-style projection:
+For exact CODE V-style projection:
   - ``NullSpaceStrategy``: null-space projection + Newton restoration.
 
 Kramer Harrison, 2026

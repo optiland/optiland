@@ -1,7 +1,6 @@
 """Native stepped optimizer subpackage.
 
-Phase 1: TorchOptimizer (Adam / SGD).
-Phase 2: LevenbergMarquardt, GaussNewton.
+Optimizers: TorchOptimizer (Adam / SGD), LevenbergMarquardt, GaussNewton.
 
 Kramer Harrison, 2026
 """

@@ -1,11 +1,11 @@
 """AutogradEvaluator — torch autograd path
 
 Computes value, gradient, and Jacobian using PyTorch's autograd engine.
-Uses the stateful forward pass (D4): parameters are pushed into surfaces via
+Uses the stateful forward pass: parameters are pushed into surfaces via
 ``var.update(param)`` each call, then ``sum_squared()`` / ``weighted_residuals()``
 are evaluated through the existing trace pipeline.
 
-**Phase 4 — functional Jacobian fast path** (D4, experimental):
+**Functional Jacobian fast path** (experimental):
 The ``"functional"`` and ``"compiled"`` Jacobian modes expose a closure
 ``f(x_tensor) -> r`` that is differentiable via ``torch.autograd``.
 
@@ -18,8 +18,8 @@ The ``"functional"`` and ``"compiled"`` Jacobian modes expose a closure
    and provides speedup on long traces.
 
 **Experimental:** ``"functional"`` and ``"compiled"`` modes are opt-in and
-excluded from the all-backends correctness guarantee.  ``"stateful"`` is the
-verified default (F13).
+not covered by the all-backend correctness guarantee.  ``"stateful"`` is the
+verified default.
 
 The ``jacobian_mode`` constructor argument selects the path.
 
@@ -62,7 +62,7 @@ class AutogradEvaluator:
     """Evaluator for the torch backend using PyTorch autograd.
 
     Delegates parameter ↔ surface synchronisation to :class:`TorchParameterSync`
-    (the single shared core, WS1).  The evaluator owns only computation logic.
+    The evaluator owns only computation logic.
 
     Args:
         problem: The optimization problem to wrap.
@@ -101,10 +101,10 @@ class AutogradEvaluator:
         self.provides: frozenset[EvalCapability] = _PROVIDES
         self.jacobian_mode: JacobianMode = jacobian_mode
 
-        # Shared param↔surface sync core (WS1)
+        # Shared param↔surface sync core
         self._sync = TorchParameterSync(problem)
 
-        # Phase 4: cached forward closure (built lazily)
+        # Cached forward closure (built lazily)
         self._forward_fn: Callable | None = None
         self._compiled_fn: Callable | None = None
 
@@ -129,7 +129,7 @@ class AutogradEvaluator:
         """Sync params from ``x``, then push into variables and update optics.
 
         Values are loaded via a single vectorised copy per param (no
-        per-element ``.item()`` loop — D9), then the autograd graph is
+        per-element ``.item()`` loop), then the autograd graph is
         updated via :meth:`TorchParameterSync.write_params`.
         """
         self._sync.load_x(x)
@@ -160,7 +160,7 @@ class AutogradEvaluator:
 
         Clears existing gradients before the forward pass and returns a
         detached tensor of shape ``(n,)``.  Does **not** call ``.item()``
-        (no device sync in the hot loop — D9).
+        (no device sync in the hot loop).
         """
         self._sync.load_x(x)
         for param in self._sync.params:
@@ -175,11 +175,11 @@ class AutogradEvaluator:
         return torch.stack([p.grad.detach().clone() for p in self._sync.params])
 
     # ------------------------------------------------------------------
-    # Phase 4 — functional forward closure (experimental)
+    # Functional forward closure (experimental)
     # ------------------------------------------------------------------
 
     def build_forward_fn(self) -> Callable:
-        """Build a differentiable closure ``f(x_tensor) -> r`` (Phase 4).
+        """Build a differentiable closure ``f(x_tensor) -> r``.
 
         **Experimental** — see class docstring.
 
@@ -215,7 +215,7 @@ class AutogradEvaluator:
         return self._compiled_fn
 
     def _jacobian_functional(self, x: Any) -> Any:
-        """Jacobian via the functional closure (Phase 4 fast path, experimental).
+        """Jacobian via the functional closure (experimental).
 
         Dispatches in preference order:
 
@@ -264,7 +264,7 @@ class AutogradEvaluator:
             self.write_x(x)
 
     # ------------------------------------------------------------------
-    # Autograd Jacobian — dispatcher (Phase 4 gate)
+    # Autograd Jacobian — dispatcher
     # ------------------------------------------------------------------
 
     def jacobian(self, x: Any) -> Any:
@@ -291,7 +291,7 @@ class AutogradEvaluator:
         return self._jacobian_stateful(x)
 
     def _jacobian_stateful(self, x: Any) -> Any:
-        """Jacobian via row-by-row ``torch.autograd.grad`` (D4 default).
+        """Jacobian via row-by-row ``torch.autograd.grad`` (default stateful path).
 
         Returns a tensor of shape ``(m, n)``.  Each row requires one backward
         pass with ``retain_graph=True`` for all but the last row.

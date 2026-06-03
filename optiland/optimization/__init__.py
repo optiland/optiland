@@ -15,7 +15,7 @@ Public surface:
     ``TorchSGDOptimizer``.  These emit ``DeprecationWarning`` on construction;
     removal planned for v0.7.0.
   - Non-deprecated standalone: ``GlassExpert``, ``OrthogonalDescent``,
-    ``ParticleSwarm`` — use directly (D10, not accessible via minimize()).
+    ``ParticleSwarm`` — use directly (not accessible via minimize()).
 """
 
 from .variable import (
@@ -40,8 +40,8 @@ from .optimizer.scipy import (
     DifferentialEvolution,
     SHGO,
     BasinHopping,
-    GlassExpert,  # not deprecated (D10)
-    OrthogonalDescent,  # not deprecated (D10)
+    GlassExpert,  # not deprecated
+    OrthogonalDescent,  # not deprecated
 )
 
 try:
@@ -53,7 +53,7 @@ except (ImportError, ModuleNotFoundError, OSError):
 from .optimizer.scipy import glass_expert
 
 from .optimizer.custom import (
-    ParticleSwarm,  # not deprecated (D10)
+    ParticleSwarm,  # not deprecated
 )
 
 # --- Canonical public surface ---

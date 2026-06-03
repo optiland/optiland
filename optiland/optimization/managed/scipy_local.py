@@ -1,7 +1,7 @@
 """ScipyLocalAdapter — private core for scipy.optimize.minimize (local methods).
 
 Calls scipy directly without going through the deprecated ``OptimizerGeneric``
-class — no DeprecationWarning is triggered from the facade path (F10).
+class — no DeprecationWarning is triggered from the facade path.
 
 Kramer Harrison, 2026
 """

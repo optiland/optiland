@@ -1,10 +1,10 @@
-"""LevenbergController — adaptive damping with inner λ-search (D7/D11/D12).
+"""LevenbergController — adaptive damping with inner λ-search.
 
 Solves ``(JᵀJ + λ·diag(JᵀJ))Δ = −Jᵀr`` (Moré diagonal damping) via
 ``numpy.linalg.solve``.  Runs the full internal accept/reject λ-search so that
-one ``transform()`` call produces one *accepted* step outcome (D11).
+one ``transform()`` call produces one *accepted* step outcome.
 
-Non-finite trial value → reject + increase λ (D12).
+Non-finite trial value → reject + increase λ.
 
 Kramer Harrison, 2026
 """
@@ -26,7 +26,7 @@ class LevenbergController:
     """Levenberg-Marquardt step controller (Moré diagonal damping).
 
     Forms and solves ``(JᵀJ + λ·diag(JᵀJ))Δ = −Jᵀr`` via
-    ``numpy.linalg.solve``.  Runs the internal accept/reject λ-search (D11):
+    ``numpy.linalg.solve``.  Runs the internal accept/reject λ-search:
     a trial that decreases cost → accept (decrease λ); a trial that increases
     cost or yields non-finite values → reject (increase λ).
 

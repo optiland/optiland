@@ -1,7 +1,7 @@
 """Step-controller subpackage.
 
-Phase 1: IdentityController (pass-through).
-Phase 2: LevenbergController (DLS damping), LineSearchController.
+Controllers: IdentityController (pass-through), LevenbergController (DLS damping),
+LineSearchController.
 
 Kramer Harrison, 2026
 """
