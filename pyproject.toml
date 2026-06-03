@@ -8,7 +8,7 @@ version = "0.6.0"
 authors = [{ name = "Kramer Harrison", email = "kdanielharrison@gmail.com" }]
 description = "Open Source Optical Design in Python"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",

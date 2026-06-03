@@ -15,6 +15,10 @@ from optiland.physical_apertures import RadialAperture
 from optiland.rays import RealRays
 from optiland.visualization.system.utils import revolve_contour, transform, transform_3d
 
+# Surfaces tilted more than 60° toward the viewing axis are rendered as a
+# boundary ellipse rather than a cross-section line to avoid artifacts.
+_FACE_ON_THRESHOLD = 0.5  # |cos(60°)|
+
 
 class Surface2D:
     """A class used to represent a 2D surface for visualization.
@@ -44,6 +48,21 @@ class Surface2D:
         else:
             self.extent = ray_extent
 
+    # Maps projection name to the index of the viewing axis in global normal.
+    # e.g. for "YZ" the view is along X (index 0); "XZ" along Y (index 1); etc.
+    _VIEWING_AXIS_IDX: dict[str, int] = {"YZ": 0, "XZ": 1, "XY": 2}
+
+    def _is_face_on(self, projection: str) -> bool:
+        """Return True if the surface normal is >60° toward the viewing axis.
+
+        When True, rendering a cross-section line would create an artifact;
+        drawing the aperture boundary ellipse is cleaner instead.
+        """
+        _, rot_mat = self.surf.geometry.cs.get_effective_transform()
+        rot = be.to_numpy(rot_mat)
+        axis_idx = self._VIEWING_AXIS_IDX[projection]
+        return abs(float(rot[axis_idx, 2])) > _FACE_ON_THRESHOLD
+
     def plot(self, ax, theme=None, projection="YZ"):
         """Plots the surface on the given matplotlib axis.
 
@@ -56,7 +75,11 @@ class Surface2D:
                 'XZ', or 'YZ'. Defaults to 'YZ'.
 
         """
-        x, y, z = self._compute_sag(projection)
+        # For surfaces strongly tilted toward the viewing axis the normal
+        # cross-section line becomes a misleading vertical artifact.  Draw the
+        # aperture boundary circle instead so the projection stays clean.
+        sag_projection = "XY" if self._is_face_on(projection) else projection
+        x, y, z = self._compute_sag(sag_projection)
 
         # convert to global coordinates and return
         x, y, z = transform(x, y, z, self.surf, is_global=False)

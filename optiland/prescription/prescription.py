@@ -6,7 +6,7 @@ Kramer Harrison, 2026
 from __future__ import annotations
 
 import pathlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from optiland.prescription.document import Document
@@ -71,7 +71,7 @@ class Prescription:
             Populated Document ready for a renderer to consume.
         """
         title = f"Optical Prescription — {self._optic.name or 'Unnamed System'}"
-        generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        generated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
         sections = [s.build(self._optic) for s in self._sections]
         return Document(title=title, generated_at=generated_at, sections=sections)
 

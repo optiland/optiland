@@ -3,7 +3,7 @@
 Installation
 ============
 
-Optiland supports Python 3.10 and above and can be installed via pip with optional extras or can be built from source. Choose the installation method that best fits your needs.
+Optiland supports Python 3.11 and above and can be installed via pip with optional extras or can be built from source. Choose the installation method that best fits your needs.
 
 Quick Start (Core + CPU‑only PyTorch)
 -------------------------------------

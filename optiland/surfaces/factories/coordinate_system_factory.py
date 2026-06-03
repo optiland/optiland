@@ -77,9 +77,15 @@ class CoordinateSystemFactory:
                 z = 0  # first surface, always at zero
             else:
                 prev_surface = surface_group.surfaces[index - 1]
-                z_prev_surface = prev_surface.geometry.cs.z
-                thickness_after_prev_surface = prev_surface.thickness
-                z = z_prev_surface + thickness_after_prev_surface
+                z_prev = prev_surface.geometry.cs.z
+                t_prev = prev_surface.thickness
+                # Extract plain floats so the new coordinate is a leaf scalar,
+                # not a non-leaf tensor created by arithmetic on traced values.
+                if hasattr(z_prev, "item"):
+                    z_prev = z_prev.item()
+                if hasattr(t_prev, "item"):
+                    t_prev = t_prev.item()
+                z = float(z_prev) + float(t_prev)
 
         rx = kwargs.get("rx", 0)
         ry = kwargs.get("ry", 0)

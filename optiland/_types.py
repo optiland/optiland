@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from sys import version_info
-from typing import TYPE_CHECKING, Literal, TypedDict, TypeVar, Union
+from typing import TYPE_CHECKING, Literal, TypedDict, TypeVar, Union, Unpack
 
 from numpy.typing import NDArray
 
@@ -15,11 +14,6 @@ if TYPE_CHECKING:
     BEArray = Tensor | NDArray
     ScalarOrArray = float | Tensor | NDArray
 
-
-if version_info >= (3, 11):
-    from typing import Unpack
-else:
-    from typing_extensions import Unpack
 
 __all__ = [
     "BEArrayT",
