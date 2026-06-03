@@ -61,7 +61,7 @@ with richer fields:
 * ``.x`` — final parameter vector (copy)
 * ``.success`` — bool
 * ``.method`` — the resolved method string
-* ``.status`` / ``.stop_reason`` — why the run ended
+* ``.status`` — why the run ended (or SciPy-compatible ``.message``)
 * ``.improvement_pct`` — percent improvement over the starting merit
 * ``.wall_time_s`` — elapsed wall-clock seconds
 * ``.history`` — per-iteration merit history (if :class:`~optiland.optimization.observers.history.HistoryObserver` was attached)

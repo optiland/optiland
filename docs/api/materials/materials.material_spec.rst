@@ -1,12 +1,13 @@
-materials.material_spec
-=======================
+﻿materials.material\_spec
+========================
 
-.. automodule:: optiland.materials.material_spec
+.. automodule:: materials.material_spec
 
-
+   
    .. rubric:: Classes
 
    .. autosummary::
-
+   
       MatchPolicy
       MaterialSpec
+   

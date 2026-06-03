@@ -17,21 +17,6 @@ This section covers the architecture, usage patterns, and extension points.
    operands_variables
    migration
 
-Persona Routing
----------------
-
-+-------------------------+-----------------------------------------------+----------------------------------------+
-| Persona                 | Need                                          | Entry point                            |
-+=========================+===============================================+========================================+
-| Optical engineer        | DLS on doublet/triplet; bounds; reproducible  | ``minimize(problem, "dls")``           |
-+-------------------------+-----------------------------------------------+----------------------------------------+
-| Computational physicist | Custom stopping, inspect per-iter state       | ``minimize(…, stop=, observers=)``     |
-+-------------------------+-----------------------------------------------+----------------------------------------+
-| Data scientist          | Optic as differentiable layer; batched GPU    | ``OpticalSystemModule``                |
-+-------------------------+-----------------------------------------------+----------------------------------------+
-| Educator                | Watch a solver iterate; compare methods       | ``minimize(…, disp=True, observers=…)``|
-+-------------------------+-----------------------------------------------+----------------------------------------+
-
 See Also
 --------
 

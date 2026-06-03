@@ -530,7 +530,7 @@ thread to request soft cancellation:
 
 On cancellation, the driver finishes the current step cleanly, fires
 ``observer.on_stop()``, and returns a result with ``result.success=False``
-and ``result.stop_reason="cancelled"``.
+and ``result.status="cancelled"``.
 
 
 GlassExpert: Categorical Glass Optimization
