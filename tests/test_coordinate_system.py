@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 import optiland.backend as be
 from optiland.coordinate_system import CoordinateSystem
 from optiland.rays import RealRays
@@ -115,6 +117,67 @@ def test_coordinate_system_to_dict(set_test_backend):
     assert cs_dict["ry"] == 0.0
     assert cs_dict["rz"] == 0.0
     assert cs_dict["reference_cs"] is None
+
+
+def test_coordinate_system_raw_assignment_to_dict(set_test_backend):
+    # Regression test for issue #624: assigning a plain Python float to a
+    # coordinate attribute after construction must not break to_dict().
+    cs = CoordinateSystem(1, -1.0, 2.0, 0.0, 0.0, 0.0)
+    cs.z = 10.0
+    cs_dict = cs.to_dict()
+    assert cs_dict["z"] == 10.0
+
+
+def test_coordinate_system_assignment_preserves_array_invariant(set_test_backend):
+    # Coordinates must remain backend arrays regardless of what is assigned.
+    cs = CoordinateSystem()
+    cs.x = 1.0
+    cs.y = -2
+    cs.z = 3.5
+    cs.rx = 0.1
+    cs.ry = 0.2
+    cs.rz = 0.3
+    for value in (cs.x, cs.y, cs.z, cs.rx, cs.ry, cs.rz):
+        assert be.is_array_like(value)
+
+
+def test_coordinate_system_raw_assignment_effective_transform(set_test_backend):
+    # get_effective_transform() relies on .item(); a raw-float assignment
+    # must not break it (same invariant as issue #624).
+    cs = CoordinateSystem(1, -1.0, 2.0, 0.0, 0.0, 0.0)
+    cs.z = 5.0
+    translation, _ = cs.get_effective_transform()
+    assert_allclose(translation, be.array([1.0, -1.0, 5.0]))
+
+
+def test_coordinate_system_setter_autodiff_matches_fd(set_test_backend):
+    # The setter routes assignment through be.array(); for an existing torch
+    # tensor this must be identity-preserving so autograd still flows. Verify
+    # the analytic gradient matches a central finite difference.
+    if be.get_backend() != "torch":
+        pytest.skip("autodiff vs. finite-difference check is torch-only")
+
+    import torch
+
+    def localized_y(rx_value):
+        cs = CoordinateSystem(rx=rx_value)
+        rays = RealRays(1.0, 2.0, 3.0, 0.0, 0.0, 1.0, 1.0, 1.0)
+        cs.localize(rays)
+        return rays.y
+
+    rx0 = 0.3
+    rx_grad = torch.tensor(rx0, dtype=torch.float64, requires_grad=True)
+    y = localized_y(rx_grad)
+    y.backward()
+    autodiff_grad = rx_grad.grad.item()
+
+    eps = 1e-6
+    with torch.no_grad():
+        y_plus = localized_y(torch.tensor(rx0 + eps, dtype=torch.float64))
+        y_minus = localized_y(torch.tensor(rx0 - eps, dtype=torch.float64))
+    fd_grad = ((y_plus - y_minus) / (2 * eps)).item()
+
+    assert abs(autodiff_grad - fd_grad) < 1e-6
 
 
 def test_coordinate_system_from_dict(set_test_backend):
