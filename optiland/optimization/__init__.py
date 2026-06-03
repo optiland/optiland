@@ -1,4 +1,22 @@
 # flake8: noqa
+"""Optiland Optimization Package
+
+Public surface:
+  - ``minimize`` — canonical entry point (all methods, all backends).
+  - ``OptimizationResult``, ``OptimizationState``, ``Capability``, ``EvalCapability``
+  - ``ConfigurationError`` — raised for impossible method/backend combinations.
+  - Native solvers: ``LevenbergMarquardt``, ``GaussNewton``.
+  - Controllers: ``LevenbergController``, ``LineSearchController``.
+  - Observers: ``CheckpointObserver``.
+  - Constraints: ``NullSpaceStrategy``.
+  - Variable / Operand types (unchanged legacy surface).
+  - Deprecated shims: ``OptimizerGeneric``, ``LeastSquares``, ``DualAnnealing``,
+    ``DifferentialEvolution``, ``SHGO``, ``BasinHopping``, ``TorchAdamOptimizer``,
+    ``TorchSGDOptimizer``.  These emit ``DeprecationWarning`` on construction;
+    removal planned for v0.7.0.
+  - Non-deprecated standalone: ``GlassExpert``, ``OrthogonalDescent``,
+    ``ParticleSwarm`` — use directly (D10, not accessible via minimize()).
+"""
 
 from .variable import (
     VariableBehavior,
@@ -13,6 +31,8 @@ from .variable import (
 )
 from .operand import ParaxialOperand, AberrationOperand, RayOperand, Operand
 from .problem import OptimizationProblem
+
+# --- Deprecated shims (emit DeprecationWarning on construction) ---
 from .optimizer.scipy import (
     OptimizerGeneric,
     LeastSquares,
@@ -20,8 +40,8 @@ from .optimizer.scipy import (
     DifferentialEvolution,
     SHGO,
     BasinHopping,
-    GlassExpert,
-    OrthogonalDescent,
+    GlassExpert,  # not deprecated (D10)
+    OrthogonalDescent,  # not deprecated (D10)
 )
 
 try:
@@ -33,22 +53,23 @@ except (ImportError, ModuleNotFoundError, OSError):
 from .optimizer.scipy import glass_expert
 
 from .optimizer.custom import (
-    ParticleSwarm,
+    ParticleSwarm,  # not deprecated (D10)
 )
 
-from .api import minimize  # noqa: E402
-from .errors import ConfigurationError  # noqa: E402
-from .state import (  # noqa: E402
+# --- Canonical public surface ---
+from .api import minimize
+from .errors import ConfigurationError
+from .state import (
     Capability,
     EvalCapability,
     OptimizationResult,
     OptimizationState,
 )
-from .native.least_squares import GaussNewton, LevenbergMarquardt  # noqa: E402
-from .control.levenberg import LevenbergController  # noqa: E402
-from .control.line_search import LineSearchController  # noqa: E402
-from .observers.checkpoint import CheckpointObserver  # noqa: E402
-from .constraints.null_space import NullSpaceStrategy  # noqa: E402
+from .native.least_squares import GaussNewton, LevenbergMarquardt
+from .control.levenberg import LevenbergController
+from .control.line_search import LineSearchController
+from .observers.checkpoint import CheckpointObserver
+from .constraints.null_space import NullSpaceStrategy
 
 import sys
 

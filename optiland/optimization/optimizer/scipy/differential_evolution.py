@@ -31,7 +31,18 @@ class DifferentialEvolution(OptimizerGeneric):
             problem (OptimizationProblem): The optimization problem to be
                 solved.
 
+        .. deprecated::
+            Use ``optiland.optimization.minimize(problem,
+            method='differential_evolution')`` instead.  Removal in v0.7.0.
         """
+        warnings.warn(
+            "DifferentialEvolution is deprecated; use "
+            "optiland.optimization.minimize(problem, "
+            "method='differential_evolution'). "
+            "Removal in v0.7.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         super().__init__(problem)
 
     def optimize(self, maxiter=1000, disp=True, workers=-1, callback=None):

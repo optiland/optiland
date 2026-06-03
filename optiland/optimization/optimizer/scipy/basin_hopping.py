@@ -31,7 +31,17 @@ class BasinHopping(OptimizerGeneric):
             problem (OptimizationProblem): The optimization problem to be
                 solved.
 
+        .. deprecated::
+            Use ``optiland.optimization.minimize(problem,
+            method='basin_hopping')`` instead.  Removal in v0.7.0.
         """
+        warnings.warn(
+            "BasinHopping is deprecated; use "
+            "optiland.optimization.minimize(problem, method='basin_hopping'). "
+            "Removal in v0.7.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         super().__init__(problem)
 
     def optimize(self, niter=100, callback=None, *args, **kwargs):

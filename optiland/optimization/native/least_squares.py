@@ -102,7 +102,8 @@ class LevenbergMarquardt(SteppedOptimizer):
 
         import optiland.backend as be
 
-        x0_np = np.asarray(evaluator.read_x(), dtype=float)
+        x0_raw = evaluator.read_x()
+        x0_np = np.asarray(be.to_numpy(x0_raw), dtype=float)
         _maybe_emit_weight_notice(evaluator, self._emit_weight_notice)
 
         r0 = evaluator.residuals(x0_np)

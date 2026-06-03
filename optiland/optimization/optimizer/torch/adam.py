@@ -21,12 +21,24 @@ from .base import TorchBaseOptimizer
 
 
 class TorchAdamOptimizer(TorchBaseOptimizer):
-    """
-    An optimizer that uses the PyTorch Adam algorithm.
+    """PyTorch Adam optimizer.
 
-    This optimizer leverages automatic differentiation to perform gradient-based
-    optimization on an OptimizationProblem.
+    .. deprecated::
+        Use ``optiland.optimization.minimize(problem, method='adam')``
+        instead.  Removal in v0.7.0.
     """
+
+    def __init__(self, problem):
+        import warnings
+
+        warnings.warn(
+            "TorchAdamOptimizer is deprecated; use "
+            "optiland.optimization.minimize(problem, method='adam'). "
+            "Removal in v0.7.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(problem)
 
     def _create_optimizer_and_scheduler(
         self, lr: float, gamma: float

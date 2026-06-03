@@ -13,7 +13,21 @@ if TYPE_CHECKING:
 
 
 class LeastSquares(OptimizerGeneric):
+    """Legacy least-squares optimizer.
+
+    .. deprecated::
+        Use ``optiland.optimization.minimize(problem, method='least_squares')``
+        instead.  Removal in v0.7.0.
+    """
+
     def __init__(self, problem: OptimizationProblem):
+        warnings.warn(
+            "LeastSquares is deprecated; use "
+            "optiland.optimization.minimize(problem, method='least_squares'). "
+            "Removal in v0.7.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         super().__init__(problem)
 
     def _compute_residuals_vector(self, x_numpy_variables_from_scipy):

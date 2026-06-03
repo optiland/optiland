@@ -26,6 +26,13 @@ class DualAnnealing(OptimizerGeneric):
     """
 
     def __init__(self, problem: OptimizationProblem):
+        warnings.warn(
+            "DualAnnealing is deprecated; use "
+            "optiland.optimization.minimize(problem, method='dual_annealing'). "
+            "Removal in v0.7.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         super().__init__(problem)
 
     def optimize(self, maxiter=1000, disp=True, callback=None):

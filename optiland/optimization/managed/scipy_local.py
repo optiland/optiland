@@ -1,15 +1,17 @@
-"""ScipyLocalAdapter — wraps OptimizerGeneric (scipy.optimize.minimize).
+"""ScipyLocalAdapter — private core for scipy.optimize.minimize (local methods).
 
-Delegates to the existing ``OptimizerGeneric.optimize()`` and threads the
-observer callback through its ``callback=`` argument.
+Calls scipy directly without going through the deprecated ``OptimizerGeneric``
+class — no DeprecationWarning is triggered from the facade path (F10).
 
 Kramer Harrison, 2026
 """
 
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING, Any
 
+import optiland.backend as be
 from optiland.optimization.state import Capability
 
 if TYPE_CHECKING:
@@ -24,7 +26,6 @@ _CAPS = frozenset(
     }
 )
 
-# SciPy methods routed through OptimizerGeneric
 _LOCAL_SCIPY_METHODS = {
     "l-bfgs-b",
     "bfgs",
@@ -40,11 +41,14 @@ _LOCAL_SCIPY_METHODS = {
 
 
 class ScipyLocalAdapter:
-    """Adapter wrapping ``OptimizerGeneric`` behind the managed adapter interface.
+    """Private-core adapter for SciPy local optimizers.
+
+    Calls ``scipy.optimize.minimize`` directly — does not instantiate any
+    deprecated legacy class.
 
     Args:
         problem: The optimization problem.
-        method: SciPy ``minimize`` method string (default None = auto-select).
+        method: SciPy ``minimize`` method string (default ``None`` = auto-select).
     """
 
     capabilities: frozenset[Capability] = _CAPS
@@ -52,20 +56,46 @@ class ScipyLocalAdapter:
     method_name: str = "scipy_local"
 
     def __init__(self, problem: OptimizationProblem, method: str | None = None):
-        from optiland.optimization.optimizer.scipy.base import OptimizerGeneric
-
         self.problem = problem
         self.method = method
-        self._inner = OptimizerGeneric(problem)
 
-    def run(  # noqa: E501
+    def run(
         self, *, callback: Any = None, maxiter: int = 1000, tol: float = 1e-3, **_: Any
     ) -> Any:
-        """Delegate to ``OptimizerGeneric.optimize``."""
-        return self._inner.optimize(
-            method=self.method,
-            maxiter=maxiter,
-            tol=tol,
-            callback=callback,
-            disp=False,  # display handled by ConsoleObserver
-        )
+        """Run scipy.optimize.minimize and write back optimal params."""
+        from scipy import optimize
+
+        x0 = be.to_numpy([var.value for var in self.problem.variables])
+        bounds = tuple([var.bounds for var in self.problem.variables])
+        options = {"maxiter": maxiter}
+
+        scipy_method = self.method if self.method != "Default" else None
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            result = optimize.minimize(
+                self._fun,
+                x0,
+                method=scipy_method,
+                bounds=bounds,
+                options=options,
+                tol=tol,
+                callback=callback,
+            )
+
+        for i, var in enumerate(self.problem.variables):
+            var.update(result.x[i])
+        self.problem.update_optics()
+        return result
+
+    def _fun(self, x: Any) -> float:
+        for i, var in enumerate(self.problem.variables):
+            var.update(be.array(x[i]))
+        self.problem.update_optics()
+        try:
+            rss = self.problem.sum_squared()
+            if be.isnan(rss):
+                return 1e10
+            return be.to_numpy(rss).item()
+        except (ValueError, Exception):  # noqa: BLE001
+            return 1e10

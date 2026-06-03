@@ -25,6 +25,10 @@ if TYPE_CHECKING:
 class OptimizerGeneric(BaseOptimizer):
     """Generic optimizer class for solving optimization problems.
 
+    .. deprecated::
+        Use ``optiland.optimization.minimize(problem, method='l-bfgs-b')``
+        instead.  This class will be removed in v0.7.0.
+
     Args:
         problem (OptimizationProblem): The optimization problem to be solved.
 
@@ -42,6 +46,14 @@ class OptimizerGeneric(BaseOptimizer):
     """
 
     def __init__(self, problem: OptimizationProblem):
+        if type(self) is OptimizerGeneric:
+            warnings.warn(
+                "OptimizerGeneric is deprecated; use "
+                "optiland.optimization.minimize(problem, method='l-bfgs-b'). "
+                "Removal in v0.7.0.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         super().__init__(problem)
         self._x = []
 

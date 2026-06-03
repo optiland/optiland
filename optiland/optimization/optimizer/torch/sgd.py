@@ -21,12 +21,24 @@ from .base import TorchBaseOptimizer
 
 
 class TorchSGDOptimizer(TorchBaseOptimizer):
-    """
-    An optimizer that uses the PyTorch SGD algorithm.
+    """PyTorch SGD optimizer.
 
-    This optimizer leverages automatic differentiation to perform gradient-based
-    optimization on an OptimizationProblem.
+    .. deprecated::
+        Use ``optiland.optimization.minimize(problem, method='sgd')``
+        instead.  Removal in v0.7.0.
     """
+
+    def __init__(self, problem):
+        import warnings
+
+        warnings.warn(
+            "TorchSGDOptimizer is deprecated; use "
+            "optiland.optimization.minimize(problem, method='sgd'). "
+            "Removal in v0.7.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(problem)
 
     def _create_optimizer_and_scheduler(
         self, lr: float, gamma: float
