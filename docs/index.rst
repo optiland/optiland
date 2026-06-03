@@ -91,6 +91,7 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
    :caption: Core Functionalities
 
    functionalities
+   optimization_method_selection
 
 
 .. toctree::
