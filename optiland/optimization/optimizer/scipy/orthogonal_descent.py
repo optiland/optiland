@@ -47,7 +47,10 @@ class OrthogonalDescent(BaseOptimizer):
             live_plotter = LiveOptimizationPlotter(self)
             live_plotter.initialize()
 
-        self.problem.initial_value = self.problem.rss().item()
+        # Minimize the package-standard merit Σ effective_weight·δ²
+        # (``sum_squared``) — not ``rss`` — so this optimizer is consistent with
+        # every other solver in the subpackage (§4.8).
+        self.problem.initial_value = self.problem.sum_squared().item()
 
         current_value = self.problem.initial_value
 
@@ -60,7 +63,7 @@ class OrthogonalDescent(BaseOptimizer):
             if live_plotter is not None:
                 live_plotter.update()
 
-            current_value = self.problem.rss().item()
+            current_value = self.problem.sum_squared().item()
 
             relative_change = abs(prev_value - current_value) / (prev_value + 1e-10)
 
@@ -80,8 +83,8 @@ class OrthogonalDescent(BaseOptimizer):
         """
         val_start = generic_var.value.item()
 
-        # Calculate initial cost
-        f_start = self.problem.rss().item()
+        # Calculate initial cost (package-standard merit, §4.8)
+        f_start = self.problem.sum_squared().item()
 
         # Determine bounds
         # Use explicit bounds if available, otherwise use wide range to prevent overflow
@@ -93,14 +96,22 @@ class OrthogonalDescent(BaseOptimizer):
         high = max_v if max_v is not None else limit
 
         def objective_func(x):
-            # Enforce bounds manually for 'brent' method
+            # Enforce bounds manually for 'brent' method.
+            #
+            # NOTE: returning a flat ``1e20`` outside the bounds (and on a failed
+            # trace) introduces a discontinuity in the 1-D objective seen by
+            # Brent's method.  Brent assumes a smooth unimodal bracket, so a
+            # wall-of-1e20 can mislead the bracket search near an active bound.
+            # This is acceptable for the coarse coordinate sweep here but is a
+            # known limitation (documented per §4.8); the KKT path is the
+            # rigorous route for hard bounds.
             if x < low or x > high:
                 return 1e20
 
             try:
                 generic_var.update(x)
                 self.problem.update_optics()
-                return self.problem.rss().item()
+                return self.problem.sum_squared().item()
             except Exception:
                 return 1e20
 

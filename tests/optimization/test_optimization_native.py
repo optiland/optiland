@@ -89,9 +89,9 @@ class MockEvaluator:
         r = self.residuals(x)
         return float(np.dot(r, r))
 
-    def jacobian(self, x: Any) -> np.ndarray:
+    def jacobian(self, x: Any, r0: Any = None) -> np.ndarray:
         x = np.asarray(x, dtype=float)
-        r0 = self.residuals(x)
+        r0 = self.residuals(x) if r0 is None else np.asarray(r0, dtype=float)
         m = r0.shape[0]
         J = np.empty((m, self.n_vars))
         for i in range(self.n_vars):

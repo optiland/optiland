@@ -121,7 +121,13 @@ class TorchOptimizer(SteppedOptimizer):
         )
 
     def step(self, state: OptimizationState) -> OptimizationState:
-        """Run one gradient step; mutate state in place and return it."""
+        """Run one gradient step; mutate state in place and return it.
+
+        Populates ``state.gradient`` (and ``state.scratch['grad_norm']``) so the
+        documented default ``MaxIter | GradNormTolerance(tol)`` can actually
+        converge, and recomputes the merit *after* the parameter update so
+        ``state.value`` has no one-step lag (§3.4).
+        """
         self._torch_opt.zero_grad()
 
         with be.grad_mode.temporary_enable():
@@ -129,12 +135,30 @@ class TorchOptimizer(SteppedOptimizer):
             loss = self._sync.problem.sum_squared()
             loss.backward()
 
+        # Gradient at the pre-step point (already computed by backward()); cheap
+        # to capture and sufficient for the gradient-norm stopping test.
+        grad_vec = torch.stack(
+            [
+                p.grad.detach().clone().reshape(())
+                if p.grad is not None
+                else torch.zeros((), dtype=p.dtype, device=p.device)
+                for p in self._sync.params
+            ]
+        ).reshape(-1)
+        state.gradient = grad_vec
+        state.scratch["grad_norm"] = float(torch.linalg.norm(grad_vec))
+
         self._torch_opt.step()
         self._sync.clamp_bounds()
         self._scheduler.step()
 
+        # Recompute the merit at the updated parameters (no one-step lag).
+        with be.grad_mode.temporary_enable():
+            self._sync.write_params()
+            post_loss = self._sync.problem.sum_squared()
+
         state.x = self._sync.read_x()
-        state.value = loss.detach()
+        state.value = post_loss.detach()
         state.iteration += 1
         state.n_value_evals += 1
         return state

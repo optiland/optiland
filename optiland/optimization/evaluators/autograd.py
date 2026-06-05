@@ -28,10 +28,17 @@ Kramer Harrison, 2026
 
 from __future__ import annotations
 
+import contextlib
 from typing import TYPE_CHECKING, Any, Literal
 
 import optiland.backend as be
 from optiland.optimization.evaluators._param_sync import TorchParameterSync
+from optiland.optimization.failure import (
+    OptimizationFailure,
+    is_nonfinite,
+    normalize_failure_mode,
+    penalty_merit,
+)
 from optiland.optimization.state import EvalCapability
 
 if TYPE_CHECKING:
@@ -84,6 +91,7 @@ class AutogradEvaluator:
         self,
         problem: OptimizationProblem,
         jacobian_mode: JacobianMode = "stateful",
+        on_failure: str = "reject",
     ):
         if torch is None:
             raise ImportError("torch is required for AutogradEvaluator")
@@ -100,6 +108,8 @@ class AutogradEvaluator:
         self.n_vars: int = len(list(problem.variables))
         self.provides: frozenset[EvalCapability] = _PROVIDES
         self.jacobian_mode: JacobianMode = jacobian_mode
+        self._on_failure = normalize_failure_mode(on_failure)
+        self._ref_merit: float = 1.0
 
         # Shared param↔surface sync core
         self._sync = TorchParameterSync(problem)
@@ -142,14 +152,67 @@ class AutogradEvaluator:
     # ------------------------------------------------------------------
 
     def value(self, x: Any) -> Any:
-        """Evaluate merit at ``x``; returns a backend tensor (no ``.item()``)."""
+        """Evaluate merit at ``x``; returns a backend tensor (no ``.item()``).
+
+        Honors the configured ``on_failure`` policy: a ray-trace exception or a
+        non-finite merit becomes ``NaN`` (``"reject"``), an
+        :class:`OptimizationFailure` (``"raise"``), or a finite penalty
+        (``"penalty"``).
+        """
         self.write_x(x)
-        return self.problem.sum_squared()
+        try:
+            v = self.problem.sum_squared()
+        except Exception as exc:  # noqa: BLE001
+            return self._handle_value_failure(exc)
+        if is_nonfinite(v):
+            return self._handle_value_failure(None)
+        with contextlib.suppress(Exception):
+            detached = v.detach() if hasattr(v, "detach") else v
+            self._ref_merit = float(be.to_numpy(detached))
+        return v
 
     def residuals(self, x: Any) -> Any:
-        """Return ``weighted_residuals()`` at ``x`` as a backend tensor."""
+        """Return ``weighted_residuals()`` at ``x`` as a backend tensor.
+
+        Honors the configured ``on_failure`` policy (see :meth:`value`).
+        """
         self.write_x(x)
-        return self.problem.weighted_residuals()
+        try:
+            r = self.problem.weighted_residuals()
+        except Exception as exc:  # noqa: BLE001
+            return self._handle_residual_failure(exc, r=None)
+        if bool(torch.any(~torch.isfinite(r))):
+            return self._handle_residual_failure(None, r=r)
+        return r
+
+    # ------------------------------------------------------------------
+    # Failure policy
+    # ------------------------------------------------------------------
+
+    def _handle_value_failure(self, exc: Exception | None) -> Any:
+        if self._on_failure == "raise":
+            raise OptimizationFailure(
+                "Merit evaluation failed (non-finite or ray-trace error)."
+            ) from exc
+        fill = (
+            penalty_merit(self._ref_merit)
+            if self._on_failure == "penalty"
+            else float("nan")
+        )
+        return torch.tensor(fill, dtype=torch.float64)
+
+    def _handle_residual_failure(self, exc: Exception | None, r: Any) -> Any:
+        if self._on_failure == "raise":
+            raise OptimizationFailure(
+                "Residual evaluation failed (non-finite or ray-trace error)."
+            ) from exc
+        # When the whole vector is unavailable (exception), return a NaN vector
+        # sized from the operand count; otherwise replace only the non-finite
+        # entries so the autograd graph is preserved where it is valid.
+        if r is None:
+            m = max(len(list(self.problem.operands)), 1)
+            return torch.full((m,), float("nan"), dtype=torch.float64)
+        return torch.where(torch.isfinite(r), r, torch.full_like(r, float("nan")))
 
     # ------------------------------------------------------------------
     # Autograd gradient
@@ -267,8 +330,13 @@ class AutogradEvaluator:
     # Autograd Jacobian — dispatcher
     # ------------------------------------------------------------------
 
-    def jacobian(self, x: Any) -> Any:
+    def jacobian(self, x: Any, r0: Any = None) -> Any:  # noqa: ARG002
         """Compute d(residuals)/d(x), shape ``(m, n)``.
+
+        The ``r0`` argument (a pre-computed baseline residual) is accepted for
+        interface parity with :class:`FiniteDiffEvaluator` but ignored — the
+        autograd path computes residuals and their gradients in a single pass,
+        so there is no redundant baseline to skip.
 
         Dispatches to the appropriate path based on ``jacobian_mode``:
 

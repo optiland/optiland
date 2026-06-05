@@ -124,8 +124,21 @@ def minimize(
         disp: If True, attach a ``ConsoleObserver`` (default True).  When
             ``method="auto"``, the resolved method is also printed at start.
         **method_options: Method-specific keyword arguments forwarded to the
-            optimizer (e.g. ``lr``, ``gamma``, ``n_steps`` for torch;
-            ``method_choice`` for ``least_squares``).
+            optimizer (e.g. ``lr``, ``gamma`` for torch; ``method_choice`` for
+            ``least_squares``).  Cross-cutting options:
+
+            * ``on_failure`` ∈ ``{"reject"(default), "raise", "penalty"}`` —
+              policy for ray-trace failures / non-finite merits (§3.5).
+            * ``scheme`` ∈ ``{"forward"(default), "central"}``, ``rel_step``,
+              ``abs_step`` — finite-difference options for the numpy path
+              (§4.6).
+            * ``linear_solver`` ∈ ``{"normal"(default), "qr"}`` — KKT linear
+              solve for hard-constrained ``dls``/``lm`` runs (§4.3).
+
+            Hard equality/inequality constraints are read automatically from
+            ``problem.constraints`` (declared via
+            :meth:`OptimizationProblem.add_constraint`) and solved with a KKT
+            active-set step; they require ``method="dls"`` or ``"lm"``.
 
     Returns:
         An ``OptimizationResult`` with rich fields plus ``.fun`` / ``.x`` /
@@ -183,13 +196,27 @@ def minimize(
 
     # ---- Validate backend / capability conflicts ----------------------
     _validate(resolved, backend, constraints, controller)
+    _validate_hard_constraints(resolved, problem)
 
     # ---- Announce auto-resolution when disp=True ----------------------
     if disp and resolved_from == "auto":
         print(f"auto → {resolved}")
 
+    # ---- Failure policy (D16, §3.5) -----------------------------------
+    from optiland.optimization.failure import normalize_failure_mode
+
+    on_failure = normalize_failure_mode(method_options.pop("on_failure", None))
+
+    # ---- Finite-difference scheme exposure (D17, §4.6) ----------------
+    fd_options = {
+        "scheme": method_options.pop("scheme", "forward"),
+        "rel_step": method_options.pop("rel_step", 1e-5),
+        "abs_step": method_options.pop("abs_step", 1e-8),
+    }
     # ---- Build evaluator -----------------------------------------------
-    evaluator = _build_evaluator(problem, backend, resolved)
+    evaluator = _build_evaluator(
+        problem, backend, resolved, on_failure=on_failure, fd_options=fd_options
+    )
 
     # ---- Build stopping criterion --------------------------------------
     from optiland.optimization.stopping.criteria import (
@@ -270,6 +297,7 @@ def minimize(
         all_observers,
         initial_value,
         method_options,
+        on_failure=on_failure,
         resolved_from=resolved_from,
     )
 
@@ -285,6 +313,13 @@ def _resolve_method(
     """Return ``(resolved_method, resolved_from)``."""
     method = method.lower()
     if method == "auto":
+        # Hard constraints (add_constraint) require the KKT-capable LM path.
+        has_hard = (
+            getattr(problem, "constraints", None) is not None
+            and len(problem.constraints) > 0
+        )
+        if has_hard:
+            return "dls", "auto"
         if backend == "torch":
             return "adam", "auto"
         ops = list(problem.operands)
@@ -308,7 +343,7 @@ def _validate(method: str, backend: str, constraints: Any, controller: Any) -> N
 
     Hard errors (impossible requests):
     - torch-only method under numpy backend.
-    - NullSpaceStrategy with a managed (SciPy) method.
+    - A per-step-projection constraint strategy with a managed (SciPy) method.
 
     Warn-and-ignore (inapplicable but harmless):
     - ``controller=`` passed to a managed method.
@@ -321,16 +356,24 @@ def _validate(method: str, backend: str, constraints: Any, controller: Any) -> N
             "Call be.set_backend('torch') before calling minimize()."
         )
     if method in _MANAGED_METHODS and constraints is not None:
-        from optiland.optimization.constraints.null_space import NullSpaceStrategy
-
+        # A managed SciPy method cannot honor an arbitrary per-step projection
+        # strategy (one that mutates the step via ``apply_to_step`` but cannot
+        # be expressed to SciPy via ``to_scipy``).  Hard equality/inequality
+        # constraints should instead be declared on the problem
+        # (``add_constraint``) and solved with a KKT-capable stepped method.
         candidates = constraints if isinstance(constraints, list) else [constraints]
-        if any(isinstance(c, NullSpaceStrategy) for c in candidates):
-            raise ConfigurationError(
-                "NullSpaceStrategy requires a stepped optimizer (e.g. 'dls', 'lm', "
-                "'gauss_newton') that declares the PER_STEP_CONSTRAINTS capability. "
-                f"Method {method!r} is a managed (SciPy) optimizer and does not "
-                "support per-step constraint projection."
-            )
+        for c in candidates:
+            has_per_step = hasattr(c, "apply_to_step")
+            scipy_native = hasattr(c, "to_scipy")
+            if has_per_step and not scipy_native:
+                raise ConfigurationError(
+                    "A per-step constraint strategy requires a stepped optimizer "
+                    "(e.g. 'dls', 'lm', 'gauss_newton'). "
+                    f"Method {method!r} is a managed (SciPy) optimizer. Express the "
+                    "constraint via SciPy (bounds / NonlinearConstraint) or declare "
+                    "it on the problem with add_constraint() and use a stepped "
+                    "method."
+                )
 
     # --- Warn-and-ignore ---
     if method in _MANAGED_METHODS and controller is not None:
@@ -350,14 +393,48 @@ def _validate(method: str, backend: str, constraints: Any, controller: Any) -> N
         )
 
 
-def _build_evaluator(problem: OptimizationProblem, backend: str, method: str) -> Any:
+def _validate_hard_constraints(method: str, problem: OptimizationProblem) -> None:
+    """Hard constraints (``add_constraint``) require a KKT-capable method.
+
+    The native stepped solvers (``dls`` / ``lm``) declare ``KKT_CONSTRAINTS``
+    and route the constraints through :class:`KKTController`.  Passing hard
+    constraints to any other method raises with guidance (D13).
+    """
+    constraints = getattr(problem, "constraints", None)
+    if constraints is None or len(constraints) == 0:
+        return
+    if method not in ("dls", "lm"):
+        raise ConfigurationError(
+            f"Problem declares {len(constraints)} hard constraint(s) via "
+            "add_constraint(), which require a KKT-capable stepped method "
+            f"('dls' or 'lm'). Method {method!r} does not support hard "
+            "equality/inequality constraints. Either switch to method='dls', or "
+            "express the requirement as a soft penalty operand (add_operand "
+            "with min_val/max_val)."
+        )
+
+
+def _build_evaluator(
+    problem: OptimizationProblem,
+    backend: str,
+    method: str,
+    on_failure: str = "reject",
+    fd_options: dict | None = None,
+) -> Any:
     if backend == "torch" and method in (_TORCH_METHODS | _NATIVE_STEPPED_METHODS):
         from optiland.optimization.evaluators.autograd import AutogradEvaluator
 
-        return AutogradEvaluator(problem)
+        return AutogradEvaluator(problem, on_failure=on_failure)
     from optiland.optimization.evaluators.finite_difference import FiniteDiffEvaluator
 
-    return FiniteDiffEvaluator(problem)
+    fd_options = fd_options or {}
+    return FiniteDiffEvaluator(
+        problem,
+        rel_step=fd_options.get("rel_step", 1e-5),
+        abs_step=fd_options.get("abs_step", 1e-8),
+        scheme=fd_options.get("scheme", "forward"),
+        on_failure=on_failure,
+    )
 
 
 def _build_constraints(
@@ -388,10 +465,27 @@ def _build_constraints(
     return CompositeStrategy(strategies)
 
 
-def _build_controller(method: str, controller: Any) -> Any:
+def _build_controller(
+    method: str,
+    controller: Any,
+    problem: Any = None,
+    linear_solver: str = "normal",
+) -> Any:
     if controller is not None:
         return controller
     if method in ("dls", "lm"):
+        # Route to the KKT active-set controller when the problem declares hard
+        # equality / inequality constraints; otherwise the plain Levenberg
+        # controller (Nielsen gain-ratio damping).
+        has_hard = (
+            problem is not None
+            and getattr(problem, "constraints", None) is not None
+            and len(problem.constraints) > 0
+        )
+        if has_hard:
+            from optiland.optimization.control.kkt import KKTController
+
+            return KKTController(linear_solver=linear_solver)
         from optiland.optimization.control.levenberg import LevenbergController
 
         return LevenbergController()
@@ -420,7 +514,8 @@ def _run_stepped_native(
 
     optimizer = LevenbergMarquardt() if method in ("dls", "lm") else GaussNewton()
 
-    ctrl = _build_controller(method, controller)
+    linear_solver = method_options.pop("linear_solver", "normal")
+    ctrl = _build_controller(method, controller, problem, linear_solver=linear_solver)
 
     driver = SteppedDriver()
     x0 = evaluator.read_x()
@@ -484,11 +579,12 @@ def _run_managed(
     observers: list,
     initial_value: float,
     method_options: dict,
+    on_failure: str = "penalty",
     resolved_from: str | None = None,
 ) -> OptimizationResult:
     from optiland.optimization.drivers import ManagedDriver
 
-    adapter = _build_managed_adapter(method, problem, method_options)
+    adapter = _build_managed_adapter(method, problem, method_options, on_failure)
 
     driver = ManagedDriver()
     return driver.run(
@@ -504,12 +600,15 @@ def _run_managed(
 
 
 def _build_managed_adapter(
-    method: str, problem: OptimizationProblem, method_options: dict
+    method: str,
+    problem: OptimizationProblem,
+    method_options: dict,
+    on_failure: str = "penalty",
 ) -> Any:
     if method in _SCIPY_LOCAL_METHODS:
         from optiland.optimization.managed.scipy_local import ScipyLocalAdapter
 
-        return ScipyLocalAdapter(problem, method=method)
+        return ScipyLocalAdapter(problem, method=method, on_failure=on_failure)
 
     if method in _SCIPY_LS_METHODS:
         method_choice = method_options.pop("method_choice", "lm")
@@ -517,7 +616,9 @@ def _build_managed_adapter(
             ScipyLeastSquaresAdapter,
         )
 
-        return ScipyLeastSquaresAdapter(problem, method_choice=method_choice)
+        return ScipyLeastSquaresAdapter(
+            problem, method_choice=method_choice, on_failure=on_failure
+        )
 
     if method in _SCIPY_GLOBAL_METHODS:
         from optiland.optimization.managed.scipy_global import ScipyGlobalAdapter

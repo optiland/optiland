@@ -9,6 +9,7 @@ Kramer Harrison, 2025
 from __future__ import annotations
 
 import optiland.backend as be
+from optiland.optimization.errors import ConfigurationError
 
 from .base import Scaler
 
@@ -25,8 +26,18 @@ class LogScaler(Scaler):
         Args:
             value: The value to scale
 
+        Raises:
+            ConfigurationError: If ``value`` is non-positive; ``log`` is only
+                defined on the positive domain.
         """
-        return be.log(be.asarray(value)) / be.log(be.asarray(self.base))
+        arr = be.asarray(value)
+        if bool(be.any(arr <= 0)):
+            raise ConfigurationError(
+                "LogScaler is only defined for strictly positive values "
+                f"(got {value!r}). Use a variable whose domain stays positive, "
+                "or choose a different scaler (e.g. LinearScaler)."
+            )
+        return be.log(arr) / be.log(be.asarray(self.base))
 
     def inverse_scale(self, scaled_value):
         """Inverse scale the value using a logarithmic transformation.

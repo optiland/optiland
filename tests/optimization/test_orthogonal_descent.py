@@ -60,6 +60,9 @@ def test_orthogonal_descent_simple_quadratic():
         return MagicMock(item=lambda: (vx - 1) ** 2 + (vy + 2) ** 2)
 
     problem.rss.side_effect = calculate_rss
+    # OrthogonalDescent now minimizes sum_squared() for objective consistency
+    # with the rest of the subpackage (§4.8).
+    problem.sum_squared.side_effect = calculate_rss
 
     optimizer = OrthogonalDescent(problem)
     optimizer.optimize(max_iter=10, tol=1e-6)

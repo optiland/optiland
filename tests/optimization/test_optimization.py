@@ -432,9 +432,10 @@ class TestLeastSquaresErrorHandling:
         optimizer = optimization.LeastSquares(problem)
         result = optimizer.optimize(maxiter=5)
 
-        # Cost is 0.5 * sum(residuals**2). Residual is sqrt(1e10 / 1) = sqrt(1e10)
-        # So cost = 0.5 * (sqrt(1e10))^2 = 0.5 * 1e10
-        assert be.isclose(result.cost, 0.5 * 1e10)
+        # Non-finite residuals now map to a scale-proportional penalty (D16):
+        # residual = penalty_residual(ref=1.0, m=1) = sqrt(PENALTY_FACTOR) = 1e3,
+        # so cost = 0.5 * sum(residuals**2) = 0.5 * 1e6.
+        assert be.isclose(result.cost, 0.5 * 1e6)
         # Check that optimization completed without crashing (status might vary)
         assert result.status is not None  # General check for completion
 
@@ -451,7 +452,9 @@ class TestLeastSquaresErrorHandling:
 
         optimizer = optimization.LeastSquares(problem)
         result = optimizer.optimize(maxiter=5)
-        assert be.isclose(result.cost, 0.5 * 1e10)
+        # Exceptions during residual evaluation map to the same scale-proportional
+        # penalty as non-finite residuals (D16): cost = 0.5 * 1e6.
+        assert be.isclose(result.cost, 0.5 * 1e6)
         assert result.status is not None
 
     def test_optimize_no_operands(self):

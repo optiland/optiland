@@ -4,7 +4,15 @@ Solves ``(JᵀJ + λ·diag(JᵀJ))Δ = −Jᵀr`` (Moré diagonal damping) via
 ``numpy.linalg.solve``.  Runs the full internal accept/reject λ-search so that
 one ``transform()`` call produces one *accepted* step outcome.
 
-Non-finite trial value → reject + increase λ.
+Damping adaption is the **Nielsen gain-ratio** scheme (D6, §4.4): with
+predicted reduction ``L = ½·dxᵀ(λ·D·dx − g)`` (``g = Jᵀr``) and actual
+reduction ``ΔF = F(x) − F(x+dx)`` (``F = Σrᵢ²``), the ratio ``ρ = ΔF / L``
+drives both acceptance and the λ update —
+
+* ``ρ > 0`` → accept; ``λ ← λ·max(⅓, 1−(2ρ−1)³)``, reset ``ν ← 2``;
+* ``ρ ≤ 0`` (or non-finite trial) → reject; ``λ ← λ·ν``, ``ν ← 2ν``.
+
+This replaces the previous flat ``×10 / ×0.1`` schedule.
 
 Kramer Harrison, 2026
 """
@@ -35,8 +43,10 @@ class LevenbergController:
 
     Args:
         lam_init: Initial damping factor λ₀ (default 1e-3).
-        lam_factor_up: Multiplicative λ increase on rejection (default 10).
-        lam_factor_down: Multiplicative λ decrease on acceptance (default 0.1).
+        lam_factor_up: **Legacy** flat-schedule λ increase, retained for
+            backward-compatible construction; unused by the Nielsen adaption.
+        lam_factor_down: **Legacy** flat-schedule λ decrease, retained for
+            backward-compatible construction; unused by the Nielsen adaption.
         lam_max: Upper bound; step is considered failed above this (default 1e16).
         min_diag: Floor for ``diag(JᵀJ)`` entries to avoid zero damping
             (default 1e-8).
@@ -60,8 +70,9 @@ class LevenbergController:
         self._max_trials = max_trials
 
     def reset(self, state: OptimizationState) -> None:
-        """Seed λ in ``state.scratch`` at the start of a run."""
+        """Seed λ and the Nielsen ν factor in ``state.scratch``."""
         state.scratch["lambda"] = self._lam_init
+        state.scratch["nu"] = 2.0
 
     def transform(
         self, direction: Any, info: StepInfo, state: OptimizationState
@@ -88,11 +99,20 @@ class LevenbergController:
         x: np.ndarray = np.asarray(state.x, dtype=float)  # (n,)
 
         JTJ: np.ndarray = J.T @ J  # (n, n)
-        JTr: np.ndarray = J.T @ r  # (n,)
+        JTr: np.ndarray = J.T @ r  # (n,) == g
         # Moré diagonal: clamp zero entries so damping is always positive
         d: np.ndarray = np.maximum(np.abs(np.diag(JTJ)), self._min_diag)
 
+        # Diagnostics (D12): gradient norm of the merit and JᵀJ conditioning.
+        state.grad_norm = float(np.linalg.norm(2.0 * JTr))
+        with np.errstate(all="ignore"):
+            try:
+                state.cond_estimate = float(np.linalg.cond(JTJ))
+            except np.linalg.LinAlgError:
+                state.cond_estimate = None
+
         lam: float = state.scratch.get("lambda", self._lam_init)
+        nu: float = state.scratch.get("nu", 2.0)
         current_val: float = _to_float(state.value)
         n_trials: int = 0
 
@@ -101,7 +121,8 @@ class LevenbergController:
             try:
                 dx = np.linalg.solve(A, -JTr)
             except np.linalg.LinAlgError:
-                lam *= self._lam_up
+                lam *= nu
+                nu *= 2.0
                 n_trials += 1
                 continue
 
@@ -109,22 +130,30 @@ class LevenbergController:
             f_trial = info.value_fn(x_trial)
             n_trials += 1
 
-            if not math.isfinite(f_trial) or f_trial >= current_val:
-                # Reject: shrink trust region
-                lam *= self._lam_up
+            # Predicted reduction L = ½·dxᵀ(λ·D·dx − g), g = Jᵀr.
+            predicted = 0.5 * float(dx @ (lam * d * dx - JTr))
+            actual = current_val - f_trial  # ΔF for F = Σrᵢ²
+            rho = actual / predicted if predicted > 0 else -1.0
+
+            if (not math.isfinite(f_trial)) or rho <= 0.0:
+                # Reject: increase damping geometrically (Nielsen).
+                lam *= nu
+                nu *= 2.0
                 continue
 
-            # Accept: expand trust region
-            lam = max(lam * self._lam_down, 1e-15)
+            # Accept: gain-ratio-controlled λ decrease, reset ν.
+            lam = max(lam * max(1.0 / 3.0, 1.0 - (2.0 * rho - 1.0) ** 3), 1e-15)
             state.scratch["lambda"] = lam
+            state.scratch["nu"] = 2.0
             return StepOutcome(
                 delta_x=dx,
                 accepted=True,
-                info={"n_trials": n_trials, "trial_value": f_trial},
+                info={"n_trials": n_trials, "trial_value": f_trial, "rho": rho},
             )
 
         # All trials failed (λ blow-up or max_trials exceeded)
         state.scratch["lambda"] = lam
+        state.scratch["nu"] = nu
         return StepOutcome(delta_x=None, accepted=False, info={"n_trials": n_trials})
 
 

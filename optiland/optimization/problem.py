@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 import optiland.backend as be
+from optiland.optimization.constraint import ConstraintManager
 from optiland.optimization.operand import OperandManager
 from optiland.optimization.variable import VariableManager
 
@@ -57,6 +58,7 @@ class OptimizationProblem:
         """
         self.operands = OperandManager()
         self.variables = VariableManager()
+        self.constraints = ConstraintManager()
         self.initial_value = 0.0
         self._batched_evaluator: BatchedRayEvaluator | None = None
 
@@ -125,6 +127,45 @@ class OptimizationProblem:
     def add_variable(self, optic, variable_type, scaler: Scaler = None, **kwargs):
         """Add a variable to the merit function"""
         self.variables.add(optic, variable_type, scaler=scaler, **kwargs)
+
+    def add_constraint(
+        self,
+        operand_type=None,
+        target=None,
+        min_val=None,
+        max_val=None,
+        weight=1,
+        input_data=None,
+        tol=1e-8,
+        scale=None,
+    ):
+        """Add a **hard** equality / inequality constraint (§4.1).
+
+        Unlike :meth:`add_operand` (which adds a merit term), a constraint is
+        enforced exactly by the KKT active-set controller when a constraint-
+        capable stepped method (``dls`` / ``lm`` / ``gauss_newton``) is used:
+
+        * ``target=v``   → equality ``value(x) == v``
+        * ``min_val=lo`` → inequality ``value(x) >= lo``
+        * ``max_val=hi`` → inequality ``value(x) <= hi``
+
+        The signature mirrors :meth:`add_operand`; the problem stays
+        solver-free (it only stores the constraint data).
+        """
+        self.constraints.add(
+            operand_type=operand_type,
+            target=target,
+            min_val=min_val,
+            max_val=max_val,
+            weight=weight,
+            input_data=input_data,
+            tol=tol,
+            scale=scale,
+        )
+
+    def clear_constraints(self):
+        """Clear all hard constraints from the problem."""
+        self.constraints.clear()
 
     def clear_operands(self):
         """Clear all operands from the merit function"""
@@ -426,8 +467,26 @@ class OptimizationProblem:
             )
         return rows
 
+    def constraint_info(self):
+        """Print a feasibility table for the hard constraints (§4.1)."""
+        if len(self.constraints) == 0:
+            print("No hard constraints defined.")
+            return
+        report = self.constraints.report()
+        data = {
+            "Constraint": [row["label"] for row in report],
+            "Kind": [row["kind"] for row in report],
+            "Residual": [f"{row['residual']:+.4g}" for row in report],
+            "Violation": [f"{row['violation']:.4g}" for row in report],
+            "Feasible": [row["feasible"] for row in report],
+        }
+        df = pd.DataFrame(data)
+        print(df.to_markdown(headers="keys", tablefmt="fancy_outline"))
+
     def info(self):
         """Print information about the optimization problem."""
         self.merit_info()
         self.operand_info()
         self.variable_info()
+        if len(self.constraints) > 0:
+            self.constraint_info()

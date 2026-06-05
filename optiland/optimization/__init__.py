@@ -8,7 +8,8 @@ Public surface:
   - Native solvers: ``LevenbergMarquardt``, ``GaussNewton``.
   - Controllers: ``LevenbergController``, ``LineSearchController``.
   - Observers: ``CheckpointObserver``.
-  - Constraints: ``NullSpaceStrategy``.
+  - Constraints: ``Constraint``, ``ConstraintManager`` (declare hard
+    equality/inequality constraints via ``OptimizationProblem.add_constraint``).
   - Variable / Operand types (unchanged legacy surface).
   - Deprecated shims: ``OptimizerGeneric``, ``LeastSquares``, ``DualAnnealing``,
     ``DifferentialEvolution``, ``SHGO``, ``BasinHopping``, ``TorchAdamOptimizer``,
@@ -69,7 +70,7 @@ from .native.least_squares import GaussNewton, LevenbergMarquardt
 from .control.levenberg import LevenbergController
 from .control.line_search import LineSearchController
 from .observers.checkpoint import CheckpointObserver
-from .constraints.null_space import NullSpaceStrategy
+from .constraint import Constraint, ConstraintManager
 
 import sys
 

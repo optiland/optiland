@@ -399,14 +399,20 @@ class TestTieredValidation:
         with pytest.raises(ConfigurationError, match="torch"):
             minimize(p, method="adam")
 
-    def test_null_space_managed_raises(self):
-        from optiland.optimization.constraints.null_space import NullSpaceStrategy
+    def test_per_step_strategy_managed_raises(self):
+        # A per-step-projection strategy (apply_to_step but no to_scipy) cannot
+        # be honored by a managed SciPy method (NullSpaceStrategy was removed in
+        # favor of the KKT path; D2).
+        class _PerStepOnly:
+            def prepare(self, evaluator, variables):
+                pass
+
+            def apply_to_step(self, x_proposed, state):
+                return x_proposed
 
         p, _ = _make_numpy_problem(n_vars=1)
-        # A valid NullSpaceStrategy requires at least one equality_fn
-        strategy = NullSpaceStrategy(equality_fn=lambda x: x[:1] - 1.0)
-        with pytest.raises(ConfigurationError, match="NullSpaceStrategy"):
-            minimize(p, method="l-bfgs-b", constraints=strategy)
+        with pytest.raises(ConfigurationError, match="per-step"):
+            minimize(p, method="l-bfgs-b", constraints=_PerStepOnly())
 
     def test_controller_managed_warns(self):
         from optiland.optimization.control.identity import IdentityController

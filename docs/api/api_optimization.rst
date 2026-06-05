@@ -113,7 +113,6 @@ Constraints
 
    optimization.constraints.base
    optimization.constraints.bounds
-   optimization.constraints.null_space
    optimization.constraints.scipy_native
 
 Standalone Optimizers

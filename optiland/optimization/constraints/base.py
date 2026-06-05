@@ -3,7 +3,9 @@
 Strategies are thin adapters over existing constraint mechanisms:
   - ``BoxBoundsStrategy`` reads ``var.bounds``.
   - ``ScipyNativeStrategy`` forwards bounds/constraints to SciPy.
-  - ``NullSpaceStrategy`` for exact projection.
+
+Hard equality / inequality constraints are declared on the problem
+(``add_constraint``) and solved by the KKT active-set controller.
 
 Kramer Harrison, 2026
 """

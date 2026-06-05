@@ -64,6 +64,7 @@ class ParticleSwarm(OptimizerGeneric):
         social: float = 1.5,
         tol: float = 1e-3,
         stall_iterations: int = 20,
+        vmax_factor: float = 0.2,
         seed: int | None = None,
         disp: bool = True,
         callback: Callable | None = None,
@@ -84,9 +85,13 @@ class ParticleSwarm(OptimizerGeneric):
             social: Social coefficient.
                 Strength of attraction toward the swarm's global best.
                 Higher values increase collective convergence pressure.
-            tol: Absolute improvement tolerance used for stall detection.
-            stall_iterations: Stop if the global best improvement remains
-                below ``tol`` for this many consecutive iterations.
+            tol: Relative improvement tolerance used for stall detection
+                (``Δbest / max(|prev_best|, 1e-12)``).
+            stall_iterations: Stop if the global best *relative* improvement
+                remains below ``tol`` for this many consecutive iterations.
+            vmax_factor: Velocity clamp factor.  Each velocity component is
+                clamped to ``±vmax_factor·span`` (per dimension) to prevent
+                swarm explosion / overshoot on poorly-scaled problems.
             seed: Random seed for reproducibility.
             disp: Whether to print iteration progress.
             callback: Optional callback called after each iteration as
@@ -155,6 +160,13 @@ class ParticleSwarm(OptimizerGeneric):
         # fixed variables, i.e. dimensions where lower == upper.
         span = upper - lower
         movable_mask = span > 0.0
+
+        # Per-dimension velocity ceiling. Clamping |v| ≤ vmax·span keeps the
+        # swarm from exploding out of (and oscillating across) the feasible box
+        # on poorly-scaled problems.
+        if vmax_factor <= 0.0:
+            raise ValueError("vmax_factor must be positive.")
+        vmax = vmax_factor * span
 
         # Initialize swarm positions.
         #
@@ -263,6 +275,9 @@ class ParticleSwarm(OptimizerGeneric):
                 + social * r2 * (global_best_position - positions)
             )
 
+            # Velocity clamping (|v| ≤ vmax·span) prevents swarm explosion.
+            velocities = np.clip(velocities, -vmax, vmax)
+
             # Advance particles (ie update each particle in the state vector)
             positions = positions + velocities  # shape (swarm_size, ndim)
 
@@ -311,8 +326,11 @@ class ParticleSwarm(OptimizerGeneric):
             #   - velocity norm collapse,
             #   - max iterations.
             #
-            # Here the choice is "global best stopped improving enough".
-            if improvement <= tol:
+            # Here the choice is "global best stopped improving enough", measured
+            # as a *relative* improvement so the test is scale-invariant across
+            # merit magnitudes (a fix over the previous absolute test).
+            rel_improvement = improvement / max(abs(prev_global_best_value), 1e-12)
+            if rel_improvement <= tol:
                 no_improve_count += 1
             else:
                 no_improve_count = 0

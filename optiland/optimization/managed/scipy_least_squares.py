@@ -16,6 +16,11 @@ import warnings
 from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
+from optiland.optimization.failure import (
+    OptimizationFailure,
+    normalize_failure_mode,
+    penalty_residual,
+)
 from optiland.optimization.state import Capability
 
 if TYPE_CHECKING:
@@ -45,9 +50,18 @@ class ScipyLeastSquaresAdapter:
     requires_backend: str | None = None
     method_name: str = "least_squares"
 
-    def __init__(self, problem: OptimizationProblem, method_choice: str = "lm"):
+    def __init__(
+        self,
+        problem: OptimizationProblem,
+        method_choice: str = "lm",
+        on_failure: str = "penalty",
+    ):
         self.problem = problem
         self.method_choice = method_choice
+        self._on_failure = normalize_failure_mode(on_failure)
+        # Reference merit for the scale-proportional penalty (last finite SSR).
+        self._ref_merit: float = 1.0
+        self._last_m: int = max(len(list(problem.operands)), 1)
 
     def run(
         self,
@@ -55,9 +69,12 @@ class ScipyLeastSquaresAdapter:
         callback: Any = None,  # noqa: ARG002 — least_squares has no callback
         maxiter: int | None = None,
         tol: float = 1e-3,
+        on_failure: str | None = None,
         **_: Any,
     ) -> Any:
         """Run scipy.optimize.least_squares and write back optimal params."""
+        if on_failure is not None:
+            self._on_failure = normalize_failure_mode(on_failure)
         from scipy import optimize
 
         x0_numpy = be.to_numpy([var.value for var in self.problem.variables])
@@ -106,17 +123,44 @@ class ScipyLeastSquaresAdapter:
         return result
 
     def _residuals(self, x: Any) -> Any:
+        """Canonical least-squares residual ``sqrt(effective_weight)·delta``.
+
+        Uses :meth:`OptimizationProblem.weighted_residuals` so that
+        ``sum(residuals**2) == sum_squared()`` exactly — the same merit
+        minimized by the native LM / Gauss-Newton path and the scipy-local
+        path.  This replaces the previous ``op.fun() = weight·delta`` form,
+        which silently dropped field/wavelength weights and produced a
+        *different* objective on multi-weight problems (§3.2).
+        """
+        import numpy as np
+
         for i, var in enumerate(self.problem.variables):
             var.update(x[i])
         self.problem.update_optics()
         try:
-            res = be.array([op.fun() for op in self.problem.operands])
-            if be.any(be.isnan(res)):
-                n = len(self.problem.operands)
-                err = be.sqrt(1e10 / n if n > 0 else 1e10)
-                return be.to_numpy(be.full(n, err))
-            return be.to_numpy(res)
-        except Exception:  # noqa: BLE001
-            n = len(self.problem.operands)
-            err = be.sqrt(1e10 / n if n > 0 else 1e10)
-            return be.to_numpy(be.full(n, err))
+            r = self.problem.weighted_residuals()
+            r_np = np.asarray(be.to_numpy(r), dtype=float)
+        except Exception as exc:  # noqa: BLE001
+            return self._residual_failure(exc)
+        if not np.all(np.isfinite(r_np)):
+            return self._residual_failure(None)
+        self._ref_merit = float(np.dot(r_np, r_np))
+        self._last_m = r_np.shape[0] if r_np.ndim else self._last_m
+        return r_np
+
+    def _residual_failure(self, exc: Exception | None) -> Any:
+        """Map a non-finite / failed residual to the active failure policy.
+
+        ``scipy.optimize.least_squares`` cannot consume ``NaN``, so any policy
+        other than ``"raise"`` resolves to a finite, scale-proportional
+        penalty (a multiple of the last finite SSR), never a hardcoded
+        ``1e10``.
+        """
+        import numpy as np
+
+        if self._on_failure == "raise":
+            raise OptimizationFailure(
+                "Residual evaluation failed (non-finite or ray-trace error)."
+            ) from exc
+        m = max(self._last_m, 1)
+        return np.full(m, penalty_residual(self._ref_merit, m))

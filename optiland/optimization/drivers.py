@@ -35,6 +35,36 @@ def _to_float(v: Any) -> float:
     return float(v)
 
 
+# Stop-reason tokens that mark a *true* convergence (tolerance satisfied).
+_CONVERGENCE_TOKENS = ("cost_tol", "grad_norm", "step_stall", "rel_improvement")
+# Stop-reason tokens that mark a hard failure — never a success regardless of
+# any co-occurring convergence token (e.g. a latching ``AndCriterion``).
+_HARD_FAILURE_TOKENS = (
+    "lm_lambda_max",
+    "gauss_newton_singular",
+    "singular",
+    "cancel",
+    "infeasible",
+    "failure",
+)
+
+
+def _derive_success(stop_reason: str | None) -> bool:
+    """Decide ``success`` from the terminating stop reason.
+
+    Success requires that a convergence criterion (cost / step / gradient /
+    relative-improvement tolerance) actually fired and that the run did **not**
+    terminate via λ-blow-up, a singular normal-equations solve, cancellation,
+    infeasibility, or a generic failure.  Hitting ``max_iter`` / ``max_evals``
+    alone is *not* success, but a latching ``AndCriterion`` whose reason also
+    contains a convergence token is (the tolerance was genuinely met).
+    """
+    reason = (stop_reason or "").lower()
+    if any(tok in reason for tok in _HARD_FAILURE_TOKENS):
+        return False
+    return any(tok in reason for tok in _CONVERGENCE_TOKENS)
+
+
 def _build_result(
     state: OptimizationState,
     initial_value: float,
@@ -52,9 +82,18 @@ def _build_result(
     x_final = state.x
     with contextlib.suppress(Exception):
         x_final = be.to_numpy(state.x)
+
+    # Diagnostics (D12) — read straight off the terminal state where present.
+    grad_norm = state.grad_norm
+    if grad_norm is None:
+        grad_norm = state.scratch.get("grad_norm")
+    lambda_final = state.scratch.get("lambda")
+    constraint_report = state.scratch.get("constraint_report")
+    max_violation = state.scratch.get("max_constraint_violation")
+
     return OptimizationResult(
         x=x_final,
-        success=not (state.stop_reason or "").startswith("max_iter"),
+        success=_derive_success(state.stop_reason),
         status=state.stop_reason or "completed",
         value=final_value,
         initial_value=initial_value,
@@ -67,6 +106,13 @@ def _build_result(
         backend=backend,
         method=method,
         resolved_from=resolved_from,
+        multipliers=state.multipliers,
+        active_set=state.active_set,
+        constraint_report=constraint_report,
+        max_constraint_violation=max_violation,
+        grad_norm=grad_norm,
+        lambda_final=lambda_final,
+        cond_estimate=state.cond_estimate,
     )
 
 
@@ -109,8 +155,12 @@ class SteppedDriver:
 
         while True:
             if optimizer.converged(state):
-                state.stop_reason = "intrinsic_convergence"
                 state.converged = True
+                # Preserve the optimizer's intrinsic reason (e.g.
+                # "lm_lambda_max…", "gauss_newton_singular…") instead of
+                # overwriting it with a generic label.
+                if not state.stop_reason:
+                    state.stop_reason = "intrinsic_convergence"
                 break
             stop, reason = criteria.should_stop(state)
             if stop or state.converged:
@@ -157,6 +207,15 @@ class ManagedDriver:
 
     Early stop is requested via ``StopIteration`` in the callback (modern
     SciPy convention, supported by ``minimize`` and some global solvers).
+
+    .. note::
+        ``scipy.optimize.least_squares`` accepts **no** ``callback`` argument,
+        so per-step observers and mid-run cancellation are not honored for the
+        ``least_squares`` method — only ``on_start`` / ``on_end`` fire, and the
+        criterion-driven early stop is inactive.  For methods that do provide a
+        callback, the per-step observer value is computed from the callback's
+        ``xk`` (the current iterate) rather than whatever perturbed state the
+        last function evaluation happened to leave behind.
     """
 
     def run(
@@ -194,7 +253,11 @@ class ManagedDriver:
         def _callback(xk: Any, *_extra: Any) -> None:
             iteration_counter[0] += 1
             n_value_evals[0] += 1
+            # Evaluate the merit at the reported iterate ``xk`` rather than at
+            # whatever perturbed point the last residual/gradient evaluation
+            # left the optic in.
             try:
+                evaluator.write_x(xk)
                 val = float(be.to_numpy(problem.sum_squared()))
             except Exception:  # noqa: BLE001
                 val = float("nan")

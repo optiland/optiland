@@ -37,39 +37,36 @@ class LeastSquares(OptimizerGeneric):
         'x_numpy_variables_from_scipy' contains the current values of the optimization
         variables as provided by the SciPy optimizer. These are typically scaled values
         if variable scaling is active.
+
+        The residual is the canonical least-squares form
+        ``sqrt(effective_weight)·delta`` (via
+        :meth:`OptimizationProblem.weighted_residuals`) so that
+        ``sum(residuals**2) == sum_squared()`` exactly, matching every other
+        solver path (§3.2).  A ray-trace failure or non-finite residual maps to
+        a finite, scale-proportional penalty (never a hardcoded ``1e10``).
         """
+        import numpy as np
+
+        from optiland.optimization.failure import penalty_residual
 
         for i, optiland_var_wrapper in enumerate(self.problem.variables):
             optiland_var_wrapper.update(x_numpy_variables_from_scipy[i])
 
         self.problem.update_optics()
 
+        ref = getattr(self, "_ref_merit", 1.0)
+        last_m = getattr(self, "_last_m", max(len(list(self.problem.operands)), 1))
         try:
-            residuals_backend_array = be.array(
-                [op.fun() for op in self.problem.operands]
-            )
+            r = self.problem.weighted_residuals()
+            r_np = np.asarray(be.to_numpy(r), dtype=float)
+            if not np.all(np.isfinite(r_np)):
+                raise ValueError("non-finite residual")
+        except Exception:  # noqa: BLE001
+            return np.full(last_m, penalty_residual(ref, last_m))
 
-            # Handle cases where ray tracing might fail and produce NaNs
-            if be.any(be.isnan(residuals_backend_array)):
-                num_operands = len(self.problem.operands)
-                # Return a vector of large constant values to penalize this region
-                # The magnitude should be large enough to indicate a poor solution.
-                error_value = be.sqrt(1e10 / num_operands if num_operands > 0 else 1e10)
-                return be.to_numpy(be.full(num_operands, error_value))
-
-            return be.to_numpy(
-                residuals_backend_array
-            )  # Convert to NumPy array for SciPy
-
-        except Exception:
-            # Catch any other exceptions during optical calculation
-            # (e.g., critical ray failure)
-            # This is a general fallback; more specific error handling
-            # might be beneficial.
-            num_operands = len(self.problem.operands)
-            error_value = be.sqrt(1e10 / num_operands if num_operands > 0 else 1e10)
-            # Return a vector of large constant values
-            return be.to_numpy(be.full(num_operands, error_value))
+        self._ref_merit = float(np.dot(r_np, r_np))
+        self._last_m = r_np.shape[0] if r_np.ndim else last_m
+        return r_np
 
     def optimize(
         self,

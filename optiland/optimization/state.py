@@ -22,6 +22,7 @@ class Capability(Enum):
     PER_STEP_CONSTRAINTS = auto()
     SCIPY_CONSTRAINTS = auto()
     BOUNDS = auto()
+    KKT_CONSTRAINTS = auto()
 
 
 class EvalCapability(Enum):
@@ -55,6 +56,13 @@ class OptimizationState:
         converged: Set True by a criterion / intrinsic convergence test.
         stop_reason: Human-readable reason string, set on termination.
         scratch: Optimizer-private scratch space (LM λ, etc.).
+        multipliers: Lagrange multipliers for active constraints/bounds
+            (constrained KKT path); None for unconstrained runs.
+        active_set: Identifiers of the constraints/bounds active at this step;
+            None when there are no hard constraints.
+        grad_norm: Most recent gradient (or ``Jᵀr``) L2 norm; None until set.
+        cond_estimate: Most recent Jacobian / KKT condition estimate; None
+            until set.
     """
 
     x: Any
@@ -70,6 +78,11 @@ class OptimizationState:
     converged: bool = False
     stop_reason: str | None = None
     scratch: dict = field(default_factory=dict)
+    # Diagnostics (D12) — populated by the controllers, watched by observers.
+    multipliers: Any | None = None
+    active_set: Any | None = None
+    grad_norm: float | None = None
+    cond_estimate: float | None = None
 
 
 @dataclass
@@ -97,6 +110,16 @@ class OptimizationResult:
         resolved_from: If ``method="auto"`` was passed, the original
             ``"auto"`` string; ``None`` when an explicit method was given.
             Combine with ``method`` to understand how the solver was chosen.
+        multipliers: Lagrange multipliers per equality / active inequality at
+            exit (constrained runs); ``None`` otherwise.
+        active_set: Constraints / bounds that were active at exit, or ``None``.
+        constraint_report: Per-constraint residual + max violation + feasible
+            flag, or ``None`` for unconstrained runs.
+        max_constraint_violation: Largest constraint violation at exit, or
+            ``None``.
+        grad_norm: Final gradient (or ``Jᵀr``) L2 norm, or ``None``.
+        lambda_final: Final LM damping factor λ, or ``None``.
+        cond_estimate: Final Jacobian / KKT condition estimate, or ``None``.
     """
 
     x: Any
@@ -113,6 +136,14 @@ class OptimizationResult:
     backend: str
     method: str
     resolved_from: str | None = None
+    # Diagnostics (D12) — additive; defaults keep full back-compat.
+    multipliers: Any | None = None
+    active_set: Any | None = None
+    constraint_report: list | None = None
+    max_constraint_violation: float | None = None
+    grad_norm: float | None = None
+    lambda_final: float | None = None
+    cond_estimate: float | None = None
 
     @property
     def fun(self) -> float:

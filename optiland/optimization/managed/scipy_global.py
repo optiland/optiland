@@ -12,6 +12,11 @@ import warnings
 from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
+from optiland.optimization.failure import (
+    OptimizationFailure,
+    normalize_failure_mode,
+    penalty_merit,
+)
 from optiland.optimization.state import Capability
 
 if TYPE_CHECKING:
@@ -48,13 +53,20 @@ class ScipyGlobalAdapter:
     capabilities: frozenset[Capability] = _CAPS
     requires_backend: str | None = None
 
-    def __init__(self, problem: OptimizationProblem, algorithm: str):
+    def __init__(
+        self,
+        problem: OptimizationProblem,
+        algorithm: str,
+        on_failure: str = "penalty",
+    ):
         algorithm = algorithm.lower()
         if algorithm not in _GLOBAL_METHODS:
             raise ValueError(f"Unknown global algorithm: {algorithm!r}")
         self.algorithm = algorithm
         self.method_name = algorithm
         self.problem = problem
+        self._on_failure = normalize_failure_mode(on_failure)
+        self._ref_merit: float = 1.0
 
     def run(self, *, callback: Any = None, maxiter: int = 1000, **kwargs: Any) -> Any:
         """Run the appropriate scipy global optimizer."""
@@ -76,16 +88,29 @@ class ScipyGlobalAdapter:
     # ------------------------------------------------------------------
 
     def _fun(self, x: Any) -> float:
+        import math
+
         for i, var in enumerate(self.problem.variables):
             var.update(be.array(x[i]))
         self.problem.update_optics()
         try:
             rss = self.problem.sum_squared()
-            if be.isnan(rss):
-                return 1e10
-            return be.to_numpy(rss).item()
-        except (ValueError, Exception):  # noqa: BLE001
-            return 1e10
+            val = float(be.to_numpy(rss))
+        except Exception as exc:  # noqa: BLE001
+            return self._fun_failure(exc)
+        if not math.isfinite(val):
+            return self._fun_failure(None)
+        self._ref_merit = val
+        return val
+
+    def _fun_failure(self, exc: Exception | None) -> float:
+        """Map a non-finite / failed merit to a finite, scale-proportional
+        penalty (``"raise"`` re-raises instead)."""
+        if self._on_failure == "raise":
+            raise OptimizationFailure(
+                "Merit evaluation failed (non-finite or ray-trace error)."
+            ) from exc
+        return penalty_merit(self._ref_merit)
 
     def _writeback(self, x_opt: Any) -> None:
         for i, var in enumerate(self.problem.variables):
