@@ -774,7 +774,7 @@ class TestCheckpointObserver:
 class TestLineSearchController:
     def test_armijo_condition_satisfied(self):
         """Accepted step satisfies the Armijo sufficient-decrease condition."""
-        # Minimise f(x) = (x-3)^2; gradient at x=0 is -6; direction d = 1 (descent)
+        # minimize f(x) = (x-3)^2; gradient at x=0 is -6; direction d = 1 (descent)
         def value_fn(x):
             return float((x[0] - 3.0) ** 2)
 

@@ -152,7 +152,7 @@ class OptimizationProblem:
 
         When batching is enabled, delegates to the
         :class:`~optiland.optimization.batched_evaluator.BatchedRayEvaluator`
-        which minimises redundant ray traces.
+        which minimizes redundant ray traces.
 
         Returns:
             be.ndarray: 1-D array of per-operand contribution values. Returns
@@ -240,7 +240,7 @@ class OptimizationProblem:
 
         When batching is enabled, delegates to the
         :class:`~optiland.optimization.batched_evaluator.BatchedRayEvaluator`
-        which minimises redundant ray traces.
+        which minimizes redundant ray traces.
         """
         if self._batched_evaluator is not None:
             return self._batched_evaluator.sum_squared()

@@ -308,7 +308,7 @@ def _maybe_emit_weight_notice(evaluator: Any, enabled: bool) -> None:
                 warnings.warn(
                     "Optimization problem has non-unity field/wavelength weights "
                     "(effective_weight ≠ operand.weight).  The native LM optimizer "
-                    "minimises Σ(sqrt(effective_weight)·δ)² which exactly equals "
+                    "minimizes Σ(sqrt(effective_weight)·δ)² which exactly equals "
                     "sum_squared() (correctness fix).  Results may differ from "
                     "pre-Phase-1b runs of LeastSquares on multi-field / "
                     "multi-wavelength systems.",

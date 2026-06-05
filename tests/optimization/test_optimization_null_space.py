@@ -334,7 +334,7 @@ def test_null_space_with_managed_raises_configuration_error():
 
 
 def test_lm_with_null_space_equality_constraint():
-    """LM + NullSpaceStrategy: minimise ||x||² subject to sum(x) = 1 (n=3).
+    """LM + NullSpaceStrategy: minimize ||x||² subject to sum(x) = 1 (n=3).
 
     Unconstrained optimum: x=0.  Constrained optimum: x = [1/3, 1/3, 1/3].
     """

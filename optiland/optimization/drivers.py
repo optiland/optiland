@@ -117,8 +117,16 @@ class SteppedDriver:
                 state.stop_reason = reason or state.stop_reason
                 break
             state = optimizer.step(state)
+            _stop_reason: str | None = None
             for obs in observers:
-                obs.on_step(state)
+                try:
+                    obs.on_step(state)
+                except StopIteration as _exc:
+                    _stop_reason = str(_exc) or "cancelled"
+                    break
+            if _stop_reason is not None:
+                state.stop_reason = _stop_reason
+                break
 
         history = _collect_history(observers)
         result = _build_result(
@@ -183,7 +191,7 @@ class ManagedDriver:
 
         final_scipy_result: Any = None
 
-        def _callback(xk: Any) -> None:
+        def _callback(xk: Any, *_extra: Any) -> None:
             iteration_counter[0] += 1
             n_value_evals[0] += 1
             try:
