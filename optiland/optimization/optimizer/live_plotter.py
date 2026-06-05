@@ -5,7 +5,11 @@ from typing import Any
 
 import matplotlib
 import matplotlib.pyplot as plt
-from IPython.display import display
+
+try:
+    from IPython.display import display
+except ImportError:  # IPython optional; only needed for the Jupyter inline backend
+    display = None
 
 import optiland.backend as be
 
