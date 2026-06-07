@@ -22,3 +22,4 @@ or unique functionality of Optiland.
     miscellaneous/lens_draw_projection
     miscellaneous/ray_aiming
     miscellaneous/eye
+    miscellaneous/zemax_circular_aperture_demo

@@ -15,6 +15,25 @@ from optiland.tolerancing.compensator import CompensatorOptimizer
 from optiland.tolerancing.perturbation import BaseSampler, Perturbation
 
 
+class OperandEvaluator:
+    """Evaluates a set of named operands against an Optic instance.
+
+    Args:
+        operands: List of Operand objects to evaluate.
+    """
+
+    def __init__(self, operands: list[Operand]) -> None:
+        self._operands = operands
+
+    def evaluate(self) -> list[float]:
+        """Return evaluated values for the current optic state.
+
+        Returns:
+            List of operand values in the same order as the operand list.
+        """
+        return [float(op.value) for op in self._operands]
+
+
 class Tolerancing:
     """A class representing a tolerancing problem. This class is the core of the
     tolerancing module. It allows the user to define a tolerancing problem by
@@ -138,9 +157,9 @@ class Tolerancing:
 
         return result
 
-    def evaluate(self):
+    def evaluate(self) -> list[float]:
         """Evaluate the operands."""
-        return [float(operand.value) for operand in self.operands]
+        return OperandEvaluator(self.operands).evaluate()
 
     def reset(self):
         """Reset the optic to its initial state."""

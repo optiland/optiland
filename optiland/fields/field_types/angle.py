@@ -47,7 +47,7 @@ class AngleField(BaseFieldDefinition):
             y0 = be.array(Py) * EPD / 2 * be.array(vy) + y
             z0 = be.full_like(Px, z)
         else:
-            dist_to_ep = EPL - optic.surfaces.positions[0]
+            dist_to_ep = optic.paraxial.entrance_pupil_z() - optic.surfaces.positions[0]
             x_local = be.atleast_1d(be.array(-be.tan(be.radians(field_x)) * dist_to_ep))
             y_local = be.atleast_1d(be.array(-be.tan(be.radians(field_y)) * dist_to_ep))
             z_local = obj.geometry.sag(x_local, y_local)

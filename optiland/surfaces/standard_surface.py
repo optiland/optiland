@@ -12,8 +12,8 @@ Kramer Harrison, 2023
 
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING
-from weakref import WeakMethod
 
 import optiland.backend as be
 from optiland.coatings import BaseCoating, FresnelCoating, ThinFilmCoating
@@ -24,14 +24,39 @@ from optiland.materials import BaseMaterial
 from optiland.physical_apertures import BaseAperture
 from optiland.physical_apertures.radial import configure_aperture
 from optiland.scatter import BaseBSDF
+from optiland.surfaces.observer import ObserverMixin
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from optiland.rays import BaseRays, ParaxialRays, RealRays
 
 
-class Surface:
+class _TracingCoordinator:
+    """Owns the localize → intersect → globalize → clip → interact → record pipeline.
+
+    Stateless: all surface components are accessed via the ``surface`` argument
+    passed to :meth:`trace`, so geometry/aperture/interaction_model changes on
+    the surface are always reflected without recreating the coordinator.
+    """
+
+    def trace(self, rays: BaseRays, surface: Surface) -> BaseRays:
+        """Execute the full ray-surface interaction pipeline.
+
+        Args:
+            rays: The rays to be traced.
+            surface: The surface being traced through.
+
+        Returns:
+            The traced rays.
+        """
+        surface.reset()
+        surface.geometry.localize(rays)
+        rays = rays.trace_on_surface(surface)
+        surface.geometry.globalize(rays)
+        rays.record_on_surface(surface)
+        return rays
+
+
+class Surface(ObserverMixin):
     """Represents a standard refractice surface in an optical system.
 
     Args:
@@ -84,48 +109,18 @@ class Surface:
             self.interaction_model.parent_surface = self
 
         self.thickness = 0.0  # used for surface positioning
-        self._listeners = []
+        ObserverMixin.__init__(self)
         self.reset()
 
-    def __getstate__(self):
-        # Remove self._listeners when a deep copy is made
-        state = self.__dict__.copy()
-        del state["_listeners"]
-        return state
-
-    def __setstate__(self, state):
-        # Initialize self._listeners to an empty list after deepcopy
-        self.__dict__.update(state)
-        self._listeners = []
-
-    def _update_callback(self, caller: Surface) -> None:
-        # Called when a surface that we're related to changes
-        if caller != self.previous_surface:
-            raise RuntimeError("Unexpected Surface called _update_callback")
-
-        # Handle the changes. Right now, we're only interested in a change in refractive
-        # index. If this surface's interaction model has a Fresnel coating, update it:
+    def _on_upstream_material_change(self) -> None:
+        """Called by the upstream (previous) surface when its material changes."""
         if isinstance(getattr(self.interaction_model, "coating", None), FresnelCoating):
             self.set_fresnel_coating()
         elif isinstance(
             getattr(self.interaction_model, "coating", None), ThinFilmCoating
         ):
-            self.coating.stack.incident_material = self.material_pre
-            self.coating.stack.substrate_material = self.material_post
-
-    def _register_callback(self, callback: Callable):
-        if callback not in self._listeners:
-            self._listeners.append(
-                WeakMethod(callback, lambda obj: self._deregister_callback(obj))
-            )
-
-    def _deregister_callback(self, callback: Callable):
-        if isinstance(callback, WeakMethod) and callback in self._listeners:
-            self._listeners.remove(callback)
-            return
-        for weakref in self._listeners:
-            if weakref() == callback:
-                self._listeners.remove(weakref)
+            self.interaction_model.coating.stack.incident_material = self.material_pre
+            self.interaction_model.coating.stack.substrate_material = self.material_post
 
     @property
     def previous_surface(self):
@@ -134,12 +129,12 @@ class Surface:
     @previous_surface.setter
     def previous_surface(self, surface: Surface):
         if self._previous_surface is not None:
-            self._previous_surface._deregister_callback(self._update_callback)
+            self._previous_surface.unsubscribe(self._on_upstream_material_change)
 
         self._previous_surface = surface
         if surface is not None:
-            surface._register_callback(self._update_callback)
-        self._update_callback(surface)  # Explicit trigger
+            surface.subscribe(self._on_upstream_material_change)
+        self._on_upstream_material_change()  # Explicit trigger
 
     @property
     def material_pre(self) -> BaseMaterial | None:
@@ -158,22 +153,34 @@ class Surface:
         self._material_post = material
 
         # Update coating for new material
-        if isinstance(self.coating, FresnelCoating):
+        _coating = getattr(self.interaction_model, "coating", None)
+        if isinstance(_coating, FresnelCoating):
             self.set_fresnel_coating()
-        elif isinstance(self.coating, ThinFilmCoating):
-            self.coating.stack.incident_material = self.material_pre
-            self.coating.stack.substrate_material = self.material_post
+        elif isinstance(_coating, ThinFilmCoating):
+            _coating.stack.incident_material = self.material_pre
+            _coating.stack.substrate_material = self.material_post
 
-        for weakref_callback in self._listeners:
-            weakref_callback()(self)
+        self._notify()
 
     @property
     def coating(self):
+        warnings.warn(
+            "surface.coating is deprecated; "
+            "use surface.interaction_model.coating instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if (interaction_model := getattr(self, "interaction_model", None)) is not None:
             return getattr(interaction_model, "coating", None)
 
     @coating.setter
     def coating(self, value):
+        warnings.warn(
+            "surface.coating setter is deprecated; "
+            "use surface.interaction_model.coating instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if hasattr(self, "interaction_model"):
             self.interaction_model.coating = value
 
@@ -207,12 +214,16 @@ class Surface:
             BaseRays: The traced rays.
 
         """
-        self.reset()
-        self.geometry.localize(rays)
-        rays = rays.trace_on_surface(self)
-        self.geometry.globalize(rays)
-        rays.record_on_surface(self)
-        return rays
+        return self._coordinator.trace(rays, self)
+
+    @property
+    def _coordinator(self) -> _TracingCoordinator:
+        """Lazy coordinator — created once, holds no mutable state."""
+        try:
+            return self.__coordinator
+        except AttributeError:
+            self.__coordinator = _TracingCoordinator()
+            return self.__coordinator
 
     def _trace_paraxial(self, rays: ParaxialRays) -> ParaxialRays:
         """Paraxial physics kernel: propagate and interact.

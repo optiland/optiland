@@ -40,3 +40,16 @@ The `PhaseInteractionModel` can be used to create a wide variety of optical comp
 - Metasurfaces
 
 To create a surface with a phase profile, you need to create a `BasePhaseProfile` object and pass it to the `SurfaceFactory` using the `phase_profile` argument. The `interaction_type` will be automatically set to `phase`.
+
+How to Extend This
+------------------
+
+**Scenario:** Add a new surface interaction model to Optiland.
+
+**Step 1:** Create a new file in ``optiland/interactions/my_interaction.py``.
+**Step 2:** Subclass ``BaseInteractionModel`` and implement ``interact_real_rays(rays, surface)``
+and ``interact_paraxial_rays(rays, surface)``.
+**Step 3:** Register in ``optiland/interactions/__init__.py``.
+**Step 4:** Add tests in ``tests/test_interactions/test_my_interaction.py``.
+
+For step-by-step guidance, see :ref:`extension_recipes`.

@@ -1,4 +1,4 @@
-﻿aberrations
+aberrations
 ===========
 
 .. automodule:: aberrations
@@ -9,4 +9,8 @@
    .. autosummary::
    
       Aberrations
+      ThirdOrderAberrations
+      SeidelAberrations
+      ChromaticAberrations
+
    

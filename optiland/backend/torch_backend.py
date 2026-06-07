@@ -1844,29 +1844,38 @@ class TorchBackend(AbstractBackend):
         if in2.ndim != ndim:
             raise ValueError("Inputs must have the same dimensionality.")
 
+        axes = tuple(range(ndim)) if ndim < 2 else (-2, -1)
+
         s1 = in1.shape
         s2 = in2.shape
-        shape = [s1[i] + s2[i] - 1 for i in range(ndim)]
 
-        IN1 = torch.fft.fftn(in1, s=shape)
-        IN2 = torch.fft.fftn(in2, s=shape)
-        ret = torch.fft.ifftn(IN1 * IN2, s=shape).real
+        fft_shape = list(in1.shape)
+        for axis in axes:
+            fft_shape[axis] = s1[axis] + s2[axis] - 1
+
+        IN1 = torch.fft.fftn(in1, s=[fft_shape[axis] for axis in axes], dim=axes)
+        IN2 = torch.fft.fftn(in2, s=[fft_shape[axis] for axis in axes], dim=axes)
+        ret = torch.fft.ifftn(
+            IN1 * IN2, s=[fft_shape[axis] for axis in axes], dim=axes
+        ).real
 
         if mode == "full":
             return ret
-        elif mode == "same":
-            crop_slices = []
-            for i in range(ndim):
-                start = (s2[i] - 1) // 2
-                end = start + s1[i]
-                crop_slices.append(slice(start, end))
+
+        crop_slices = [slice(None)] * ndim
+
+        if mode == "same":
+            for axis in axes:
+                start = (s2[axis] - 1) // 2
+                end = start + s1[axis]
+                crop_slices[axis] = slice(start, end)
             return ret[tuple(crop_slices)]
-        elif mode == "valid":
-            crop_slices = []
-            for i in range(ndim):
-                start = s2[i] - 1
-                end = s1[i]
-                crop_slices.append(slice(start, end))
+
+        if mode == "valid":
+            for axis in axes:
+                start = s2[axis] - 1
+                end = s1[axis]
+                crop_slices[axis] = slice(start, end)
             return ret[tuple(crop_slices)]
 
         raise ValueError(f"Unknown mode: {mode}")
@@ -2048,20 +2057,33 @@ class TorchBackend(AbstractBackend):
 
         Args:
             tensor: Input tensor.
-            pad_width: Padding per axis as ``((pt, pb), (pl, pr))``.
-            mode: Only ``'constant'`` is supported.
+            pad_width: Padding per axis.
+            mode: Padding mode.
             constant_values: Value used for constant padding.
 
         Returns:
             Tensor: Padded tensor.
-
-        Raises:
-            NotImplementedError: If mode is not ``'constant'``.
         """
-        if mode != "constant":
-            raise NotImplementedError("Only constant mode supported")
-        (pt, pb), (pl, pr) = pad_width
-        return F.pad(tensor, (pl, pr, pt, pb), mode="constant", value=constant_values)
+        if len(pad_width) == 2:
+            (pt, pb), (pl, pr) = pad_width
+        elif len(pad_width) == 4:
+            if pad_width[0] != (0, 0) or pad_width[1] != (0, 0):
+                raise NotImplementedError(
+                    "Padding batch or channel dimensions is not supported"
+                )
+            (pt, pb), (pl, pr) = pad_width[2:]
+        else:
+            raise ValueError("pad_width must have length 2 or 4")
+
+        if mode == "constant":
+            return F.pad(
+                tensor, (pl, pr, pt, pb), mode="constant", value=constant_values
+            )
+
+        if mode in ("reflect", "replicate", "circular"):
+            return F.pad(tensor, (pl, pr, pt, pb), mode=mode)
+
+        raise NotImplementedError(f"Unsupported padding mode: {mode}")
 
     def vectorize(self, pyfunc: Callable[..., Any]) -> Callable[..., Any]:
         """Vectorize a scalar Python function over tensor inputs.

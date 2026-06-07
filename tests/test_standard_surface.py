@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import gc
-
 import pytest
 
 import optiland.backend as be
@@ -147,36 +145,22 @@ class TestSurface:
         surf1 = self.create_surface()
         surf2 = self.create_surface()
 
-        # Test for explicit registering of the callback
-        surf1._register_callback(surf2._update_callback)
-        assert all(
-            [weakref() == surf2._update_callback for weakref in surf1._listeners]
-        )
+        # Test explicit subscribe/unsubscribe (ObserverMixin API)
+        surf1.subscribe(surf2._on_upstream_material_change)
+        assert surf2._on_upstream_material_change in surf1._subscribers
 
-        # Test for explicit deregistering
-        surf1._deregister_callback(surf2._update_callback)
-        assert surf1._listeners == []
+        surf1.unsubscribe(surf2._on_upstream_material_change)
+        assert surf1._subscribers == []
 
-        # Test for implicit registering of the callback
+        # Implicit registration when previous_surface is set
         surf2.previous_surface = surf1
-        assert all(
-            [weakref() == surf2._update_callback for weakref in surf1._listeners]
-        )
+        assert surf2._on_upstream_material_change in surf1._subscribers
 
-        # Test for implicit deregistering
-        del surf2
-        gc.collect()
-        assert surf1._listeners == []
-
-        # Test for updating the callback
-        surf2 = self.create_surface()
+        # Implicit deregistration when previous_surface is reassigned
         surf3 = self.create_surface()
-        surf2.previous_surface = surf1
         surf2.previous_surface = surf3
-        assert surf1._listeners == []
-        assert all(
-            [weakref() == surf3._update_callback for weakref in surf1._listeners]
-        )
+        assert surf1._subscribers == []
+        assert surf2._on_upstream_material_change in surf3._subscribers
 
     def test_fresnel_coating_material(self):
         surf1 = self.create_surface()

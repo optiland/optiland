@@ -25,32 +25,41 @@ class SpatiallyVariableSimulator:
         Simulate the image using provided EigenPSFs and Coefficient Maps.
 
         Args:
-            source_image (be.ndarray): The high-resolution source image (H, W).
+            source_image (be.ndarray): The high-resolution source image (B, H, W).
             eigen_psfs (be.ndarray): Basis PSFs (K, P, P).
             coefficient_maps (be.ndarray): Spatial coefficient maps (K, H, W).
             mean_psf (be.ndarray): The average PSF (P, P).
 
         Returns:
-            be.ndarray: The simulated image (H, W).
+            be.ndarray: The simulated image (B, H, W).
         """
         source_image = be.array(source_image)
         eigen_psfs = be.array(eigen_psfs)
         coefficient_maps = be.array(coefficient_maps)
         mean_psf = be.array(mean_psf)
 
-        n_components = eigen_psfs.shape[0]
+        if source_image.ndim != 3:
+            raise ValueError("source_image must have shape (B, H, W).")
 
         # 1. Base term: Convolve with mean PSF
         # Corresponds to 0-th order approximation
-        final_image = be.fftconvolve(source_image, mean_psf, mode="same")
+        final_image = be.fftconvolve(
+            source_image,
+            mean_psf[None, :, :],
+            mode="same",
+        )
 
-        for k in range(n_components):
-            # 2. Variable terms
-            # Pre-multiply: (Source * Coeff) * EigenPSF
-            # This correctly models field-dependent PSF weight
-            weighted_source = source_image * coefficient_maps[k]
+        # 2. Variable terms
+        # Pre-multiply: (Source * Coeff) * EigenPSF
+        # This correctly models field-dependent PSF weight
+        weighted_source = source_image[:, None, :, :] * coefficient_maps[None, :, :, :]
 
-            convolved = be.fftconvolve(weighted_source, eigen_psfs[k], mode="same")
-            final_image += convolved
+        convolved = be.fftconvolve(
+            weighted_source,
+            eigen_psfs[None, :, :, :],
+            mode="same",
+        )
+
+        final_image += be.sum(convolved, axis=1)
 
         return final_image

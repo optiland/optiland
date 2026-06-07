@@ -1,0 +1,671 @@
+"""Tests for the qpoly module's coefficient trimming and Clenshaw edge cases.
+
+These tests target PR 1 of the Forbes Q-polynomial downstreaming work
+(issue #617): robust handling of empty, single-coefficient, and
+trailing-zero coefficient vectors plus derivative orders larger than the
+polynomial degree.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pytest
+
+import optiland.backend as be
+from optiland.geometries.forbes.qpoly import (
+    _harmonic_powers,
+    _q2d_cartesian_eval,
+    _trim_trailing_zeros,
+    change_basis_q2d_to_pnm,
+    change_basis_qbfs_to_pn,
+    clenshaw_q2d,
+    clenshaw_q2d_der,
+    clenshaw_qbfs,
+    clenshaw_qbfs_der,
+    compute_z_q2d,
+    compute_z_qbfs,
+    compute_z_zprime_q2d,
+    compute_z_zprime_qbfs,
+    q2d_nm_coeffs_to_ams_bms,
+    q2d_sum_from_alphas,
+)
+
+from .utils import assert_allclose
+
+# ---------------------------------------------------------------------------
+# _trim_trailing_zeros
+# ---------------------------------------------------------------------------
+
+
+class TestTrimTrailingZeros:
+    def test_none(self):
+        assert _trim_trailing_zeros(None) == []
+
+    def test_empty(self):
+        assert _trim_trailing_zeros([]) == []
+
+    def test_single_zero(self):
+        assert _trim_trailing_zeros([0]) == []
+
+    def test_all_zero(self):
+        assert _trim_trailing_zeros([0, 0, 0]) == []
+
+    def test_single_nonzero(self):
+        assert _trim_trailing_zeros([1.5]) == [1.5]
+
+    def test_trailing_only(self):
+        assert _trim_trailing_zeros([1, 0, 0]) == [1]
+
+    def test_interior_zero_preserved(self):
+        assert _trim_trailing_zeros([1, 0, 2, 0, 0]) == [1, 0, 2]
+
+    def test_no_trailing(self):
+        assert _trim_trailing_zeros([1, 2, 3]) == [1, 2, 3]
+
+    def test_tuple(self):
+        assert _trim_trailing_zeros((1.0, 0.0, 0.0)) == [1.0]
+
+    def test_numpy_array(self):
+        arr = np.array([1.0, 2.0, 0.0, 0.0])
+        out = _trim_trailing_zeros(arr)
+        assert len(out) == 2
+        assert float(out[0]) == 1.0
+        assert float(out[1]) == 2.0
+
+    def test_numpy_all_zero(self):
+        arr = np.zeros(4)
+        assert _trim_trailing_zeros(arr) == []
+
+
+# ---------------------------------------------------------------------------
+# Clenshaw / basis-change edge cases (Qbfs)
+# ---------------------------------------------------------------------------
+
+
+class TestClenshawQbfsEdgeCases:
+    def test_empty_coefs_scalar(self, set_test_backend):
+        result = clenshaw_qbfs([], be.array(0.25))
+        assert float(be.to_numpy(result)) == 0.0
+
+    def test_empty_coefs_array(self, set_test_backend):
+        usq = be.array([0.1, 0.25, 0.4])
+        result = clenshaw_qbfs([], usq)
+        assert_allclose(result, be.zeros_like(usq))
+
+    def test_all_zero_coefs(self, set_test_backend):
+        usq = be.array([0.1, 0.5, 0.9])
+        result = clenshaw_qbfs([0.0, 0.0, 0.0, 0.0], usq)
+        assert_allclose(result, be.zeros_like(usq))
+
+    def test_one_coef(self, set_test_backend):
+        # Q_0(u) is constant; the Clenshaw sum 2*alpha[0] for one P_n
+        # coefficient equals 2 * (cs[0] / f_qbfs(0)) = cs[0].
+        usq = be.array([0.1, 0.5, 0.9])
+        cs = [0.5]
+        result = clenshaw_qbfs(cs, usq)
+        # Two-coefficient version with explicit trailing zero must match.
+        result_trail = clenshaw_qbfs([0.5, 0.0], usq)
+        assert_allclose(result, result_trail)
+
+    def test_trailing_zeros_match_trimmed(self, set_test_backend):
+        usq = be.array([0.1, 0.3, 0.7])
+        cs_dense = [0.7, -0.2, 0.4, 0.0, 0.0, 0.0]
+        cs_trim = [0.7, -0.2, 0.4]
+        assert_allclose(
+            clenshaw_qbfs(cs_dense, usq),
+            clenshaw_qbfs(cs_trim, usq),
+        )
+
+    def test_change_basis_handles_trailing_zero(self, set_test_backend):
+        bs_dense = change_basis_qbfs_to_pn([1.0, 0.0, 0.0])
+        bs_trim = change_basis_qbfs_to_pn([1.0])
+        assert_allclose(bs_dense, bs_trim)
+
+    def test_change_basis_empty(self, set_test_backend):
+        bs = change_basis_qbfs_to_pn([])
+        assert be.to_numpy(bs).size == 0
+
+    def test_change_basis_all_zero(self, set_test_backend):
+        bs = change_basis_qbfs_to_pn([0.0, 0.0, 0.0])
+        assert be.to_numpy(bs).size == 0
+
+
+class TestClenshawQbfsDerEdgeCases:
+    def test_empty_coefs(self, set_test_backend):
+        usq = be.array([0.1, 0.5])
+        alphas = clenshaw_qbfs_der([], usq, j=1)
+        # No coefficients => zero alpha table padded to 2 modes.
+        assert be.to_numpy(alphas).shape[-1] == 2
+
+    def test_j_greater_than_degree(self, set_test_backend):
+        usq = be.array([0.1, 0.5])
+        cs = [0.5]  # degree 0
+        alphas = clenshaw_qbfs_der(cs, usq, j=2)
+        # Higher derivative tables (j=1, j=2) must be zero.
+        np_alphas = be.to_numpy(alphas)
+        assert np.allclose(np_alphas[1], 0.0)
+        assert np.allclose(np_alphas[2], 0.0)
+
+    def test_compute_z_zprime_empty(self, set_test_backend):
+        u = be.array([0.1, 0.5])
+        usq = u * u
+        s, ds_du = compute_z_zprime_qbfs([], u, usq)
+        assert_allclose(s, be.zeros_like(u))
+        assert_allclose(ds_du, be.zeros_like(u))
+
+    def test_compute_z_zprime_all_zero(self, set_test_backend):
+        u = be.array([0.1, 0.5, 0.9])
+        usq = u * u
+        s, ds_du = compute_z_zprime_qbfs([0.0, 0.0, 0.0], u, usq)
+        assert_allclose(s, be.zeros_like(u))
+        assert_allclose(ds_du, be.zeros_like(u))
+
+    def test_compute_z_zprime_trailing_zeros_match_trimmed(self, set_test_backend):
+        u = be.array([0.1, 0.3, 0.7])
+        usq = u * u
+        s_dense, ds_dense = compute_z_zprime_qbfs([0.7, -0.2, 0.4, 0.0, 0.0], u, usq)
+        s_trim, ds_trim = compute_z_zprime_qbfs([0.7, -0.2, 0.4], u, usq)
+        assert_allclose(s_dense, s_trim)
+        assert_allclose(ds_dense, ds_trim)
+
+
+# ---------------------------------------------------------------------------
+# Clenshaw / basis-change edge cases (Q2D)
+# ---------------------------------------------------------------------------
+
+
+class TestClenshawQ2DEdgeCases:
+    def test_empty_coefs(self, set_test_backend):
+        usq = be.array([0.1, 0.5])
+        alphas = clenshaw_q2d([], m=1, usq=usq)
+        # Padded to at least 2 modes so callers can safely index alpha[1].
+        assert be.to_numpy(alphas).shape[0] == 2
+        assert np.allclose(be.to_numpy(alphas), 0.0)
+
+    def test_one_coef(self, set_test_backend):
+        usq = be.array([0.1, 0.5])
+        alphas = clenshaw_q2d([0.5], m=1, usq=usq)
+        # The first mode carries ds[0]; the padded second mode must be zero.
+        assert be.to_numpy(alphas).shape[0] >= 1
+
+    def test_trailing_zeros_match_trimmed_m1(self, set_test_backend):
+        # m == 1 with a coefficient vector of length >= 4 triggers the
+        # special alphas[3] correction in q2d_sum_from_alphas.  A dense
+        # vector with a zero in slot 3 must produce the *same* sum as the
+        # trimmed three-element vector that skips the correction — this is
+        # the prysm one-sweep alpha-index fix.
+        usq = be.array(0.4)
+        cs_dense = [0.7, -0.2, 0.4, 0.0]
+        cs_trim = [0.7, -0.2, 0.4]
+        alphas_dense = clenshaw_q2d(cs_dense, m=1, usq=usq)
+        alphas_trim = clenshaw_q2d(cs_trim, m=1, usq=usq)
+        s_dense = q2d_sum_from_alphas(alphas_dense, m=1, num_coeffs=len(cs_dense))
+        s_trim = q2d_sum_from_alphas(alphas_trim, m=1, num_coeffs=len(cs_trim))
+        # After trimming, num_coeffs collapses to 3 internally, so the
+        # m==1 special correction is correctly skipped — sums must agree.
+        assert_allclose(s_dense, s_trim)
+
+    def test_change_basis_q2d_empty(self, set_test_backend):
+        ds = change_basis_q2d_to_pnm([], m=1)
+        assert be.to_numpy(ds).size == 0
+
+    def test_change_basis_q2d_trailing_zero(self, set_test_backend):
+        ds_dense = change_basis_q2d_to_pnm([1.0, 0.5, 0.0, 0.0], m=2)
+        ds_trim = change_basis_q2d_to_pnm([1.0, 0.5], m=2)
+        assert_allclose(ds_dense, ds_trim)
+
+
+class TestClenshawQ2DDerEdgeCases:
+    def test_empty_coefs(self, set_test_backend):
+        usq = be.array([0.1, 0.5])
+        alphas = clenshaw_q2d_der([], m=1, usq=usq, j=1)
+        np_a = be.to_numpy(alphas)
+        # Padded to at least 2 modes, all zero.
+        assert np_a.shape[0] == 2  # j+1
+        assert np.allclose(np_a, 0.0)
+
+    def test_j_greater_than_degree(self, set_test_backend):
+        usq = be.array([0.1, 0.5])
+        alphas = clenshaw_q2d_der([0.5], m=2, usq=usq, j=2)
+        np_a = be.to_numpy(alphas)
+        # j=1 and j=2 alpha rows are zero because the polynomial is degree 0.
+        assert np.allclose(np_a[1], 0.0)
+        assert np.allclose(np_a[2], 0.0)
+
+    def test_compute_z_zprime_q2d_trailing_zeros_match_trimmed(self, set_test_backend):
+        u = be.array([0.2, 0.5, 0.8])
+        t = be.array([0.1, 0.6, 1.2])
+        ams_dense = [[0.3, -0.1, 0.2, 0.0]]  # m=1, n=0..3, trailing zero
+        bms_dense = [[0.0, 0.0]]
+        ams_trim = [[0.3, -0.1, 0.2]]
+        bms_trim = [[]]
+        v_dense = compute_z_zprime_q2d([], ams_dense, bms_dense, u, t)
+        v_trim = compute_z_zprime_q2d([], ams_trim, bms_trim, u, t)
+        for a, b in zip(v_dense, v_trim, strict=True):
+            assert_allclose(a, b)
+
+
+# ---------------------------------------------------------------------------
+# q2d_nm_coeffs_to_ams_bms — asymmetric a/b families
+# ---------------------------------------------------------------------------
+
+
+class TestQ2dNmCoeffsAsymmetric:
+    def test_cos_only_family_survives(self):
+        # Only ('a', 2, 0) supplied. zip(ams, bms) must still expose m=2.
+        nms = [(0, 2)]
+        coefs = [0.42]
+        cms, ams, bms = q2d_nm_coeffs_to_ams_bms(nms, coefs)
+        assert cms == []
+        assert len(ams) == 2  # padded up through azimuthal order 2
+        assert len(bms) == 2
+        assert ams[1] == [0.42]
+        assert bms[1] == []
+
+    def test_sin_only_family_survives(self):
+        # Only ('b', 3, 0) supplied. zip must still expose m=3.
+        nms = [(0, -3)]
+        coefs = [0.99]
+        cms, ams, bms = q2d_nm_coeffs_to_ams_bms(nms, coefs)
+        assert len(ams) == 3
+        assert len(bms) == 3
+        assert ams[2] == []  # no cos m=3 family
+        assert bms[2] == [0.99]
+
+
+# ---------------------------------------------------------------------------
+# Geometry-level regression: scaling-style sag with trailing zeros
+# ---------------------------------------------------------------------------
+
+
+class TestGeometrySagWithTrailingZeros:
+    def test_qbfs_sag_unchanged_by_trailing_zero_terms(self, set_test_backend):
+        """A ForbesQNormalSlopeGeometry must produce identical sag when the
+        radial-terms dict contains extra zero-valued terms at high order."""
+        from optiland.coordinate_system import CoordinateSystem
+        from optiland.geometries import (
+            ForbesQNormalSlopeGeometry,
+            ForbesSurfaceConfig,
+        )
+
+        cs = CoordinateSystem()
+        cfg_tight = ForbesSurfaceConfig(
+            radius=20.0,
+            conic=-1.0,
+            terms={0: 1e-3, 1: 5e-4},
+            norm_radius=5.0,
+        )
+        cfg_padded = ForbesSurfaceConfig(
+            radius=20.0,
+            conic=-1.0,
+            terms={0: 1e-3, 1: 5e-4, 2: 0.0, 3: 0.0, 4: 0.0},
+            norm_radius=5.0,
+        )
+        g_tight = ForbesQNormalSlopeGeometry(cs, surface_config=cfg_tight)
+        g_padded = ForbesQNormalSlopeGeometry(cs, surface_config=cfg_padded)
+        x = be.array([0.5, 1.0, 2.0, 3.5])
+        y = be.array([0.2, -0.4, 1.0, 2.0])
+        assert_allclose(g_tight.sag(x, y), g_padded.sag(x, y))
+
+
+# ---------------------------------------------------------------------------
+# Sag-only helpers (PR 2)
+# ---------------------------------------------------------------------------
+
+
+class TestSagOnlyHelpers:
+    """compute_z_qbfs / compute_z_q2d must agree exactly with the sag
+    component returned by compute_z_zprime_{qbfs,q2d}."""
+
+    def test_compute_z_qbfs_matches_zprime(self, set_test_backend):
+        u = be.array([0.05, 0.2, 0.6, 0.95])
+        usq = u * u
+        cs = [1.6e-4, 3e-5, -1.5e-5, 8e-6]
+        s_only = compute_z_qbfs(cs, usq)
+        s_zp, _ = compute_z_zprime_qbfs(cs, u, usq)
+        assert_allclose(s_only, s_zp)
+
+    def test_compute_z_qbfs_empty(self, set_test_backend):
+        usq = be.array([0.1, 0.4])
+        s = compute_z_qbfs([], usq)
+        assert_allclose(s, be.zeros_like(usq))
+
+    def test_compute_z_q2d_matches_zprime(self, set_test_backend):
+        u = be.array([0.1, 0.3, 0.7])
+        t = be.array([0.2, 0.9, 1.7])
+        cm0 = [1e-3, -3e-4]
+        ams = [[2e-4, 1e-4], [], [5e-5]]  # m=1, m=2 (empty), m=3
+        bms = [[1e-4], [-2e-4], []]
+        s_m0_only, s_mgt0_only = compute_z_q2d(cm0, ams, bms, u, t)
+        s_m0_zp, _, s_mgt0_zp, _, _ = compute_z_zprime_q2d(cm0, ams, bms, u, t)
+        assert_allclose(s_m0_only, s_m0_zp)
+        assert_allclose(s_mgt0_only, s_mgt0_zp)
+
+    def test_compute_z_q2d_empty(self, set_test_backend):
+        u = be.array([0.1, 0.5])
+        t = be.array([0.0, 1.0])
+        s_m0, s_mgt0 = compute_z_q2d([], [], [], u, t)
+        assert_allclose(s_m0, be.zeros_like(u))
+        assert_allclose(s_mgt0, be.zeros_like(u))
+
+
+class TestForbesQ2dSagRoutingBitParity:
+    """ForbesQ2dGeometry.sag() must produce numerically identical sag
+    after being routed through compute_z_q2d, compared to evaluating it
+    via compute_z_zprime_q2d directly (the pre-PR2 path).
+    """
+
+    def test_q2d_sag_matches_direct_zprime_path(self, set_test_backend):
+        from optiland.coordinate_system import CoordinateSystem
+        from optiland.geometries import ForbesQ2dGeometry, ForbesSurfaceConfig
+        from optiland.geometries.forbes.qpoly import (
+            compute_z_zprime_q2d as _zp,
+        )
+
+        cs = CoordinateSystem()
+        cfg = ForbesSurfaceConfig(
+            radius=25.0,
+            conic=-0.5,
+            terms={
+                ("a", 0, 0): 1.2e-3,  # m=0, n=0
+                ("a", 0, 1): -4e-4,  # m=0, n=1
+                ("a", 1, 0): 2e-4,  # cos m=1, n=0
+                ("b", 1, 0): 1e-4,  # sin m=1, n=0
+                ("a", 2, 0): 3e-5,  # cos m=2, n=0
+                ("b", 2, 1): -1e-5,  # sin m=2, n=1
+            },
+            norm_radius=8.0,
+        )
+        geom = ForbesQ2dGeometry(cs, surface_config=cfg)
+
+        x = be.array([0.0, 1.0, 2.5, 4.0, -3.0])
+        y = be.array([0.0, 0.8, -1.5, 2.0, 1.2])
+        sag_new = geom.sag(x, y)
+
+        # Reconstruct the pre-PR2 expression directly from compute_z_zprime_q2d.
+        r2 = x**2 + y**2
+        rho = be.sqrt(r2 + 1e-14)
+        u = rho / geom.norm_radius
+        safe_x = be.where(rho < 1e-14, x + 1e-12, x)
+        theta = be.arctan2(y, safe_x)
+        s_m0, _, s_mgt0, _, _ = _zp(
+            geom.cm0_coeffs, geom.ams_coeffs, geom.bms_coeffs, u, theta
+        )
+        ccf, _ = geom._conic_correction_factor(r2)
+        usq = u**2
+        dep = (usq * (1 - usq)) * ccf * s_m0 + ccf * s_mgt0
+        sag_expected = geom._base_sag(r2) + be.where(u > 1, 0.0, dep)
+        assert_allclose(sag_new, sag_expected)
+
+
+# ---------------------------------------------------------------------------
+# PR 3 — harmonic powers + Cartesian Q2D derivatives
+# ---------------------------------------------------------------------------
+
+
+class TestHarmonicPowers:
+    """Sanity-check the (X + iY)**m recurrence used to build the
+    rotationally-equivariant Cartesian derivative path."""
+
+    def test_recurrence_matches_complex_power(self, set_test_backend):
+        rng = np.random.default_rng(0)
+        X_np = rng.uniform(-0.7, 0.7, size=11)
+        Y_np = rng.uniform(-0.7, 0.7, size=11)
+        X = be.array(X_np)
+        Y = be.array(Y_np)
+        Hc, Hs = _harmonic_powers(X, Y, 5)
+        for m in range(6):
+            ref = (X_np + 1j * Y_np) ** m
+            assert_allclose(Hc[m], be.array(ref.real))
+            assert_allclose(Hs[m], be.array(ref.imag))
+
+    def test_origin_is_regular(self, set_test_backend):
+        # At X = Y = 0 we expect (1, 0) for m = 0 and (0, 0) for m >= 1.
+        X = be.array(0.0)
+        Y = be.array(0.0)
+        Hc, Hs = _harmonic_powers(X, Y, 4)
+        assert float(be.to_numpy(Hc[0])) == 1.0
+        for m in range(1, 5):
+            assert float(be.to_numpy(Hc[m])) == 0.0
+            assert float(be.to_numpy(Hs[m])) == 0.0
+
+
+def _fd_partials(fn, x, y, h=1e-6):
+    """Centered finite differences of a scalar-valued ``fn(x, y)``."""
+    return (fn(x + h, y) - fn(x - h, y)) / (2 * h), (fn(x, y + h) - fn(x, y - h)) / (
+        2 * h
+    )
+
+
+class TestQ2dCartesianEvalFD:
+    """`_q2d_cartesian_eval` derivatives must match centered finite
+    differences of the underlying polynomial value."""
+
+    def _coeffs(self):
+        cm0 = [1.0e-3, -5.0e-4, 2.0e-4]
+        ams = [
+            [3.0e-4, -1.0e-4],  # m=1
+            [],  # m=2: empty cosine family
+            [4.0e-5],  # m=3
+        ]
+        bms = [
+            [],  # m=1: empty sine family
+            [2.0e-4, -1.0e-4],  # m=2
+            [],  # m=3
+        ]
+        return cm0, ams, bms
+
+    def test_fd_parity_away_from_origin(self, set_test_backend):
+        cm0, ams, bms = self._coeffs()
+
+        def P_only(x, y):
+            X = be.array(x)
+            Y = be.array(y)
+            P, _, _ = _q2d_cartesian_eval(X, Y, cm0, ams, bms)
+            return float(be.to_numpy(P))
+
+        for x0, y0 in [(0.4, 0.2), (-0.3, 0.6), (0.7, -0.5), (0.1, 0.05)]:
+            X = be.array(x0)
+            Y = be.array(y0)
+            _, dPdX, dPdY = _q2d_cartesian_eval(X, Y, cm0, ams, bms)
+            fd_x, fd_y = _fd_partials(P_only, x0, y0, h=1e-6)
+            assert_allclose(dPdX, be.array(fd_x), rtol=1e-5, atol=1e-9)
+            assert_allclose(dPdY, be.array(fd_y), rtol=1e-5, atol=1e-9)
+
+    def test_fd_parity_near_and_at_origin(self, set_test_backend):
+        cm0, ams, bms = self._coeffs()
+
+        def P_only(x, y):
+            X = be.array(x)
+            Y = be.array(y)
+            P, _, _ = _q2d_cartesian_eval(X, Y, cm0, ams, bms)
+            return float(be.to_numpy(P))
+
+        for x0, y0 in [(0.0, 0.0), (1e-8, 0.0), (0.0, 1e-8), (1e-4, 1e-4)]:
+            X = be.array(x0)
+            Y = be.array(y0)
+            _, dPdX, dPdY = _q2d_cartesian_eval(X, Y, cm0, ams, bms)
+            # Use a step that is large compared to x0/y0 so the FD itself
+            # is well-conditioned (h >> |x0| keeps the centered difference
+            # in the smooth region around the origin).
+            h = max(1e-5, abs(x0) * 10, abs(y0) * 10)
+            fd_x, fd_y = _fd_partials(P_only, x0, y0, h=h)
+            assert_allclose(dPdX, be.array(fd_x), rtol=1e-4, atol=1e-9)
+            assert_allclose(dPdY, be.array(fd_y), rtol=1e-4, atol=1e-9)
+
+
+class TestForbesQ2dCartesianNormal:
+    """The Cartesian-normal path on ``ForbesQ2dGeometry`` must agree
+    with the polar path away from the origin and remain finite at the
+    origin (where the polar path applies a separate ``where``-blend)."""
+
+    def _build(self):
+        from optiland.coordinate_system import CoordinateSystem
+        from optiland.geometries import ForbesQ2dGeometry, ForbesSurfaceConfig
+
+        cfg = ForbesSurfaceConfig(
+            radius=25.0,
+            conic=-0.5,
+            terms={
+                ("a", 0, 0): 1.2e-3,
+                ("a", 0, 1): -4.0e-4,
+                ("a", 1, 0): 2.0e-4,
+                ("a", 1, 1): -8.0e-5,
+                ("b", 1, 0): 1.0e-4,
+                ("a", 2, 0): 3.0e-5,
+                ("b", 2, 1): -1.0e-5,
+                ("a", 3, 0): 5.0e-6,
+            },
+            norm_radius=8.0,
+        )
+        return ForbesQ2dGeometry(CoordinateSystem(), cfg)
+
+    def test_cartesian_matches_polar_away_from_origin(self, set_test_backend):
+        geom = self._build()
+        x = be.array([0.5, 1.0, 2.5, -3.0, 4.5])
+        y = be.array([0.3, -0.7, 1.4, 2.0, -0.5])
+        polar = geom._surface_normal_analytical(x, y)
+        cart = geom._surface_normal_analytical_cartesian(x, y)
+        # Tolerances loose enough to cover the polar (1/r) path's own
+        # round-off but tight enough to catch a real disagreement.
+        assert_allclose(cart[0], polar[0], rtol=1e-8, atol=1e-10)
+        assert_allclose(cart[1], polar[1], rtol=1e-8, atol=1e-10)
+
+    def test_cartesian_finite_at_exact_origin(self, set_test_backend):
+        geom = self._build()
+        x = be.array(0.0)
+        y = be.array(0.0)
+        dfdx, dfdy = geom._surface_normal_analytical_cartesian(x, y)
+        v_x = float(be.to_numpy(dfdx))
+        v_y = float(be.to_numpy(dfdy))
+        assert np.isfinite(v_x)
+        assert np.isfinite(v_y)
+        # At origin only the m=1 family contributes to the slope. With
+        # ('a', 1, 0) > 0 the X-slope must be > 0 and ('b', 1, 0) > 0
+        # gives a positive Y-slope.
+        assert v_x > 0.0
+        assert v_y > 0.0
+
+    def test_cartesian_fd_parity_at_and_near_origin(self, set_test_backend):
+        geom = self._build()
+
+        def sag(x_, y_):
+            return float(be.to_numpy(geom.sag(be.array(x_), be.array(y_))))
+
+        # FD step h must be large enough to avoid catastrophic cancellation
+        # in float64 sag evaluations (the sag itself is ~ 1e-6 mm near the
+        # axis), but small enough that the O(h^2) truncation error stays
+        # below the asserted tolerance.  h = 1e-3 mm is a safe sweet spot
+        # for this geometry: sag changes are well above eps_f64 * |sag|.
+        h = 1.0e-3
+        for x0, y0 in [(0.0, 0.0), (1e-6, 0.0), (0.0, 1e-6), (1e-4, 1e-4)]:
+            dfdx, dfdy = geom._surface_normal_analytical_cartesian(
+                be.array(x0), be.array(y0)
+            )
+            fd_x = (sag(x0 + h, y0) - sag(x0 - h, y0)) / (2 * h)
+            fd_y = (sag(x0, y0 + h) - sag(x0, y0 - h)) / (2 * h)
+            assert_allclose(dfdx, be.array(fd_x), rtol=1e-5, atol=1e-9)
+            assert_allclose(dfdy, be.array(fd_y), rtol=1e-5, atol=1e-9)
+
+    def test_default_is_cartesian(self, set_test_backend):
+        geom = self._build()
+        assert geom._use_cartesian_normal is True
+
+    def test_cartesian_switch_dispatches(self, set_test_backend):
+        geom = self._build()
+        x = be.array([0.5, 1.2, -0.4])
+        y = be.array([0.3, -0.8, 1.0])
+        # Default is Cartesian — dispatch must match the explicit call.
+        default = geom._surface_normal_analytical(x, y)
+        cart = geom._surface_normal_analytical_cartesian(x, y)
+        assert_allclose(default[0], cart[0])
+        assert_allclose(default[1], cart[1])
+
+        # Toggling off must route through the legacy polar path, which
+        # away from origin agrees with Cartesian.
+        geom._use_cartesian_normal = False
+        try:
+            polar = geom._surface_normal_analytical(x, y)
+        finally:
+            geom._use_cartesian_normal = True
+        assert_allclose(cart[0], polar[0], rtol=1e-8, atol=1e-10)
+        assert_allclose(cart[1], polar[1], rtol=1e-8, atol=1e-10)
+
+    def test_cartesian_handles_asymmetric_families(self, set_test_backend):
+        from optiland.coordinate_system import CoordinateSystem
+        from optiland.geometries import ForbesQ2dGeometry, ForbesSurfaceConfig
+
+        # Only cosine-m=2 and only sine-m=3 families — exercises the
+        # asymmetric a-only / b-only family path inside the Cartesian
+        # evaluator.
+        cfg = ForbesSurfaceConfig(
+            radius=25.0,
+            conic=0.0,
+            terms={
+                ("a", 2, 0): 2.0e-4,
+                ("a", 2, 1): -1.0e-4,
+                ("b", 3, 0): 1.0e-4,
+            },
+            norm_radius=8.0,
+        )
+        geom = ForbesQ2dGeometry(CoordinateSystem(), cfg)
+
+        # The Cartesian helper must run without IndexError on the
+        # asymmetric per-m families.
+        x = be.array([0.3, 1.5, -2.0, 0.0])
+        y = be.array([0.4, -0.5, 1.2, 0.0])
+        dfdx, dfdy = geom._surface_normal_analytical_cartesian(x, y)
+        assert np.all(np.isfinite(be.to_numpy(dfdx)))
+        assert np.all(np.isfinite(be.to_numpy(dfdy)))
+
+        # Away from origin, Cartesian must match polar.
+        x_off = be.array([0.3, 1.5, -2.0])
+        y_off = be.array([0.4, -0.5, 1.2])
+        polar = geom._surface_normal_analytical(x_off, y_off)
+        cart = geom._surface_normal_analytical_cartesian(x_off, y_off)
+        assert_allclose(cart[0], polar[0], rtol=1e-8, atol=1e-10)
+        assert_allclose(cart[1], polar[1], rtol=1e-8, atol=1e-10)
+
+
+class TestForbesQ2dCartesianTorchAutograd:
+    """The Cartesian normal must remain autograd-differentiable through
+    both Q coefficients and (x, y), even at the exact origin where the
+    polar path produces NaN gradients."""
+
+    def test_autograd_origin_finite_gradients(self, set_test_backend):
+        if be.get_backend() != "torch":
+            pytest.skip("autograd path is torch-only")
+
+        import torch
+
+        from optiland.coordinate_system import CoordinateSystem
+        from optiland.geometries import ForbesQ2dGeometry, ForbesSurfaceConfig
+
+        cfg = ForbesSurfaceConfig(
+            radius=25.0,
+            conic=-0.3,
+            terms={
+                ("a", 0, 0): 1.0e-3,
+                ("a", 1, 0): 2.0e-4,
+                ("b", 1, 0): 1.5e-4,
+                ("a", 2, 0): 3.0e-5,
+            },
+            norm_radius=8.0,
+        )
+        geom = ForbesQ2dGeometry(CoordinateSystem(), cfg)
+
+        x = torch.tensor(0.0, dtype=torch.float64, requires_grad=True)
+        y = torch.tensor(0.0, dtype=torch.float64, requires_grad=True)
+        dfdx, dfdy = geom._surface_normal_analytical_cartesian(x, y)
+        # The Cartesian derivatives at origin should themselves be finite.
+        assert torch.isfinite(dfdx).all()
+        assert torch.isfinite(dfdy).all()
+        # And backpropagating through them should not produce NaN.
+        (dfdx + dfdy).backward()
+        assert torch.isfinite(x.grad).all()
+        assert torch.isfinite(y.grad).all()
+
+
+# Mark Q2D regression tests on numpy backend — torch import not available
+# in some local environments; parametrized backend fixture covers both.
+pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")

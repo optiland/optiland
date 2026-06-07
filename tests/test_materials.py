@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import warnings
 from importlib import resources
 from unittest.mock import MagicMock
 
@@ -626,13 +627,15 @@ class TestMaterial:
             )
 
     def test_non_robust_failure(self, set_test_backend):
-        # There are many materials matches for BK7. Without robust search,
-        # this should fail.
+        # There are many materials matches for BK7. Without robust search
+        # (now STRICT), multiple ambiguous exact matches raise ValueError.
         with pytest.raises(ValueError):
             materials.Material("BK7", robust_search=False)
 
-        # There are also many materials matches for BK7 with schott reference.
-        with pytest.raises(ValueError):
+        # With reference="schott", only one exact match remains (N-BK7), so
+        # STRICT policy resolves successfully — no longer raises.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
             materials.Material("BK7", reference="schott", robust_search=False)
 
     def test_min_wavelength_filtering(self, set_test_backend):
@@ -671,7 +674,9 @@ class TestMaterial:
             "filename": material.filename,
             "name": "SF11",
             "reference": None,
-            "robust_search": True,
+            "catalog": None,
+            "match_policy": "warn",
+            "robust_search": None,
             "min_wavelength": None,
             "max_wavelength": None,
             "propagation_model": {"class": "HomogeneousPropagation"},

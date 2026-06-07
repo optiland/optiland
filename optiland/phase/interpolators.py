@@ -111,8 +111,8 @@ class GridInterpolator:
                 phi,
                 (x_req, y_req),
                 grad_outputs=be.ones_like(phi),
-                create_graph=False,
-                retain_graph=False,
+                create_graph=True,
+                retain_graph=True,
             )
 
             return grad_x, grad_y

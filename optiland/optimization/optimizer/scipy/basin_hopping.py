@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
 from scipy import optimize
 
+from ..live_plotter import LiveOptimizationPlotter
 from .base import OptimizerGeneric
 
 if TYPE_CHECKING:
@@ -34,13 +35,21 @@ class BasinHopping(OptimizerGeneric):
         """
         super().__init__(problem)
 
-    def optimize(self, niter=100, callback=None, *args, **kwargs):
+    def optimize(
+        self,
+        niter: int = 100,
+        plot: bool = False,
+        callback: Any = None,
+        *args,
+        **kwargs,
+    ):
         """Runs the basin-hopping algorithm. Note that the basin-hopping
         algorithm accepts the same arguments as the
         scipy.optimize.basinhopping function.
 
         Args:
             niter (int): Number of iterations to perform. Default is 100.
+            plot: If True, update live plots during optimization.
             callback (callable): A callable called after each iteration.
             *args: Variable length argument list.
             **kwargs: Arbitrary keyword arguments.
@@ -61,6 +70,19 @@ class BasinHopping(OptimizerGeneric):
         if not all(x is None for pair in bounds for x in pair):
             raise ValueError("Basin-hopping does not accept bounds.")
 
+        plot: bool = kwargs.get("plot", False)
+        live_plotter: LiveOptimizationPlotter | None = None
+        if plot:
+            live_plotter = LiveOptimizationPlotter(self)
+            live_plotter.initialize()
+
+        def _wrapped_callback(*args: Any, **kwargs: Any) -> None:
+            if callback is not None:
+                callback(*args, **kwargs)
+
+            if live_plotter is not None:
+                live_plotter.update()
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=RuntimeWarning)
 
@@ -68,13 +90,18 @@ class BasinHopping(OptimizerGeneric):
                 self._fun,
                 x0=x0_numpy,
                 niter=niter,
-                callback=callback,
+                callback=_wrapped_callback,
                 **kwargs,
             )
 
+        # The last function evaluation is not necessarily the lowest.
+        # Update all lens variables to their optimized values
         for idvar, var in enumerate(self.problem.variables):
             var.update(result.x[idvar])
-
         self.problem.update_optics()
+
+        if live_plotter is not None:
+            live_plotter.update()
+            live_plotter.finalize()
 
         return result

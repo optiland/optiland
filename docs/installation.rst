@@ -3,7 +3,7 @@
 Installation
 ============
 
-Optiland supports Python 3.10 and above and can be installed via pip with optional extras or can be built from source. Choose the installation method that best fits your needs.
+Optiland supports Python 3.11 and above and can be installed via pip with optional extras or can be built from source. Choose the installation method that best fits your needs.
 
 Quick Start (Core + CPU‑only PyTorch)
 -------------------------------------
@@ -34,10 +34,33 @@ If you wish to use the Optiland GUI:
 
    pip install optiland[gui]
 
+Standard Install with Prescription Reports
+------------------------------------------
+
+To use the new prescription report generator functionality:
+
+*   **All Prescription features** (Console Rich-text and PDF rendering):
+
+    .. code-block:: console
+
+       pip install optiland[prescription]
+
+*   **Console-only** (Requires only `rich`):
+
+    .. code-block:: console
+
+       pip install optiland[prescription-console]
+
+*   **PDF-only** (Requires only `reportlab`):
+
+    .. code-block:: console
+
+       pip install optiland[prescription-pdf]
+
 Development Extras
 ------------------
 
-To install Optiland’s development dependencies-pytest, codecov, and linting tools-use:
+To install Optiland's development dependencies-pytest, codecov, and linting tools-use:
 
 .. code-block:: console
 

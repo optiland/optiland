@@ -583,3 +583,213 @@ class TestSurfaceGroupUpdatesRealObjects:
             match=("Surface index cannot be zero after first surface is created."),
         ):
             lens1.surfaces.add(index=0, thickness=be.inf, material="Air")
+
+
+class TestSurfaceGroupAdd:
+    """Tests for SurfaceGroup.__add__ (concatenation operator). - Issue #477"""
+
+    def _make_relay(self):
+        """Two-element relay with an explicit image-plane marker."""
+        o = optic.Optic()
+        o.set_aperture(aperture_type="EPD", value=10.0)
+        o.fields.set_type(field_type="angle")
+        o.fields.add(y=0)
+        o.fields.add(y=10)
+        o.wavelengths.add(value=0.55, is_primary=True)
+        o.surfaces.add(index=0, thickness=be.inf)
+        o.surfaces.add(index=1, radius=100, thickness=5, material="N-BK7", is_stop=True)
+        o.surfaces.add(index=2, radius=-100, thickness=40)
+        o.surfaces.add(index=3, radius=be.inf, thickness=0)  # image plane
+        return o
+
+    def _make_eye(self):
+        """Simple eye model with object plane and retina image surface."""
+        o = optic.Optic()
+        o.surfaces.add(index=0, thickness=0)  # object at image plane
+        o.surfaces.add(index=1, radius=7.8, thickness=3.6, material="N-BK7")
+        o.surfaces.add(index=2, radius=-6.0, thickness=16.6)
+        o.surfaces.add(index=3, radius=be.inf)  # retina
+        return o
+
+    def _make_monolithic(self):
+        """Monolithic equivalent of relay + eye."""
+        o = optic.Optic()
+        o.set_aperture(aperture_type="EPD", value=10.0)
+        o.fields.set_type(field_type="angle")
+        o.fields.add(y=0)
+        o.fields.add(y=10)
+        o.wavelengths.add(value=0.55, is_primary=True)
+        o.surfaces.add(index=0, thickness=be.inf)
+        o.surfaces.add(index=1, radius=100, thickness=5, material="N-BK7", is_stop=True)
+        o.surfaces.add(index=2, radius=-100, thickness=40)
+        o.surfaces.add(index=3, radius=7.8, thickness=3.6, material="N-BK7")
+        o.surfaces.add(index=4, radius=-6.0, thickness=16.6)
+        o.surfaces.add(index=5, radius=be.inf)
+        return o
+
+    def test_add_surface_count(self, set_test_backend):
+        """Combined system has the correct number of surfaces."""
+        relay = self._make_relay()
+        eye = self._make_eye()
+        combined = relay.surfaces + eye.surfaces
+        # relay has 4 surfaces (drop last=1), eye has 4 surfaces (drop first=1)
+        assert len(combined) == 6
+
+    def test_add_surface_positions_match_monolithic(self, set_test_backend):
+        """z-positions of the combined group match the monolithic system."""
+        relay = self._make_relay()
+        eye = self._make_eye()
+        mono = self._make_monolithic()
+        combined = relay.surfaces + eye.surfaces
+
+        for i, (cs, ms) in enumerate(zip(combined.surfaces, mono.surfaces.surfaces)):
+            assert_allclose(
+                cs.geometry.cs.z,
+                ms.geometry.cs.z,
+            ), f"z mismatch at surface {i}"
+
+    def test_add_surface_radii_match_monolithic(self, set_test_backend):
+        """Radii of the combined group match the monolithic system."""
+        relay = self._make_relay()
+        eye = self._make_eye()
+        mono = self._make_monolithic()
+        combined = relay.surfaces + eye.surfaces
+
+        assert_allclose(combined.radii, mono.surfaces.radii)
+
+    def test_add_stop_preserved_from_self(self, set_test_backend):
+        """Stop surface comes from self (relay), not from other (eye)."""
+        relay = self._make_relay()
+        eye = self._make_eye()
+        # Give the eye a stop on one of its surfaces before composition.
+        eye.surfaces[1].is_stop = True
+        combined = relay.surfaces + eye.surfaces
+        assert combined.stop_index == 1  # relay's stop at index 1
+
+    def test_add_does_not_mutate_other_z_positions(self, set_test_backend):
+        """other's surface z-positions are unchanged after __add__."""
+        relay = self._make_relay()
+        eye = self._make_eye()
+        z_before = [float(s.geometry.cs.z) for s in eye.surfaces]
+        _ = relay.surfaces + eye.surfaces
+        z_after = [float(s.geometry.cs.z) for s in eye.surfaces]
+        assert z_before == z_after, "eye surfaces were mutated by __add__"
+
+    def test_add_does_not_mutate_other_stop_flags(self, set_test_backend):
+        """other's is_stop flags are unchanged after __add__."""
+        relay = self._make_relay()
+        eye = self._make_eye()
+        eye.surfaces[1].is_stop = True
+        stops_before = [s.is_stop for s in eye.surfaces]
+        _ = relay.surfaces + eye.surfaces
+        stops_after = [s.is_stop for s in eye.surfaces]
+        assert stops_before == stops_after, "eye stop flags were mutated by __add__"
+
+    def test_add_combined_surfaces_independent_of_other(self, set_test_backend):
+        """Modifying other after __add__ does not affect the combined group."""
+        relay = self._make_relay()
+        eye = self._make_eye()
+        combined = relay.surfaces + eye.surfaces
+
+        # Change a z-position in eye post-composition
+        original_z = float(combined.surfaces[3].geometry.cs.z)
+        eye.surfaces[1].geometry.cs.z = be.array(999.0)
+
+        assert_allclose(
+            combined.surfaces[3].geometry.cs.z,
+            be.array(original_z),
+        ), "combined group shares surface objects with other"
+
+    def test_add_junction_uses_last_surface_thickness(self, set_test_backend):
+        """Junction z = last_relay_z + last_relay_thickness, not just last_relay_z."""
+        relay = optic.Optic()
+        relay.set_aperture(aperture_type="EPD", value=10.0)
+        relay.fields.set_type(field_type="angle")
+        relay.fields.add(y=0)
+        relay.wavelengths.add(value=0.55, is_primary=True)
+        relay.surfaces.add(index=0, thickness=be.inf)
+        relay.surfaces.add(index=1, radius=100, thickness=5, material="N-BK7", is_stop=True)
+        # Last surface has thickness=40 and NO explicit image plane.
+        relay.surfaces.add(index=2, radius=-100, thickness=40)
+
+        eye = optic.Optic()
+        eye.surfaces.add(index=0, thickness=0)  # object at junction
+        eye.surfaces.add(index=1, radius=7.8, thickness=3.6, material="N-BK7")
+        eye.surfaces.add(index=2, radius=be.inf)
+
+        combined = relay.surfaces + eye.surfaces
+
+        # relay[2] (dropped, z=5, thickness=40) -> junction_z = 5+40 = 45
+        # eye[1] should land at z=45
+        expected_cornea_z = 5.0 + 40.0
+        assert_allclose(
+            combined.surfaces[2].geometry.cs.z,
+            be.array(expected_cornea_z),
+        )
+
+    def test_optic_add_spot_matches_monolithic(self, set_test_backend):
+        """Optic.__add__ produces the same on-axis spot RMS as the monolithic system."""
+        from optiland.analysis import SpotDiagram
+
+        relay = self._make_relay()
+        eye = self._make_eye()
+        combined = relay + eye
+        mono = self._make_monolithic()
+
+        sc = SpotDiagram(combined, num_rings=3)
+        sm = SpotDiagram(mono, num_rings=3)
+
+        rms_c = sc.rms_spot_radius()
+        rms_m = sm.rms_spot_radius()
+
+        # On-axis field (index 0) must match
+        assert_allclose(rms_c[0][0], rms_m[0][0], rtol=1e-6)
+
+    def test_optic_add_fields_preserved(self, set_test_backend):
+        """Optic.__add__ preserves field angles from the left-hand operand."""
+        relay = self._make_relay()
+        eye = self._make_eye()
+        combined = relay + eye
+
+        relay_coords = relay.fields.get_field_coords()
+        combined_coords = combined.fields.get_field_coords()
+        assert combined_coords == relay_coords
+
+    def test_optic_add_aperture_preserved(self, set_test_backend):
+        """Optic.__add__ preserves the aperture from the left-hand operand."""
+        relay = self._make_relay()
+        eye = self._make_eye()
+        combined = relay + eye
+        assert_allclose(
+            be.array(combined.paraxial.EPD()),
+            be.array(relay.paraxial.EPD()),
+        )
+
+    def test_optic_add_does_not_mutate_other(self, set_test_backend):
+        """Optic.__add__ leaves the right-hand Optic completely unchanged."""
+        relay = self._make_relay()
+        eye = self._make_eye()
+        eye.surfaces[1].is_stop = True
+        z_before = [float(s.geometry.cs.z) for s in eye.surfaces]
+        stops_before = [s.is_stop for s in eye.surfaces]
+
+        _ = relay + eye
+
+        z_after = [float(s.geometry.cs.z) for s in eye.surfaces]
+        stops_after = [s.is_stop for s in eye.surfaces]
+        assert z_before == z_after
+        assert stops_before == stops_after
+
+    def test_optic_add_combined_surfaces_independent_of_other(self, set_test_backend):
+        """Mutating other after Optic.__add__ does not affect the combined system."""
+        relay = self._make_relay()
+        eye = self._make_eye()
+        combined = relay + eye
+
+        original_z = float(combined.surfaces[3].geometry.cs.z)
+        eye.surfaces[1].geometry.cs.z = be.array(9999.0)
+
+        assert_allclose(
+            combined.surfaces[3].geometry.cs.z,
+            be.array(original_z),
+        )

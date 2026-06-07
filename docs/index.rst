@@ -78,9 +78,11 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
    :maxdepth: 1
    :caption: Getting Started
 
+   start_here
    installation
    quickstart
    cheat_sheet
+   glossary
    gui_quickstart
 
 
@@ -147,6 +149,7 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
    developers_guide/visualization_framework
    developers_guide/optiland_file_format
    developers_guide/gui
+   developers_guide/extension_recipes
 
 
 .. toctree::
@@ -161,6 +164,7 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
 
    api/api_introduction
    api/api_analysis
+   api/api_prescription
    api/api_backend
    api/api_coatings
    api/api_core

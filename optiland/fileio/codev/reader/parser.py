@@ -473,7 +473,7 @@ class CodeVDataParser:
         if ":" in token:
             try:
                 nd_str, vd_str = token.split(":", 1)
-                return AbbeMaterial(float(nd_str), float(vd_str))
+                return AbbeMaterial(float(nd_str), float(vd_str), model="buchdahl")
             except (ValueError, TypeError):
                 pass
 
@@ -485,7 +485,7 @@ class CodeVDataParser:
                 nd = 1.0 + int(int_str[:3]) / 1000.0
                 vd = int(dec_str[:3].ljust(3, "0")) / 10.0
                 if 1.0 < nd < 4.0 and 0.0 < vd < 200.0:
-                    return AbbeMaterial(nd, vd)
+                    return AbbeMaterial(nd, vd, model="buchdahl")
             except (ValueError, IndexError):
                 pass
 
@@ -495,7 +495,7 @@ class CodeVDataParser:
             try:
                 nd = 1.0 + int(token[:3]) / 1000.0
                 vd = int(token[3:]) / 10.0
-                return AbbeMaterial(nd, vd)
+                return AbbeMaterial(nd, vd, model="buchdahl")
             except ValueError:
                 pass
 

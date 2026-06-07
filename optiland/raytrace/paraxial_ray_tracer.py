@@ -51,7 +51,11 @@ class ParaxialRayTracer(BaseRayTracer):
         y0, z0 = self.optic.fields.field_definition.get_paraxial_object_position(
             self.optic, Hy, y1, EPL
         )
-        u0 = (y1 - y0) / (EPL - z0)
+        # z0 is a global z (object frame); use the global entrance-pupil z so
+        # both terms share a frame. EPL above stays relative — that is what
+        # get_paraxial_object_position expects.
+        epl_global = self.optic.paraxial.entrance_pupil_z()
+        u0 = (y1 - y0) / (epl_global - z0)
         rays = ParaxialRays(y0, u0, z0, wavelength)
 
         self.optic.surfaces.trace(rays)

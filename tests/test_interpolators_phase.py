@@ -82,3 +82,25 @@ def test_interpolator_gradient_boundary(interpolator_data):
 
     assert dh_dx.shape == (1,)
     assert dh_dy.shape == (1,)
+
+
+def test_torch_interpolator_gradient_keeps_graph(set_test_backend):
+    if be.get_backend() != "torch":
+        pytest.skip("Torch-specific autograd test")
+
+    coef = be.array(1.0)
+    coef.requires_grad_(True)
+
+    x = be.linspace(-1.0, 1.0, 5)
+    y = be.linspace(-1.0, 1.0, 5)
+    grid = coef * (y[:, None] ** 2 + x[None, :] ** 2)
+
+    interp = GridInterpolator(x, y, grid)
+
+    px = be.array([0.25])
+    py = be.array([0.25])
+
+    dh_dx, dh_dy = interp.gradient(px, py)
+
+    assert dh_dx.requires_grad
+    assert dh_dy.requires_grad

@@ -984,6 +984,10 @@ class NumpyBackend(AbstractBackend):
         """
         a = self.array(in1)
         b = self.array(in2)
+
+        if a.ndim >= 2 and b.ndim >= 2:
+            return _fftconvolve(a, b, mode=mode, axes=(-2, -1))
+
         return _fftconvolve(a, b, mode=mode)
 
     # ------------------------------------------------------------------
@@ -1154,7 +1158,10 @@ class NumpyBackend(AbstractBackend):
         Returns:
             NDArray: Padded array.
         """
-        return np.pad(tensor, pad_width, mode=mode, constant_values=constant_values)
+        if mode == "constant":
+            return np.pad(tensor, pad_width, mode=mode, constant_values=constant_values)
+
+        return np.pad(tensor, pad_width, mode=mode)
 
     def vectorize(self, pyfunc: Callable[..., Any]) -> Callable[..., Any]:
         """Vectorize a scalar Python function.

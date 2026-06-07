@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
 from scipy import optimize
 
+from ..live_plotter import LiveOptimizationPlotter
 from .base import OptimizerGeneric
 
 if TYPE_CHECKING:
@@ -57,8 +58,14 @@ class LeastSquares(OptimizerGeneric):
             return be.to_numpy(be.full(num_operands, error_value))
 
     def optimize(
-        self, maxiter=None, disp=False, tol=1e-3, method_choice="lm"
-    ):  # Default to 'lm' for DLS
+        self,
+        maxiter: int | None = None,
+        disp: bool = False,
+        plot: bool = False,
+        tol: float = 1e-3,
+        callback: Any = None,
+        method_choice: str = "lm",  # Default to 'lm' for DLS
+    ):
         """
         Optimize the problem using a SciPy least squares method.
 
@@ -66,6 +73,7 @@ class LeastSquares(OptimizerGeneric):
             max_nfev (int, optional): Maximum number of function evaluations (NFEV).
                                       SciPy's least_squares uses max_nfev.
             disp (bool, optional): Whether to display optimization progress.
+            plot: If True, update live plots during optimization.
             tol (float, optional): Tolerance for termination (ftol - tolerance for the
                                    change in the sum of squares). Defaults to 1e-3.
             method_choice (str, optional): Method for scipy.optimize.least_squares.
@@ -147,6 +155,18 @@ class LeastSquares(OptimizerGeneric):
 
         scipy_verbose_level = 1 if disp else 0
 
+        live_plotter: LiveOptimizationPlotter | None = None
+        if plot:
+            live_plotter = LiveOptimizationPlotter(self)
+            live_plotter.initialize()
+
+        def _wrapped_callback(*args: Any, **kwargs: Any) -> None:
+            if callback is not None:
+                callback(*args, **kwargs)
+
+            if live_plotter is not None:
+                live_plotter.update()
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=RuntimeWarning)
             result = optimize.least_squares(
@@ -157,10 +177,15 @@ class LeastSquares(OptimizerGeneric):
                 max_nfev=maxiter,
                 verbose=scipy_verbose_level,
                 ftol=tol,
+                callback=_wrapped_callback,
             )
 
         for i, optiland_var_wrapper in enumerate(self.problem.variables):
             optiland_var_wrapper.update(result.x[i])
         self.problem.update_optics()  # Final update to the optical system
+
+        if live_plotter is not None:
+            live_plotter.update()
+            live_plotter.finalize()
 
         return result

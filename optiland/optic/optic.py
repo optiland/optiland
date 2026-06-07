@@ -8,6 +8,14 @@ and perform paraxial and aberration analyses. Instances of the Optic class
 are used as arguments to various analysis, optimization, and visualization
 functions in Optiland.
 
+Optic holds and coordinates:
+  - surfaces (SurfaceGroup)
+  - aperture, fields, wavelengths, polarization, apodization
+  - paraxial analysis (Paraxial)
+  - aberration analysis (Aberrations)
+  - real ray tracing (RealRayTracer)
+  - pickup and solve managers
+
 Kramer Harrison, 2024
 """
 
