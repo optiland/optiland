@@ -135,6 +135,7 @@ class Variable:
             "chebyshev_coeff": ChebyshevCoeffVariable,
             "zernike_coeff": ZernikeCoeffVariable,
             "reciprocal_radius": ReciprocalRadiusVariable,
+            "curvature": ReciprocalRadiusVariable,
             "forbes_qbfs_coeff": ForbesQNormalSlopeCoeffVariable,  # canonical
             "forbes_qnormalslope_coeff": ForbesQNormalSlopeCoeffVariable,
             "forbes_q2d_coeff": ForbesQ2dCoeffVariable,

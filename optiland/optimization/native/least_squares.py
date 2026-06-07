@@ -67,8 +67,11 @@ class LevenbergMarquardt(SteppedOptimizer):
     capabilities: frozenset[Capability] = _CAPS
     requires_backend: str | None = None
 
-    def __init__(self, emit_weight_notice: bool = True) -> None:
+    def __init__(
+        self, emit_weight_notice: bool = True, sd_fallback: bool = True
+    ) -> None:
         self._emit_weight_notice = emit_weight_notice
+        self._sd_fallback = sd_fallback
         self._evaluator: Any = None
         self._controller: Any = None
         self._constraints: Any = None
@@ -165,7 +168,41 @@ class LevenbergMarquardt(SteppedOptimizer):
         state.n_value_evals += n_trials
 
         if not outcome.accepted:
-            # λ too large; restore system to current x and signal intrinsic convergence
+            # Skip the gradient fallback for KKT-constrained problems: a raw
+            # steepest-descent step ignores the penalty merit and can violate
+            # hard constraints.  KKTController is the only controller with a
+            # ``bind`` method; LevenbergController does not.
+            if self._sd_fallback and not hasattr(self._controller, "bind"):
+                J_np = np.asarray(be.to_numpy(J), dtype=float)
+                r_np = np.asarray(be.to_numpy(r), dtype=float)
+                fallback = self._steepest_descent_fallback(
+                    J_np, r_np, x, info.value_fn, state
+                )
+                if fallback is not None:
+                    dx, f_new = fallback
+                    x_new = x + dx
+                    if self._constraints is not None and hasattr(
+                        self._constraints, "apply_to_step"
+                    ):
+                        x_new = np.asarray(
+                            be.to_numpy(self._constraints.apply_to_step(x_new, state)),
+                            dtype=float,
+                        )
+                    self._controller.reset(state)
+                    state.step_norm = float(np.linalg.norm(x_new - x))
+                    state.x = x_new
+                    state.residuals = r
+                    state.jacobian = J
+                    state.iteration += 1
+                    if not np.array_equal(x_new, x + dx):
+                        self._evaluator.write_x(x_new)
+                        state.value = self._evaluator.value(x_new)
+                        state.n_value_evals += 1
+                    else:
+                        state.value = f_new
+                    return state
+
+            # λ too large and gradient fallback unavailable/failed: restore and stop.
             self._evaluator.write_x(x)
             state.converged = True
             state.stop_reason = "lm_lambda_max: all trials rejected"
@@ -202,6 +239,35 @@ class LevenbergMarquardt(SteppedOptimizer):
             # controller; reuse the stored trial value to avoid an extra eval.
             state.value = outcome.info.get("trial_value", self._evaluator.value(x_new))
         return state
+
+    def _steepest_descent_fallback(
+        self,
+        J: np.ndarray,
+        r: np.ndarray,
+        x: np.ndarray,
+        value_fn: Any,
+        state: OptimizationState,
+    ) -> tuple[np.ndarray, float] | None:
+        """Armijo backtracking along −Jᵀr when the λ-search blows up.
+
+        Returns ``(dx, f_new)`` on success or ``None`` when the gradient is
+        negligible (true minimum) or no sufficient-decrease step is found.
+        """
+        grad: np.ndarray = J.T @ r
+        grad_norm: float = float(np.linalg.norm(grad))
+        if grad_norm <= 1e-10:
+            return None
+
+        f0: float = float(state.value)
+        alpha: float = 1.0 / max(grad_norm, 1.0)
+        for _ in range(30):
+            dx = -alpha * grad
+            f_trial = value_fn(x + dx)
+            state.n_value_evals += 1
+            if math.isfinite(f_trial) and f_trial < f0 - 0.5 * alpha * grad_norm**2:
+                return dx, float(f_trial)
+            alpha *= 0.5
+        return None
 
     def converged(self, state: OptimizationState) -> bool:
         """Return True when the λ-search exhausts all trials (λ blow-up).

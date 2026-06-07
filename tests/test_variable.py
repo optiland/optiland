@@ -106,6 +106,13 @@ class TestReciprocalRadiusVariable:
         optimized_radius = self.optic.surfaces.radii[1]
         assert_allclose(optimized_radius, expected_radius, atol=5)
 
+    def test_curvature_alias(self):
+        self.problem.add_variable(self.optic, "curvature", surface_number=1)
+        assert len(self.problem.variables) == 1
+        var = self.problem.variables[0]
+        assert var.type == "curvature"
+        assert isinstance(var.variable, variable.ReciprocalRadiusVariable)
+
 
 class TestConicVariable:
     @pytest.fixture(autouse=True)
