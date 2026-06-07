@@ -57,21 +57,25 @@ The old scipy optimizers returned a raw ``scipy.optimize.OptimizeResult``.
 ``minimize()`` always returns an :class:`~optiland.optimization.state.OptimizationResult`
 with richer fields:
 
-* ``.value`` — final scalar merit value
-* ``.x`` — final parameter vector (copy)
-* ``.success`` — bool
-* ``.method`` — the resolved method string
-* ``.status`` — why the run ended (or SciPy-compatible ``.message``)
-* ``.improvement_pct`` — percent improvement over the starting merit
-* ``.wall_time_s`` — elapsed wall-clock seconds
-* ``.history`` — per-iteration merit history (if :class:`~optiland.optimization.observers.history.HistoryObserver` was attached)
-* ``.fun``, ``.message`` — SciPy-compatible duck-typing aliases
+* ``.value``: final scalar merit value
+* ``.x``: final parameter vector (copy)
+* ``.success``: bool
+* ``.method``: the resolved method string
+* ``.status``: why the run ended (or SciPy-compatible ``.message``)
+* ``.improvement_pct``: percent improvement over the starting merit
+* ``.wall_time_s``: elapsed wall-clock seconds
+* ``.history``: per-iteration merit history (if :class:`~optiland.optimization.observers.history.HistoryObserver` was attached)
+* ``.fun``, ``.message``: SciPy-compatible duck-typing aliases
+* ``.multipliers``, ``.active_set``, ``.constraint_report``, ``.max_constraint_violation``
+  -- constraint diagnostics (non-None only when hard constraints were declared)
+* ``.grad_norm``, ``.lambda_final``, ``.cond_estimate`` -- solver diagnostics
+* ``.resolved_from`` -- ``"auto"`` when the method was chosen by ``"auto"`` routing
 
 Mutation Contract
 -----------------
 
-``minimize()`` mutates the optic **in place** — on return, ``problem``'s optic
-holds the optimized design.  To preserve the starting state:
+``minimize()`` mutates the optic **in place**. On return, ``problem``'s optic
+holds the optimized design. To preserve the starting state:
 
 .. code-block:: python
 
@@ -80,19 +84,28 @@ holds the optimized design.  To preserve the starting state:
    result = minimize(problem, "dls")
    # optic now holds the result; starting is untouched
 
-Residual-Weighting Correctness Fix
------------------------------------
+Residual-Weighting Behavior Change
+------------------------------------
 
-The reworked optimization subsystem correctly honors per-field and per-wavelength
-residual weights so that ``Σ weighted_residuals()² == sum_squared()``.  If you
-were relying on the old unweighted behavior in multi-field or multi-wavelength
-problems, verify merit values after upgrading.
+The reworked optimization subsystem changes residual-vector semantics for
+multi-field and multi-wavelength problems. The ``residual_vector()`` /
+``weighted_residuals()`` path now scales each residual by
+``sqrt(eff_weight) * delta`` so that ``sum(weighted_residuals**2) == sum_squared()``.
+
+**Who is affected:** users who compared raw residual *vectors* across versions
+(e.g. recorded per-residual values for post-processing or custom stopping logic).
+The scalar merit value ``sum_squared()`` is the same; only the residual vector
+components change for multi-field/multi-wavelength problems.
+
+**What to do:** if you were relying on the old unweighted residual vector in
+custom stopping criteria or post-processing, verify your logic against the
+updated values after upgrading to the reworked subsystem.
 
 Standalone Optimizers Are Not Migrated
 ---------------------------------------
 
 ``GlassExpert``, ``OrthogonalDescent``, and ``ParticleSwarm`` are **not**
-deprecated and are **not** accessible via ``minimize()`` — by design.
+deprecated and are **not** accessible via ``minimize()`` by design.
 Continue using them directly:
 
 .. code-block:: python
@@ -104,5 +117,5 @@ Continue using them directly:
 See Also
 --------
 
-* :doc:`method_selection` — choosing the right method for your problem
-* :doc:`/api/api_optimization` — full API reference
+* :doc:`method_selection` -- choosing the right method for your problem
+* :doc:`/api/api_optimization` -- full API reference

@@ -391,8 +391,52 @@ Register the new type in the ``Variable`` class dispatch table in
 ``optiland/optimization/variable/variable.py`` so it can be referenced by
 string in :meth:`~optiland.optimization.problem.OptimizationProblem.add_variable`.
 
+Operands vs. Constraints
+------------------------
+
+Optiland provides two mechanisms for specifying targets:
+
+* ``add_operand`` -- **soft target**. The operand enters the merit function as a
+  weighted squared residual. The optimizer balances all operands simultaneously;
+  no individual target is guaranteed to be met exactly. Use this for preferences,
+  tolerances, and weighted trade-offs.
+* ``add_constraint`` -- **hard constraint**. The constraint is enforced at every
+  step via the KKT active-set method. The optimizer cannot trade it off against
+  the merit. Use this for absolute requirements: exact focal length, minimum
+  edge thickness, maximum chief-ray angle, etc.
+
+Both take the same spec shape:
+
+.. code-block:: python
+
+   # Soft: EFL enters the merit function with weight 1.0
+   problem.add_operand(
+       operand_type="f2",
+       target=50.0,
+       weight=1.0,
+       input_data={"optic": lens},
+   )
+
+   # Hard: EFL must equal 50 mm (KKT-enforced)
+   problem.add_constraint(
+       operand_type="f2",
+       target=50.0,           # equality constraint
+       input_data={"optic": lens},
+   )
+
+   # Hard inequality: total track <= 80 mm
+   problem.add_constraint(
+       operand_type="total_track",
+       max_val=80.0,
+       input_data={"optic": lens},
+   )
+
+Hard constraints require ``method="dls"`` or ``method="lm"``; ``method="auto"``
+selects ``"dls"`` automatically when constraints are present. See
+:ref:`hard_constraints` in the framework guide for the full workflow and diagnostics.
+
 See Also
 --------
 
-* :doc:`framework` — extension recipes and architecture details
-* :doc:`/api/api_optimization` — full API reference
+* :doc:`framework` -- extension recipes and architecture details, including :ref:`hard_constraints`
+* :doc:`/api/api_optimization` -- full API reference

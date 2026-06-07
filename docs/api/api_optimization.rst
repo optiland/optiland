@@ -78,6 +78,7 @@ Step Controllers
    optimization.control.base
    optimization.control.identity
    optimization.control.levenberg
+   optimization.control.kkt
    optimization.control.line_search
 
 Stopping Criteria
@@ -104,8 +105,25 @@ Observers
    optimization.observers.checkpoint
    optimization.observers.cancel
 
-Constraints
------------
+Hard Constraints
+----------------
+
+Hard equality and inequality constraints are declared via
+``OptimizationProblem.add_constraint`` and enforced at every step via the KKT
+active-set method. See :ref:`hard_constraints` in the framework guide.
+
+.. autosummary::
+   :toctree: optimization/constraint/
+   :nosignatures:
+
+   optimization.constraint.constraint
+   optimization.constraint.manager
+
+Soft Constraint Strategies
+---------------------------
+
+``ConstraintStrategy`` objects apply per-step modifications (bounds projection,
+SciPy-native constraints). These are distinct from hard constraints above.
 
 .. autosummary::
    :toctree: optimization/constraints/
@@ -186,24 +204,14 @@ Scaling
    optimization.scaling.power
    optimization.scaling.reciprocal
 
-Deprecated (until v0.7.0)
---------------------------
+Deprecated Classes (v0.7.0 removal)
+-------------------------------------
 
 .. deprecated::
-   These classes emit ``DeprecationWarning`` on construction.
-   Use :func:`~optimization.api.minimize` with the equivalent ``method=`` string instead.
-   See :doc:`/guide/optimization/migration`.
+   The following classes emit ``DeprecationWarning`` on construction and will be
+   removed in **v0.7.0**: ``OptimizerGeneric``, ``LeastSquares``,
+   ``DualAnnealing``, ``DifferentialEvolution``, ``SHGO``, ``BasinHopping``,
+   ``TorchAdamOptimizer``, ``TorchSGDOptimizer``.
 
-.. autosummary::
-   :toctree: optimization/optimizer/deprecated/
-   :nosignatures:
-
-   optimization.optimizer.scipy.base
-   optimization.optimizer.scipy.basin_hopping
-   optimization.optimizer.scipy.differential_evolution
-   optimization.optimizer.scipy.dual_annealing
-   optimization.optimizer.scipy.least_squares
-   optimization.optimizer.scipy.shgo
-   optimization.optimizer.torch.base
-   optimization.optimizer.torch.adam
-   optimization.optimizer.torch.sgd
+   Use :func:`~optimization.api.minimize` with the equivalent ``method=`` string
+   instead. See :doc:`/guide/optimization/migration` for the full migration table.

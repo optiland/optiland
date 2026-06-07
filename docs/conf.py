@@ -51,6 +51,12 @@ autodoc_mock_imports = [
 
 pygments_style = "sphinx"
 
+# Allow notebook execution errors to not abort the build.
+# Some gallery notebooks have no committed outputs and fail on execution
+# (e.g. torch notebooks that require a GPU or specific environment).
+# This prevents those failures from crashing the whole build.
+nbsphinx_allow_errors = True
+
 # Autodoc configuration: include only public members by default
 autodoc_default_options = {
     "members": True,

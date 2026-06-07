@@ -2,8 +2,9 @@ Optimization Framework Architecture
 =====================================
 
 This document describes the internal architecture of Optiland's optimization
-subsystem, the six protocol extension points, worked extension recipes, and
-advanced topics including batched ray evaluation and the GlassExpert algorithm.
+subsystem, the extension protocols, worked extension recipes, advanced knobs,
+hard constraints, and specialized features including batched ray evaluation and
+the GlassExpert algorithm.
 
 .. contents::
    :local:
@@ -20,28 +21,29 @@ computed*:
 .. code-block:: text
 
    minimize()
-       │
-       ├── SteppedDriver          (native LM, Gauss-Newton, Torch)
-       │       ├── Evaluator      reads/writes parameter vector; computes J, grad
-       │       ├── Optimizer      computes the raw parameter update Δx
-       │       ├── StepController applies damping, line search, or identity scaling
-       │       ├── ConstraintStrategy  projects Δx to satisfy constraints
-       │       ├── StoppingCriterion   decides when to halt
-       │       └── Observer[]     hook callbacks at each iteration
-       │
-       └── ManagedDriver          (all SciPy methods)
-               ├── Evaluator      same interface as above
-               ├── ConstraintStrategy  translated to SciPy constraint dicts
-               ├── StoppingCriterion   translated to SciPy callback
-               └── Observer[]     wrapped in SciPy callback
+       |
+       +-- SteppedDriver          (native LM, Gauss-Newton, Torch)
+       |       +-- Evaluator      reads/writes parameter vector; computes J, grad
+       |       +-- Optimizer      computes the raw parameter update dx
+       |       +-- StepController applies damping, line search, or KKT projection
+       |       +-- ConstraintStrategy  applies per-step bounds/projection
+       |       +-- StoppingCriterion   decides when to halt
+       |       +-- Observer[]     hook callbacks at each iteration
+       |
+       +-- ManagedDriver          (all SciPy methods)
+               +-- Evaluator      same interface as above
+               +-- ConstraintStrategy  translated to SciPy constraint dicts
+               +-- StoppingCriterion   translated to SciPy callback
+               +-- Observer[]     wrapped in SciPy callback
 
-**SteppedDriver** owns the loop.  It calls ``optimizer.step()``, then
-``controller.apply()``, then ``strategy.project()``, checks
-``criterion.should_stop()``, and fires ``observer.on_step()``.  This is used
-for ``"dls"``, ``"lm"``, ``"gauss_newton"``, ``"adam"``, and ``"sgd"``.
+**SteppedDriver** owns the loop. It calls ``optimizer.step()``, the
+``StepController`` transforms the raw step, ``ConstraintStrategy.apply_to_step()``
+projects it, checks ``criterion.should_stop()``, and fires ``observer.on_step()``.
+This driver is used for ``"dls"``, ``"lm"``, ``"gauss_newton"``, ``"adam"``,
+and ``"sgd"``.
 
-**ManagedDriver** delegates the loop to ``scipy.optimize``.  It wraps the
-evaluator callbacks into the SciPy interface.  This is used for ``"l-bfgs-b"``,
+**ManagedDriver** delegates the loop to ``scipy.optimize``. It wraps the
+evaluator callbacks into the SciPy interface. This is used for ``"l-bfgs-b"``,
 ``"bfgs"``, ``"slsqp"``, ``"trust-constr"``, ``"least_squares"``,
 ``"differential_evolution"``, ``"dual_annealing"``, ``"shgo"``, and
 ``"basin_hopping"``.
@@ -59,8 +61,8 @@ default components for any not supplied by the caller, and returns an
    :align: center
 
 
-The Six Extension Protocols
------------------------------
+The Seven Extension Protocols
+------------------------------
 
 Each of the following is a formal Python protocol (or abstract base class).
 Pass instances to :func:`~optiland.optimization.minimize` via the corresponding
@@ -71,186 +73,234 @@ pipeline.
 ~~~~~~~~~~~~~
 
 The ``Evaluator`` is the bridge between the optimizer's numerical world and
-the ``OptimizationProblem``.  It reads and writes the parameter vector,
+the ``OptimizationProblem``. It reads and writes the parameter vector,
 computes the merit value, gradient, and Jacobian.
 
 **Capability flags** (``EvalCapability`` enum):
 
-* ``VALUE`` — can compute a scalar merit value
-* ``GRADIENT`` — can compute ``∇f`` (requires autograd or finite differences)
-* ``JACOBIAN`` — can compute the residual Jacobian ``J`` (for LM/GN)
+* ``VALUE`` -- can compute a scalar merit value
+* ``RESIDUALS`` -- can compute the residual vector
+* ``GRADIENT`` -- can compute ``grad_f`` (requires autograd or finite differences)
+* ``JACOBIAN`` -- can compute the residual Jacobian ``J`` (for LM/GN)
 
 **Key methods:**
 
 .. code-block:: python
 
-   evaluator.read_x()        # → np.ndarray current parameter vector
+   evaluator.read_x()        # -> np.ndarray current parameter vector
    evaluator.write_x(x)      # push new x into the optic's attributes
-   evaluator.value()         # → float scalar merit
-   evaluator.gradient(x)     # → np.ndarray ∇f
-   evaluator.jacobian(x)     # → np.ndarray J (m × n)
+   evaluator.value(x)        # -> float scalar merit
+   evaluator.gradient(x)     # -> np.ndarray grad_f
+   evaluator.jacobian(x)     # -> np.ndarray J (m x n)
 
 **Built-in evaluators:**
 
-* ``FiniteDifferenceEvaluator`` — NumPy backend; computes ``∇f`` and ``J``
-  via forward finite differences.  Default for all SciPy and native NumPy
-  methods.
-* ``AutogradEvaluator`` — PyTorch backend; uses ``torch.autograd`` to compute
-  exact gradients.  Default when the torch backend is active.
+* ``FiniteDiffEvaluator`` -- NumPy backend; computes ``grad_f`` and ``J``
+  via forward or central finite differences. Default for all SciPy and native
+  NumPy methods. Constructor accepts ``rel_step``, ``abs_step``, ``scheme``,
+  and ``on_failure``.
+* ``AutogradEvaluator`` -- PyTorch backend; uses ``torch.autograd`` to compute
+  exact gradients. Default when the torch backend is active.
 
-**Experimental** ``jacobian_mode`` kwarg on ``minimize()``:
+**Experimental -- Autograd Jacobian modes (AutogradEvaluator only):**
 
-* ``"stateful"`` (default) — evaluator uses the problem's current state;
-  compatible with all backends.
-* ``"functional"`` — wraps each evaluation as a pure function call; useful
-  for functional-style transforms but carries higher overhead.
-* ``"compiled"`` — traces the evaluation through ``torch.compile``; reduces
-  Python overhead on repeated calls.  Only meaningful on PyTorch backend; not
-  in the all-backend guarantee.
+``AutogradEvaluator`` accepts a ``jacobian_mode`` constructor argument:
+
+* ``"stateful"`` (default) -- standard reverse-mode autograd; compatible with
+  all torch workflows.
+* ``"functional"`` (**Experimental**) -- wraps each evaluation as a pure
+  function call via ``torch.func.jacrev``; useful for functional transforms but
+  carries state-serialization overhead.
+* ``"compiled"`` (**Experimental**) -- traces through ``torch.compile`` before
+  differentiating; can reduce per-step overhead on repeated calls. Only
+  meaningful on PyTorch; not in the all-backend guarantee.
+
+These modes are **not currently exposed through** :func:`~optiland.optimization.minimize`
+-- they are constructor arguments to ``AutogradEvaluator`` when you instantiate it
+directly. Passing ``jacobian_mode=`` to ``minimize()`` has no effect (it lands in
+``**method_options`` and is silently ignored). Wiring this kwarg through
+``minimize()`` is tracked as a planned enhancement.
 
 2. Optimizer (step computation)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-An ``Optimizer`` receives the current parameter vector and evaluator, and
-returns a raw (unconstrained, undamped) step ``Δx``.
+An ``Optimizer`` computes the raw (unconstrained, undamped) step ``dx`` from the
+current state.
 
-**Built-in optimizers:**
-
-* :class:`~optiland.optimization.optimizer.native.levenberg.LevenbergMarquardt`
-  — Damped least-squares LM.  Calls ``evaluator.jacobian()``.  Accepts a
-  :class:`~optiland.optimization.controller.levenberg.LevenbergController`.
-* :class:`~optiland.optimization.optimizer.native.gauss_newton.GaussNewton`
-  — Undamped Gauss-Newton.  Converges faster near the minimum when the
-  residuals are small, but can diverge far from it.
-* :class:`~optiland.optimization.optimizer.torch_opt.TorchOptimizer`
-  — Wraps a ``torch.optim.Optimizer`` (Adam, SGD, …).  Calls
-  ``evaluator.gradient()`` via autograd.
-
-**Protocol (minimal interface):**
+**Interface (``SteppedOptimizer`` ABC):**
 
 .. code-block:: python
 
-   class MyOptimizer:
-       def step(self, x: np.ndarray, evaluator) -> np.ndarray:
-           """Return the update vector Δx."""
+   class MyOptimizer(SteppedOptimizer):
+       capabilities: frozenset  # declares EvalCapability requirements
+       requires_backend: str    # "numpy", "torch", or "any"
+
+       def initialize(self, evaluator, x0, *, controller, constraints) -> state:
+           """Set up internal state; return initial OptimizationState."""
            ...
+
+       def step(self, state) -> state:
+           """Compute and apply one step; return updated state."""
+           ...
+
+       def converged(self, state) -> bool:
+           """Return True if the optimizer's own convergence criterion is met."""
+           ...
+
+**Built-in optimizers:**
+
+* :class:`~optiland.optimization.native.least_squares.LevenbergMarquardt`
+  -- Damped least-squares LM. Calls ``evaluator.jacobian()``. Accepts a
+  :class:`~optiland.optimization.control.levenberg.LevenbergController` or
+  :class:`~optiland.optimization.control.kkt.KKTController`.
+* :class:`~optiland.optimization.native.least_squares.GaussNewton`
+  -- Undamped Gauss-Newton with Armijo line-search fallback. Converges faster
+  near the minimum when residuals are small.
+* :class:`~optiland.optimization.native.torch_opt.TorchOptimizer`
+  -- Wraps ``torch.optim.Adam`` or ``torch.optim.SGD``. Calls
+  ``evaluator.gradient()`` via autograd.
 
 3. StepController
 ~~~~~~~~~~~~~~~~~~
 
-A ``StepController`` post-processes the raw step ``Δx`` before it is applied.
+A ``StepController`` post-processes the raw step ``dx`` before it is applied.
 This is where damping and line search live.
 
-**Built-in controllers:**
-
-* ``IdentityController`` — passes ``Δx`` through unchanged.  Used with
-  GaussNewton by default.
-* :class:`~optiland.optimization.controller.levenberg.LevenbergController`
-  — Adjusts the LM damping parameter λ after each step.  Increases λ when
-  the step worsens the merit, decreases λ when it improves it (trust-region
-  style).
-* :class:`~optiland.optimization.controller.line_search.LineSearchController`
-  — Scales ``Δx`` by ``α ∈ (0, 1]`` chosen by Armijo backtracking.  Useful
-  for Gauss-Newton or custom optimizers when steps overshoot.
-
-**Protocol:**
+**Interface:**
 
 .. code-block:: python
 
    class MyController:
-       def apply(self, x: np.ndarray, dx: np.ndarray, evaluator) -> np.ndarray:
-           """Return the controlled (possibly scaled) update vector."""
+       def reset(self) -> None:
+           """Reset internal state (called at initialize)."""
            ...
+
+       def transform(self, step_info: StepInfo) -> StepOutcome:
+           """Return a StepOutcome with the controlled dx."""
+           ...
+
+**Built-in controllers:**
+
+* ``IdentityController`` -- passes ``dx`` through unchanged. Used with
+  GaussNewton by default.
+* :class:`~optiland.optimization.control.levenberg.LevenbergController`
+  -- Nielsen gain-ratio damping (**Stable**). Adjusts the LM damping
+  parameter ``lambda`` using the gain-ratio between predicted and actual
+  improvement. Increases ``lambda`` when the step worsens the merit, decreases
+  it when improvement is good. This is the default controller for ``"dls"``
+  and ``"lm"`` without hard constraints.
+* :class:`~optiland.optimization.control.kkt.KKTController`
+  -- Active-set KKT controller for hard-constrained problems (**Stable** for
+  the constrained LM path). Solves the augmented KKT system at each step,
+  manages the working set of active inequality constraints, and falls back to
+  SVD-based least-squares on singular systems. Selected automatically when
+  ``problem.constraints`` is non-empty.
+* :class:`~optiland.optimization.control.line_search.LineSearchController`
+  -- Armijo backtracking line search. Scales ``dx`` by ``alpha in (0, 1]``.
+  Useful for GaussNewton or custom optimizers when steps overshoot.
 
 4. ConstraintStrategy
 ~~~~~~~~~~~~~~~~~~~~~~
 
-A ``ConstraintStrategy`` projects or modifies the step to satisfy constraints.
-It reports whether it requires per-step application via the
-``PER_STEP_CONSTRAINTS`` capability flag.
+A ``ConstraintStrategy`` applies per-step modifications to keep the iterate
+within soft bounds or project it to satisfy soft constraints. This is
+**distinct** from hard constraints (see `Hard Constraints (KKT active-set)`_
+below): a ``ConstraintStrategy`` is for bounds and SciPy-native soft
+constraints, while hard equality/inequality constraints use ``add_constraint``
+and the KKT path.
 
-**Built-in strategies:**
-
-* ``BoxBoundsStrategy`` — clips ``x + Δx`` to ``[min_val, max_val]`` for
-  each variable.  Automatically used when any variable has bounds and the
-  method is native (SteppedDriver).
-* :class:`~optiland.optimization.constraint.null_space.NullSpaceStrategy`
-  — Projects ``Δx`` into the null space of the active equality constraint
-  Jacobian.  Enforces exact equality constraints at each LM step (CODE-V
-  style).  Pass via ``minimize(problem, "dls", constraint_strategy=NullSpaceStrategy(...))``.
-* ``ScipyNativeStrategy`` — Translates constraints to SciPy ``constraints``
-  dict for use in ManagedDriver methods (``"slsqp"``, ``"trust-constr"``).
-* ``CompositeStrategy`` — Chains multiple strategies in sequence.
-
-**Protocol:**
+**Interface:**
 
 .. code-block:: python
 
    class MyStrategy:
-       def project(self, x: np.ndarray, dx: np.ndarray) -> np.ndarray:
-           """Return the projected update vector."""
+       def prepare(self, evaluator, variables) -> None:
+           """One-time setup called before the loop."""
            ...
 
-       @property
-       def capability(self) -> set:
-           return {"PER_STEP_CONSTRAINTS"}   # or empty set
+       def apply_to_step(self, x_proposed, state):
+           """Modify x_proposed in-place or return a new feasible x."""
+           ...
+
+       def to_scipy(self):
+           """Return SciPy constraint dicts for ManagedDriver methods."""
+           ...
+
+       def is_feasible(self, x, tol: float = 1e-8) -> bool:
+           """Return True if x satisfies the constraint within tol."""
+           ...
+
+**Built-in strategies:**
+
+* ``BoxBoundsStrategy`` -- clips ``x + dx`` to ``[min_val, max_val]`` for
+  each variable. Automatically used when any variable has bounds and the
+  method is a native SteppedDriver method.
+* ``ScipyNativeStrategy`` -- translates constraints to SciPy ``constraints``
+  dict for ManagedDriver methods (``"slsqp"``, ``"trust-constr"``).
+* ``CompositeStrategy`` -- chains multiple strategies in sequence.
 
 5. StoppingCriterion
 ~~~~~~~~~~~~~~~~~~~~~
 
 A ``StoppingCriterion`` is polled after each step to decide whether to halt.
-Criteria compose with the ``|`` operator.
+Criteria compose with the ``|`` (OR) and ``&`` (AND) operators.
 
-**Built-in criteria:**
+**Interface:**
 
-* ``MaxIterCriterion(n)`` — stops after ``n`` steps.
-* ``CostTolerance(tol)`` — stops when the relative change in merit falls
-  below ``tol`` (``Δmerit / merit_prev < tol``).
-* ``GradNormTolerance(tol)`` — stops when ``‖∇f‖₂ < tol``.  Default
+.. code-block:: python
+
+   class MyStoppingCriterion:
+       def reset(self) -> None:
+           """Reset internal state at the start of a run."""
+           ...
+
+       def should_stop(self, state) -> tuple[bool, str | None]:
+           """Return (halt, reason_string) where reason is None if not halting."""
+           ...
+
+**Built-in criteria (all in** ``optiland.optimization.stopping.criteria`` **):**
+
+* ``MaxIter(n)`` -- stops after ``n`` accepted steps.
+* ``MaxEvals(n)`` -- stops after ``n`` value evaluations (including trial steps).
+* ``CostTolerance(tol)`` -- stops when the relative change in merit falls
+  below ``tol``.
+* ``GradNormTolerance(tol)`` -- stops when ``||grad_f||_2 < tol``. Default
   termination for torch methods.
+* ``StepStall(tol)`` -- stops when ``||delta_x|| < tol`` (step too small).
+* ``RelImprovement(tol)`` -- stops when cumulative improvement from initial
+  merit drops below ``tol``.
 
 **Composition:**
 
 .. code-block:: python
 
-   from optiland.optimization.stopping import MaxIterCriterion, CostTolerance
+   from optiland.optimization.stopping.criteria import MaxIter, CostTolerance
 
-   stop = MaxIterCriterion(500) | CostTolerance(1e-6)
+   stop = MaxIter(500) | CostTolerance(1e-6)
    result = minimize(problem, "dls", stop=stop)
-
-**Protocol:**
-
-.. code-block:: python
-
-   class MyStoppingCriterion:
-       def should_stop(self, state) -> bool:
-           """Return True to halt the iteration."""
-           ...
-
-       def __or__(self, other):
-           return CompositeCriterion(self, other)
 
 6. Observer
 ~~~~~~~~~~~~
 
-An ``Observer`` is notified at four hook points during a run:
+An ``Observer`` is notified at three hook points during a run:
 
-* ``on_start(state)`` — called once before the first step
-* ``on_step(state)`` — called after each step (including failed steps)
-* ``on_stop(state)`` — called once after the last step
-* ``on_error(exc, state)`` — called if the driver raises an exception
+* ``on_start(state)`` -- called once before the first step
+* ``on_step(state)`` -- called after each accepted step
+* ``on_end(state, result)`` -- called once after the run completes
 
 **Built-in observers:**
 
-* :class:`~optiland.optimization.observers.history.HistoryObserver` — appends
-  ``(iteration, merit)`` to ``result.history`` after each step.
-* ``ConsoleObserver`` — prints per-step merit and parameter summary.
-  Activated when ``disp=True`` is passed to ``minimize()``.
+* :class:`~optiland.optimization.observers.history.HistoryObserver` -- appends
+  per-iteration records to ``result.history`` after each step.
+* :class:`~optiland.optimization.observers.logging.ConsoleObserver` -- prints
+  per-step merit and parameter summary. Activated when ``disp=True`` is passed
+  to ``minimize()``.
 * :class:`~optiland.optimization.observers.checkpoint.CheckpointObserver`
-  — saves the optic state to disk at configurable intervals.  Useful for long
+  -- saves the optic state to disk at configurable intervals. Useful for long
   runs.
-* ``CancelObserver`` — checks a thread-safe :class:`~optiland.optimization.cancel.CancelToken`
-  and raises a soft cancellation exception.  See *Experimental features*.
+* :class:`~optiland.optimization.observers.cancel.CancelObserver` -- checks a
+  thread-safe :class:`~optiland.optimization.observers.cancel.CancelToken`
+  and requests soft cancellation. See `Cancel Token and CancelObserver`_.
 
 **Protocol:**
 
@@ -259,14 +309,219 @@ An ``Observer`` is notified at four hook points during a run:
    class MyObserver:
        def on_start(self, state) -> None: ...
        def on_step(self, state) -> None: ...
-       def on_stop(self, state) -> None: ...
-       def on_error(self, exc, state) -> None: ...
+       def on_end(self, state, result) -> None: ...
+
+7. KKT Controller (Hard Constraints)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When ``problem.constraints`` is non-empty, :func:`~optiland.optimization.minimize`
+replaces the default ``LevenbergController`` with a
+:class:`~optiland.optimization.control.kkt.KKTController`. This controller
+solves the full KKT system at each LM step, enforcing hard equality and
+inequality constraints without trading them off against the merit function.
+See `Hard Constraints (KKT active-set)`_ for the full workflow.
+
+
+.. _hard_constraints:
+
+Hard Constraints (KKT active-set)
+-----------------------------------
+
+Optiland supports two ways to add constraints to an optimization problem:
+
+* **Soft constraints** (``add_operand``): the constraint enters the merit
+  function as a weighted residual. The optimizer can trade off constraint
+  satisfaction against other operands. Use this for targets that are
+  preferences, not requirements.
+* **Hard constraints** (``add_constraint``): the constraint is enforced at
+  every step via the KKT active-set method. The optimizer cannot trade these
+  off -- equality constraints are met exactly at convergence, and inequality
+  constraints remain feasible throughout. Use this for absolute requirements
+  such as exact focal length, minimum edge thickness, or max chief-ray angle.
+
+.. admonition:: Soft vs. hard decision rule
+
+   Use ``add_operand`` when violating the constraint by a small amount is
+   acceptable. Use ``add_constraint`` when the constraint must hold to high
+   accuracy regardless of the merit value.
+
+Declaring Hard Constraints
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``OptimizationProblem.add_constraint`` takes the same spec as ``add_operand``:
+
+.. code-block:: python
+
+   from optiland.optimization import minimize, OptimizationProblem
+
+   problem = OptimizationProblem()
+   # ... add variables and operands ...
+
+   # Equality constraint: EFL must equal 50 mm
+   problem.add_constraint(
+       operand_type="f2",
+       target=50.0,
+       input_data={"optic": lens},
+       weight=1.0,
+   )
+
+   # Inequality constraint: total track <= 80 mm
+   problem.add_constraint(
+       operand_type="total_track",
+       max_val=80.0,
+       input_data={"optic": lens},
+   )
+
+   result = minimize(problem, "dls")
+
+* ``target=v`` declares an **equality** constraint: the operand must equal ``v``
+  at convergence.
+* ``min_val=lo`` / ``max_val=hi`` declare **inequality** constraints.
+* ``weight``, ``scale``, ``tol``, and ``input_data`` work the same as
+  ``add_operand``.
+
+Method Requirement
+~~~~~~~~~~~~~~~~~~
+
+Hard constraints require ``method="dls"`` or ``method="lm"`` (both are
+KKT-capable). Any other method raises
+:class:`~optiland.optimization.errors.ConfigurationError` with guidance.
+``method="auto"`` automatically selects ``"dls"`` when
+``problem.constraints`` is non-empty.
+
+.. code-block:: python
+
+   # "auto" picks "dls" when constraints are present
+   result = minimize(problem, "auto")   # -> "dls"
+
+   # Explicit:
+   result = minimize(problem, "dls")
+
+Constraint Diagnostics
+~~~~~~~~~~~~~~~~~~~~~~~
+
+The returned :class:`~optiland.optimization.state.OptimizationResult` carries
+full constraint diagnostics:
+
+.. code-block:: python
+
+   result = minimize(problem, "dls")
+
+   print(result.multipliers)              # KKT multipliers (equality + inequality)
+   print(result.active_set)              # indices of active inequality constraints
+   print(result.max_constraint_violation) # max |c_i| or max(g_i, 0) at solution
+   print(result.constraint_report)       # per-constraint dict: residual/violation/feasible
+
+   # Programmatic feasibility check:
+   mgr = problem.constraints
+   print(mgr.report())        # tabular per-row summary
+   print(mgr.max_violation()) # scalar max violation
+   print(mgr.n_equality, mgr.n_inequality)
+
+
+Advanced Knobs
+---------------
+
+These are ``**method_options`` passed to :func:`~optiland.optimization.minimize`
+alongside ``method``, ``stop``, ``observers``, and the other named kwargs.
+
+on_failure -- Ray-trace failure policy (**Stable**)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``on_failure`` controls what happens when a ray trace fails or the merit
+function returns a non-finite value:
+
+* ``"reject"`` (default) -- the step is rejected; the optimizer backs off and
+  tries again. Safe for all methods.
+* ``"raise"`` -- raises an exception immediately. Useful for debugging.
+* ``"penalty"`` -- returns a large finite penalty value. Required internally
+  for SciPy managed methods (SciPy cannot consume NaN); set explicitly when
+  you want the stepped path to behave similarly.
+
+.. code-block:: python
+
+   result = minimize(problem, "dls", on_failure="reject")   # default
+   result = minimize(problem, "dls", on_failure="penalty")  # accept failed steps with penalty
+
+scheme -- Finite-difference scheme (**Advanced**)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``scheme`` selects the finite-difference scheme used by ``FiniteDiffEvaluator``:
+
+* ``"forward"`` (default) -- one extra function evaluation per parameter.
+  Fast; less accurate.
+* ``"central"`` -- two extra evaluations per parameter; second-order accurate
+  at roughly 2x cost. Prefer when tight convergence is needed and the merit
+  is smooth.
+
+.. code-block:: python
+
+   result = minimize(problem, "dls", scheme="central")
+
+rel_step / abs_step (**Advanced**)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Control the finite-difference step size used by ``FiniteDiffEvaluator``:
+
+* ``rel_step`` (default ``1e-5``) -- step as a fraction of the parameter value.
+* ``abs_step`` (default ``1e-8``) -- absolute floor for the step.
+
+linear_solver -- KKT linear solve (**Advanced**)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``linear_solver`` selects how the augmented KKT system is solved when hard
+constraints are present:
+
+* ``"normal"`` (default) -- normal-equations solve. Fast; can lose accuracy
+  for ill-conditioned KKT matrices.
+* ``"qr"`` -- QR-based solve. More numerically stable for ill-conditioned
+  systems; somewhat slower. Use when ``result.cond_estimate`` is large.
+
+.. code-block:: python
+
+   result = minimize(problem, "dls", linear_solver="qr")
+
+Geodesic Acceleration (**Experimental**)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Geodesic acceleration is a second-order correction to the LM step that can
+significantly reduce the number of iterations near the solution by correcting
+for surface curvature of the residual manifold. It is opt-in and experimental.
+Consult the ``LevenbergMarquardt`` and ``KKTController`` source for the current
+opt-in mechanism; this feature may change in future releases.
+
+Auto-scaling (**Stable**)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Parameter scaling is applied automatically before each run. The scaler
+normalizes variable magnitudes so that the optimizer operates in a
+well-conditioned space regardless of the physical units of the design
+parameters (mm radii vs. dimensionless conic constants, for example). This
+is on by default and requires no user action.
+
+lr / gamma -- Torch first-order (**Stable**)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For ``method="adam"`` or ``method="sgd"``:
+
+* ``lr`` (default ``1e-2``) -- learning rate.
+* ``gamma`` (default ``0.99``) -- multiplicative LR decay per step.
+
+method_choice -- SciPy least_squares sub-method (**Stable**)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For ``method="least_squares"``:
+
+* ``method_choice`` (default ``"lm"``) -- passes through to
+  ``scipy.optimize.least_squares`` as the ``method`` argument. Options:
+  ``"lm"`` (Levenberg-Marquardt), ``"trf"`` (trust-region reflective),
+  ``"dogbox"``.
 
 
 Extension Recipes
------------------
+------------------
 
-.. _extension_recipes:
+.. _opt_extension_recipes:
 
 The following minimal examples show how to extend each protocol.
 
@@ -356,13 +611,10 @@ Custom Observer
 
        def on_step(self, state) -> None:
            self.iterations.append(state.iteration)
-           self.merits.append(state.merit)
+           self.merits.append(state.value)
 
-       def on_stop(self, state) -> None:
-           print(f"Final merit: {state.merit:.6g} after {state.iteration} steps")
-
-       def on_error(self, exc, state) -> None:
-           print(f"Run failed at iteration {state.iteration}: {exc}")
+       def on_end(self, state, result) -> None:
+           print(f"Final merit: {state.value:.6g} after {state.iteration} steps")
 
    obs = PlottingObserver()
    result = minimize(problem, "dls", observers=[obs])
@@ -380,14 +632,17 @@ Custom StoppingCriterion
        def __init__(self, threshold: float):
            self.threshold = threshold
 
-       def should_stop(self, state) -> bool:
-           return state.merit < self.threshold
+       def reset(self) -> None:
+           pass
 
-       def __or__(self, other):
-           from optiland.optimization.stopping import CompositeCriterion
-           return CompositeCriterion(self, other)
+       def should_stop(self, state) -> tuple[bool, str | None]:
+           if state.value < self.threshold:
+               return True, f"abs_merit_tol={self.threshold:.2e}"
+           return False, None
 
-   stop = AbsoluteMeritTolerance(1e-4) | MaxIterCriterion(1000)
+   from optiland.optimization.stopping.criteria import MaxIter
+
+   stop = AbsoluteMeritTolerance(1e-4) | MaxIter(1000)
    result = minimize(problem, "dls", stop=stop)
 
 Custom StepController
@@ -397,21 +652,25 @@ Custom StepController
 
    from __future__ import annotations
    import numpy as np
+   from optiland.optimization.control.base import StepInfo, StepOutcome
 
    class ClampedStepController:
-       """Clips any single parameter update to ±max_step."""
+       """Clips any single parameter update to +/-max_step."""
 
        def __init__(self, max_step: float = 0.1):
            self.max_step = max_step
 
-       def apply(self, x: np.ndarray, dx: np.ndarray, evaluator) -> np.ndarray:
-           return np.clip(dx, -self.max_step, self.max_step)
+       def reset(self) -> None:
+           pass
 
-   from optiland.optimization.optimizer.native.levenberg import LevenbergMarquardt
+       def transform(self, step_info: StepInfo) -> StepOutcome:
+           dx_clamped = np.clip(step_info.direction, -self.max_step, self.max_step)
+           return StepOutcome(delta_x=dx_clamped, accepted=True, info={})
+
    result = minimize(
        problem,
        "dls",
-       step_controller=ClampedStepController(max_step=0.05),
+       controller=ClampedStepController(max_step=0.05),
    )
 
 Custom ConstraintStrategy
@@ -422,22 +681,26 @@ Custom ConstraintStrategy
    from __future__ import annotations
    import numpy as np
 
-   class SymmetryConstraintStrategy:
-       """Forces surface 2 and surface 4 to have the same radius."""
+   class SymmetryStrategy:
+       """Forces surface 2 and surface 4 to move by equal amounts."""
 
-       def project(self, x: np.ndarray, dx: np.ndarray) -> np.ndarray:
-           dx_out = dx.copy()
+       def prepare(self, evaluator, variables) -> None:
+           pass
+
+       def apply_to_step(self, x_proposed, state):
            # Assume variables 0 and 2 are radii of surfaces 2 and 4
-           mean_update = 0.5 * (dx_out[0] + dx_out[2])
-           dx_out[0] = mean_update
-           dx_out[2] = mean_update
-           return dx_out
+           mean_x = 0.5 * (x_proposed[0] + x_proposed[2])
+           x_proposed[0] = mean_x
+           x_proposed[2] = mean_x
+           return x_proposed
 
-       @property
-       def capability(self) -> set:
-           return {"PER_STEP_CONSTRAINTS"}
+       def to_scipy(self):
+           return []
 
-   result = minimize(problem, "dls", constraint_strategy=SymmetryConstraintStrategy())
+       def is_feasible(self, x, tol=1e-8) -> bool:
+           return abs(x[0] - x[2]) < tol
+
+   result = minimize(problem, "dls", constraints=SymmetryStrategy())
 
 
 Batched Ray Evaluation
@@ -445,7 +708,7 @@ Batched Ray Evaluation
 
 The batching path is implemented in
 :class:`optiland.optimization.batched_evaluator.BatchedRayEvaluator` and is
-integrated into ``OptimizationProblem`` by default.  You can opt out with
+integrated into ``OptimizationProblem`` by default. You can opt out with
 ``problem.disable_batching()`` and re-enable with ``problem.enable_batching()``.
 
 **Algorithm:**
@@ -468,7 +731,7 @@ Operands that are not currently batchable are evaluated through the standard
 direct path, so mixed merit functions are fully supported.
 
 For PyTorch workflows, this design keeps gradients valid because values are
-extracted by tensor indexing from traced data without detaching.  For NumPy
+extracted by tensor indexing from traced data without detaching. For NumPy
 workflows, behavior remains numerically equivalent to the standard per-operand
 evaluation path.
 
@@ -484,42 +747,22 @@ evaluation path.
 Experimental Features
 ----------------------
 
-jacobian_mode
-~~~~~~~~~~~~~
-
-The ``jacobian_mode`` kwarg on :func:`~optiland.optimization.minimize` is
-experimental and controls how the evaluator computes the Jacobian:
-
-* ``"stateful"`` (default) — standard forward-difference evaluation; supported
-  on both backends.
-* ``"functional"`` — wraps each merit evaluation as a pure function call.
-  Useful for functional-style transforms but carries overhead from repeated
-  state serialization.
-* ``"compiled"`` — traces the forward evaluation through ``torch.compile``
-  before differentiating.  Can significantly reduce per-step overhead on
-  repeated calls, but requires the PyTorch backend and is not part of the
-  all-backend compatibility guarantee.
-
-These modes do not affect the public result interface.
-
 Cancel Token and CancelObserver
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 For long-running jobs (GUI integration, threaded workers), a
-:class:`~optiland.optimization.cancel.CancelToken` can be set from another
-thread to request soft cancellation:
+:class:`~optiland.optimization.observers.cancel.CancelToken` can be set from
+another thread to request soft cancellation:
 
 .. code-block:: python
 
-   from optiland.optimization.cancel import CancelToken
-   from optiland.optimization.observers.cancel import CancelObserver
+   from optiland.optimization.observers.cancel import CancelToken, CancelObserver
    import threading
 
    token = CancelToken()
-   obs = CancelObserver(token)
 
    def run_opt():
-       result = minimize(problem, "dls", observers=[obs])
+       result = minimize(problem, "dls", cancel_token=token)
 
    t = threading.Thread(target=run_opt)
    t.start()
@@ -529,7 +772,7 @@ thread to request soft cancellation:
    t.join()
 
 On cancellation, the driver finishes the current step cleanly, fires
-``observer.on_stop()``, and returns a result with ``result.success=False``
+``observer.on_end()``, and returns a result with ``result.success=False``
 and ``result.status="cancelled"``.
 
 
@@ -537,22 +780,22 @@ GlassExpert: Categorical Glass Optimization
 ---------------------------------------------
 
 :class:`~optiland.optimization.GlassExpert` is a specialized optimizer for
-problems that include categorical material variables.  It is **not** accessible
-via :func:`~optiland.optimization.minimize` — by design — because it manages
+problems that include categorical material variables. It is **not** accessible
+via :func:`~optiland.optimization.minimize` by design, because it manages
 a hybrid discrete/continuous search.
 
 Architecture
 ~~~~~~~~~~~~
 
 GlassExpert separates continuous variables (radii, thicknesses) from
-categorical glass variables.  It runs a greedy nearest-neighbour search
+categorical glass variables. It runs a greedy nearest-neighbour search
 over the glass catalog, interleaving discrete glass substitutions with
 continuous local optimizations.
 
 The algorithm operates in five phases:
 
-1. **Initialization** — set up the problem with both continuous variables and
-   categorical ``"material"`` variables.  Each material variable holds a list
+1. **Initialization** -- set up the problem with both continuous variables and
+   categorical ``"material"`` variables. Each material variable holds a list
    of candidate glasses:
 
    .. code-block:: python
@@ -565,9 +808,9 @@ The algorithm operates in five phases:
 
       optimizer = GlassExpert(problem)
 
-2. **Global exploration** — for each glass variable, GlassExpert downsamples
+2. **Global exploration** -- for each glass variable, GlassExpert downsamples
    the full catalog using K-Means clustering (controlled by ``pool_size``),
-   retaining a diverse representative subset.  Each candidate is temporarily
+   retaining a diverse representative subset. Each candidate is temporarily
    substituted into the design, followed by a continuous optimization.
 
    .. figure:: ../../_static/glass_map_global_exploration_space.png
@@ -576,7 +819,7 @@ The algorithm operates in five phases:
 
       Glass map (n_d vs. V_d) showing candidates selected for global search.
 
-3. **Local exploration** — after global search, for each glass variable,
+3. **Local exploration** -- after global search, for each glass variable,
    the ``num_neighbours`` nearest materials in (n_d, V_d) space are trialed.
 
    .. figure:: ../../_static/glass_map_local_exploration_space.png
@@ -585,11 +828,11 @@ The algorithm operates in five phases:
 
       Glass map showing candidates selected for local search.
 
-4. **Evaluation and refinement** — for each candidate glass, a continuous
-   local optimization is run on all continuous variables.  If the new glass
+4. **Evaluation and refinement** -- for each candidate glass, a continuous
+   local optimization is run on all continuous variables. If the new glass
    produces a lower merit, it is kept; otherwise the design reverts.
 
-5. **Final polish** — a final local continuous optimization with the selected
+5. **Final polish** -- a final local continuous optimization with the selected
    glass combination.
 
 Running GlassExpert
@@ -606,7 +849,7 @@ Running GlassExpert
    )
 
 The merit function trace during a GlassExpert run typically shows step
-discontinuities — these are normal and correspond to the design being restored
+discontinuities -- these are normal and correspond to the design being restored
 to its best known state when a trialed glass worsens the merit:
 
 .. figure:: ../../_static/glass_expert_error_function.png
@@ -620,7 +863,7 @@ Run duration scales with the number of lens elements and ``num_neighbours``.
 Key Implementation Notes
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-* **optiland.optimization.glass_expert.GlassExpert** — main class.
+* **optiland.optimization.glass_expert.GlassExpert** -- main class.
 * Glasses are identified by name (string), but their (n_d, V_d) properties
   are used for neighborhood searches and K-Means downsampling (via
   ``optiland.materials.get_nd_vd`` and ``get_neighbour_glasses``).
@@ -632,13 +875,13 @@ Extending GlassExpert
 
 Developers can extend GlassExpert by:
 
-* **Customizing the search strategy** — subclass ``GlassExpert`` and override
+* **Customizing the search strategy** -- subclass ``GlassExpert`` and override
   ``_global_exploration()`` or ``_local_exploration()`` to use alternative
   discrete search heuristics (e.g., simulated annealing over the glass map).
-* **Integrating additional material properties** — override the distance
+* **Integrating additional material properties** -- override the distance
   metric used in ``_local_exploration()`` to account for cost, thermal
   coefficient, or transmission band.
-* **Reducing local optimization calls** — use a surrogate model to predict
+* **Reducing local optimization calls** -- use a surrogate model to predict
   merit for a given glass, reserving full optimization for top candidates.
 
 For a practical example, see
@@ -648,7 +891,7 @@ For a practical example, see
 See Also
 --------
 
-* :doc:`method_selection` — choosing the right method
-* :doc:`operands_variables` — full operand and variable catalog
-* :doc:`migration` — migrating from deprecated optimizer classes
-* :doc:`/api/api_optimization` — full API reference
+* :doc:`method_selection` -- choosing the right method
+* :doc:`operands_variables` -- full operand and variable catalog
+* :doc:`migration` -- migrating from deprecated optimizer classes
+* :doc:`/api/api_optimization` -- full API reference

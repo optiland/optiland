@@ -36,9 +36,9 @@ Method Selection Decision Table
    * - Classical lens, all equality targets, ``m >= n``, ``numpy``
      - ``"dls"`` (native LM)
      - CODE V / Zemax-style damped least squares; robust, fast on dense small problems.
-   * - Same, need exact equality constraints
-     - ``"dls"`` + ``NullSpaceStrategy``
-     - Exact CODE-V-style constraint projection at each LM step.
+   * - Same, need exact equality constraints (hard constraints)
+     - ``"dls"`` + ``problem.add_constraint``
+     - KKT active-set enforcement; use ``add_constraint`` with ``target=`` for exact equalities.
    * - Close to a solution (no damping needed)
      - ``"gauss_newton"``
      - No ``\lambda``-damping overhead; converges faster when already near the minimum.
@@ -70,17 +70,53 @@ Method Selection Decision Table
 The ``tol`` argument to :func:`~optiland.optimization.minimize` controls different criteria depending on the method family:
 
 * **Native LM / DLS / GaussNewton** and **SciPy managed (local, LS)**:
-  ``tol`` is passed to :class:`~optiland.optimization.stopping.criteria.CostTolerance` — stops when the relative change in merit falls below ``tol``.
+  ``tol`` is passed to :class:`~optiland.optimization.stopping.criteria.CostTolerance` (stops when the relative change in merit falls below ``tol``).
 * **Torch first-order (adam, sgd)**:
-  ``tol`` is passed to :class:`~optiland.optimization.stopping.criteria.GradNormTolerance` — stops when the gradient L2 norm falls below ``tol``.
+  ``tol`` is passed to :class:`~optiland.optimization.stopping.criteria.GradNormTolerance` (stops when the gradient L2 norm falls below ``tol``).
 
 The active criterion and the threshold that fired are always recorded in ``result.status`` (e.g., ``"cost_tol=1.00e-03 (rel_change=8.21e-04)"``), so you can inspect which criterion terminated the run without parsing console output.
+
+Hard Constraints and Method Routing
+-------------------------------------
+
+When ``problem.constraints`` is non-empty (hard constraints declared via
+``problem.add_constraint``), ``method="auto"`` automatically selects ``"dls"``
+regardless of backend. Hard constraints require ``method="dls"`` or
+``method="lm"`` -- any other method raises
+:class:`~optiland.optimization.errors.ConfigurationError`.
+
+.. code-block:: python
+
+   problem.add_constraint(operand_type="f2", target=50.0, input_data={"optic": lens})
+   result = minimize(problem)        # "auto" -> "dls" (KKT path)
+   result = minimize(problem, "lm") # also valid
+
+For soft operand-based targets (no strict enforcement), continue using
+``problem.add_operand`` with ``target=``. See :ref:`hard_constraints` for the
+full workflow and diagnostics.
+
+``on_failure`` and Numerical Robustness
+----------------------------------------
+
+The ``on_failure`` kwarg controls what happens when a ray trace fails or the
+merit function returns a non-finite value:
+
+* ``"reject"`` (default, **Stable**) -- the step is rejected; the optimizer
+  backs off. Safest for all methods.
+* ``"raise"`` -- raises an exception immediately. Useful for debugging.
+* ``"penalty"`` -- returns a large finite penalty. SciPy managed methods
+  always use this internally (SciPy cannot consume NaN).
+
+For ``"central"`` finite differences (``scheme="central"``), accuracy improves
+at roughly 2x the cost of ``"forward"`` (the default). Prefer ``"central"``
+when tight convergence is needed and the merit landscape is smooth.
 
 ``auto`` Resolution
 -------------------
 
 When ``method="auto"`` (the default):
 
+* **Hard constraints present** -> ``"dls"`` (KKT path).
 * Under the **torch** backend -> ``"adam"``.
 * Under **numpy**, all operands have targets, and ``m >= n`` -> ``"dls"``.
 * Under **numpy**, otherwise -> ``"l-bfgs-b"``.
@@ -90,7 +126,7 @@ The resolved method is printed at the start of the run when ``disp=True`` (e.g.,
 Side Effects / Mutation Contract
 --------------------------------
 
-:func:`~optiland.optimization.minimize` **mutates the optic in place** — on return the optic holds the optimized design. ``result.x`` is a convenience copy of the final parameter vector. To preserve the starting design, snapshot the optic yourself before calling ``minimize()``.
+:func:`~optiland.optimization.minimize` **mutates the optic in place**. On return, the optic holds the optimized design. ``result.x`` is a convenience copy of the final parameter vector. To preserve the starting design, snapshot the optic yourself before calling ``minimize()``.
 
 The same side-effect contract applies to :class:`~optiland.ml.OpticalSystemModule`: each ``forward()`` call pushes the current ``nn.Parameter`` values into the optic's surface attributes.
 
@@ -125,13 +161,9 @@ The following classes are **deprecated** (emit ``DeprecationWarning`` on constru
 Non-Deprecated Standalone Optimizers
 ------------------------------------
 
-These are **not** accessible via :func:`~optiland.optimization.minimize` by design — use them directly:
+These are **not** accessible via :func:`~optiland.optimization.minimize` by design. Use them directly:
 
-* :class:`~optiland.optimization.GlassExpert` — discrete glass search.
-* :class:`~optiland.optimization.OrthogonalDescent` — descent in the operand null-space.
-* :class:`~optiland.optimization.optimizer.custom.particle_swarm.ParticleSwarm` — particle-swarm global optimizer.
+* :class:`~optiland.optimization.GlassExpert`: discrete glass search.
+* :class:`~optiland.optimization.OrthogonalDescent`: descent in the operand null-space.
+* :class:`~optiland.optimization.optimizer.custom.particle_swarm.ParticleSwarm`: particle-swarm global optimizer.
 
-Changelog (Correctness Fix — Multi-Field/Multi-Wavelength Weighting)
----------------------------------------------------------------------
-
-The ``residual_vector()`` / ``LeastSquares`` weighting now correctly honors field and wavelength weights for multi-field/multi-wavelength problems, so that ``sum(weighted_residuals**2) == sum_squared()``. This is a correctness fix; designs that relied on the old unweighted residuals should verify their merit-function values after upgrading.

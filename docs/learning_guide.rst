@@ -38,9 +38,10 @@ New to Optiland? Start with :ref:`start_here` to find the path that fits your go
    Tutorial 3b: Choosing a Method <examples/Tutorial_3b_Choosing_a_Method>
    Tutorial 3c: Stepped Optimization and DLS/LM <examples/Tutorial_3c_Stepped_Optimization_and_DLS>
    Tutorial 3d: Inspecting and Controlling a Run <examples/Tutorial_3d_Inspecting_and_Controlling_a_Run>
-   Tutorial 3e: OpticalSystemModule — You Own the Loop <examples/Tutorial_3e_OpticalSystemModule>
+   Tutorial 3e: OpticalSystemModule - You Own the Loop <examples/Tutorial_3e_OpticalSystemModule>
    Tutorial 3f: Standalone and Global Optimizers <examples/Tutorial_3f_Standalone_and_Global_Optimizers>
-   Tutorial 3g: Case Study — Cooke Triplet <examples/Tutorial_3g_Cooke_Triplet_Case_Study>
+   Tutorial 3g: Case Study - Cooke Triplet <examples/Tutorial_3g_Cooke_Triplet_Case_Study>
+   Tutorial 3h: From Scratch - Double Gauss <examples/Tutorial_3h_Double_Gauss_From_Scratch>
 
 
 4. Off-Axis & Complex Systems
