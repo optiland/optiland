@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib.util
+import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
@@ -64,6 +66,29 @@ def build_optimizer(
     optic = FakeOptic()
     problem = FakeProblem(optic, merit_values or [1.0])
     return FakeOptimizer(problem), optic
+
+
+def test_module_imports_without_ipython(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The module stays importable when IPython is absent (headless envs).
+
+    Re-executes the module source with ``IPython`` blocked so the
+    ``except ImportError`` guard runs and ``display`` falls back to ``None``,
+    without mutating the already-imported shared module other tests rely on.
+    """
+    # A ``None`` entry in ``sys.modules`` makes ``import IPython`` raise
+    # ImportError, simulating an install without IPython.
+    monkeypatch.setitem(sys.modules, "IPython", None)
+    monkeypatch.setitem(sys.modules, "IPython.display", None)
+
+    spec = importlib.util.spec_from_file_location(
+        "live_plotter_no_ipython", live_plotter_module.__file__
+    )
+    assert spec is not None and spec.loader is not None
+    reloaded = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(reloaded)
+
+    assert reloaded.display is None
+    assert hasattr(reloaded, "LiveOptimizationPlotter")
 
 
 @pytest.fixture(autouse=True)
