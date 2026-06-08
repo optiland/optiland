@@ -449,7 +449,11 @@ class MaterialFile(BaseMaterial):
         Returns:
             dict: Parsed YAML data.
         """
-        with open(self.filename) as stream:
+        # The RefractiveIndex.INFO YAML files contain non-ASCII characters
+        # (e.g. the degree sign, em dashes). Decode explicitly as UTF-8 so the
+        # read does not depend on the platform's default text encoding -- on
+        # Windows that is cp1252/cp936 (GBK), which raises UnicodeDecodeError.
+        with open(self.filename, encoding="utf-8") as stream:
             return yaml.safe_load(stream)
 
     def _set_formula_type(self, formula_type):
