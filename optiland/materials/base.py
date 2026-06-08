@@ -10,14 +10,33 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+import hashlib
+import weakref
 from abc import ABC, abstractmethod
-from contextlib import suppress
 
 import numpy as np
 
 import optiland.backend as be
 from optiland.propagation.base import BasePropagationModel
 from optiland.propagation.homogeneous import HomogeneousPropagation
+
+# Maps id(array) -> (weakref, content_digest, version_token) so the O(N) content
+# hash in BaseMaterial._array_metadata_key runs once per array object and is
+# reused on later lookups. The weakref callback evicts the entry when the array
+# is collected, so a later array reusing the same id() never reads a stale
+# digest.
+_ARRAY_DIGEST_CACHE: dict[int, tuple] = {}
+
+
+def _array_content_key(value, digest: bytes) -> tuple:
+    """Assemble a cache-key tuple from a content digest plus coarse metadata."""
+    return (
+        "array-content",
+        digest,
+        tuple(getattr(value, "shape", ())),
+        str(getattr(value, "dtype", type(value).__name__)),
+        str(getattr(value, "device", None)),
+    )
 
 
 class BaseMaterial(ABC):
@@ -86,66 +105,50 @@ class BaseMaterial(ABC):
 
     @staticmethod
     def _array_metadata_key(value) -> tuple:
-        """Build an O(1) hash key for large arrays without
-        materializing all elements."""
-        # Torch tensors expose stable storage metadata and a version counter
-        # that changes on in-place writes.
-        if hasattr(value, "data_ptr"):
-            try:
-                sample = ()
-                num_el = value.numel()
-                if num_el > 0:
-                    flat_val = value.flatten()
-                    sample = (
-                        flat_val[0].item(),
-                        flat_val[num_el // 2].item(),
-                        flat_val[-1].item(),
-                    )
-                return (
-                    "tensor-meta",
-                    int(value.data_ptr()),
-                    tuple(value.shape),
-                    tuple(value.stride()) if hasattr(value, "stride") else None,
-                    int(value.storage_offset())
-                    if hasattr(value, "storage_offset")
-                    else 0,
-                    str(value.dtype),
-                    str(value.device) if hasattr(value, "device") else None,
-                    int(getattr(value, "_version", 0)),
-                    sample,
-                )
-            except Exception:
-                pass
+        """Build a content-addressed cache key for large arrays.
 
-        if isinstance(value, np.ndarray):
-            sample = ()
-            if value.size > 0:
-                sample = (
-                    value.flat[0],
-                    value.flat[value.size // 2],
-                    value.flat[-1],
-                )
-            return (
-                "ndarray-meta",
-                int(value.__array_interface__["data"][0]),
-                tuple(value.shape),
-                tuple(value.strides),
-                str(value.dtype),
-                sample,
+        The key identifies an array by its *contents*, never by its memory
+        location. Raw buffer pointers (``ndarray.__array_interface__["data"]``,
+        ``Tensor.data_ptr()``) and ``id()`` are reused by the allocator once an
+        array is garbage-collected, so two distinct wavelength arrays of the
+        same shape/dtype that reuse a freed slot would collide and ``n()`` would
+        return the previous array's refractive index -- a silent
+        cross-wavelength leak (issue #630).
+
+        Hashing the bytes is O(N), so the digest is memoized per array object in
+        ``_ARRAY_DIGEST_CACHE``; repeated lookups of the same array (e.g. one
+        wavelength bundle traced through every surface) are amortized O(1). A
+        weakref callback drops the entry when the array dies, so id() reuse can
+        never surface a stale digest.
+
+        NumPy exposes no in-place-write counter, so an array is treated as
+        immutable for its lifetime (optiland never mutates wavelength buffers in
+        place). Torch tensors carry ``_version``, folded into the memoization
+        token so in-place edits invalidate the cached digest.
+        """
+        oid = id(value)
+        token = int(getattr(value, "_version", 0))
+        cached = _ARRAY_DIGEST_CACHE.get(oid)
+        if cached is not None:
+            ref, digest, cached_token = cached
+            if ref() is value and cached_token == token:
+                return _array_content_key(value, digest)
+
+        if hasattr(value, "detach"):  # torch tensor
+            array = value.detach().cpu().contiguous().numpy()
+        else:  # numpy ndarray, list, or tuple
+            array = np.ascontiguousarray(np.asarray(value))
+        digest = hashlib.blake2b(array.tobytes(), digest_size=16).digest()
+
+        try:
+            ref = weakref.ref(
+                value, lambda _ref, _oid=oid: _ARRAY_DIGEST_CACHE.pop(_oid, None)
             )
-
-        sample = ()
-        shape = getattr(value, "shape", ())
-        if hasattr(value, "__getitem__") and len(shape) > 0:
-            with suppress(Exception):
-                sample = (value[0], value[len(value) // 2], value[-1])
-        return (
-            "array-meta",
-            id(value),
-            tuple(shape),
-            str(getattr(value, "dtype", type(value))),
-            sample,
-        )
+        except TypeError:
+            ref = None  # e.g. list/tuple cannot be weak-referenced; skip memo
+        if ref is not None:
+            _ARRAY_DIGEST_CACHE[oid] = (ref, digest, token)
+        return _array_content_key(value, digest)
 
     def _create_cache_key(self, wavelength: float | be.ndarray, **kwargs) -> tuple:
         """Creates a hashable cache key from wavelength and kwargs."""

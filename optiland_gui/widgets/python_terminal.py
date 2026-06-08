@@ -601,7 +601,7 @@ class PythonTerminalWidget(QWidget):
                 return False
 
         try:
-            with open(file_path, "w") as f:
+            with open(file_path, "w", encoding="utf-8") as f:
                 f.write(editor.toPlainText())
 
             editor.setProperty("is_modified", False)
@@ -621,7 +621,7 @@ class PythonTerminalWidget(QWidget):
         if not filepath:
             return
 
-        with open(filepath) as f:
+        with open(filepath, encoding="utf-8") as f:
             content = f.read()
 
         editor = self._get_current_editor()

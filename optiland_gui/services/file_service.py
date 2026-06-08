@@ -160,7 +160,7 @@ class FileService:
                 self._connector._optic = load_zemax_file(filepath)
                 self._current_filepath = None
             else:
-                with open(filepath) as f:
+                with open(filepath, encoding="utf-8") as f:
                     data = json.load(f, object_hook=json_inf_nan_hook)
                 self._connector._undo_redo_manager.clear_stacks()
                 self._connector._optic = Optic.from_dict(data)
@@ -186,7 +186,7 @@ class FileService:
         """
         try:
             data = self._connector._capture_optic_state()
-            with open(filepath, "w") as f:
+            with open(filepath, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4, cls=SpecialFloatEncoder)
             self._current_filepath = filepath
             self._connector.set_modified(False)
