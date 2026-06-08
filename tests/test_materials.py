@@ -196,6 +196,32 @@ class TestBaseMaterial:
         gc.collect()
         assert len(_ARRAY_DIGEST_CACHE) <= baseline + 2
 
+    def test_large_array_key_handles_non_weakref_sequence(self, set_test_backend):
+        """list/tuple wavelengths are content-addressed too, but cannot be
+        weak-referenced, so the digest memo is skipped (no error) while the keys
+        stay correct.
+        """
+
+        class DummyMaterial(BaseMaterial):
+            def _calculate_n(self, wavelength, **kwargs):
+                return 1.0
+
+            def _calculate_k(self, wavelength, **kwargs):
+                return 0.0
+
+        material = DummyMaterial()
+
+        # A list has no .shape, so it takes the metadata-key path; it also can't
+        # be weak-referenced, exercising the memo-skip branch.
+        a = [0.5] * 2_000
+        other = list(a)
+        other[7] = 0.6  # differ at one interior index
+
+        assert material._create_cache_key(a) == material._create_cache_key(list(a))
+        assert material._create_cache_key(a) != material._create_cache_key(other)
+        # tuples take the same (non-weak-referenceable) path without error
+        material._create_cache_key(tuple(a))
+
     def test_detach_if_tensor_numpy(self, set_test_backend):
         """_detach_if_tensor returns numpy arrays unchanged."""
         arr = np.array([1.5, 1.6])
