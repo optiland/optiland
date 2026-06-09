@@ -1254,3 +1254,36 @@ class NumpyBackend(AbstractBackend):
             Rotation: SciPy Rotation object.
         """
         return R.from_euler("xyz", euler)
+
+    def floor(self, x: Any) -> NDArray:
+        """Element-wise floor.
+
+        Args:
+            x: Input array.
+
+        Returns:
+            NDArray: Floor of each element.
+        """
+        return np.floor(x)
+
+    def index_add(
+        self,
+        target: NDArray,
+        dim: int,
+        index: NDArray,
+        source: NDArray,
+    ) -> NDArray:
+        """Scatter-add: result[index[i]] += source[i] along dim=0.
+
+        Args:
+            target: Accumulation buffer, shape (N, ...).
+            dim: Must be 0 (only 0 supported for NumPy path).
+            index: Integer indices, shape (K,).
+            source: Values to add, shape (K, ...).
+
+        Returns:
+            NDArray: New array with scattered values added.
+        """
+        result = target.copy()
+        np.add.at(result, index, source)
+        return result

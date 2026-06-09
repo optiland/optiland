@@ -396,6 +396,8 @@ def _build_detector(cs: CoordinateSystem, config) -> object:
             height=config.height,
             num_pixels_x=config.num_pixels_x,
             num_pixels_y=config.num_pixels_y,
+            splat=config.splat,
+            splat_sigma=config.splat_sigma,
         )
     if isinstance(config, SpectralDetectorConfig):
         wl_bins = be.linspace(config.wl_min, config.wl_max, config.num_bins + 1)
@@ -406,6 +408,8 @@ def _build_detector(cs: CoordinateSystem, config) -> object:
             num_pixels_x=config.num_pixels_x,
             num_pixels_y=config.num_pixels_y,
             wavelength_bins=wl_bins,
+            splat=config.splat,
+            splat_sigma=config.splat_sigma,
         )
     if isinstance(config, FarFieldDetectorConfig):
         return FarFieldDetector(
