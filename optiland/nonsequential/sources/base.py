@@ -99,7 +99,8 @@ class BaseNSQSource(ABC):
         """
         self.cs = cs
         self.spectrum = spectrum
-        self.total_flux = float(total_flux)
+        # Keep as-is (float or torch.Tensor) so autograd graph is not severed
+        self.total_flux = total_flux
 
     @abstractmethod
     def generate(self, num_rays: int, rng: np.random.Generator) -> NSQRayBundle:

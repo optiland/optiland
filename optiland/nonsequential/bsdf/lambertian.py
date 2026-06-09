@@ -26,8 +26,10 @@ class LambertianBSDF(BaseBSDF):
 
         Args:
             reflectance_value: Total hemispherical reflectance in [0, 1].
+                May be a torch Tensor with requires_grad=True for autograd.
         """
-        self.reflectance_value = float(reflectance_value)
+        # Intentionally not float()-cast so torch tensors remain attached.
+        self.reflectance_value = reflectance_value
 
     def sample(
         self,
@@ -78,7 +80,9 @@ class LambertianBSDF(BaseBSDF):
 
         # Convert back to backend array type (detached; no grad required)
         scattered_be = be.array(scattered.astype(np.float64))
-        weights_be = be.full(num_rays, self.reflectance_value)
+        # be.ones * reflectance_value preserves the autograd graph when
+        # reflectance_value is a torch Tensor with requires_grad=True.
+        weights_be = be.ones(num_rays) * self.reflectance_value
 
         return scattered_be, weights_be
 
@@ -98,7 +102,7 @@ class LambertianBSDF(BaseBSDF):
         Returns:
             Array of reflectance_value, shape (N,).
         """
-        return be.full(incident_dirs.shape[0], self.reflectance_value)
+        return be.ones(incident_dirs.shape[0]) * self.reflectance_value
 
 
 def _orthonormal_basis(n: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
+import optiland.backend as be
 from optiland.nonsequential.components.base import _get_transform
 from optiland.nonsequential.ray_bundle import NSQRayBundle
 from optiland.nonsequential.sources.base import BaseNSQSource, Spectrum
@@ -109,6 +110,7 @@ class CollimatedSource(BaseNSQSource):
 
         # Sample wavelengths [µm]
         wavelengths = self.spectrum.sample(num_rays, rng)
+        # Divide preserves torch tensor when total_flux is a Tensor (for autograd)
         flux_per_ray = self.total_flux / num_rays
 
         # Initialize n_current from medium if provided
@@ -127,7 +129,9 @@ class CollimatedSource(BaseNSQSource):
             L=dirs_global[:, 0].copy(),
             M=dirs_global[:, 1].copy(),
             N=dirs_global[:, 2].copy(),
-            flux=np.full(num_rays, flux_per_ray),
+            # be.ones * flux_per_ray keeps the torch autograd graph when
+            # total_flux is a Tensor; falls back to numpy when it's a float.
+            flux=be.ones(num_rays) * flux_per_ray,
             wavelength=wavelengths,
             n_current=n_init,
             bounce=np.zeros(num_rays, dtype=np.int32),

@@ -78,3 +78,17 @@ class NumpyBackend(ArrayBackend):
             NumPy array of uniform random numbers in [0, 1).
         """
         return self.rng.random(shape)
+
+    def _maybe_compact(self, rays: NSQRayBundle) -> NSQRayBundle:
+        """Compact dead rays after every bounce for the NumPy fast path.
+
+        Removes rays where ``alive=False`` so subsequent intersection tests
+        skip them, giving a significant speedup when many rays die early.
+
+        Args:
+            rays: Current ray bundle.
+
+        Returns:
+            Compacted ray bundle containing only alive rays.
+        """
+        return rays.compact()

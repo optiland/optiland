@@ -44,6 +44,21 @@ _EVENT_DTYPE = np.dtype(
 class ArrayBackend(TracerBackend):
     """Abstract base class for array-based tracing backends."""
 
+    def _maybe_compact(self, rays: NSQRayBundle) -> NSQRayBundle:
+        """Post-bounce hook: optionally compact dead rays from the bundle.
+
+        Default is a no-op (TorchBackend keeps fixed-shape tensors for the
+        autograd graph). NumpyBackend overrides this to call rays.compact(),
+        removing dead rays before each subsequent intersection test.
+
+        Args:
+            rays: Current ray bundle.
+
+        Returns:
+            Possibly compacted ray bundle.
+        """
+        return rays
+
     @abstractmethod
     def random_uniform(self, shape: tuple[int, ...]) -> np.ndarray:
         """Generate uniform random numbers on the backend device."""
@@ -89,7 +104,9 @@ class ArrayBackend(TracerBackend):
         t_start = time.perf_counter()
 
         sources = scene.sources
-        total_flux_in = sum(s.total_flux for s in sources)
+        # Float-cast for stats / kill-threshold; source.generate() uses the
+        # raw total_flux (may be a torch Tensor for autograd).
+        total_flux_in = sum(float(s.total_flux) for s in sources)
         num_rays_total = int(num_rays)
 
         flux_per_ray = total_flux_in / num_rays_total if num_rays_total > 0 else 1.0
@@ -334,12 +351,9 @@ class ArrayBackend(TracerBackend):
 
                     rays.alive = rays.alive & alive_flux & alive_depth
 
-                    # Compact when >50% rays are dead (NumPy fast path only)
-                    if (
-                        rays.num_rays_alive > 0
-                        and rays.num_rays_alive < rays.num_rays // 2
-                    ):
-                        rays = rays.compact()
+                    rays = self._maybe_compact(rays)
+                    if rays.num_rays == 0:
+                        break
 
                 source_remaining -= batch
 

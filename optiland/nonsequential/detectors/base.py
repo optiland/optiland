@@ -74,13 +74,21 @@ class BaseDetector(ABC):
             positions_l, directions_l
         )
 
+        # Geometry may return numpy arrays even in torch-backend mode (geometry
+        # internals are numpy-based). Convert to the current backend format so
+        # that be.where dispatches correctly in both NumPy and Torch paths.
+        t_hit = be.array(t_hit)
+        normals_l = be.array(normals_l)
+        hit_mask = be.array(hit_mask)
+
         # T_EPSILON guard: prevent self-intersection
         T_EPSILON = 1e-9
         t_hit = be.where(t_hit > T_EPSILON, t_hit, be.full_like(t_hit, be.inf))
         hit_mask = hit_mask & (t_hit > T_EPSILON)
 
-        t_hit = be.where(rays.alive, t_hit, be.full_like(t_hit, be.inf))
-        hit_mask = hit_mask & rays.alive
+        alive_be = be.array(rays.alive)
+        t_hit = be.where(alive_be, t_hit, be.full_like(t_hit, be.inf))
+        hit_mask = hit_mask & alive_be
 
         normals_g = normals_l @ R_arr.T
         return t_hit, normals_g, hit_mask

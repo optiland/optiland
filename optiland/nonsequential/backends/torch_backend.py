@@ -157,7 +157,9 @@ class TorchBackend(TracerBackend):
         t_start = time.perf_counter()
 
         sources = scene.sources
-        total_flux_in = sum(s.total_flux for s in sources)
+        # Float-cast for stats / kill-threshold; source.generate() uses the
+        # raw total_flux (may be a torch Tensor for autograd).
+        total_flux_in = sum(float(s.total_flux) for s in sources)
         num_rays_total = int(num_rays)
 
         flux_per_ray = total_flux_in / num_rays_total if num_rays_total > 0 else 1.0
@@ -223,6 +225,10 @@ class TorchBackend(TracerBackend):
             while source_remaining > 0:
                 batch = min(batch_size, source_remaining)
                 rays = source.generate(batch, self.rng)
+                # Ensure all physics arrays are torch tensors.  Sources
+                # produce numpy arrays by default; NumPy 2.0 disallows
+                # mixed numpy/torch arithmetic, so we promote upfront.
+                rays = self._ensure_torch_bundle(rays)
                 _log_birth(rays, source_name)
 
                 # Fixed-depth loop (no compaction)
@@ -409,6 +415,50 @@ class TorchBackend(TracerBackend):
             det_indices = np.where(better, i, det_indices)
 
         return t_min, hit_normals, det_indices
+
+    def _ensure_torch_bundle(self, rays: NSQRayBundle) -> NSQRayBundle:
+        """Convert all NSQRayBundle float arrays to torch tensors.
+
+        Sources produce numpy arrays by default.  NumPy 2.0 disallows mixed
+        numpy/torch arithmetic, so we promote every field to the current
+        backend format at batch start.  Gradient-carrying fields (flux)
+        are left untouched if already a Tensor.
+
+        Args:
+            rays: Ray bundle from source.generate().
+
+        Returns:
+            Same ray bundle with all physics arrays as torch Tensors.
+        """
+        import torch as _torch  # noqa: PLC0415
+
+        def _to_float(x: object) -> _torch.Tensor:
+            if isinstance(x, _torch.Tensor):
+                return x
+            return be.array(x)
+
+        def _to_bool(x: object) -> _torch.Tensor:
+            if isinstance(x, _torch.Tensor) and x.dtype == _torch.bool:
+                return x
+            arr = to_numpy(x) if isinstance(x, _torch.Tensor) else x
+            return _torch.from_numpy(np.asarray(arr, dtype=bool).copy())
+
+        rays.x = _to_float(rays.x)
+        rays.y = _to_float(rays.y)
+        rays.z = _to_float(rays.z)
+        rays.L = _to_float(rays.L)
+        rays.M = _to_float(rays.M)
+        rays.N = _to_float(rays.N)
+        rays.flux = _to_float(rays.flux)
+        rays.wavelength = _to_float(rays.wavelength)
+        rays.n_current = _to_float(rays.n_current)
+        rays.alive = _to_bool(rays.alive)
+        # bounce: keep as int32 tensor (used for depth comparisons)
+        if not isinstance(rays.bounce, _torch.Tensor):
+            rays.bounce = _torch.from_numpy(
+                np.asarray(rays.bounce, dtype=np.int32).copy()
+            )
+        return rays
 
     def _estimate_bounding_scale(self, scene: NSQScene) -> float:
         """Estimate a reasonable length to extend escaped rays."""
