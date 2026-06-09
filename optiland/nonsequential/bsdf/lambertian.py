@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import numpy as np
 
+import optiland.backend as be
+from optiland.backend.utils import to_numpy
 from optiland.nonsequential.bsdf.base import BaseBSDF
 
 
@@ -38,13 +40,13 @@ class LambertianBSDF(BaseBSDF):
         """Sample cosine-weighted hemisphere directions around normals.
 
         Uses Malley's method: sample uniform disk, project to hemisphere.
+        Sampling is detached (numpy RNG); weights are plain scalars.
 
         Args:
             num_rays: Number of rays.
-            incident_dirs: Incident directions, shape (N, 3). Unused for
-                Lambertian scatter but kept for API consistency.
+            incident_dirs: Incident directions, shape (N, 3).
             normals: Surface normals, shape (N, 3), pointing toward ray side.
-            wavelengths: Wavelengths [nm], shape (N,).
+            wavelengths: Wavelengths [µm], shape (N,).
             rng: NumPy random generator.
 
         Returns:
@@ -52,39 +54,33 @@ class LambertianBSDF(BaseBSDF):
         """
         if rng is None:
             rng = np.random.default_rng()
-        xp = _get_xp(incident_dirs)
 
-        # Sample cosine-weighted hemisphere in local frame
-        # Using rejection sampling of unit sphere + normalisation
-        r1 = np.asarray(rng.random(num_rays), dtype=np.float64)
-        r2 = np.asarray(rng.random(num_rays), dtype=np.float64)
+        # Sampling is inherently stochastic/detached -- use numpy throughout
+        normals_np = np.asarray(to_numpy(normals), dtype=np.float64)
+
+        r1 = rng.random(num_rays)
+        r2 = rng.random(num_rays)
 
         # Malley's method
         phi = 2.0 * np.pi * r1
         cos_theta = np.sqrt(r2)
         sin_theta = np.sqrt(1.0 - r2)
 
-        # Local frame: z = normal
         lx = sin_theta * np.cos(phi)
         ly = sin_theta * np.sin(phi)
         lz = cos_theta
 
-        # Build orthonormal basis (n, t, b) around the normal
-        n = np.asarray(_to_numpy(normals), dtype=np.float64)
-        t, b = _orthonormal_basis(n)
+        t_vec, b_vec = _orthonormal_basis(normals_np)
 
-        # Transform to global frame
-        scattered = lx[:, None] * t + ly[:, None] * b + lz[:, None] * n
-
-        # Normalize
+        scattered = lx[:, None] * t_vec + ly[:, None] * b_vec + lz[:, None] * normals_np
         norms = (scattered * scattered).sum(axis=1, keepdims=True) ** 0.5
         scattered = scattered / norms
 
-        if xp is not np:
-            scattered = xp.array(scattered)
+        # Convert back to backend array type (detached; no grad required)
+        scattered_be = be.array(scattered.astype(np.float64))
+        weights_be = be.full(num_rays, self.reflectance_value)
 
-        weights = xp.full(num_rays, self.reflectance_value, dtype=incident_dirs.dtype)
-        return scattered, weights
+        return scattered_be, weights_be
 
     def reflectance(
         self,
@@ -97,19 +93,16 @@ class LambertianBSDF(BaseBSDF):
         Args:
             incident_dirs: Incident directions, shape (N, 3).
             normals: Surface normals, shape (N, 3).
-            wavelengths: Wavelengths [nm], shape (N,).
+            wavelengths: Wavelengths [µm], shape (N,).
 
         Returns:
             Array of reflectance_value, shape (N,).
         """
-        xp = _get_xp(incident_dirs)
-        return xp.full(
-            incident_dirs.shape[0], self.reflectance_value, dtype=incident_dirs.dtype
-        )
+        return be.full(incident_dirs.shape[0], self.reflectance_value)
 
 
 def _orthonormal_basis(n: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Build two tangent vectors perpendicular to n.
+    """Build two tangent vectors perpendicular to n (numpy, for detached sampling).
 
     Args:
         n: Normal vectors, shape (N, 3), already normalised.
@@ -117,44 +110,16 @@ def _orthonormal_basis(n: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     Returns:
         Pair of tangent vectors (t, b), each shape (N, 3).
     """
-    # Frisvad / Duff et al. method
     N = n.shape[0]
-    t = np.empty_like(n)
-    b = np.empty_like(n)
 
-    # For each normal, pick a non-parallel reference vector
     abs_nx = np.abs(n[:, 0])
     use_y = abs_nx > 0.9
 
     ref = np.zeros((N, 3), dtype=n.dtype)
-    ref[~use_y, 1] = 1.0  # use Y axis
-    ref[use_y, 2] = 1.0  # use Z axis when n is close to X
+    ref[~use_y, 1] = 1.0
+    ref[use_y, 2] = 1.0
 
-    t = np.cross(n, ref)
-    t /= (t * t).sum(axis=1, keepdims=True) ** 0.5
-    b = np.cross(n, t)
-    return t, b
-
-
-def _to_numpy(arr: np.ndarray) -> np.ndarray:
-    """Convert cupy array to numpy if needed."""
-    try:
-        import cupy  # type: ignore[import]
-
-        if isinstance(arr, cupy.ndarray):
-            return cupy.asnumpy(arr)
-    except ImportError:
-        pass
-    return arr
-
-
-def _get_xp(arr: np.ndarray):
-    """Return numpy or cupy depending on the array type."""
-    try:
-        import cupy  # type: ignore[import]
-
-        if isinstance(arr, cupy.ndarray):
-            return cupy
-    except ImportError:
-        pass
-    return np
+    t_vec = np.cross(n, ref)
+    t_vec /= (t_vec * t_vec).sum(axis=1, keepdims=True) ** 0.5
+    b_vec = np.cross(n, t_vec)
+    return t_vec, b_vec

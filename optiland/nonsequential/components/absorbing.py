@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from optiland.nonsequential.components.base import BaseComponent, _get_xp
+import optiland.backend as be
+from optiland.nonsequential.components.base import BaseComponent
 from optiland.nonsequential.materials.nsq_material import VACUUM
 
 if TYPE_CHECKING:
@@ -68,12 +69,10 @@ class AbsorbingComponent(BaseComponent):
             hit_mask: True for rays hitting this component, shape (N,).
             rng: Random number generator (unused).
         """
-        xp = _get_xp(rays.x)
-
         # Advance to hit point before killing
-        rays.x = xp.where(hit_mask, rays.x + t * rays.L, rays.x)
-        rays.y = xp.where(hit_mask, rays.y + t * rays.M, rays.y)
-        rays.z = xp.where(hit_mask, rays.z + t * rays.N, rays.z)
+        rays.x = be.where(hit_mask, rays.x + t * rays.L, rays.x)
+        rays.y = be.where(hit_mask, rays.y + t * rays.M, rays.y)
+        rays.z = be.where(hit_mask, rays.z + t * rays.N, rays.z)
 
         # Count absorbed rays (must be alive when they hit)
         hit_alive = hit_mask & rays.alive
@@ -82,8 +81,8 @@ class AbsorbingComponent(BaseComponent):
 
         # Terminate rays
         rays.alive = rays.alive & ~hit_mask
-        rays.flux = xp.where(hit_mask, xp.zeros_like(rays.flux), rays.flux)
-        rays.bounce = xp.where(hit_mask, rays.bounce + 1, rays.bounce)
+        rays.flux = be.where(hit_mask, be.zeros_like(rays.flux), rays.flux)
+        rays.bounce = be.where(hit_mask, rays.bounce + 1, rays.bounce)
 
     def reset_stats(self) -> None:
         """Reset per-simulation absorbed ray and flux counters."""

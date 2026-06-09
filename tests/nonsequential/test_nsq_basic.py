@@ -17,13 +17,16 @@ from optiland.coordinate_system import CoordinateSystem
 from optiland.nonsequential import (
     VACUUM,
     CollimatedSource,
+    CollimatedSourceConfig,
     ConicGeometry,
     FarFieldDetector,
     FinitePlaneGeometry,
     IrradianceDetector,
+    IrradianceDetectorConfig,
     NSQScene,
     NSQTracer,
     PointSource,
+    PointSourceConfig,
     ReflectiveComponent,
     RefractiveComponent,
     Spectrum,
@@ -246,14 +249,14 @@ class TestFlatMirrorReflection:
         )
 
         scene = NSQScene()
-        scene.add_component(mirror)
-        scene.add_source(src)
-        scene.add_detector(det)
+        scene.add_component("mirror", mirror)
+        scene.add_source("src", src_cs, CollimatedSourceConfig(spectrum=spec, total_flux=1.0, aperture_radius=1.0))
+        scene.add_detector("det", det_cs, IrradianceDetectorConfig(width=10.0, height=10.0, num_pixels_x=64, num_pixels_y=64))
 
-        tracer = NSQTracer(scene, num_rays=10_000, max_bounces=5, seed=42)
-        result = tracer.trace()
+        tracer = NSQTracer(scene)
+        result = tracer.trace(num_rays=10_000, max_depth=5, seed=42)
 
-        irr = result.detectors["detector_0"]
+        irr = result.detectors["det"]
         # Should detect most flux (some geometric clipping expected)
         assert irr.num_rays_hit > 8000
 
@@ -294,13 +297,13 @@ class TestFluxConservation:
         )
 
         scene = NSQScene()
-        scene.add_source(src)
-        scene.add_detector(det)
+        scene.add_source("src", src_cs, CollimatedSourceConfig(spectrum=spec, total_flux=1.0, aperture_radius=5.0))
+        scene.add_detector("det", det_cs, IrradianceDetectorConfig(width=30.0, height=30.0, num_pixels_x=32, num_pixels_y=32))
 
-        tracer = NSQTracer(scene, num_rays=10_000, max_bounces=5, seed=0)
-        result = tracer.trace()
+        tracer = NSQTracer(scene)
+        result = tracer.trace(num_rays=10_000, max_depth=5, seed=0)
 
-        irr = result.detectors["detector_0"]
+        irr = result.detectors["det"]
         # All rays should reach the detector (beam r=5mm, detector 30mm wide)
         assert irr.num_rays_hit == 10_000
         # Total detected flux should equal total source flux
@@ -344,12 +347,12 @@ class TestFluxConservation:
         )
 
         scene = NSQScene()
-        scene.add_component(mirror)
-        scene.add_source(src)
-        scene.add_detector(det)
+        scene.add_component("mirror", mirror)
+        scene.add_source("src", src_cs, PointSourceConfig(spectrum=spec, total_flux=1.0, half_angle_deg=30.0))
+        scene.add_detector("det", det_cs, IrradianceDetectorConfig(width=200.0, height=200.0, num_pixels_x=64, num_pixels_y=64))
 
-        tracer = NSQTracer(scene, num_rays=20_000, max_bounces=5, seed=0)
-        result = tracer.trace()
+        tracer = NSQTracer(scene)
+        result = tracer.trace(num_rays=20_000, max_depth=5, seed=0)
 
         # Some rays should be detected; tracer should complete without error
         assert result.trace_time_sec > 0.0
@@ -380,12 +383,12 @@ class TestFluxConservation:
         )
 
         scene = NSQScene()
-        scene.add_component(mirror)
-        scene.add_source(src)
-        scene.add_detector(det)
+        scene.add_component("mirror", mirror)
+        scene.add_source("src", src_cs, CollimatedSourceConfig(spectrum=spec, total_flux=1.0, aperture_radius=2.0))
+        scene.add_detector("det", det_cs, IrradianceDetectorConfig(width=20.0, height=20.0, num_pixels_x=32, num_pixels_y=32))
 
-        tracer = NSQTracer(scene, num_rays=5_000, max_bounces=5, seed=0)
-        result = tracer.trace()
+        tracer = NSQTracer(scene)
+        result = tracer.trace(num_rays=5_000, max_depth=5, seed=0)
 
         # flux_conservation_error < 5% (some rays may escape around mirror edge)
         assert result.flux_conservation_error < 0.05
@@ -429,10 +432,7 @@ class TestNSQScene:
     def test_validate_no_sources(self):
         scene = NSQScene()
         cs = CoordinateSystem(x=0, y=0, z=0)
-        from optiland.nonsequential.components.geometry.analytic.plane import FinitePlaneGeometry  # noqa: PLC0415
-
-        det = IrradianceDetector(cs=cs, width=10.0, height=10.0, num_pixels_x=32, num_pixels_y=32)
-        scene.add_detector(det)
+        scene.add_detector("det", cs, IrradianceDetectorConfig(width=10.0, height=10.0, num_pixels_x=32, num_pixels_y=32))
         with pytest.raises(ValueError, match="no sources"):
             scene.validate()
 
@@ -440,8 +440,7 @@ class TestNSQScene:
         scene = NSQScene()
         cs = CoordinateSystem(x=0, y=0, z=0)
         spec = Spectrum.monochromatic(0.55)
-        src = PointSource(cs=cs, spectrum=spec, total_flux=1.0)
-        scene.add_source(src)
+        scene.add_source("src", cs, PointSourceConfig(spectrum=spec, total_flux=1.0))
         with pytest.raises(ValueError, match="no detectors"):
             scene.validate()
 
@@ -550,23 +549,16 @@ class TestMultiSourceRayCount:
         spec = Spectrum.monochromatic(0.55)
 
         src1_cs = CoordinateSystem(x=0, y=0, z=0)
-        src1 = CollimatedSource(cs=src1_cs, spectrum=spec, total_flux=1.0, aperture_radius=1.0)
-
         src2_cs = CoordinateSystem(x=5, y=0, z=0)
-        src2 = CollimatedSource(cs=src2_cs, spectrum=spec, total_flux=1.0, aperture_radius=1.0)
-
         det_cs = CoordinateSystem(x=0, y=0, z=10)
-        det = IrradianceDetector(
-            cs=det_cs, width=30.0, height=30.0, num_pixels_x=32, num_pixels_y=32
-        )
 
         scene = NSQScene()
-        scene.add_source(src1)
-        scene.add_source(src2)
-        scene.add_detector(det)
+        scene.add_source("src1", src1_cs, CollimatedSourceConfig(spectrum=spec, total_flux=1.0, aperture_radius=1.0))
+        scene.add_source("src2", src2_cs, CollimatedSourceConfig(spectrum=spec, total_flux=1.0, aperture_radius=1.0))
+        scene.add_detector("det", det_cs, IrradianceDetectorConfig(width=30.0, height=30.0, num_pixels_x=32, num_pixels_y=32))
 
-        tracer = NSQTracer(scene, num_rays=2000, seed=0)
-        result = tracer.trace()
+        tracer = NSQTracer(scene)
+        result = tracer.trace(num_rays=2000, seed=0)
 
         # Total rays = 2000 (sum across sources)
         assert result.num_rays_total == 2000
@@ -665,9 +657,9 @@ class TestDeathCauseFluxKilled:
         )
 
         scene = NSQScene()
-        scene.add_raw_component("absorber", absorber)
-        scene.add_source(src)
-        scene.add_detector(det)
+        scene.add_component("absorber", absorber)
+        scene.add_source("src", src_cs, CollimatedSourceConfig(spectrum=spec, total_flux=1.0, aperture_radius=1.0))
+        scene.add_detector("det", det_cs, IrradianceDetectorConfig(width=50.0, height=50.0, num_pixels_x=16, num_pixels_y=16))
 
         result = scene.trace(num_rays=1000, seed=0)
 

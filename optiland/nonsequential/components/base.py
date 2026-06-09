@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from optiland.nonsequential._utils import get_xp
+import optiland.backend as be
 
 if TYPE_CHECKING:
     from optiland.coordinate_system import CoordinateSystem
@@ -78,21 +78,18 @@ class BaseComponent(ABC):
                 - normals: Surface normals in global frame, shape (N, 3).
                 - hit_mask: Boolean hit mask, shape (N,).
         """
-        xp = _get_xp(rays.x)
         translation, rot = _get_transform(self.cs)
-        # R transforms column vectors local->global, so:
-        # local = R^T @ (global - t), i.e., for row vectors: (global - t) @ R
 
         # Global ray data as (N, 3) arrays
-        positions_g = xp.stack([rays.x, rays.y, rays.z], axis=1)
-        directions_g = xp.stack([rays.L, rays.M, rays.N], axis=1)
+        positions_g = be.stack([rays.x, rays.y, rays.z], axis=1)
+        directions_g = be.stack([rays.L, rays.M, rays.N], axis=1)
 
-        t_np = xp.array(translation, dtype=positions_g.dtype)
-        R_np = xp.array(rot, dtype=positions_g.dtype)
+        t_be = be.array(translation)
+        R_be = be.array(rot)
 
         # Transform to local frame
-        positions_l = (positions_g - t_np) @ R_np
-        directions_l = directions_g @ R_np
+        positions_l = (positions_g - t_be) @ R_be
+        directions_l = directions_g @ R_be
 
         t_hit, normals_l, hit_mask = self.geometry.ray_intersect(
             positions_l, directions_l
@@ -100,15 +97,16 @@ class BaseComponent(ABC):
 
         # T_EPSILON guard: prevent self-intersection after surface crossing
         T_EPSILON = 1e-9
-        t_hit = xp.where(t_hit > T_EPSILON, t_hit, xp.full_like(t_hit, xp.inf))
+        inf_like = be.ones_like(t_hit) * be.inf
+        t_hit = be.where(t_hit > T_EPSILON, t_hit, inf_like)
         hit_mask = hit_mask & (t_hit > T_EPSILON)
 
         # Dead rays can't hit
-        t_hit = xp.where(rays.alive, t_hit, xp.full_like(t_hit, xp.inf))
+        t_hit = be.where(rays.alive, t_hit, inf_like)
         hit_mask = hit_mask & rays.alive
 
         # Transform normals back to global: n_global_row = n_local_row @ R^T
-        normals_g = normals_l @ R_np.T
+        normals_g = normals_l @ R_be.T
 
         return t_hit, normals_g, hit_mask
 
@@ -164,8 +162,3 @@ def _get_transform(cs: CoordinateSystem) -> tuple[np.ndarray, np.ndarray]:
     translation = to_numpy(t_be).astype(np.float64)
     rotation = to_numpy(R_be).astype(np.float64)
     return translation, rotation
-
-
-def _get_xp(arr: np.ndarray):
-    """Backward-compatible alias for get_xp."""
-    return get_xp(arr)

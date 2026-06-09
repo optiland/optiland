@@ -1,6 +1,7 @@
-"""NSQ Material adapter.
+"""NSQ Material adapter -- thin differentiable wrapper over optiland.materials.
 
-Wraps optiland.materials.BaseMaterial for use in the non-sequential tracer.
+Evaluates refractive index as an attached computation node when the backend
+is PyTorch, enabling gradients w.r.t. material dispersion parameters.
 
 Kramer Harrison, 2026
 """
@@ -8,37 +9,44 @@ Kramer Harrison, 2026
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Union
 
 import numpy as np
 
+import optiland.backend as be
+
 if TYPE_CHECKING:
+    import torch
+
     from optiland.materials import BaseMaterial
     from optiland.nonsequential.bsdf.base import BaseBSDF
+
+# Wavelength input: Python float, numpy array, or torch Tensor
+WavelengthInput = Union[float, np.ndarray, "torch.Tensor"]
 
 
 @dataclass
 class NSQMaterial:
-    """Thin adapter over optiland.materials for non-sequential raytracing.
+    """Thin differentiable adapter over optiland.materials.BaseMaterial.
+
+    Evaluates ``n(wavelength_um)`` without any grad-severing casts
+    (no ``float()``, no ``np.asarray()``) so the result stays in the
+    autograd graph when using the Torch backend.
 
     Attributes:
-        optiland_material: Refractive index provider. None means vacuum (n=1).
-        bsdf: Optional surface scatter model for volumetric effects.
-        absorption_coeff: Beer-Lambert absorption coefficient [1/mm].
-            0.0 means lossless (MVP: always 0).
+        optiland_material: Underlying material model. None means vacuum (n=1).
+        bsdf: Optional surface scatter model.
     """
 
     optiland_material: BaseMaterial | None = None
     bsdf: BaseBSDF | None = None
-    absorption_coeff: float = 0.0
 
     @classmethod
     def from_glass(cls, name: str) -> NSQMaterial:
         """Resolve a glass catalog name to an NSQMaterial.
 
         Args:
-            name: Glass name (e.g. ``'N-BK7'``, ``'SF11'``).  Resolved via
-                :class:`optiland.materials.Material`.
+            name: Glass catalog name (e.g. ``'N-BK7'``, ``'SF11'``).
 
         Returns:
             NSQMaterial wrapping the resolved BaseMaterial.
@@ -56,29 +64,31 @@ class NSQMaterial:
             ) from exc
         return cls(optiland_material=mat)
 
-    def n(self, wavelength_um: float | np.ndarray) -> float | np.ndarray:
+    def n(self, wavelength_um: WavelengthInput) -> WavelengthInput:
         """Refractive index at the given wavelength(s).
 
+        Differentiable: when ``wavelength_um`` is a torch Tensor with
+        ``requires_grad=True``, the returned value carries attached gradients.
+        No ``float()`` or ``np.asarray()`` casts are applied to the result.
+
         Args:
-            wavelength_um: Wavelength(s) in micrometres [µm].
+            wavelength_um: Wavelength(s) in micrometres [µm]. Accepts Python
+                float, NumPy ndarray, or torch Tensor.
 
         Returns:
-            Refractive index. Returns 1.0 for vacuum.
+            Refractive index with the same array type as the input. Returns
+            ``1.0`` (scalar) for vacuum when input is a scalar, or a
+            ones-like array/tensor matching the input shape for array inputs.
         """
         if self.optiland_material is None:
-            if np.ndim(wavelength_um) == 0:
+            # Vacuum: return ones matching the input type/device
+            try:
+                return be.ones_like(wavelength_um)
+            except (TypeError, AttributeError):
                 return 1.0
-            return np.ones_like(np.asarray(wavelength_um, dtype=float))
-        result = self.optiland_material.n(np.asarray(wavelength_um, dtype=float))
-        try:
-            return (
-                float(result)
-                if np.ndim(result) == 0
-                else np.asarray(result, dtype=float)
-            )
-        except Exception:
-            return np.asarray(result, dtype=float)
+        # Pass wavelength directly -- preserves the grad graph
+        return self.optiland_material.n(wavelength_um)
 
 
-# Module-level vacuum constant -- refractive index 1.0, no scatter, lossless.
+# Module-level vacuum constant
 VACUUM: NSQMaterial = NSQMaterial(optiland_material=None)

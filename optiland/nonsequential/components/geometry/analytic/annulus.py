@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import numpy as np
 
+import optiland.backend as be
 from optiland.nonsequential.components.geometry.base import AABB, AnalyticGeometry
 
 
@@ -61,36 +62,34 @@ class AnnularPlaneGeometry(AnalyticGeometry):
         Returns:
             (t, normals, hit_mask) all in local frame.
         """
-        xp = _get_xp(origins)
         N = origins.shape[0]
 
         oz = origins[:, 2]
         dz = directions[:, 2]
 
         eps = 1e-9
+        inf_arr = be.ones(N) * be.inf
         # Avoid division by zero for rays parallel to the plane
-        t = xp.where(
-            xp.abs(dz) > eps,
+        t = be.where(
+            be.abs(dz) > eps,
             (self.z_offset - oz) / (dz + 1e-30),
-            xp.full(N, xp.inf),
+            inf_arr,
         )
 
-        # Compute hit position; for parallel rays t=inf so hx/hy may be
-        # inf or nan -- this is intentional: those values fail the r^2 check.
-        with np.errstate(invalid="ignore"):
-            hx = origins[:, 0] + t * directions[:, 0]
-            hy = origins[:, 1] + t * directions[:, 1]
-            r2 = hx * hx + hy * hy
+        # Compute hit position; inf t values naturally fail the r^2 check
+        hx = origins[:, 0] + t * directions[:, 0]
+        hy = origins[:, 1] + t * directions[:, 1]
+        r2 = hx * hx + hy * hy
 
         hit_mask = (
             (t > eps) & (r2 >= self.inner_radius**2) & (r2 <= self.outer_radius**2)
         )
 
-        t_out = xp.where(hit_mask, t, xp.full(N, xp.inf))
+        t_out = be.where(hit_mask, t, inf_arr)
 
         # Normal is (0, 0, +/-1) -- flip to face incoming ray
-        nz_sign = xp.where(dz > 0, -1.0, 1.0)
-        normals = xp.stack([xp.zeros(N), xp.zeros(N), nz_sign * xp.ones(N)], axis=1)
+        nz_sign = be.where(dz > 0, -1.0, 1.0)
+        normals = be.stack([be.zeros(N), be.zeros(N), nz_sign * be.ones(N)], axis=1)
 
         return t_out, normals, hit_mask
 
@@ -118,14 +117,3 @@ class AnnularPlaneGeometry(AnalyticGeometry):
         )
         corners_global = corners_local @ R.T + t_vec
         return AABB(corners_global.min(axis=0), corners_global.max(axis=0))
-
-
-def _get_xp(arr: np.ndarray):
-    try:
-        import cupy  # type: ignore[import]
-
-        if isinstance(arr, cupy.ndarray):
-            return cupy
-    except ImportError:
-        pass
-    return np

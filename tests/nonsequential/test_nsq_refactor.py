@@ -325,24 +325,21 @@ class TestBackwardCompat:
         cs = CoordinateSystem(z=50)
         comp = ReflectiveComponent(cs=cs, geometry=FinitePlaneGeometry(width=20, height=20))
         scene = NSQScene()
-        scene.add_component(comp)
+        scene.add_component("mirror", comp)
         assert len(scene.surfaces) == 1
 
     def test_old_add_source(self):
         cs = CoordinateSystem()
         spec = Spectrum.monochromatic(0.55)
-        src = PointSource(cs=cs, spectrum=spec, total_flux=1.0)
         scene = NSQScene()
-        scene.add_source(src)
+        scene.add_source("source_0", cs, PointSourceConfig(spectrum=spec, total_flux=1.0))
         assert len(scene.sources) == 1
-        # Auto-name should be 'source_0'
         assert "source_0" in scene.source_registry
 
     def test_old_add_detector(self):
         cs = CoordinateSystem(z=100)
-        det = IrradianceDetector(cs=cs, width=10, height=10, num_pixels_x=16, num_pixels_y=16)
         scene = NSQScene()
-        scene.add_detector(det)
+        scene.add_detector("detector_0", cs, IrradianceDetectorConfig(width=10, height=10, num_pixels_x=16, num_pixels_y=16))
         assert len(scene.detectors) == 1
         assert "detector_0" in scene.detector_registry
 
@@ -379,7 +376,7 @@ class TestLensIntegration:
                            IrradianceDetectorConfig(width=50, height=50,
                                                      num_pixels_x=64, num_pixels_y=64))
 
-        result = scene.trace(num_rays=10_000, max_bounces=10, seed=42)
+        result = scene.trace(num_rays=10_000, max_depth=10, seed=42)
 
         irr = result.detectors["D1"]
         assert result.total_flux_in == pytest.approx(1.0, rel=1e-6)

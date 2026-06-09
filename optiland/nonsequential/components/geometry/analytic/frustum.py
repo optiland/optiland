@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import numpy as np
 
+import optiland.backend as be
 from optiland.nonsequential.components.geometry.base import AABB, AnalyticGeometry
 
 
@@ -71,8 +72,6 @@ class CylindricalFrustumGeometry(AnalyticGeometry):
         Returns:
             (t, normals, hit_mask) all in local frame.
         """
-        xp = _get_xp(origins)
-
         ox, oy, oz = origins[:, 0], origins[:, 1], origins[:, 2]
         dx, dy, dz = directions[:, 0], directions[:, 1], directions[:, 2]
 
@@ -81,36 +80,32 @@ class CylindricalFrustumGeometry(AnalyticGeometry):
             # Degenerate frustum (zero height) -- no lateral surface to hit
             N = origins.shape[0]
             return (
-                xp.full(N, xp.inf),
-                xp.zeros((N, 3)),
-                xp.zeros(N, dtype=bool),
+                be.ones(N) * be.inf,
+                be.zeros((N, 3)),
+                be.zeros(N, dtype=bool),
             )
 
         slope = (self.r_back - self.r_front) / h
 
-        # r at the ray origin along z: rz = r_front + slope*(oz - z_front)
         rz = self.r_front + slope * (oz - self.z_front)
-        # rate of change of r with t: rv = slope * dz
         rv = slope * dz
 
-        # Quadratic coefficients: (dx^2 + dy^2 - rv^2)*t^2 + 2*(ox*dx + oy*dy - rz*rv)*t
-        #                          + (ox^2 + oy^2 - rz^2) = 0
         a = dx * dx + dy * dy - rv * rv
         b = 2.0 * (ox * dx + oy * dy - rz * rv)
         c = ox * ox + oy * oy - rz * rz
 
         disc = b * b - 4.0 * a * c
-        disc_safe = xp.maximum(disc, 0.0)
-        sqrt_disc = xp.sqrt(disc_safe)
+        disc_safe = be.maximum(disc, 0.0)
+        sqrt_disc = be.sqrt(disc_safe)
 
         eps = 1e-9
-        inf_val = xp.full(a.shape, xp.inf)
+        inf_val = be.ones_like(a) * be.inf
 
         # Linear fallback when |a| is very small (ray nearly parallel to axis)
-        a_small = xp.abs(a) < 1e-14
-        t_lin = xp.where(xp.abs(b) > 1e-14, -c / (b + 1e-30), inf_val)
+        a_small = be.abs(a) < 1e-14
+        t_lin = be.where(be.abs(b) > 1e-14, -c / (b + 1e-30), inf_val)
 
-        inv2a = xp.where(a_small, 0.0, 1.0 / (2.0 * a + 1e-30))
+        inv2a = be.where(a_small, 0.0, 1.0 / (2.0 * a + 1e-30))
         t1 = (-b - sqrt_disc) * inv2a
         t2 = (-b + sqrt_disc) * inv2a
 
@@ -125,16 +120,15 @@ class CylindricalFrustumGeometry(AnalyticGeometry):
         valid_lin = _valid(t_lin)
 
         # Pick the smallest valid t
-        t_best = xp.full(a.shape, xp.inf)
-        t_best = xp.where(valid2, t2, t_best)
-        t_best = xp.where(valid1, t1, t_best)
-        # For near-linear case, use linear solution
-        t_best = xp.where(a_small & valid_lin, t_lin, t_best)
+        t_best = be.ones_like(a) * be.inf
+        t_best = be.where(valid2, t2, t_best)
+        t_best = be.where(valid1, t1, t_best)
+        t_best = be.where(a_small & valid_lin, t_lin, t_best)
 
-        hit_mask = xp.isfinite(t_best)
+        hit_mask = be.isfinite(t_best)
 
         # Compute normals at hit points (clamp t for miss rays to avoid NaN)
-        t_nrm = xp.where(hit_mask, t_best, xp.zeros_like(t_best))
+        t_nrm = be.where(hit_mask, t_best, be.zeros_like(t_best))
         hx = ox + t_nrm * dx
         hy = oy + t_nrm * dy
         hz = oz + t_nrm * dz
@@ -144,15 +138,15 @@ class CylindricalFrustumGeometry(AnalyticGeometry):
         #   (2x, 2y, -2*r(z)*slope)
         nx = hx
         ny = hy
-        nz = -rz_hit * slope * xp.ones_like(hx)
-        n_len = xp.sqrt(nx * nx + ny * ny + nz * nz + 1e-30)
-        normals = xp.stack([nx / n_len, ny / n_len, nz / n_len], axis=1)
+        nz = -rz_hit * slope * be.ones_like(hx)
+        n_len = be.sqrt(nx * nx + ny * ny + nz * nz + 1e-30)
+        normals = be.stack([nx / n_len, ny / n_len, nz / n_len], axis=1)
 
         # Flip to face incoming ray
         dot = (directions * normals).sum(axis=1, keepdims=True)
-        normals = xp.where(dot > 0, -normals, normals)
+        normals = be.where(dot > 0, -normals, normals)
 
-        t_out = xp.where(hit_mask, t_best, inf_val)
+        t_out = be.where(hit_mask, t_best, inf_val)
         return t_out, normals, hit_mask
 
     def bounding_box(self, transform: tuple[np.ndarray, np.ndarray]) -> AABB:
@@ -183,14 +177,3 @@ class CylindricalFrustumGeometry(AnalyticGeometry):
         )
         corners_global = corners_local @ R.T + t_vec
         return AABB(corners_global.min(axis=0), corners_global.max(axis=0))
-
-
-def _get_xp(arr: np.ndarray):
-    try:
-        import cupy  # type: ignore[import]
-
-        if isinstance(arr, cupy.ndarray):
-            return cupy
-    except ImportError:
-        pass
-    return np

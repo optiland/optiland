@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import numpy as np
 
+import optiland.backend as be
+from optiland.backend.utils import to_numpy
 from optiland.nonsequential.bsdf.base import BaseBSDF
 
 
@@ -51,11 +53,13 @@ class HarveyShackBSDF(BaseBSDF):
     ) -> tuple[np.ndarray, np.ndarray]:
         """Sample scattered directions using ABg model via rejection sampling.
 
+        Sampling is detached (numpy). Weights are scalar scalings.
+
         Args:
             num_rays: Number of rays.
             incident_dirs: Incident directions, shape (N, 3).
             normals: Surface normals, shape (N, 3).
-            wavelengths: Wavelengths [nm], shape (N,).
+            wavelengths: Wavelengths [µm], shape (N,).
             rng: NumPy random generator.
 
         Returns:
@@ -63,21 +67,17 @@ class HarveyShackBSDF(BaseBSDF):
         """
         if rng is None:
             rng = np.random.default_rng()
-        xp = _get_xp(incident_dirs)
 
-        n_np = np.asarray(_to_numpy(normals), dtype=np.float64)
-        d_np = np.asarray(_to_numpy(incident_dirs), dtype=np.float64)
+        n_np = np.asarray(to_numpy(normals), dtype=np.float64)
+        d_np = np.asarray(to_numpy(incident_dirs), dtype=np.float64)
 
         # Specular direction: d - 2(d.n)n
         cos_i = (d_np * n_np).sum(axis=1, keepdims=True)
         d_spec = d_np - 2.0 * cos_i * n_np
         d_spec /= (d_spec * d_spec).sum(axis=1, keepdims=True) ** 0.5
 
-        # Sample ABg distribution via inverse CDF (approximate)
-        # Use cosine-weighted hemisphere and weight by BSDF/cos
-        # For simplicity: sample Lambertian hemisphere, weight by BSDF
-        from optiland.nonsequential.bsdf.lambertian import (
-            _orthonormal_basis,  # noqa: PLC0415
+        from optiland.nonsequential.bsdf.lambertian import (  # noqa: PLC0415
+            _orthonormal_basis,
         )
 
         r1 = rng.random(num_rays)
@@ -90,8 +90,8 @@ class HarveyShackBSDF(BaseBSDF):
         ly = sin_theta * np.sin(phi)
         lz = cos_theta
 
-        t, b = _orthonormal_basis(n_np)
-        scattered = lx[:, None] * t + ly[:, None] * b + lz[:, None] * n_np
+        t_vec, b_vec = _orthonormal_basis(n_np)
+        scattered = lx[:, None] * t_vec + ly[:, None] * b_vec + lz[:, None] * n_np
         norms = (scattered * scattered).sum(axis=1, keepdims=True) ** 0.5
         scattered = scattered / norms
 
@@ -99,18 +99,9 @@ class HarveyShackBSDF(BaseBSDF):
         delta_beta = scattered - d_spec
         beta_mag = (delta_beta * delta_beta).sum(axis=1) ** 0.5
         bsdf_val = self.b0 / (1.0 + (beta_mag / self.l0) ** self.s)
-        # Importance weight: BSDF / (cos_theta / pi) = pi * BSDF / cos_theta
-        flux_weights = np.pi * bsdf_val / np.maximum(lz, 1e-6)
-        # Clamp to [0, 1]
-        flux_weights = np.clip(flux_weights, 0.0, 1.0)
+        flux_weights = np.clip(np.pi * bsdf_val / np.maximum(lz, 1e-6), 0.0, 1.0)
 
-        if xp is not np:
-            scattered = xp.array(scattered)
-            flux_weights = xp.array(flux_weights)
-
-        return scattered.astype(incident_dirs.dtype), flux_weights.astype(
-            incident_dirs.dtype
-        )
+        return be.array(scattered.astype(np.float64)), be.array(flux_weights)
 
     def reflectance(
         self,
@@ -123,39 +114,11 @@ class HarveyShackBSDF(BaseBSDF):
         Args:
             incident_dirs: Incident directions, shape (N, 3).
             normals: Surface normals, shape (N, 3).
-            wavelengths: Wavelengths [nm], shape (N,).
+            wavelengths: Wavelengths [µm], shape (N,).
 
         Returns:
             Approximate reflectance values, shape (N,).
         """
-        # Rough estimate: integrate ABg over hemisphere
-        # For simplicity use the b0-based limit
-        xp = _get_xp(incident_dirs)
         n = incident_dirs.shape[0]
-        # Total scatter ~ pi * b0 * l0^s / (s - 1) for s > 1 (truncated)
         estimate = min(float(np.pi * self.b0 * self.l0), 1.0)
-        return xp.full(n, estimate, dtype=incident_dirs.dtype)
-
-
-def _to_numpy(arr: np.ndarray) -> np.ndarray:
-    """Convert cupy array to numpy if needed."""
-    try:
-        import cupy  # type: ignore[import]
-
-        if isinstance(arr, cupy.ndarray):
-            return cupy.asnumpy(arr)
-    except ImportError:
-        pass
-    return arr
-
-
-def _get_xp(arr: np.ndarray):
-    """Return numpy or cupy depending on the array type."""
-    try:
-        import cupy  # type: ignore[import]
-
-        if isinstance(arr, cupy.ndarray):
-            return cupy
-    except ImportError:
-        pass
-    return np
+        return be.full(n, estimate)

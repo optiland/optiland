@@ -13,8 +13,6 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    import numpy as np
-
     from optiland.nonsequential.scene import NSQScene
     from optiland.nonsequential.tracer import SimulationResult
 
@@ -37,7 +35,7 @@ class TracerBackend(ABC):
         self,
         scene: NSQScene,
         num_rays: int,
-        max_bounces: int = 200,
+        max_depth: int = 16,
         min_flux_fraction: float = 1e-6,
         batch_size: int = 1_000_000,
         seed: int | None = None,
@@ -50,7 +48,7 @@ class TracerBackend(ABC):
                 lists via :attr:`~NSQScene.surfaces`,
                 :attr:`~NSQScene.sources`, :attr:`~NSQScene.detectors`).
             num_rays: Total number of rays to launch.
-            max_bounces: Maximum surface interactions per ray before
+            max_depth: Maximum surface interactions per ray before
                 termination.
             min_flux_fraction: Rays whose flux drops below
                 ``min_flux_fraction * (total_flux / num_rays)`` are killed.
@@ -63,26 +61,3 @@ class TracerBackend(ABC):
             :class:`~optiland.nonsequential.tracer.SimulationResult` with
             per-detector results and global statistics.
         """
-
-    def intersect_scene(
-        self,
-        rays: np.ndarray,
-        components: list,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Find the nearest intersection of each ray with scene components.
-
-        This is a convenience helper used internally by ``NumpyBackend`` and
-        ``CupyBackend``.  Backends that implement a fully device-side loop
-        (e.g. OptiX) may not need this method.
-
-        Args:
-            rays: Current ray bundle.
-            components: List of BaseComponent surfaces.
-
-        Returns:
-            ``(t_min, hit_normals, component_indices)`` -- distances, normals,
-            and per-ray nearest-hit component index (-1 if no hit).
-        """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not implement intersect_scene()."
-        )

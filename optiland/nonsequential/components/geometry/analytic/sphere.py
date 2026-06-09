@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 
+import optiland.backend as be
 from optiland.nonsequential.components.geometry.base import AABB, AnalyticGeometry
 
 
@@ -50,30 +51,28 @@ class SphereGeometry(AnalyticGeometry):
         Returns:
             (t, normals, hit_mask).
         """
-        xp = _get_xp(origins)
         ox, oy, oz = origins[:, 0], origins[:, 1], origins[:, 2]
         dx, dy, dz = directions[:, 0], directions[:, 1], directions[:, 2]
 
         # Quadratic: |o + t*d|^2 = R^2
-        # a*t^2 + b*t + c = 0
-        # a = |d|^2 = 1 (unit directions)
         b = 2.0 * (ox * dx + oy * dy + oz * dz)
         c = ox**2 + oy**2 + oz**2 - self.radius**2
 
         discriminant = b**2 - 4.0 * c
         disc_ok = discriminant >= 0.0
-        sqrt_disc = xp.where(
-            disc_ok, (xp.maximum(discriminant, 0.0)) ** 0.5, xp.zeros_like(discriminant)
+        sqrt_disc = be.where(
+            disc_ok, be.maximum(discriminant, 0.0) ** 0.5, be.zeros_like(discriminant)
         )
 
-        t1 = xp.where(disc_ok, (-b - sqrt_disc) / 2.0, xp.inf)
-        t2 = xp.where(disc_ok, (-b + sqrt_disc) / 2.0, xp.inf)
+        inf_arr = be.ones_like(discriminant) * be.inf
+        t1 = be.where(disc_ok, (-b - sqrt_disc) / 2.0, inf_arr)
+        t2 = be.where(disc_ok, (-b + sqrt_disc) / 2.0, inf_arr)
 
         # Choose nearest positive t
         eps = 1e-9
         use_t1 = disc_ok & (t1 > eps)
         use_t2 = disc_ok & (~use_t1) & (t2 > eps)
-        t = xp.where(use_t1, t1, xp.where(use_t2, t2, xp.inf))
+        t = be.where(use_t1, t1, be.where(use_t2, t2, inf_arr))
 
         # Compute hit position and normal
         hx = ox + t * dx
@@ -81,23 +80,23 @@ class SphereGeometry(AnalyticGeometry):
         hz = oz + t * dz
 
         # Normal: outward from sphere centre, flipped to face incoming ray
-        nx = xp.where(t < xp.inf, hx / self.radius, xp.zeros_like(hx))
-        ny = xp.where(t < xp.inf, hy / self.radius, xp.zeros_like(hy))
-        nz = xp.where(t < xp.inf, hz / self.radius, xp.zeros_like(hz))
+        nx = be.where(t < be.inf, hx / self.radius, be.zeros_like(hx))
+        ny = be.where(t < be.inf, hy / self.radius, be.zeros_like(hy))
+        nz = be.where(t < be.inf, hz / self.radius, be.zeros_like(hz))
 
         # Flip to face incoming ray
         dot = dx * nx + dy * ny + dz * nz
-        flip = xp.where(dot > 0, -1.0, 1.0)
-        normals = xp.stack([nx * flip, ny * flip, nz * flip], axis=1)
+        flip = be.where(dot > 0, -1.0, 1.0)
+        normals = be.stack([nx * flip, ny * flip, nz * flip], axis=1)
 
-        hit_mask = t < xp.inf
+        hit_mask = t < be.inf
 
         # Aperture check
         if self.aperture_radius is not None:
             r_transverse = (hx**2 + hy**2) ** 0.5
             in_aperture = r_transverse <= self.aperture_radius
             hit_mask = hit_mask & in_aperture
-            t = xp.where(hit_mask, t, xp.inf)
+            t = be.where(hit_mask, t, inf_arr)
 
         return t, normals, hit_mask
 
@@ -113,14 +112,3 @@ class SphereGeometry(AnalyticGeometry):
         t = np.array(transform[0], dtype=float)
         r = self.radius
         return AABB(t - r, t + r)
-
-
-def _get_xp(arr: np.ndarray):
-    try:
-        import cupy  # type: ignore[import]
-
-        if isinstance(arr, cupy.ndarray):
-            return cupy
-    except ImportError:
-        pass
-    return np

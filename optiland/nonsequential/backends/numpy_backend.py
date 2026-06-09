@@ -1,7 +1,6 @@
 """NumPy CPU backend for Non-Sequential Raytracing.
 
-Owns the full Monte Carlo simulation loop.  CupyBackend inherits this loop
-and overrides intersect_scene() to run on the GPU.
+Owns the forward fast-path Monte Carlo loop via ArrayBackend.
 
 Kramer Harrison, 2026
 """
@@ -12,9 +11,6 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from optiland.nonsequential._utils import (
-    to_numpy as _to_numpy,  # noqa: F401 backward compat
-)
 from optiland.nonsequential.backends.array_backend import ArrayBackend
 
 if TYPE_CHECKING:
@@ -27,8 +23,8 @@ class NumpyBackend(ArrayBackend):
 
     This is the default fallback backend.  All ray data remains in host
     (CPU) memory throughout the simulation.  The full Monte Carlo trace loop
-    lives here so that ``CupyBackend`` can inherit it and substitute only the
-    device-specific :meth:`intersect_scene` implementation.
+    lives in ArrayBackend; this class provides the NumPy-specific
+    :meth:`intersect_scene` and RNG.
 
     Attributes:
         rng: NumPy random generator.
@@ -50,9 +46,6 @@ class NumpyBackend(ArrayBackend):
         components: list[BaseComponent],
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Find nearest intersection of each ray with all scene components.
-
-        Iterates over components, calls each component's intersect(), and
-        takes the argmin over distances.
 
         Args:
             rays: Current ray bundle (NumPy arrays).
@@ -85,18 +78,3 @@ class NumpyBackend(ArrayBackend):
             NumPy array of uniform random numbers in [0, 1).
         """
         return self.rng.random(shape)
-
-
-def _get_detector_names(scene) -> list[str]:
-    """Extract registry names for detectors, falling back to index-based names.
-
-    Args:
-        scene: NSQScene instance.
-
-    Returns:
-        Ordered list of detector names.
-    """
-    try:
-        return list(scene.detector_registry._registry.keys())
-    except AttributeError:
-        return []

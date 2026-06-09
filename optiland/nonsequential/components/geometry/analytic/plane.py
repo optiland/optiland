@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import numpy as np
 
+import optiland.backend as be
 from optiland.nonsequential.components.geometry.base import AABB, AnalyticGeometry
 
 
@@ -31,19 +32,19 @@ class PlaneGeometry(AnalyticGeometry):
         Returns:
             (t, normals, hit_mask).
         """
-        xp = _get_xp(origins)
         dz = directions[:, 2]
         oz = origins[:, 2]
 
         # t = -oz / dz  (plane z=0)
-        valid = xp.abs(dz) > 1e-12
-        t = xp.where(valid, -oz / xp.where(valid, dz, xp.ones_like(dz)), xp.inf)
+        valid = be.abs(dz) > 1e-12
+        safe_dz = be.where(valid, dz, be.ones_like(dz))
+        t = be.where(valid, -oz / safe_dz, be.ones_like(oz) * be.inf)
         hit_mask = valid & (t > 1e-9)
-        t = xp.where(hit_mask, t, xp.inf)
+        t = be.where(hit_mask, t, be.ones_like(t) * be.inf)
 
         # Normal: +z or -z depending on ray direction
-        normals = xp.zeros_like(origins)
-        normals[:, 2] = xp.where(dz < 0, 1.0, -1.0)
+        normals = be.zeros_like(origins)
+        normals[:, 2] = be.where(dz < 0, 1.0, -1.0)
 
         return t, normals, hit_mask
 
@@ -106,18 +107,18 @@ class FinitePlaneGeometry(AnalyticGeometry):
         Returns:
             (t, normals, hit_mask).
         """
-        xp = _get_xp(origins)
         dz = directions[:, 2]
         oz = origins[:, 2]
 
-        plane_valid = xp.abs(dz) > 1e-12
-        t = xp.where(
-            plane_valid, -oz / xp.where(plane_valid, dz, xp.ones_like(dz)), xp.inf
+        inf_arr = be.ones_like(oz) * be.inf
+        plane_valid = be.abs(dz) > 1e-12
+        t = be.where(
+            plane_valid, -oz / be.where(plane_valid, dz, be.ones_like(dz)), inf_arr
         )
-        t = xp.where(plane_valid & (t > 1e-9), t, xp.inf)
+        t = be.where(plane_valid & (t > 1e-9), t, inf_arr)
 
-        # Hit position in local frame -- clamp t so inf*0 doesn't produce NaN
-        safe_t = xp.where(xp.isfinite(t), t, xp.zeros_like(t))
+        # Hit position in local frame
+        safe_t = be.where(be.isfinite(t), t, be.zeros_like(t))
         hx = origins[:, 0] + safe_t * directions[:, 0]
         hy = origins[:, 1] + safe_t * directions[:, 1]
 
@@ -127,13 +128,13 @@ class FinitePlaneGeometry(AnalyticGeometry):
         else:
             half_w = self.width / 2.0
             half_h = self.height / 2.0
-            in_aperture = (xp.abs(hx) <= half_w) & (xp.abs(hy) <= half_h)
+            in_aperture = (be.abs(hx) <= half_w) & (be.abs(hy) <= half_h)
 
-        hit_mask = plane_valid & (t < xp.inf) & in_aperture
+        hit_mask = plane_valid & (t < be.inf) & in_aperture
 
-        t = xp.where(hit_mask, t, xp.inf)
-        normals = xp.zeros_like(origins)
-        normals[:, 2] = xp.where(dz < 0, 1.0, -1.0)
+        t = be.where(hit_mask, t, inf_arr)
+        normals = be.zeros_like(origins)
+        normals[:, 2] = be.where(dz < 0, 1.0, -1.0)
 
         return t, normals, hit_mask
 
@@ -174,19 +175,5 @@ class FinitePlaneGeometry(AnalyticGeometry):
                 dtype=float,
             )
 
-        # local->global: g = R @ l + t  (column convention: R transforms col vectors)
-        # For row vectors: g_row = l_row @ R^T + t
         corners_global = corners_local @ R.T + t
         return AABB(corners_global.min(axis=0), corners_global.max(axis=0))
-
-
-def _get_xp(arr: np.ndarray):
-    """Return numpy or cupy depending on the array type."""
-    try:
-        import cupy  # type: ignore[import]
-
-        if isinstance(arr, cupy.ndarray):
-            return cupy
-    except ImportError:
-        pass
-    return np

@@ -8,9 +8,13 @@ Kramer Harrison, 2026
 
 from __future__ import annotations
 
-import numpy as np
+from typing import TYPE_CHECKING
 
+import optiland.backend as be
 from optiland.nonsequential.bsdf.base import BaseBSDF
+
+if TYPE_CHECKING:
+    import numpy as np
 
 
 class SpecularBRDF(BaseBSDF):
@@ -34,20 +38,17 @@ class SpecularBRDF(BaseBSDF):
             num_rays: Number of rays.
             incident_dirs: Incident directions, shape (N, 3).
             normals: Surface normals, shape (N, 3).
-            wavelengths: Wavelengths [nm], shape (N,).
+            wavelengths: Wavelengths [µm], shape (N,).
             rng: Unused for specular BRDF.
 
         Returns:
             (reflected_dirs, ones) -- reflected unit vectors and unit weights.
         """
-        # d_r = d - 2 * (d . n) * n
         cos_theta = (incident_dirs * normals).sum(axis=1, keepdims=True)
         reflected = incident_dirs - 2.0 * cos_theta * normals
-        # Normalize to guard against floating-point drift
         norms = (reflected * reflected).sum(axis=1, keepdims=True) ** 0.5
         reflected = reflected / norms
-        xp = _get_xp(incident_dirs)
-        return reflected, xp.ones(num_rays, dtype=incident_dirs.dtype)
+        return reflected, be.ones(num_rays, dtype=incident_dirs.dtype)
 
     def reflectance(
         self,
@@ -60,22 +61,9 @@ class SpecularBRDF(BaseBSDF):
         Args:
             incident_dirs: Incident directions, shape (N, 3).
             normals: Surface normals, shape (N, 3).
-            wavelengths: Wavelengths [nm], shape (N,).
+            wavelengths: Wavelengths [µm], shape (N,).
 
         Returns:
             Array of ones, shape (N,).
         """
-        xp = _get_xp(incident_dirs)
-        return xp.ones(incident_dirs.shape[0], dtype=incident_dirs.dtype)
-
-
-def _get_xp(arr: np.ndarray):
-    """Return numpy or cupy depending on the array type."""
-    try:
-        import cupy  # type: ignore[import]
-
-        if isinstance(arr, cupy.ndarray):
-            return cupy
-    except ImportError:
-        pass
-    return np
+        return be.ones(incident_dirs.shape[0], dtype=incident_dirs.dtype)

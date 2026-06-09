@@ -12,6 +12,8 @@ from pathlib import Path
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
+import optiland.backend as be
+from optiland.backend.utils import to_numpy
 from optiland.nonsequential.bsdf.base import BaseBSDF
 
 
@@ -65,12 +67,13 @@ class TabulatedBSDF(BaseBSDF):
         """Sample scattered directions from the tabulated BSDF.
 
         Uses importance sampling via Lambertian hemisphere + BSDF weighting.
+        Sampling is detached (numpy).
 
         Args:
             num_rays: Number of rays.
             incident_dirs: Incident directions, shape (N, 3).
             normals: Surface normals, shape (N, 3).
-            wavelengths: Wavelengths [nm], shape (N,).
+            wavelengths: Wavelengths [µm], shape (N,).
             rng: NumPy random generator.
 
         Returns:
@@ -78,18 +81,16 @@ class TabulatedBSDF(BaseBSDF):
         """
         if rng is None:
             rng = np.random.default_rng()
-        xp = _get_xp(incident_dirs)
 
-        n_np = np.asarray(_to_numpy(normals), dtype=np.float64)
-        d_np = np.asarray(_to_numpy(incident_dirs), dtype=np.float64)
+        n_np = np.asarray(to_numpy(normals), dtype=np.float64)
+        d_np = np.asarray(to_numpy(incident_dirs), dtype=np.float64)
 
         # Compute angle of incidence
         cos_i = np.clip((-d_np * n_np).sum(axis=1), 0.0, 1.0)
         theta_i = np.degrees(np.arccos(cos_i))
 
-        # Sample scattered angle from Lambertian hemisphere
-        from optiland.nonsequential.bsdf.lambertian import (
-            _orthonormal_basis,  # noqa: PLC0415
+        from optiland.nonsequential.bsdf.lambertian import (  # noqa: PLC0415
+            _orthonormal_basis,
         )
 
         r1 = rng.random(num_rays)
@@ -103,25 +104,17 @@ class TabulatedBSDF(BaseBSDF):
         ly = sin_theta * np.sin(phi)
         lz = cos_theta
 
-        t, b = _orthonormal_basis(n_np)
-        scattered = lx[:, None] * t + ly[:, None] * b + lz[:, None] * n_np
+        t_vec, b_vec = _orthonormal_basis(n_np)
+        scattered = lx[:, None] * t_vec + ly[:, None] * b_vec + lz[:, None] * n_np
         norms = (scattered * scattered).sum(axis=1, keepdims=True) ** 0.5
         scattered = scattered / norms
 
         # Evaluate BSDF at (theta_i, theta_s) pairs
         query = np.column_stack([theta_i, theta_s])
         bsdf_vals = self._interp(query)
-
-        # Importance weight: BSDF * cos(theta_s) * pi / cos(theta_s) = pi * BSDF
         flux_weights = np.clip(np.pi * bsdf_vals, 0.0, 1.0)
 
-        if xp is not np:
-            scattered = xp.array(scattered)
-            flux_weights = xp.array(flux_weights)
-
-        return scattered.astype(incident_dirs.dtype), flux_weights.astype(
-            incident_dirs.dtype
-        )
+        return be.array(scattered.astype(np.float64)), be.array(flux_weights)
 
     def reflectance(
         self,
@@ -134,46 +127,20 @@ class TabulatedBSDF(BaseBSDF):
         Args:
             incident_dirs: Incident directions, shape (N, 3).
             normals: Surface normals, shape (N, 3).
-            wavelengths: Wavelengths [nm], shape (N,).
+            wavelengths: Wavelengths [µm], shape (N,).
 
         Returns:
             Reflectance values, shape (N,).
         """
-        xp = _get_xp(incident_dirs)
-        d_np = np.asarray(_to_numpy(incident_dirs), dtype=np.float64)
-        n_np = np.asarray(_to_numpy(normals), dtype=np.float64)
+        d_np = np.asarray(to_numpy(incident_dirs), dtype=np.float64)
+        n_np = np.asarray(to_numpy(normals), dtype=np.float64)
 
         cos_i = np.clip((-d_np * n_np).sum(axis=1), 0.0, 1.0)
         theta_i = np.degrees(np.arccos(cos_i))
 
-        # Integrate BSDF over hemisphere: use mid-point of scatter angles
         theta_s_mid = np.mean(self._theta_s_vals)
         query = np.column_stack([theta_i, np.full_like(theta_i, theta_s_mid)])
         bsdf_vals = self._interp(query)
 
         refl = np.clip(np.pi * bsdf_vals, 0.0, 1.0)
-        if xp is not np:
-            return xp.array(refl, dtype=incident_dirs.dtype)
-        return refl.astype(incident_dirs.dtype)
-
-
-def _to_numpy(arr: np.ndarray) -> np.ndarray:
-    try:
-        import cupy  # type: ignore[import]
-
-        if isinstance(arr, cupy.ndarray):
-            return cupy.asnumpy(arr)
-    except ImportError:
-        pass
-    return arr
-
-
-def _get_xp(arr: np.ndarray):
-    try:
-        import cupy  # type: ignore[import]
-
-        if isinstance(arr, cupy.ndarray):
-            return cupy
-    except ImportError:
-        pass
-    return np
+        return be.array(refl.astype(np.float64))

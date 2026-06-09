@@ -4,10 +4,6 @@ NSQScene owns three typed registries (components, sources, detectors) and
 exposes builder methods, a .trace() shortcut, and .view()/.view3d() for
 visualization.
 
-Backward-compatible shims are provided so that code using the old flat-list
-API (add_component, add_source(src_obj), add_detector(det_obj)) continues to
-work without modification.
-
 Kramer Harrison, 2026
 """
 
@@ -29,8 +25,6 @@ if TYPE_CHECKING:
         LensConfig,
         MirrorConfig,
     )
-    from optiland.nonsequential.detectors.base import BaseDetector
-    from optiland.nonsequential.sources.base import BaseNSQSource
     from optiland.nonsequential.tracer import SimulationResult
 
 
@@ -42,19 +36,13 @@ class NSQScene:
     detectors.  The tracer works on flat surface/source/detector lists
     exposed via read-only properties.
 
-    Usage (new API)::
+    Usage::
 
         scene = NSQScene()
         scene.add_source('S1', cs, PointSourceConfig(...))
         scene.add_lens('L1', cs, LensConfig(...))
         scene.add_detector('D1', cs, IrradianceDetectorConfig(...))
         result = scene.trace(num_rays=1_000_000, seed=42)
-
-    The old flat-list API is still supported for backward compatibility::
-
-        scene.add_component(raw_component)
-        scene.add_source(source_obj)      # auto-named
-        scene.add_detector(detector_obj)  # auto-named
 
     Mutation note: Components are held by reference. Modifying a component's
     CoordinateSystem or geometry after scene construction is valid and takes
@@ -72,10 +60,6 @@ class NSQScene:
         self.component_registry = ComponentRegistry()
         self.source_registry = SourceRegistry()
         self.detector_registry = DetectorRegistry()
-        # Counters for auto-generated names (backward compat)
-        self._auto_comp_count = 0
-        self._auto_src_count = 0
-        self._auto_det_count = 0
 
     @property
     def surfaces(self) -> list[BaseComponent]:
@@ -83,12 +67,12 @@ class NSQScene:
         return self.component_registry.surfaces
 
     @property
-    def sources(self) -> list[BaseNSQSource]:
+    def sources(self):
         """Ordered list of all registered sources."""
         return self.source_registry.sources
 
     @property
-    def detectors(self) -> list[BaseDetector]:
+    def detectors(self):
         """Ordered list of all registered detectors."""
         return self.detector_registry.detectors
 
@@ -143,14 +127,11 @@ class NSQScene:
 
         self.component_registry.add(name, Doublet(name, cs, config))
 
-    def add_raw_component(self, name: str, component: BaseComponent) -> None:
+    def add_component(self, name: str, component: BaseComponent) -> None:
         """Add a raw BaseComponent (advanced use).
 
-        Wraps the component in a thin single-surface CompoundComponent so it
-        can be stored in the ComponentRegistry.
-
         Args:
-            name: Unique name.
+            name: Unique name for this component in the registry.
             component: Pre-built BaseComponent to register.
         """
         from optiland.nonsequential.components.compound import (  # noqa: PLC0415
@@ -178,75 +159,36 @@ class NSQScene:
 
     def add_source(
         self,
-        name_or_source: str | BaseNSQSource,
-        cs: CoordinateSystem | None = None,
-        config=None,
+        name: str,
+        cs: CoordinateSystem,
+        config,
     ) -> None:
         """Add a source to the scene.
 
-        Supports two call signatures:
-
-        **New API** (preferred)::
-
-            scene.add_source('S1', cs, PointSourceConfig(...))
-
-        **Legacy API** (backward compat)::
-
-            scene.add_source(source_object)   # auto-named 'source_N'
-
         Args:
-            name_or_source: Either a unique string name (new API) or a
-                pre-built :class:`~BaseNSQSource` object (legacy API).
-            cs: Coordinate system (new API only).
-            config: Source config dataclass (new API only).
+            name: Unique string name for the source.
+            cs: Coordinate system for the source.
+            config: Source config dataclass (PointSourceConfig,
+                CollimatedSourceConfig, or ExtendedSourceConfig).
         """
-        from optiland.nonsequential.sources.base import BaseNSQSource  # noqa: PLC0415
-
-        if isinstance(name_or_source, BaseNSQSource):
-            # Legacy path: auto-name from counter
-            name = f"source_{self._auto_src_count}"
-            self._auto_src_count += 1
-            self.source_registry.add(name, name_or_source)
-            return
-
-        # New path
-        name: str = name_or_source  # type: ignore[assignment]
         source = _build_source(cs, config)
         self.source_registry.add(name, source)
 
     def add_detector(
         self,
-        name_or_detector: str | BaseDetector,
-        cs: CoordinateSystem | None = None,
-        config=None,
+        name: str,
+        cs: CoordinateSystem,
+        config,
     ) -> None:
         """Add a detector to the scene.
 
-        Supports two call signatures:
-
-        **New API** (preferred)::
-
-            scene.add_detector('D1', cs, IrradianceDetectorConfig(...))
-
-        **Legacy API** (backward compat)::
-
-            scene.add_detector(detector_object)   # auto-named 'detector_N'
-
         Args:
-            name_or_detector: Either a unique string name (new API) or a
-                pre-built :class:`~BaseDetector` object (legacy API).
-            cs: Coordinate system (new API only).
-            config: Detector config dataclass (new API only).
+            name: Unique string name for the detector.
+            cs: Coordinate system for the detector.
+            config: Detector config dataclass (IrradianceDetectorConfig,
+                SpectralDetectorConfig, FarFieldDetectorConfig, or
+                RayDatabaseConfig).
         """
-        from optiland.nonsequential.detectors.base import BaseDetector  # noqa: PLC0415
-
-        if isinstance(name_or_detector, BaseDetector):
-            name = f"detector_{self._auto_det_count}"
-            self._auto_det_count += 1
-            self.detector_registry.add(name, name_or_detector)
-            return
-
-        name: str = name_or_detector  # type: ignore[assignment]
         detector = _build_detector(cs, config)
         self.detector_registry.add(name, detector)
 
@@ -274,41 +216,27 @@ class NSQScene:
         """
         self.detector_registry.remove(name)
 
-    def add_component(self, component: BaseComponent) -> None:
-        """Add a raw component (backward-compatible shim).
-
-        Equivalent to ``add_raw_component('component_N', component)`` with
-        an auto-generated name.
-
-        Args:
-            component: Pre-built BaseComponent to add.
-        """
-        name = f"component_{self._auto_comp_count}"
-        self._auto_comp_count += 1
-        self.add_raw_component(name, component)
-
     def trace(
         self,
         num_rays: int,
-        max_bounces: int = 200,
+        max_depth: int = 16,
         min_flux_fraction: float = 1e-6,
         batch_size: int = 1_000_000,
         seed: int | None = None,
         backend: TracerBackend | None = None,
+        record_paths: bool = False,
     ) -> SimulationResult:
         """Run the Monte Carlo simulation and return results.
 
-        This is a one-liner shortcut equivalent to::
-
-            NSQTracer(self, backend=backend).trace(num_rays, ...)
-
         Args:
             num_rays: Total rays to launch.
-            max_bounces: Maximum surface hits per ray.
+            max_depth: Maximum surface hits per ray.
             min_flux_fraction: Kill threshold relative to per-ray initial flux.
             batch_size: Rays per processing batch.
             seed: RNG seed.
-            backend: TracerBackend to use. Defaults to NumpyBackend.
+            backend: TracerBackend to use. Defaults to NumpyBackend or
+                TorchBackend based on the active ``optiland.backend``.
+            record_paths: If True, tracks node points of bouncing rays.
 
         Returns:
             SimulationResult with per-detector results and statistics.
@@ -319,10 +247,11 @@ class NSQScene:
         tracer = NSQTracer(self, backend=backend)
         return tracer.trace(
             num_rays,
-            max_bounces=max_bounces,
+            max_depth=max_depth,
             min_flux_fraction=min_flux_fraction,
             batch_size=batch_size,
             seed=seed,
+            record_paths=record_paths,
         )
 
     def view(
@@ -367,7 +296,7 @@ class NSQScene:
             raise ValueError("Scene has no detectors. Add at least one detector.")
 
 
-def _build_source(cs: CoordinateSystem, config) -> BaseNSQSource:
+def _build_source(cs: CoordinateSystem, config) -> object:
     """Instantiate a BaseNSQSource from a config dataclass.
 
     Args:
@@ -427,7 +356,7 @@ def _build_source(cs: CoordinateSystem, config) -> BaseNSQSource:
     )
 
 
-def _build_detector(cs: CoordinateSystem, config) -> BaseDetector:
+def _build_detector(cs: CoordinateSystem, config) -> object:
     """Instantiate a BaseDetector from a config dataclass.
 
     Args:
@@ -481,7 +410,7 @@ def _build_detector(cs: CoordinateSystem, config) -> BaseDetector:
     if isinstance(config, FarFieldDetectorConfig):
         return FarFieldDetector(
             cs=cs,
-            theta_max_deg=90.0,  # Default to hemisphere
+            theta_max_deg=90.0,
             num_bins_theta=config.num_theta,
             num_bins_phi=config.num_phi,
         )

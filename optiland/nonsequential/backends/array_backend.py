@@ -1,7 +1,6 @@
 """ArrayBackend -- base class for array-based tracing backends.
 
-Provides the shared Monte Carlo trace loop for Numpy, Cupy, and other
-similar array-based backends.
+Provides the shared Monte Carlo trace loop for NumPy and Torch backends.
 
 Kramer Harrison, 2026
 """
@@ -14,7 +13,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from optiland.nonsequential._utils import get_xp, to_numpy
+import optiland.backend as be
+from optiland.backend.utils import to_numpy
 from optiland.nonsequential.backends.base import TracerBackend
 
 if TYPE_CHECKING:
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from optiland.nonsequential.scene import NSQScene
     from optiland.nonsequential.tracer import SimulationResult
 
-# Dtype for per-ray event records
+# Dtype for per-ray event records (always numpy structured array for display)
 _EVENT_DTYPE = np.dtype(
     [
         ("ray_id", np.int64),
@@ -52,7 +52,7 @@ class ArrayBackend(TracerBackend):
         self,
         scene: NSQScene,
         num_rays: int,
-        max_bounces: int = 200,
+        max_depth: int = 16,
         min_flux_fraction: float = 1e-6,
         batch_size: int = 1_000_000,
         seed: int | None = None,
@@ -63,7 +63,7 @@ class ArrayBackend(TracerBackend):
         Args:
             scene: The NSQScene to simulate.
             num_rays: Total rays to launch.
-            max_bounces: Maximum surface hits per ray.
+            max_depth: Maximum surface hits per ray.
             min_flux_fraction: Kill threshold relative to per-ray initial flux.
             batch_size: Rays per processing batch.
             seed: RNG seed for reproducibility.
@@ -98,7 +98,7 @@ class ArrayBackend(TracerBackend):
         num_rays_absorbed = 0
         num_rays_escaped = 0
         num_rays_flux_killed = 0
-        num_rays_bounce_killed = 0
+        num_rays_depth_killed = 0
         total_flux_escaped = 0.0
         total_flux_lost = 0.0
 
@@ -116,9 +116,9 @@ class ArrayBackend(TracerBackend):
                     remaining -= n
                 rays_per_source.append(n)
 
-        # Per-ray event log
+        # Per-ray event log (numpy-only, for display/visualization)
         event_log: list[dict] | None = [] if record_paths else None
-        _next_ray_id: list[int] = [0]  # mutable counter
+        _next_ray_id: list[int] = [0]
 
         def _log_birth(rays: NSQRayBundle, source_name: str) -> None:
             if event_log is None:
@@ -174,7 +174,6 @@ class ArrayBackend(TracerBackend):
             M_np = to_numpy(rays.M)[idx]
             N_np = to_numpy(rays.N)[idx]
             if t_offset is not None:
-                # Advance to the actual hit surface position
                 t_np = to_numpy(t_offset)[idx]
                 x_np = x_np + t_np * L_np
                 y_np = y_np + t_np * M_np
@@ -245,7 +244,6 @@ class ArrayBackend(TracerBackend):
             while source_remaining > 0:
                 batch = min(batch_size, source_remaining)
                 rays = source.generate(batch, self.rng)
-                xp = get_xp(rays.x)
 
                 _log_birth(rays, source_name)
 
@@ -268,7 +266,7 @@ class ArrayBackend(TracerBackend):
                     det_first = any_det_hit & (~comp_closer | ~any_comp_hit)
                     comp_first = any_comp_hit & (~det_first)
 
-                    # Record detector hits (log at actual detector position)
+                    # Record detector hits
                     for di, det in enumerate(scene.detectors):
                         mask_di = det_first & (det_idx == di)
                         if mask_di.any():
@@ -281,13 +279,13 @@ class ArrayBackend(TracerBackend):
                         dx = det_t_min * rays.L
                         dy = det_t_min * rays.M
                         dz = det_t_min * rays.N
-                        rays.x = xp.where(det_first, rays.x + dx, rays.x)
-                        rays.y = xp.where(det_first, rays.y + dy, rays.y)
-                        rays.z = xp.where(det_first, rays.z + dz, rays.z)
+                        rays.x = be.where(det_first, rays.x + dx, rays.x)
+                        rays.y = be.where(det_first, rays.y + dy, rays.y)
+                        rays.z = be.where(det_first, rays.z + dz, rays.z)
                         rays.alive = rays.alive & ~det_first
-                        rays.bounce = xp.where(det_first, rays.bounce + 1, rays.bounce)
+                        rays.bounce = be.where(det_first, rays.bounce + 1, rays.bounce)
 
-                    # Apply component interactions (log at actual surface position)
+                    # Apply component interactions
                     for ci, comp in enumerate(scene.surfaces):
                         mask_ci = comp_first & (comp_idx == ci)
                         if mask_ci.any():
@@ -308,17 +306,17 @@ class ArrayBackend(TracerBackend):
                         ex = bounding_scale * rays.L
                         ey = bounding_scale * rays.M
                         ez = bounding_scale * rays.N
-                        rays.x = xp.where(escaped_now, rays.x + ex, rays.x)
-                        rays.y = xp.where(escaped_now, rays.y + ey, rays.y)
-                        rays.z = xp.where(escaped_now, rays.z + ez, rays.z)
+                        rays.x = be.where(escaped_now, rays.x + ex, rays.x)
+                        rays.y = be.where(escaped_now, rays.y + ey, rays.y)
+                        rays.z = be.where(escaped_now, rays.z + ez, rays.z)
                     rays.alive = rays.alive & ~no_hit
 
-                    # Kill rays below flux threshold or exceeding max bounces
+                    # Kill rays below flux threshold or exceeding max depth
                     alive_flux = rays.flux >= min_flux
-                    alive_bounce = rays.bounce < max_bounces
+                    alive_depth = rays.bounce < max_depth
 
                     newly_flux_killed = rays.alive & ~alive_flux
-                    newly_bounce_killed = rays.alive & alive_flux & ~alive_bounce
+                    newly_depth_killed = rays.alive & alive_flux & ~alive_depth
 
                     if newly_flux_killed.any():
                         num_rays_flux_killed += int(newly_flux_killed.sum())
@@ -327,16 +325,16 @@ class ArrayBackend(TracerBackend):
                         )
                         _log_deaths(rays, newly_flux_killed, "flux_killed")
 
-                    if newly_bounce_killed.any():
-                        num_rays_bounce_killed += int(newly_bounce_killed.sum())
+                    if newly_depth_killed.any():
+                        num_rays_depth_killed += int(newly_depth_killed.sum())
                         total_flux_lost += float(
-                            to_numpy(rays.flux[newly_bounce_killed]).sum()
+                            to_numpy(rays.flux[newly_depth_killed]).sum()
                         )
-                        _log_deaths(rays, newly_bounce_killed, "bounce_killed")
+                        _log_deaths(rays, newly_depth_killed, "depth_killed")
 
-                    rays.alive = rays.alive & alive_flux & alive_bounce
+                    rays.alive = rays.alive & alive_flux & alive_depth
 
-                    # Compact when >50% rays are dead
+                    # Compact when >50% rays are dead (NumPy fast path only)
                     if (
                         rays.num_rays_alive > 0
                         and rays.num_rays_alive < rays.num_rays // 2
@@ -360,8 +358,6 @@ class ArrayBackend(TracerBackend):
         # Collect detector results
         detector_results: dict[str, object] = {}
         total_flux_detected = 0.0
-        from optiland.nonsequential.backends.numpy_backend import _get_detector_names  # noqa: PLC0415, I001
-
         det_names = _get_detector_names(scene)
         for i, det in enumerate(scene.detectors):
             name = det_names[i] if i < len(det_names) else (det.name or f"detector_{i}")
@@ -397,7 +393,7 @@ class ArrayBackend(TracerBackend):
             num_rays_absorbed=num_rays_absorbed,
             num_rays_escaped=num_rays_escaped,
             num_rays_flux_killed=num_rays_flux_killed,
-            num_rays_bounce_killed=num_rays_bounce_killed,
+            num_rays_depth_killed=num_rays_depth_killed,
             total_flux_in=total_flux_in,
             total_flux_detected=total_flux_detected,
             total_flux_absorbed=total_flux_absorbed,
@@ -418,20 +414,21 @@ class ArrayBackend(TracerBackend):
         Returns:
             ``(t_min, hit_normals, detector_indices)``
         """
-        xp = get_xp(rays.x)
         N = rays.num_rays
-        t_min = xp.full(N, xp.inf, dtype=xp.float64)
-        hit_normals = xp.zeros((N, 3), dtype=xp.float64)
-        det_indices = xp.full(N, -1, dtype=xp.int32)
+        t_min = np.full(N, np.inf, dtype=np.float64)
+        hit_normals = np.zeros((N, 3), dtype=np.float64)
+        det_indices = np.full(N, -1, dtype=np.int32)
 
         for i, det in enumerate(detectors):
-            # det.intersect() already returns arrays on the correct device
             t_d, normals_d, hit_d = det.intersect(rays)
-            hit_d = hit_d.astype(bool)
-            better = hit_d & (t_d < t_min)
-            t_min = xp.where(better, t_d, t_min)
-            hit_normals = xp.where(better[:, None], normals_d, hit_normals)
-            det_indices = xp.where(better, i, det_indices)
+            # Convert to numpy for the index-comparison logic (no grad needed)
+            t_d_np = to_numpy(t_d).astype(np.float64)
+            normals_d_np = to_numpy(normals_d).astype(np.float64)
+            hit_d_np = to_numpy(hit_d).astype(bool)
+            better = hit_d_np & (t_d_np < t_min)
+            t_min = np.where(better, t_d_np, t_min)
+            hit_normals = np.where(better[:, None], normals_d_np, hit_normals)
+            det_indices = np.where(better, i, det_indices)
 
         return t_min, hit_normals, det_indices
 
@@ -449,15 +446,28 @@ class ArrayBackend(TracerBackend):
             zmin = min(b.zmin for b in boxes)
             zmax = max(b.zmax for b in boxes)
 
-            import numpy as fallback_np
-
-            extent = fallback_np.sqrt(
+            extent = np.sqrt(
                 (xmax - xmin) ** 2 + (ymax - ymin) ** 2 + (zmax - zmin) ** 2
             )
             return float(extent) if extent > 1.0 else 100.0
         except Exception:
             return 100.0
 
-    def _to_numpy(self, arr):
+    def _to_numpy(self, arr: object) -> np.ndarray:
         """Backward-compatible alias."""
         return to_numpy(arr)
+
+
+def _get_detector_names(scene: object) -> list[str]:
+    """Extract registry names for detectors.
+
+    Args:
+        scene: NSQScene instance.
+
+    Returns:
+        Ordered list of detector names.
+    """
+    try:
+        return list(scene.detector_registry._registry.keys())  # type: ignore[attr-defined]
+    except AttributeError:
+        return []

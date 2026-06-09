@@ -8,7 +8,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from optiland.nonsequential.components.base import _get_transform, _get_xp
+import optiland.backend as be
+from optiland.nonsequential.components.base import _get_transform
 
 if TYPE_CHECKING:
     import numpy as np
@@ -58,17 +59,16 @@ class BaseDetector(ABC):
         Returns:
             Tuple (t, normals, hit_mask) in global frame.
         """
-        xp = _get_xp(rays.x)
         translation, rot = _get_transform(self.cs)
 
-        positions_g = xp.stack([rays.x, rays.y, rays.z], axis=1)
-        directions_g = xp.stack([rays.L, rays.M, rays.N], axis=1)
+        positions_g = be.stack([rays.x, rays.y, rays.z], axis=1)
+        directions_g = be.stack([rays.L, rays.M, rays.N], axis=1)
 
-        t_np = xp.array(translation, dtype=positions_g.dtype)
-        R_np = xp.array(rot, dtype=positions_g.dtype)
+        t_arr = be.array(translation)
+        R_arr = be.array(rot)
 
-        positions_l = (positions_g - t_np) @ R_np
-        directions_l = directions_g @ R_np
+        positions_l = (positions_g - t_arr) @ R_arr
+        directions_l = directions_g @ R_arr
 
         t_hit, normals_l, hit_mask = self.geometry.ray_intersect(
             positions_l, directions_l
@@ -76,13 +76,13 @@ class BaseDetector(ABC):
 
         # T_EPSILON guard: prevent self-intersection
         T_EPSILON = 1e-9
-        t_hit = xp.where(t_hit > T_EPSILON, t_hit, xp.full_like(t_hit, xp.inf))
+        t_hit = be.where(t_hit > T_EPSILON, t_hit, be.full_like(t_hit, be.inf))
         hit_mask = hit_mask & (t_hit > T_EPSILON)
 
-        t_hit = xp.where(rays.alive, t_hit, xp.full_like(t_hit, xp.inf))
+        t_hit = be.where(rays.alive, t_hit, be.full_like(t_hit, be.inf))
         hit_mask = hit_mask & rays.alive
 
-        normals_g = normals_l @ R_np.T
+        normals_g = normals_l @ R_arr.T
         return t_hit, normals_g, hit_mask
 
     @abstractmethod

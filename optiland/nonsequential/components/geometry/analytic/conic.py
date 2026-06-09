@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import numpy as np
 
+import optiland.backend as be
 from optiland.nonsequential.components.geometry.base import AABB, AnalyticGeometry
 
 
@@ -59,13 +60,11 @@ class ConicGeometry(AnalyticGeometry):
         Returns:
             Sag values z, shape (N,).
         """
-        xp = _get_xp(x)
         r2 = x**2 + y**2
         R = self.radius
         K = self.conic
         under_root = 1.0 - (1.0 + K) * r2 / (R * R)
-        # Clamp to avoid sqrt of negative (outside valid aperture)
-        safe_root = xp.maximum(under_root, 0.0)
+        safe_root = be.maximum(under_root, 0.0)
         return r2 / (R * (1.0 + safe_root**0.5))
 
     def _normal_local(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
@@ -80,11 +79,10 @@ class ConicGeometry(AnalyticGeometry):
         Returns:
             Outward normals (not yet normalized), shape (N, 3).
         """
-        xp = _get_xp(x)
         r2 = x**2 + y**2
         R = self.radius
         K = self.conic
-        under_root = xp.maximum(1.0 - (1.0 + K) * r2 / (R * R), 0.0)
+        under_root = be.maximum(1.0 - (1.0 + K) * r2 / (R * R), 0.0)
         sqrt_term = under_root**0.5
 
         # dz/dx, dz/dy from implicit differentiation
@@ -94,8 +92,8 @@ class ConicGeometry(AnalyticGeometry):
         # Gradient of (z - sag): (-dsag/dx, -dsag/dy, 1)
         gx = -x * 2.0 * factor
         gy = -y * 2.0 * factor
-        gz = xp.ones_like(x)
-        norms = xp.stack([gx, gy, gz], axis=1)
+        gz = be.ones_like(x)
+        norms = be.stack([gx, gy, gz], axis=1)
         return norms
 
     def ray_intersect(
@@ -112,12 +110,11 @@ class ConicGeometry(AnalyticGeometry):
         Returns:
             (t, normals, hit_mask).
         """
-        xp = _get_xp(origins)
         ox, oy, oz = origins[:, 0], origins[:, 1], origins[:, 2]
         dx, dy, dz = directions[:, 0], directions[:, 1], directions[:, 2]
 
         # Initial guess: plane intersection at z=0
-        t = xp.where(xp.abs(dz) > 1e-12, -oz / (dz + 1e-30), xp.zeros_like(oz))
+        t = be.where(be.abs(dz) > 1e-12, -oz / (dz + 1e-30), be.zeros_like(oz))
 
         # Newton-Raphson: f(t) = oz + t*dz - sag(ox + t*dx, oy + t*dy) = 0
         num_iters = 10
@@ -130,13 +127,12 @@ class ConicGeometry(AnalyticGeometry):
             f = pz - sag
 
             # df/dt = dz - d(sag)/dt
-            # d(sag)/dx * dx + d(sag)/dy * dy
-            n_raw = self._normal_local(px, py)  # (-dsag/dx, -dsag/dy, 1) unnormalized
-            dsag_dx = -n_raw[:, 0]  # dsag/dx
+            n_raw = self._normal_local(px, py)  # (-dsag/dx, -dsag/dy, 1)
+            dsag_dx = -n_raw[:, 0]
             dsag_dy = -n_raw[:, 1]
             df_dt = dz - dsag_dx * dx - dsag_dy * dy
 
-            step = xp.where(xp.abs(df_dt) > 1e-15, f / df_dt, xp.zeros_like(f))
+            step = be.where(be.abs(df_dt) > 1e-15, f / df_dt, be.zeros_like(f))
             t = t - step
 
         # Validate hit
@@ -144,12 +140,13 @@ class ConicGeometry(AnalyticGeometry):
         py = oy + t * dy
         pz = oz + t * dz
         sag_final = self._sag(px, py)
-        residual = xp.abs(pz - sag_final)
+        residual = be.abs(pz - sag_final)
 
         in_aperture = (px**2 + py**2) <= self.aperture_radius**2
         hit_mask = (t > eps) & (residual < 1e-4) & in_aperture
 
-        t_out = xp.where(hit_mask, t, xp.inf)
+        inf_arr = be.ones_like(t) * be.inf
+        t_out = be.where(hit_mask, t, inf_arr)
 
         # Compute normals at hit points
         n_raw = self._normal_local(px, py)
@@ -158,7 +155,7 @@ class ConicGeometry(AnalyticGeometry):
 
         # Flip to face incoming ray
         dot = (directions * normals).sum(axis=1, keepdims=True)
-        normals = xp.where(dot > 0, -normals, normals)
+        normals = be.where(dot > 0, -normals, normals)
 
         return t_out, normals, hit_mask
 
@@ -214,14 +211,3 @@ class ParaboloidGeometry(ConicGeometry):
             aperture_radius: Aperture semi-diameter [mm].
         """
         super().__init__(radius=radius, conic=-1.0, aperture_radius=aperture_radius)
-
-
-def _get_xp(arr: np.ndarray):
-    try:
-        import cupy  # type: ignore[import]
-
-        if isinstance(arr, cupy.ndarray):
-            return cupy
-    except ImportError:
-        pass
-    return np

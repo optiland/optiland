@@ -8,8 +8,8 @@ from .numpy_backend import NumpyBackend
 __all__ = ["NumpyBackend", "TracerBackend"]
 
 try:
-    from .cupy_backend import CupyBackend  # noqa: F401
+    from .torch_backend import TorchBackend  # noqa: F401
 
-    __all__ += ["CupyBackend"]
+    __all__ += ["TorchBackend"]
 except ImportError:
     pass
