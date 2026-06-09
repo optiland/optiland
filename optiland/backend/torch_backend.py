@@ -1388,6 +1388,26 @@ class TorchBackend(AbstractBackend):
         """
         return torch.ceil(self.array(x))
 
+    def index_add(
+        self,
+        target: Tensor,
+        dim: int,
+        index: Tensor,
+        source: Tensor,
+    ) -> Tensor:
+        """Scatter-add: result[index[i]] += source[i] along dim.
+
+        Args:
+            target: Accumulation buffer.
+            dim: Dimension along which to scatter.
+            index: 1-D integer indices tensor.
+            source: Values to add (same dtype as target).
+
+        Returns:
+            Tensor: New tensor with values scatter-added (non-in-place).
+        """
+        return target.index_add(dim, index, source)
+
     def hypot(self, x: Any, y: Any) -> Tensor:
         """Compute the hypotenuse given legs x and y.
 

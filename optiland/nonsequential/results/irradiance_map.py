@@ -17,7 +17,11 @@ class IrradianceMap:
     """2D irradiance distribution on a planar detector.
 
     Attributes:
-        irradiance: Irradiance [W/mm^2], shape (ny, nx).
+        data: Flat accumulated flux buffer (be-array, shape ny*nx).
+            This is the differentiable handle; call ``.data.backward()``
+            to propagate gradients through the detector image.
+            ``None`` when constructed from legacy hard-splatted data.
+        irradiance: Irradiance [W/mm^2], shape (ny, nx), as a NumPy array.
         x_coords: Bin centre x-coordinates [mm], shape (nx,).
         y_coords: Bin centre y-coordinates [mm], shape (ny,).
         total_flux: Total flux recorded [W].
@@ -31,6 +35,7 @@ class IrradianceMap:
         y_coords: np.ndarray,
         total_flux: float,
         num_rays_hit: int,
+        data=None,
     ) -> None:
         """Initialize IrradianceMap.
 
@@ -40,7 +45,11 @@ class IrradianceMap:
             y_coords: Bin centre y-coordinates [mm], shape (ny,).
             total_flux: Total detected flux [W].
             num_rays_hit: Number of rays that contributed.
+            data: Flat accumulated flux be-array (shape ny*nx), optional.
+                When provided, this is the attached differentiable buffer
+                from which irradiance was computed. Defaults to None.
         """
+        self.data = data  # attached tensor or numpy array (flat, ny*nx)
         self.irradiance = irradiance
         self.x_coords = x_coords
         self.y_coords = y_coords

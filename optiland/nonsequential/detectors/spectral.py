@@ -7,7 +7,7 @@ Kramer Harrison, 2026
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
@@ -36,6 +36,9 @@ class SpectralDetector(BaseDetector):
         num_pixels_x: Number of pixels along x.
         num_pixels_y: Number of pixels along y.
         wavelength_bins: Wavelength bin edges [µm].
+        splat: Splatting mode. Only 'hard' binning is currently implemented;
+            'bilinear' and 'gaussian' are accepted but fall back to hard.
+        splat_sigma: Reserved for future Gaussian splat support.
     """
 
     def __init__(
@@ -46,6 +49,8 @@ class SpectralDetector(BaseDetector):
         num_pixels_x: int,
         num_pixels_y: int,
         wavelength_bins: np.ndarray,
+        splat: Literal["bilinear", "gaussian", "hard"] = "bilinear",
+        splat_sigma: float = 0.5,
         name: str = "",
     ) -> None:
         """Initialize SpectralDetector.
@@ -57,6 +62,11 @@ class SpectralDetector(BaseDetector):
             num_pixels_x: Number of pixels along x.
             num_pixels_y: Number of pixels along y.
             wavelength_bins: Wavelength bin edges [µm], shape (n_lambda + 1,).
+            splat: Splatting mode. Accepts 'bilinear', 'gaussian', or 'hard'.
+                Currently all modes use hard binning; bilinear splat for
+                SpectralDetector is a TODO.
+            splat_sigma: Gaussian splat sigma in pixels (reserved for future
+                use).
             name: Optional label.
         """
         geometry = FinitePlaneGeometry(width=width, height=height)
@@ -65,6 +75,8 @@ class SpectralDetector(BaseDetector):
         self.height = float(height)
         self.num_pixels_x = int(num_pixels_x)
         self.num_pixels_y = int(num_pixels_y)
+        self.splat = splat
+        self.splat_sigma = float(splat_sigma)
         self.wavelength_bins = np.asarray(wavelength_bins, dtype=np.float64)
         n_lambda = len(wavelength_bins) - 1
 
