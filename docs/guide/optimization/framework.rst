@@ -102,24 +102,24 @@ computes the merit value, gradient, and Jacobian.
 * ``AutogradEvaluator`` -- PyTorch backend; uses ``torch.autograd`` to compute
   exact gradients. Default when the torch backend is active.
 
-**Experimental -- Autograd Jacobian modes (AutogradEvaluator only):**
+**Experimental -- Autograd Jacobian modes:**
 
-``AutogradEvaluator`` accepts a ``jacobian_mode`` constructor argument:
+The torch Jacobian strategy can be configured by passing ``jacobian_mode`` to :func:`~optiland.optimization.minimize` or directly to ``AutogradEvaluator``:
 
 * ``"stateful"`` (default) -- standard reverse-mode autograd; compatible with
-  all torch workflows.
+  all torch workflows. Best when the number of residuals ``m`` is small relative
+  to the number of variables ``n``.
 * ``"functional"`` (**Experimental**) -- wraps each evaluation as a pure
   function call via ``torch.func.jacrev``; useful for functional transforms but
   carries state-serialization overhead.
+* ``"forward"`` (**Experimental**) -- forward-mode ``torch.func.jacfwd`` over a
+  functional closure. Beats reverse-mode when ``m ≫ n`` (many residuals, few
+  variables — the common lens design case). Falls back to ``"stateful"`` if not
+  compatible.
 * ``"compiled"`` (**Experimental**) -- traces through ``torch.compile`` before
-  differentiating; can reduce per-step overhead on repeated calls. Only
-  meaningful on PyTorch; not in the all-backend guarantee.
-
-These modes are **not currently exposed through** :func:`~optiland.optimization.minimize`
--- they are constructor arguments to ``AutogradEvaluator`` when you instantiate it
-directly. Passing ``jacobian_mode=`` to ``minimize()`` has no effect (it lands in
-``**method_options`` and is silently ignored). Wiring this kwarg through
-``minimize()`` is tracked as a planned enhancement.
+  differentiating; can reduce per-step overhead on repeated calls.
+* ``"auto"`` (**Experimental**) -- automatically selects ``"forward"`` when
+  ``n_vars < m``, otherwise uses the verified ``"stateful"`` path.
 
 2. Optimizer (step computation)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -466,16 +466,17 @@ Control the finite-difference step size used by ``FiniteDiffEvaluator``:
 * ``rel_step`` (default ``1e-5``) -- step as a fraction of the parameter value.
 * ``abs_step`` (default ``1e-8``) -- absolute floor for the step.
 
-linear_solver -- KKT linear solve (**Advanced**)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+linear_solver -- Linear Solve Strategy (**Advanced**)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``linear_solver`` selects how the augmented KKT system is solved when hard
-constraints are present:
+``linear_solver`` selects how the step is solved during native ``dls``/``lm`` runs:
 
-* ``"normal"`` (default) -- normal-equations solve. Fast; can lose accuracy
-  for ill-conditioned KKT matrices.
-* ``"qr"`` -- QR-based solve. More numerically stable for ill-conditioned
-  systems; somewhat slower. Use when ``result.cond_estimate`` is large.
+* ``"normal"`` (default) -- normal-equations solve. Fast; forms the normal
+  equations ``JᵀJ + λD``. Can lose accuracy for ill-conditioned Jacobians.
+* ``"qr"`` -- QR-based solve. Solves the augmented least-squares system
+  without forming ``JᵀJ`` (robust for ill-conditioned Jacobians). Applies to both
+  the unconstrained ``LevenbergController`` and the hard-constrained ``KKTController``
+  (where it uses the Schur-complement range-space method).
 
 .. code-block:: python
 
