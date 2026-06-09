@@ -5,9 +5,11 @@ Solves ``(JᵀJ + λ·diag(JᵀJ))Δ = −Jᵀr`` (Moré diagonal damping) via
 one ``transform()`` call produces one *accepted* step outcome.
 
 Damping adaption is the **Nielsen gain-ratio** scheme (D6, §4.4): with
-predicted reduction ``L = ½·dxᵀ(λ·D·dx − g)`` (``g = Jᵀr``) and actual
+predicted reduction ``L = dxᵀ(λ·D·dx − g)`` (``g = Jᵀr``) and actual
 reduction ``ΔF = F(x) − F(x+dx)`` (``F = Σrᵢ²``), the ratio ``ρ = ΔF / L``
-drives both acceptance and the λ update —
+drives both acceptance and the λ update.  Both ``L`` and ``ΔF`` are measured
+in the units of ``F = Σrᵢ²`` (no ½ factor on either side) so ``ρ`` is the
+true gain ratio —
 
 * ``ρ > 0`` → accept; ``λ ← λ·max(⅓, 1−(2ρ−1)³)``, reset ``ν ← 2``;
 * ``ρ ≤ 0`` (or non-finite trial) → reject; ``λ ← λ·ν``, ``ν ← 2ν``.
@@ -51,6 +53,19 @@ class LevenbergController:
         min_diag: Floor for ``diag(JᵀJ)`` entries to avoid zero damping
             (default 1e-8).
         max_trials: Maximum inner λ-search trials per step (default 20).
+        linear_solver: ``"normal"`` (default) forms ``JᵀJ + λD`` and solves the
+            normal equations via ``numpy.linalg.solve`` — fast for small,
+            well-conditioned dense problems.  ``"qr"`` instead solves the
+            **augmented least-squares** system
+
+                ⎡   J    ⎤        ⎡ r ⎤
+                ⎢        ⎥ Δ  ≈  −⎢   ⎥
+                ⎣ √λ·√D  ⎦        ⎣ 0 ⎦
+
+            via ``numpy.linalg.lstsq`` (QR/SVD).  This never forms ``JᵀJ`` and
+            so does not square the conditioning of ``J``; prefer it for
+            ill-conditioned / near-rank-deficient Jacobians (strongly coupled
+            curvature/thickness/conic variables, near-null field directions).
     """
 
     def __init__(
@@ -61,13 +76,19 @@ class LevenbergController:
         lam_max: float = 1e16,
         min_diag: float = 1e-8,
         max_trials: int = 20,
+        linear_solver: str = "normal",
     ) -> None:
+        if linear_solver not in ("normal", "qr"):
+            raise ValueError(
+                f"linear_solver must be 'normal' or 'qr', got {linear_solver!r}."
+            )
         self._lam_init = lam_init
         self._lam_up = lam_factor_up
         self._lam_down = lam_factor_down
         self._lam_max = lam_max
         self._min_diag = min_diag
         self._max_trials = max_trials
+        self._linear_solver = linear_solver
 
     def reset(self, state: OptimizationState) -> None:
         """Seed λ and the Nielsen ν factor in ``state.scratch``."""
@@ -116,10 +137,18 @@ class LevenbergController:
         current_val: float = _to_float(state.value)
         n_trials: int = 0
 
+        sqrt_d = np.sqrt(d)  # for the augmented QR path
         while n_trials < self._max_trials and lam <= self._lam_max:
-            A = JTJ + lam * np.diag(d)
             try:
-                dx = np.linalg.solve(A, -JTr)
+                if self._linear_solver == "qr":
+                    # Augmented least squares: minimise ‖JΔ + r‖² + λ‖√D·Δ‖²
+                    # without forming JᵀJ (avoids squaring cond(J)).
+                    aug = np.vstack([J, np.sqrt(lam) * np.diag(sqrt_d)])
+                    rhs = np.concatenate([-r, np.zeros(J.shape[1])])
+                    dx = np.linalg.lstsq(aug, rhs, rcond=None)[0]
+                else:
+                    A = JTJ + lam * np.diag(d)
+                    dx = np.linalg.solve(A, -JTr)
             except np.linalg.LinAlgError:
                 lam *= nu
                 nu *= 2.0
@@ -130,8 +159,16 @@ class LevenbergController:
             f_trial = info.value_fn(x_trial)
             n_trials += 1
 
-            # Predicted reduction L = ½·dxᵀ(λ·D·dx − g), g = Jᵀr.
-            predicted = 0.5 * float(dx @ (lam * d * dx - JTr))
+            # Predicted reduction of the merit F = Σrᵢ² (note: the merit carries
+            # **no** ½ factor, so neither does the predicted reduction — this is
+            # the unit fix for the gain ratio).  For the LM step
+            # (JᵀJ + λD)Δ = −g this equals
+            #     Δᵀ(λ·D·Δ − g) = ‖JΔ‖² + 2λ·ΔᵀDΔ ≥ 0,
+            # which is exactly the same units as ``actual`` = F(x) − F(x+Δ).
+            # (The textbook ½·Δᵀ(λDΔ − g) is the predicted reduction of ½‖r‖²;
+            # pairing it with an F=‖r‖² actual inflated ρ by 2× and released the
+            # damping too aggressively.)
+            predicted = float(dx @ (lam * d * dx - JTr))
             actual = current_val - f_trial  # ΔF for F = Σrᵢ²
             rho = actual / predicted if predicted > 0 else -1.0
 

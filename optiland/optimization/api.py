@@ -132,8 +132,19 @@ def minimize(
             * ``scheme`` ∈ ``{"forward"(default), "central"}``, ``rel_step``,
               ``abs_step`` — finite-difference options for the numpy path
               (§4.6).
-            * ``linear_solver`` ∈ ``{"normal"(default), "qr"}`` — KKT linear
-              solve for hard-constrained ``dls``/``lm`` runs (§4.3).
+            * ``linear_solver`` ∈ ``{"normal"(default), "qr"}`` — linear-solve
+              strategy for the native ``dls``/``lm`` step.  ``"normal"`` solves
+              the normal equations ``JᵀJ + λD``; ``"qr"`` solves the augmented
+              least-squares system without forming ``JᵀJ`` (robust for
+              ill-conditioned Jacobians).  Applies to both the unconstrained
+              ``LevenbergController`` and the hard-constrained ``KKTController``
+              (§4.3).
+            * ``jacobian_mode`` ∈ ``{"stateful"(default), "functional",
+              "forward", "compiled", "auto"}`` — torch Jacobian strategy for
+              ``dls``/``lm`` under the torch backend.  ``"stateful"`` is the
+              verified reverse-mode default; ``"forward"`` uses ``jacfwd``
+              (cheaper when residuals ≫ variables); ``"auto"`` picks per the
+              ``n_vars < m`` heuristic.  Ignored on the numpy backend.
 
             Hard equality/inequality constraints are read automatically from
             ``problem.constraints`` (declared via
@@ -213,9 +224,17 @@ def minimize(
         "rel_step": method_options.pop("rel_step", 1e-5),
         "abs_step": method_options.pop("abs_step", 1e-8),
     }
+    # ---- Torch Jacobian mode exposure (P1.3) --------------------------
+    jacobian_mode = method_options.pop("jacobian_mode", "stateful")
+
     # ---- Build evaluator -----------------------------------------------
     evaluator = _build_evaluator(
-        problem, backend, resolved, on_failure=on_failure, fd_options=fd_options
+        problem,
+        backend,
+        resolved,
+        on_failure=on_failure,
+        fd_options=fd_options,
+        jacobian_mode=jacobian_mode,
     )
 
     # ---- Build stopping criterion --------------------------------------
@@ -420,11 +439,14 @@ def _build_evaluator(
     method: str,
     on_failure: str = "reject",
     fd_options: dict | None = None,
+    jacobian_mode: str = "stateful",
 ) -> Any:
     if backend == "torch" and method in (_TORCH_METHODS | _NATIVE_STEPPED_METHODS):
         from optiland.optimization.evaluators.autograd import AutogradEvaluator
 
-        return AutogradEvaluator(problem, on_failure=on_failure)
+        return AutogradEvaluator(
+            problem, jacobian_mode=jacobian_mode, on_failure=on_failure
+        )
     from optiland.optimization.evaluators.finite_difference import FiniteDiffEvaluator
 
     fd_options = fd_options or {}
@@ -488,7 +510,7 @@ def _build_controller(
             return KKTController(linear_solver=linear_solver)
         from optiland.optimization.control.levenberg import LevenbergController
 
-        return LevenbergController()
+        return LevenbergController(linear_solver=linear_solver)
     from optiland.optimization.control.identity import IdentityController
 
     return IdentityController()

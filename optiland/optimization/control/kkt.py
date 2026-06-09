@@ -60,8 +60,12 @@ class KKTController:
             near-active and seeded into the working set.
         max_working_set_changes: Cap on release/add iterations per step (guards
             against active-set chatter).
-        linear_solver: ``"normal"`` (default, symmetric-indefinite KKT solve) or
-            ``"qr"`` (range-space QR; falls back to the normal solve here).
+        linear_solver: ``"normal"`` (default) assembles the symmetric-indefinite
+            KKT matrix and solves it with ``np.linalg.solve`` (SVD-lstsq
+            fallback).  ``"qr"`` solves it by the **range-space / Schur-
+            complement** method, applying ``H⁻¹`` through a QR factorization of
+            the augmented operator ``[J; √λ·diag(√d)]`` so ``JᵀJ`` is never
+            formed (robust for ill-conditioned Jacobians).
     """
 
     def __init__(
@@ -127,12 +131,68 @@ class KKTController:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _make_hsolve(J: np.ndarray, lam: float, d: np.ndarray):
+        """Return an ``H⁻¹`` applier built from a QR of the augmented operator.
+
+        With ``B = [J; √λ·diag(√d)]`` (shape ``(m+n, n)``) we have
+        ``BᵀB = JᵀJ + λ·diag(d) = H``.  Economic QR ``B = QR`` gives an
+        invertible ``R`` (the ``√λ·√d`` block guarantees full column rank), so
+        ``H⁻¹v = R⁻¹R⁻ᵀv`` is computed by two triangular solves — **without ever
+        forming ``JᵀJ``**, avoiding the squared conditioning ``cond(J)²``.
+
+        Args:
+            J: Residual Jacobian ``(m, n)``.
+            lam: Current damping λ.
+            d: Moré diagonal entries (already floored), shape ``(n,)``.
+
+        Returns:
+            A callable ``hsolve(v)`` accepting a 1-D ``(n,)`` or 2-D ``(n, k)``
+            right-hand side and returning ``H⁻¹v`` of the same shape.
+        """
+        b_aug = np.vstack([J, np.sqrt(lam) * np.diag(np.sqrt(d))])
+        _, r_factor = np.linalg.qr(b_aug)  # reduced: r_factor is (n, n)
+
+        def hsolve(v: np.ndarray) -> np.ndarray:
+            return np.linalg.solve(r_factor, np.linalg.solve(r_factor.T, v))
+
+        return hsolve
+
+    @staticmethod
     def _solve_kkt(
-        H: np.ndarray, A: np.ndarray, rhs_top: np.ndarray, rhs_bot: np.ndarray
+        H: np.ndarray,
+        A: np.ndarray,
+        rhs_top: np.ndarray,
+        rhs_bot: np.ndarray,
+        hsolve=None,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Solve the symmetric KKT system; SVD-lstsq fallback on singularity."""
+        """Solve the symmetric KKT system.
+
+        When ``hsolve`` is provided it applies ``H⁻¹`` (built by
+        :meth:`_make_hsolve` from a QR of the augmented operator) and the system
+        is solved by the **range-space / Schur-complement** method, which never
+        forms ``JᵀJ``.  When ``hsolve`` is ``None`` the full KKT matrix is
+        assembled and solved via ``np.linalg.solve`` with an SVD-lstsq fallback
+        on singularity.
+        """
         n = H.shape[0]
         k = A.shape[0]
+
+        if hsolve is not None:
+            # Range-space method:
+            #   H·dx + Aᵀ·μ = rhs_top,   A·dx = rhs_bot
+            # ⇒ dx = H⁻¹(rhs_top − Aᵀμ),  (A·H⁻¹·Aᵀ)μ = A·H⁻¹·rhs_top − rhs_bot
+            dx_u = hsolve(rhs_top)
+            if k == 0:
+                return dx_u, np.zeros(0)
+            w = hsolve(A.T)  # H⁻¹Aᵀ, shape (n, k)
+            schur = A @ w  # (k, k)
+            rhs_mu = A @ dx_u - rhs_bot
+            try:
+                mu = np.linalg.solve(schur, rhs_mu)
+            except np.linalg.LinAlgError:
+                mu = np.linalg.lstsq(schur, rhs_mu, rcond=None)[0]
+            return dx_u - w @ mu, mu
+
         if k == 0:
             try:
                 dx = np.linalg.solve(H, rhs_top)
@@ -158,8 +218,13 @@ class KKTController:
         c: np.ndarray,
         A_ineq: np.ndarray,
         g: np.ndarray,
+        hsolve=None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[int]]:
-        """Run the active-set loop, returning ``(dx, mu_eq, mu_W, working_set)``."""
+        """Run the active-set loop, returning ``(dx, mu_eq, mu_W, working_set)``.
+
+        ``hsolve`` (optional) is the ``H⁻¹`` applier for the range-space QR
+        solve; when ``None`` the dense KKT assembly is used.
+        """
         q = A_ineq.shape[0]
         # Seed the working set with violated / near-active inequalities.
         working = [j for j in range(q) if g[j] >= -self._active_tol]
@@ -177,7 +242,7 @@ class KKTController:
                 A = A_eq
                 b = -c if A_eq.shape[0] else np.zeros(0)
 
-            dx, mu = self._solve_kkt(H, A, neg_grad, b)
+            dx, mu = self._solve_kkt(H, A, neg_grad, b, hsolve=hsolve)
             p = A_eq.shape[0]
             mu_eq = mu[:p]
             mu_W = mu[p:]
@@ -247,8 +312,13 @@ class KKTController:
         n_trials = 0
         while n_trials < self._max_trials and lam <= self._lam_max:
             H = JTJ + lam * np.diag(d)
+            # Range-space QR solve avoids forming JᵀJ in the H-block; the dense
+            # normal assembly is used otherwise.
+            hsolve = (
+                self._make_hsolve(J, lam, d) if self._linear_solver == "qr" else None
+            )
             dx, mu_eq, mu_W, working = self._active_set_solve(
-                H, -JTr, A_eq, c, A_ineq, g
+                H, -JTr, A_eq, c, A_ineq, g, hsolve=hsolve
             )
             n_trials += 1
 
@@ -262,9 +332,8 @@ class KKTController:
 
             x_trial = x + dx
             # Current penalty merit (constraints already at x from write_x above).
-            phi0 = current_val + sigma * (
-                float(np.sum(np.abs(c))) + float(np.sum(np.maximum(0.0, g)))
-            )
+            p0 = float(np.sum(np.abs(c))) + float(np.sum(np.maximum(0.0, g)))
+            phi0 = current_val + sigma * p0
             phi_trial = self._penalty_merit(x_trial, info.value_fn, sigma)
 
             if (not math.isfinite(phi_trial)) or phi_trial >= phi0:
@@ -272,8 +341,27 @@ class KKTController:
                 nu *= 2.0
                 continue
 
-            # Accept.
-            lam = max(lam * (1.0 / 3.0), 1e-15)
+            # Accept.  Refine λ using the gain ratio of the **penalty merit**
+            # φ = F + σ·(‖c‖₁ + ‖g₊‖₁) under its linearized model (the same
+            # Nielsen scheme as the unconstrained LevenbergController, but for
+            # φ rather than F).  Acceptance itself stays governed by the strict
+            # φ decrease above, so a positive but model-underpredicted step is
+            # never wrongly rejected; the gain ratio only sets the λ schedule.
+            actual = phi0 - phi_trial
+            # Predicted F reduction from the Gauss-Newton model
+            # F(x+Δ) ≈ F + 2·(Jᵀr)·Δ + Δᵀ(JᵀJ)Δ.
+            pred_f = float(-2.0 * (JTr @ dx) - dx @ (JTJ @ dx))
+            # Predicted constraint-violation reduction from the linear model.
+            c_lin = c + A_eq @ dx if A_eq.shape[0] else c
+            g_lin = g + A_ineq @ dx if A_ineq.shape[0] else g
+            p_lin = float(np.sum(np.abs(c_lin))) + float(np.sum(np.maximum(0.0, g_lin)))
+            predicted = pred_f + sigma * (p0 - p_lin)
+            if predicted > 0.0:
+                rho = actual / predicted
+                lam = max(lam * max(1.0 / 3.0, 1.0 - (2.0 * rho - 1.0) ** 3), 1e-15)
+            else:
+                # Model predicts no decrease (rare): keep the robust flat 1/3.
+                lam = max(lam * (1.0 / 3.0), 1e-15)
             state.scratch["lambda"] = lam
             state.scratch["nu"] = 2.0
 
