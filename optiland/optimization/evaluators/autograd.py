@@ -62,7 +62,7 @@ _PROVIDES = frozenset(
     }
 )
 
-JacobianMode = Literal["stateful", "functional", "compiled"]
+JacobianMode = Literal["stateful", "functional", "compiled", "forward", "auto"]
 
 
 class AutogradEvaluator:
@@ -77,14 +77,24 @@ class AutogradEvaluator:
 
             * ``"stateful"`` (default, verified) — row-by-row
               ``torch.autograd.grad`` with ``retain_graph``.  Always correct;
-              no extra dependencies.
+              no extra dependencies.  Reverse-mode, cost ``O(m)`` backward
+              passes — best when residuals ``m`` ≲ variables ``n``.
             * ``"functional"`` (**experimental**) — builds a differentiable
               closure ``f(x) -> r`` and dispatches to ``torch.func.jacrev``
               when the trace is vmap-compatible; otherwise falls back to
-              ``torch.autograd.functional.jacobian``.
+              ``torch.autograd.functional.jacobian``.  Reverse-mode.
+            * ``"forward"`` (**experimental**) — forward-mode
+              ``torch.func.jacfwd`` over the functional closure, cost ``O(n)``
+              directional passes.  Beats reverse-mode when ``m ≫ n`` (many
+              ray/field/wavelength residuals, few variables — the common lens
+              case).  Falls back to the stateful reverse path if the trace is
+              not ``jacfwd``-compatible.
             * ``"compiled"`` (**experimental**) — same as ``"functional"`` but
               first applies ``torch.compile`` to the forward closure for
               JIT-compilation of the entire forward pass.
+            * ``"auto"`` (**experimental**) — picks ``"forward"`` when
+              ``n_vars < m`` (residual count estimated from the operand list),
+              otherwise the verified ``"stateful"`` reverse path.
     """
 
     def __init__(
@@ -345,8 +355,12 @@ class AutogradEvaluator:
           last row.  Always correct.
         * ``"functional"`` (**experimental**) — functional closure +
           ``torch.func.jacrev`` (with fallback).
+        * ``"forward"`` (**experimental**) — functional closure +
+          ``torch.func.jacfwd`` (with fallback to stateful reverse).
         * ``"compiled"`` (**experimental**) — same as ``"functional"`` but
           with the forward closure pre-compiled via ``torch.compile``.
+        * ``"auto"`` (**experimental**) — ``"forward"`` when ``n_vars < m``,
+          else ``"stateful"``.
 
         Args:
             x: Parameter vector (1-D tensor or compatible).
@@ -354,9 +368,54 @@ class AutogradEvaluator:
         Returns:
             Jacobian tensor of shape ``(m, n)``.
         """
-        if self.jacobian_mode in ("functional", "compiled"):
+        mode = self.jacobian_mode
+        if mode == "auto":
+            # Estimate residual count m from active operands; forward-mode wins
+            # when there are many more residuals than variables.
+            m_est = max(len(list(self.problem.operands)), 1)
+            mode = "forward" if self.n_vars < m_est else "stateful"
+        if mode == "forward":
+            return self._jacobian_forward(x)
+        if mode in ("functional", "compiled"):
             return self._jacobian_functional(x)
         return self._jacobian_stateful(x)
+
+    def _jacobian_forward(self, x: Any) -> Any:
+        """Jacobian via forward-mode ``torch.func.jacfwd`` (experimental).
+
+        Computes ``J`` with ``n`` directional (forward-mode) passes over the
+        functional closure, which is cheaper than reverse-mode when ``m ≫ n``.
+        Falls back to the verified stateful reverse path when ``jacfwd`` is
+        unavailable or the trace is not forward-mode-compatible.  The problem
+        state is restored via ``write_x(x)`` afterwards.
+
+        Args:
+            x: Parameter vector (1-D tensor or compatible).
+
+        Returns:
+            Jacobian tensor of shape ``(m, n)``.
+        """
+        if not (hasattr(torch, "func") and hasattr(torch.func, "jacfwd")):
+            return self._jacobian_stateful(x)
+
+        fn = self._get_or_build_forward_fn()
+        params = self._sync.params
+        dtype = params[0].dtype if params else torch.float64
+        device = params[0].device if params else torch.device("cpu")
+        x_t = torch.as_tensor(
+            x if not isinstance(x, torch.Tensor) else x.detach(),
+            dtype=dtype,
+            device=device,
+        )
+        try:
+            J = torch.func.jacfwd(fn)(x_t)
+            if isinstance(J, torch.Tensor) and J.requires_grad:
+                J = J.detach()
+            return J
+        except Exception:
+            return self._jacobian_stateful(x)
+        finally:
+            self.write_x(x)
 
     def _jacobian_stateful(self, x: Any) -> Any:
         """Jacobian via row-by-row ``torch.autograd.grad`` (default stateful path).
