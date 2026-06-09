@@ -59,7 +59,7 @@ Ray tracing is performed by sequentially propagating rays across the surfaces in
 
 1. Rays are converted into the local coordinate system of the current surface.
 2. Rays intersections with the surface are identified and the ray propagates to the intersection point.
-3. If the surface has a physica aperture, rays may be clipped (intensity set to zero) if they fall outside this aperture.
+3. If the surface has a physical aperture, rays may be clipped (intensity set to zero) if they fall outside this aperture.
 4. The rays interact with the surface, modifying their direction, intensity, polarization matrix, and other attributes.
 5. Ray are transformed back to the global coordinate system.
 6. Ray information (intersection points, intensities, etc.) is recorded on the surface for later analysis and visualization.

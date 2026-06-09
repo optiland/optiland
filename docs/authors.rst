@@ -28,7 +28,7 @@ We sincerely appreciate the contributions of the following individuals, whose ef
 - **Robert Moerland** (`GitHub <https://github.com/rjmoerland>`_)
 - **Littie28** (`GitHub <https://github.com/Littie28>`_)
 - **Hsoj** (`GitHub <https://github.com/Hhsoj>`_)
-- **C.R Vasudev Varma** (`GitHub <https://github.com/v4sud3v>`_)
+- **C.R. Vasudev Varma** (`GitHub <https://github.com/v4sud3v>`_)
 - **Melquiades Xiong** (`GitHub <https://github.com/Xiong-Ziyi>`_)
 - **Scott Paine** (`GitHub <https://github.com/scottpaine>`_)
 - **Renato Ferracini Alves** (`GitHub <https://github.com/RFerraciniAlves>`_)
@@ -37,6 +37,8 @@ We sincerely appreciate the contributions of the following individuals, whose ef
 - **lutzerb** (`GitHub <https://github.com/lutzerb>`_)
 - **Jan-Willem Beenakker** (`GitHub <https://github.com/jwmbeenakker>`_)
 - **RayPragma** (`GitHub <https://github.com/RayPragma>`_)
+- **Doron Behar** (`GitHub <https://github.com/doronbehar>`_)
+- **Ayachi Padmanabh Mishra** (`GitHub <https://github.com/AyachiMishra>`_)
 
 
 Your contributions, whether in the form of code, documentation, feedback, or discussions, are what make **Optiland** better for everyone.
