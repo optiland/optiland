@@ -89,6 +89,7 @@ For more details, see the [installation guide](https://optiland.readthedocs.io/e
 | **🛠️ Design & Modeling** | Configure fields, wavelengths, apertures. Build systems using spherical, aspheric, conic, and freeform surfaces.  |
 | **🧮 Differentiable Core** | Switch between NumPy (CPU) and PyTorch (GPU/autograd) seamlessly for hybrid physics-ML workflows. |
 | **🔬 Ray Tracing** | Trace paraxial and real rays through sequential systems with support for polarization, birefringence, and coatings. |
+| **💡 Non-Sequential (beta)** | Differentiable non-sequential ray tracing: illumination, stray-light & ghost analysis, optimizable via `loss.backward()`. |
 | **📊 Optical Analysis** | Generate spot diagrams, wavefront error maps, ray fans, PSF/MTF plots, Zernike decompositions, distortion plots, etc. |
 | **🧠 Optimization** | Local & global optimizers, autograd support, operand-based merit functions, and GlassExpert for categorical variable search. |
 | **📈 Tolerancing** | Monte Carlo and parametric sensitivity analysis to evaluate robustness and manufacturability. |
@@ -111,7 +112,14 @@ For a full breakdown of Optiland’s functionalities, see the [complete feature 
 Optiland is continually evolving to provide new functionalities for optical design and analysis. Below are some of the planned features and enhancements we aim to implement in future versions. We welcome contributions in any of these areas:
 
 ### Physics & Core Engine
-- [ ] **Non-sequential Ray Tracing** (Ghost analysis, stray light, etc.)
+- [x] **Non-Sequential Ray Tracing** (beta) — differentiable illumination, stray-light & ghost analysis. See the [Limitations & Roadmap](https://optiland.readthedocs.io/en/latest/gallery/nonsequential/limitations_and_roadmap.html) page (canonical) for the v1 envelope and these follow-ups:
+  - [ ] Reparameterization for visibility gradients (silhouette/vignetting)
+  - [ ] Optimization-system integration (Variable/operand wiring)
+  - [ ] Path Replay Backpropagation (constant-memory gradients)
+  - [ ] GUI integration
+  - [ ] Volumetric media (Beer–Lambert, volume scatter)
+  - [ ] Polarization (Stokes through Fresnel)
+  - [ ] Dr.Jit / Mitsuba 3 backend
 - [ ] **Physical Optics Propagation** (Diffraction, beam clipping, Gaussian beam evolution)
 - [ ] **Multi-Path Sequential Ray Tracing**
 - [ ] **Additional Freeforms** (Superconic, etc.)
