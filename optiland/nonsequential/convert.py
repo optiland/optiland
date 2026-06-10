@@ -4,6 +4,19 @@ Provides :func:`sequential_to_nonsequential` to convert an
 :class:`~optiland.optic.Optic` instance into a fully-populated
 :class:`~optiland.nonsequential.scene.NSQScene`.
 
+Differentiable-ready output
+---------------------------
+The returned scene stores all geometric parameters as plain Python
+:class:`float` values extracted from the sequential surfaces.  This is
+intentional: the converter does *not* know which parameters the user wants to
+differentiate.  To optimize a parameter with PyTorch, re-assign it as a
+tensor after conversion::
+
+    scene = sequential_to_nonsequential(optic)
+    # Access the config on the compound component:
+    cfg = scene.component_registry.get("L1")._config
+    cfg.r1 = torch.tensor(cfg.r1, requires_grad=True)
+
 Kramer Harrison, 2026
 """
 
@@ -25,22 +38,26 @@ class ConversionError(Exception):
 def _has_polarization_surfaces(optic) -> bool:
     """Return True if any surface has polarization-sensitive coatings.
 
+    Uses the canonical ``surface.interaction_model.coating`` accessor (not the
+    deprecated ``surface.coating`` property) and checks against the
+    :class:`~optiland.coatings.BaseCoatingPolarized` ABC, which is the
+    authoritative discriminator for polarization-sensitive coatings.
+
     Args:
         optic: Sequential Optic.
 
     Returns:
-        True if any surface has polarization-sensitive coatings.
+        True if any surface has a polarization-sensitive coating.
     """
     try:
+        from optiland.coatings import BaseCoatingPolarized  # noqa: PLC0415
+
         for surf in optic.surfaces.surfaces:
-            if (
-                hasattr(surf, "coating")
-                and surf.coating is not None
-                and (
-                    hasattr(surf.coating, "jones_matrix")
-                    or hasattr(surf.coating, "is_polarizing")
-                )
-            ):
+            im = getattr(surf, "interaction_model", None)
+            if im is None:
+                continue
+            coating = getattr(im, "coating", None)
+            if coating is not None and isinstance(coating, BaseCoatingPolarized):
                 return True
         return False
     except Exception:
@@ -492,8 +509,6 @@ def _collimated_source_cs(y_angle_deg: float, x_angle_deg: float, epd: float):
     Returns:
         CoordinateSystem for the source.
     """
-    import math  # noqa: PLC0415
-
     from optiland.coordinate_system import CoordinateSystem  # noqa: PLC0415
 
     upstream_z = -max(epd, 10.0)

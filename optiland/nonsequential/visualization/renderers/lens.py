@@ -221,14 +221,14 @@ class DoubletRenderer2D(ComponentRenderer2D):
         e1b_h, e1b_v = pts2d(-r, z1[0])  # Bottom front rim
 
         c1h = np.concatenate([h1, e1t_h, h2[::-1], e1b_h])
-        c1v = np.concatenate([v1, e1t_v, v2[::-1], v1[0:1]])
+        c1v = np.concatenate([v1, e1t_v, v2[::-1], e1b_v])
 
         # Element 2: Interface -> Top Edge -> Back -> Bottom Edge
         e2t_h, e2t_v = pts2d(r, z3[-1])  # Top back rim
         e2b_h, e2b_v = pts2d(-r, z2[0])  # Bottom interface rim
 
         c2h = np.concatenate([h2, e2t_h, h3[::-1], e2b_h])
-        c2v = np.concatenate([v2, e2t_v, v3[::-1], v2[0:1]])
+        c2v = np.concatenate([v2, e2t_v, v3[::-1], e2b_v])
 
         face_color = (0.8, 0.8, 0.8, 0.6)
         if theme is not None:

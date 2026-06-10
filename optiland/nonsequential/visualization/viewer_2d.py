@@ -86,20 +86,28 @@ class NSQViewer2D(BaseViewer2D):
     ) -> tuple[Figure, Axes]:
         """Render the scene cross-section to a Matplotlib figure.
 
+        When *result* is provided and contains ``ray_paths``, those paths are
+        used for the ray overlay without running a new trace.  If *result* is
+        ``None`` (or its ``ray_paths`` is ``None``) and ``num_rays > 0``, a
+        fresh trace is run internally.
+
         Args:
-            result: Optional SimulationResult; used to overlay ray paths
-                when ``num_rays > 0``.
+            result: Optional SimulationResult.  If its ``ray_paths`` dict is
+                populated it is used for the ray overlay directly.
             theme: Optional theme object for colours and styles. If None,
                 the active theme is used.
             projection: Projection plane -- ``'YZ'`` (default), ``'XZ'``,
                 or ``'XY'``.
             num_rays: Number of ray segments to sample and overlay.
-                Defaults to 100.
+                Defaults to 100.  Pass 0 to skip ray drawing entirely.
             figsize: Figure size override (width, height). None -> theme default.
-            title: Optional axes title. Defaults to "NSQ Scene -- 2D Cross-Section".
+            title: Optional axes title. Defaults to
+                ``"NSQ Scene -- 2D Cross-Section"``.
             xlim: Optional (xmin, xmax) axis limits.
             ylim: Optional (ymin, ymax) axis limits.
             ax: Optional existing axes to plot into.
+            color_by: Ray colouring strategy -- ``'source'`` (default),
+                ``'bounce'``, or ``'segment'``.
 
         Returns:
             (fig, ax) tuple.
@@ -127,6 +135,7 @@ class NSQViewer2D(BaseViewer2D):
                 NSQRays2D,  # noqa: PLC0415
             )
 
+            existing_paths = result.ray_paths if result is not None else None
             rays = NSQRays2D(self.scene)
             rays.plot(
                 ax,
@@ -134,6 +143,7 @@ class NSQViewer2D(BaseViewer2D):
                 theme=theme,
                 projection=projection,
                 color_by=color_by,
+                ray_paths=existing_paths,
             )
 
         ax.set_aspect("equal")

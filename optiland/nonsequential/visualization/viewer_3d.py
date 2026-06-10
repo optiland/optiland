@@ -78,11 +78,20 @@ class NSQViewer3D(BaseViewer3D):
     ) -> None:
         """Render the scene in a VTK interactive window.
 
+        When *result* is provided and contains ``ray_paths``, those paths are
+        used for the ray overlay without running a new trace.  If *result* is
+        ``None`` (or its ``ray_paths`` is ``None``) and ``num_rays > 0``, a
+        fresh trace is run internally.
+
         Args:
-            result: Optional SimulationResult; used to overlay ray paths.
-            num_rays: Number of ray segments to overlay (0 = none).
-            dark_mode: Use dark background if True.
+            result: Optional SimulationResult.  If its ``ray_paths`` dict is
+                populated it is used for the ray overlay directly.
+            num_rays: Number of ray segments to overlay. Pass 0 to skip ray
+                drawing entirely.
+            dark_mode: Use a dark background if True.
             figsize: (width, height) of the VTK window in pixels.
+            color_by: Ray colouring strategy -- ``'source'`` (default),
+                ``'bounce'``, or ``'segment'``.
 
         Raises:
             ImportError: If VTK is not installed.
@@ -116,8 +125,14 @@ class NSQViewer3D(BaseViewer3D):
                 NSQRays3D,  # noqa: PLC0415
             )
 
+            existing_paths = result.ray_paths if result is not None else None
             rays = NSQRays3D(self.scene)
-            rays.plot(renderer, num_rays=num_rays, color_by=color_by)
+            rays.plot(
+                renderer,
+                num_rays=num_rays,
+                color_by=color_by,
+                ray_paths=existing_paths,
+            )
 
         window, interactor = self._make_window(
             renderer, figsize, "NSQ Scene -- 3D View"
