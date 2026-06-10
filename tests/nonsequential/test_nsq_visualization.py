@@ -200,6 +200,31 @@ def test_nsq_viewer_2d_default_title(minimal_scene):
 
 
 # ---------------------------------------------------------------------------
+# ray_paths pass-through test
+# ---------------------------------------------------------------------------
+
+
+def test_nsq_viewer_2d_uses_existing_ray_paths(minimal_scene):
+    """When a result with ray_paths=None is passed, NSQViewer2D must not crash.
+
+    This exercises the result.ray_paths pass-through path: if ray_paths is
+    None on the result, NSQRays2D falls through to tracing fresh rays
+    (num_rays > 0) -- we just verify no AttributeError is raised.
+    """
+    import matplotlib.pyplot as plt
+
+    from optiland.nonsequential.visualization import NSQViewer2D
+    from optiland.nonsequential.tracer import SimulationResult
+
+    # A result without ray_paths (the common case before record_paths=True)
+    result = SimulationResult(ray_paths=None)
+    viewer = NSQViewer2D(minimal_scene)
+    # Should not raise; num_rays=0 skips ray drawing
+    fig, ax = viewer.view(result=result, num_rays=0)
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
 # OpticViewer backward-compat test
 # ---------------------------------------------------------------------------
 

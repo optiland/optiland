@@ -1,7 +1,12 @@
-"""Non-Sequential Rays Visualization Module
+"""Non-Sequential Rays Visualization Module.
 
-This module contains classes for visualizing rays in a non-sequential
-optical system.
+Provides :class:`NSQRays2D` and :class:`NSQRays3D` for drawing ray paths
+onto Matplotlib axes and VTK renderers respectively.
+
+When a pre-existing :class:`~optiland.nonsequential.tracer.SimulationResult`
+with ``ray_paths`` is available, pass it via the ``ray_paths`` argument to
+avoid a redundant trace.  If ``ray_paths`` is ``None`` the helpers run a
+fresh Monte Carlo trace with ``record_paths=True``.
 
 Kramer Harrison, 2026
 """
@@ -9,6 +14,7 @@ Kramer Harrison, 2026
 from __future__ import annotations
 
 import contextlib
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -18,44 +24,73 @@ with contextlib.suppress(ImportError):
 from optiland.nonsequential.tracer import NSQTracer
 from optiland.visualization.system.utils import project_rays
 
+if TYPE_CHECKING:
+    from optiland.nonsequential.scene import NSQScene
+
 
 class NSQRays2D:
-    """A class to represent and visualize 2D rays in an NSQ system.
+    """Visualize 2D ray paths for a non-sequential scene.
 
-    Args:
-        scene (NSQScene): The non-sequential scene to be visualized.
+    Attributes:
+        scene: The NSQScene being visualized.
+        recorded_paths: Ray-path dict populated by :meth:`_trace` or
+            supplied directly; ``None`` until populated.
     """
 
-    def __init__(self, scene):
+    def __init__(self, scene: NSQScene) -> None:
+        """Initialize NSQRays2D.
+
+        Args:
+            scene: The non-sequential scene to be visualized.
+        """
         self.scene = scene
-        self.recorded_paths = None
+        self.recorded_paths: dict | None = None
 
     def plot(
         self,
         ax,
-        num_rays=100,
+        num_rays: int = 100,
         theme=None,
-        projection="YZ",
-        rng_seed=42,
+        projection: str = "YZ",
+        rng_seed: int = 42,
         color_by: str = "source",
-    ):
-        """Plots the rays.
+        ray_paths: dict | None = None,
+    ) -> None:
+        """Plot ray paths onto a Matplotlib axis.
+
+        If *ray_paths* is provided it is used directly and no new trace is
+        run.  Otherwise a fresh Monte Carlo trace with ``record_paths=True``
+        is performed using *num_rays* and *rng_seed*.
 
         Args:
-            ax: The matplotlib axis to plot on.
-            num_rays: Number of rays to trace.
-            theme (Theme, optional): The theme to apply.
-            projection (str): Projection plane.
-            rng_seed (int): Seed for reproducibility.
-            color_by (str): How to color rays ("source" or "bounce" or "segment").
+            ax: Matplotlib axis to plot on.
+            num_rays: Number of rays to trace when *ray_paths* is ``None``.
+            theme: Optional theme (colour cycle, etc.).
+            projection: Projection plane (``'YZ'``, ``'XZ'``, or ``'XY'``).
+            rng_seed: RNG seed for the fresh trace (ignored when
+                *ray_paths* is supplied).
+            color_by: Ray colouring mode: ``'source'``, ``'bounce'``, or
+                ``'segment'``.
+            ray_paths: Pre-existing ray-path dict from a
+                :class:`~optiland.nonsequential.tracer.SimulationResult`.
+                When supplied no new trace is run.
         """
-        self._trace(num_rays, rng_seed)
+        if ray_paths is not None:
+            self.recorded_paths = ray_paths
+        else:
+            self._trace(num_rays, rng_seed)
         if not self.recorded_paths:
             return
 
         self._plot_lines(ax, theme, projection, color_by)
 
-    def _trace(self, num_rays, seed):
+    def _trace(self, num_rays: int, seed: int) -> None:
+        """Run a fresh trace and store the resulting ray paths.
+
+        Args:
+            num_rays: Number of rays to launch.
+            seed: RNG seed.
+        """
         tracer = NSQTracer(self.scene)
         res = tracer.trace(num_rays=num_rays, seed=seed, record_paths=True)
         self.recorded_paths = res.ray_paths
@@ -151,25 +186,54 @@ class NSQRays2D:
 
 
 class NSQRays3D(NSQRays2D):
-    """A class to represent 3D rays for visualization using VTK."""
+    """Visualize 3D ray paths for a non-sequential scene using VTK.
 
-    def __init__(self, scene):
+    Inherits :meth:`_trace` and the event-path logic from
+    :class:`NSQRays2D`; overrides :meth:`plot` and :meth:`_plot_lines` to
+    use VTK line actors instead of Matplotlib lines.
+    """
+
+    def __init__(self, scene: NSQScene) -> None:
+        """Initialize NSQRays3D.
+
+        Args:
+            scene: The non-sequential scene to be visualized.
+        """
         super().__init__(scene)
         self._rgb_colors = [
             (0.122, 0.467, 0.706),
         ]
 
-    def plot(self, ax, num_rays=100, theme=None, rng_seed=42, color_by: str = "source"):
-        """Plots the rays in 3D.
+    def plot(
+        self,
+        ax,
+        num_rays: int = 100,
+        theme=None,
+        rng_seed: int = 42,
+        color_by: str = "source",
+        ray_paths: dict | None = None,
+    ) -> None:
+        """Plot ray paths onto a VTK renderer.
+
+        If *ray_paths* is provided it is used directly and no new trace is
+        run.  Otherwise a fresh Monte Carlo trace is performed.
 
         Args:
-            ax: The VTK renderer to plot on.
-            num_rays: Number of rays.
-            theme: The theme.
-            rng_seed: Seed.
-            color_by (str): How to color rays ("source" or "bounce" or "segment").
+            ax: VTK renderer to add line actors to.
+            num_rays: Number of rays to trace when *ray_paths* is ``None``.
+            theme: Optional theme object.
+            rng_seed: RNG seed for the fresh trace (ignored when
+                *ray_paths* is supplied).
+            color_by: Ray colouring mode: ``'source'``, ``'bounce'``, or
+                ``'segment'``.
+            ray_paths: Pre-existing ray-path dict from a
+                :class:`~optiland.nonsequential.tracer.SimulationResult`.
+                When supplied no new trace is run.
         """
-        self._trace(num_rays, rng_seed)
+        if ray_paths is not None:
+            self.recorded_paths = ray_paths
+        else:
+            self._trace(num_rays, rng_seed)
         if not self.recorded_paths:
             return
 

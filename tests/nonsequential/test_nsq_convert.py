@@ -228,6 +228,24 @@ def test_fresnel_warning_issued():
         sequential_to_nonsequential(optic)
 
 
+def test_has_polarization_no_deprecation_warning():
+    """_has_polarization_surfaces must not trigger a DeprecationWarning.
+
+    Previously the function used the deprecated ``surf.coating`` property.
+    It must now use ``surf.interaction_model.coating`` exclusively.
+    """
+    import warnings
+
+    from optiland.nonsequential.convert import _has_polarization_surfaces
+
+    optic = _singlet_optic()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        # Must not raise DeprecationWarning
+        result = _has_polarization_surfaces(optic)
+    assert result is False  # plain singlet has no polarization coatings
+
+
 def test_image_height_field_raises():
     """Fields of type 'paraxial_image_height' must raise ConversionError."""
     from optiland.optic import Optic
