@@ -17,6 +17,8 @@ from optiland.nonsequential.detectors.registry import DetectorRegistry
 from optiland.nonsequential.sources.registry import SourceRegistry
 
 if TYPE_CHECKING:
+    import os
+
     from optiland.coordinate_system import CoordinateSystem
     from optiland.nonsequential.backends.base import TracerBackend
     from optiland.nonsequential.components.base import BaseComponent
@@ -284,6 +286,65 @@ class NSQScene:
 
         NSQViewer3D(self).view(result, **kwargs)
 
+    def to_json(self, path: str | os.PathLike) -> None:
+        """Serialize the scene to a versioned JSON file.
+
+        Serializes all components, sources, and detectors.  Simulation
+        results and accumulated detector data are **not** included.
+
+        Tensor values (e.g. ``torch.Tensor`` parameters) are detached and
+        written as plain floats.  ``requires_grad`` is not persisted; to
+        differentiate a loaded scene, re-wrap the relevant parameters in
+        ``torch.tensor(..., requires_grad=True)`` after loading.
+
+        Args:
+            path: Destination file path (created or overwritten).
+
+        Raises:
+            TypeError: If a component/source/detector type is not serializable.
+            ValueError: If a material cannot be round-tripped (e.g. no
+                catalog name is available).
+
+        Example::
+
+            scene.to_json("my_scene.json")
+        """
+        from optiland.nonsequential.serialization import (  # noqa: PLC0415
+            scene_to_json,
+        )
+
+        scene_to_json(self, path)
+
+    @classmethod
+    def from_json(cls, path: str | os.PathLike) -> NSQScene:
+        """Load a scene from a versioned JSON file.
+
+        The loaded scene is plain-valued: all numeric parameters are Python
+        floats, not tensors.  Re-wrap parameters in
+        ``torch.tensor(..., requires_grad=True)`` if you need gradients.
+
+        Args:
+            path: Path to a JSON file previously written by
+                :meth:`to_json`.
+
+        Returns:
+            Reconstructed :class:`NSQScene`.
+
+        Raises:
+            FileNotFoundError: If ``path`` does not exist.
+            ValueError: If the ``nsq_schema_version`` is missing or does not
+                match the current loader.
+
+        Example::
+
+            scene = NSQScene.from_json("my_scene.json")
+        """
+        from optiland.nonsequential.serialization import (  # noqa: PLC0415
+            scene_from_json,
+        )
+
+        return scene_from_json(path)
+
     def validate(self) -> None:
         """Validate the scene for common configuration errors.
 
@@ -419,9 +480,13 @@ def _build_detector(cs: CoordinateSystem, config) -> object:
             num_bins_phi=config.num_phi,
         )
     if isinstance(config, RayDatabaseConfig):
+        from optiland.nonsequential.components.geometry.analytic.plane import (  # noqa: PLC0415
+            FinitePlaneGeometry,
+        )
+
+        geometry = FinitePlaneGeometry(width=config.width, height=config.height)
         return RayDatabaseDetector(
             cs=cs,
-            width=config.width,
-            height=config.height,
+            geometry=geometry,
         )
     raise TypeError(f"Unrecognised detector config type: {type(config).__name__}.")
