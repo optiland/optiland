@@ -64,7 +64,10 @@ class ConicGeometry(AnalyticGeometry):
         R = self.radius
         K = self.conic
         under_root = 1.0 - (1.0 + K) * r2 / (R * R)
-        safe_root = be.maximum(under_root, 0.0)
+        # Clamp to a small positive epsilon (not 0): sqrt has an infinite
+        # derivative at 0, which would poison gradients for rays at the conic
+        # edge. The forward value changes by <= 1e-6 (sqrt(1e-12)).
+        safe_root = be.maximum(under_root, 1e-12)
         return r2 / (R * (1.0 + safe_root**0.5))
 
     def _normal_local(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
@@ -82,7 +85,8 @@ class ConicGeometry(AnalyticGeometry):
         r2 = x**2 + y**2
         R = self.radius
         K = self.conic
-        under_root = be.maximum(1.0 - (1.0 + K) * r2 / (R * R), 0.0)
+        # Epsilon-clamped (not 0) so the sqrt derivative stays finite at the edge.
+        under_root = be.maximum(1.0 - (1.0 + K) * r2 / (R * R), 1e-12)
         sqrt_term = under_root**0.5
 
         # dz/dx, dz/dy from implicit differentiation

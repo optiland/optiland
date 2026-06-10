@@ -60,8 +60,11 @@ class SphereGeometry(AnalyticGeometry):
 
         discriminant = b**2 - 4.0 * c
         disc_ok = discriminant >= 0.0
+        # Clamp the radicand to a small positive epsilon (not 0). sqrt has an
+        # infinite derivative at 0; combined with be.where this produces a
+        # 0 * inf = NaN in the backward pass even though the forward is masked.
         sqrt_disc = be.where(
-            disc_ok, be.maximum(discriminant, 0.0) ** 0.5, be.zeros_like(discriminant)
+            disc_ok, be.maximum(discriminant, 1e-12) ** 0.5, be.zeros_like(discriminant)
         )
 
         inf_arr = be.ones_like(discriminant) * be.inf

@@ -92,50 +92,16 @@ optimisation.
 - *Forward mode (no-grad / NumPy backend)*: 1 × 10\ :sup:`7`\+ rays, depth
   16, fully batched.
 
-Limitations (v1)
-----------------
-The following capabilities are **not** available in v1 and are tracked on the
-roadmap below:
-
-1. **Visibility gradients are zero.**  When a ray silhouette moves across a
-   surface boundary (e.g. vignetting), the boundary does not contribute a
-   gradient.  Reparameterization (Loubet et al. 2019; Bangaru et al. 2020)
-   is roadmap item #1 and is the single biggest physics limitation of the beta.
-   A dedicated test (``tests/nonsequential/test_nsq_gradients.py``) explicitly
-   asserts this behaviour and links the roadmap.
-2. **Mesh geometry is forward-only.**  Analytic conics
-   (:class:`ConicGeometry`, :class:`SphereGeometry`,
-   :class:`ParaboloidGeometry`) are differentiable; :class:`MeshGeometry` is
-   not — ``mesh.backward()`` will raise.
-3. **No polarisation.**  Stokes tracking was removed from v1; it is roadmap
-   item #6.
-4. **Memory cap.**  The ~1 × 10\ :sup:`5`-ray gradient-mode envelope is a
-   hard constraint of the naive autograd strategy.  Path Replay
-   Backpropagation (roadmap #3) lifts this cap.
-
-Roadmap
--------
-Contributions welcome — use the ``feat/nonsequential`` branch and open a PR
-against ``master``.  Each item below has the spec section as a reference.
-
-1. **Reparameterization for visibility gradients** — Loubet et al. 2019 /
-   Bangaru et al. 2020 warped-area reparameterization so
-   silhouette/vignetting/which-surface-hit gradients become correct.  Closes
-   the single biggest physics limitation of the beta.
-2. **Optimization integration** — wire NSQ into Optiland's
-   ``Variable``/operand system and optimizers for end-to-end
-   illumination/stray-light design.
-3. **Path Replay Backpropagation (PRB)** — constant-memory, unbiased
-   gradients; lifts the ~1 × 10\ :sup:`5`-ray cap via the
-   ``gradient_mode`` seam already present in :class:`TorchBackend`.
-4. **GUI integration** — NSQ scene building and visualization in
-   ``optiland_gui``.
-5. **Volumetric media** — Beer–Lambert bulk absorption and volume scattering.
-6. **Polarisation** — reintroduce Stokes tracking through Fresnel coatings
-   (the removed s0–s3, done properly this time).
-7. **Dr.Jit / Mitsuba 3 backend** — high-performance
-   :class:`~optiland.nonsequential.backends.TracerBackend` plugin via scene
-   translation.
+Limitations & Roadmap
+---------------------
+The biggest v1 limitation is that **visibility gradients are zero** (silhouette,
+vignetting, and which-surface-hit boundaries do not contribute gradients);
+mesh geometry is forward-only, there is no polarisation, and gradient mode is
+capped at ~1e5 rays. These gaps and the full 7-item roadmap
+(reparameterization → optimization integration → PRB → GUI → volumetric media →
+polarisation → Dr.Jit/Mitsuba) are tracked on the canonical
+**NSQ Limitations & Roadmap** documentation page:
+https://optiland.readthedocs.io/en/latest/gallery/nonsequential/limitations_and_roadmap.html
 
 Call to Action
 --------------
@@ -319,10 +285,3 @@ __all__ = [
     "ConversionError",
     "sequential_to_nonsequential",
 ]
-
-try:
-    from optiland.nonsequential.backends import CupyBackend  # noqa: F401
-
-    __all__ += ["CupyBackend"]
-except ImportError:
-    pass

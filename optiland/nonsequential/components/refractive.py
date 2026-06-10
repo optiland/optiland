@@ -84,6 +84,11 @@ class RefractiveComponent(BaseComponent):
             hit_mask: True for rays hitting this component, shape (N,).
             rng: Random number generator (used for detached sampling only).
         """
+        # Missed rays carry t = inf; zero it for the differentiable position
+        # update so the masked-out be.where branch cannot inject a
+        # 0 * inf = NaN into the backward pass.
+        t = be.where(hit_mask, t, be.zeros_like(t))
+
         # Advance hit rays to intersection point
         rays.x = be.where(hit_mask, rays.x + t * rays.L, rays.x)
         rays.y = be.where(hit_mask, rays.y + t * rays.M, rays.y)
@@ -110,10 +115,13 @@ class RefractiveComponent(BaseComponent):
         n_ratio = n1 / (n2 + 1e-30)
         sin2_t = n_ratio**2 * (1.0 - cos_theta_i**2)
         tir = sin2_t > 1.0
+        # Epsilon-clamp the radicand (not 0): sqrt's infinite derivative at 0
+        # combined with be.where yields a 0 * inf = NaN gradient at the TIR
+        # boundary. Forward value changes by <= 1e-6.
         cos_theta_t = be.where(
             tir,
             be.zeros_like(sin2_t),
-            be.maximum(1.0 - sin2_t, 0.0) ** 0.5,
+            be.maximum(1.0 - sin2_t, 1e-12) ** 0.5,
         )
 
         rs = (n1 * cos_theta_i - n2 * cos_theta_t) / (
