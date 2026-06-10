@@ -120,3 +120,68 @@ Optiland code uses ``import optiland.backend as be`` instead of importing NumPy 
 Switch backends with ``be.set_backend("torch")`` or ``be.set_backend("numpy")``.
 
 See :ref:`configurable_backend` in the Developer's Guide for the full backend architecture.
+
+Non-sequential ray tracing
+--------------------------
+
+A tracing mode where rays propagate freely through a 3-D scene and interact with surfaces in **any
+order** (rather than a fixed numbered sequence). Used for illumination, stray-light, ghost, and
+non-imaging analysis. See the :ref:`NSQ gallery <gallery_nonsequential>`.
+
+Monte Carlo tracing
+-------------------
+
+Sampling many random rays from sources and accumulating their contributions statistically. NSQ uses
+Monte Carlo sampling; results converge as the ray count increases.
+
+Splatting
+---------
+
+How a detector deposits a ray's flux into its pixel grid. ``hard`` splatting bins to the nearest
+pixel; ``bilinear`` splatting distributes flux across the four nearest pixels and is **differentiable**
+with respect to the landing position.
+
+Throughput (weight)
+-------------------
+
+A per-ray multiplicative factor on flux that accumulates as a ray reflects, refracts, or scatters.
+NSQ's differentiable Fresnel split uses an *attached* throughput weight whose forward value is 1 but
+which carries gradients (see *detached-sample / attached-weight*).
+
+BSDF
+----
+
+Bidirectional Scattering Distribution Function — the model that determines how a surface scatters
+incident light into outgoing directions (e.g. specular, Lambertian, Harvey–Shack roughness, or
+tabulated measured data).
+
+Irradiance map
+--------------
+
+A 2-D spatial distribution of flux per unit area [W/mm²] recorded on a detector surface.
+
+Far-field pattern
+-----------------
+
+The angular distribution of radiant intensity [W/sr] emitted into a hemisphere, recorded by a
+``FarFieldDetector``.
+
+Étendue
+-------
+
+A conserved geometric quantity (area × projected solid angle) describing how "spread out" a bundle of
+light is in space and angle. It bounds what any non-imaging concentrator can achieve.
+
+Detached-sample / attached-weight
+---------------------------------
+
+The estimator NSQ uses to keep stochastic reflect/refract choices differentiable: the *branch* is
+sampled from a detached (non-differentiable) probability, while the throughput *weight* stays attached
+to the autograd graph so gradients flow through material and geometry parameters. See the
+:ref:`NSQ developer guide <nonsequential_raytracing>`.
+
+Visibility gradient
+-------------------
+
+The gradient contributed by a moving silhouette or occlusion boundary (e.g. vignetting at an aperture
+edge). NSQ v1 does **not** capture these (they are zero); see :ref:`nsq_limitations_and_roadmap`.

@@ -1,11 +1,12 @@
-materials.registry
+﻿materials.registry
 ==================
 
-.. automodule:: optiland.materials.registry
+.. automodule:: materials.registry
 
-
+   
    .. rubric:: Classes
 
    .. autosummary::
-
+   
       MaterialRegistry
+   

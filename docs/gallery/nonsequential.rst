@@ -9,6 +9,27 @@ sequential tracer — where surfaces are numbered and rays always traverse them
 in order — the NSQ engine lets rays propagate freely through a 3-D scene,
 bouncing, refracting, and scattering on any surface they encounter.
 
+**Two engines, two jobs.** NSQ runs forward on **NumPy** (1e7+ rays — the real
+illumination and stray-light workflow) *and* differentiably on **PyTorch**
+(``be.set_backend("torch")``, ~1e5 rays at depth 16 — optimization and ML
+layers). The same scene-building code drives both; switching the active
+``optiland.backend`` selects the engine. The forward path is for production
+analysis; the torch path builds a full autograd graph through the Monte Carlo
+loop so you can shape a detector's irradiance by calling ``loss.backward()``
+(see :doc:`notebook 11 <nonsequential/11_differentiable_optimization>`).
+
+**Already have a lens? Convert it in one line.** Existing sequential Optiland
+designs drop straight into NSQ for stray-light and ghost analysis::
+
+    from optiland.nonsequential import sequential_to_nonsequential
+    scene = sequential_to_nonsequential(optic)   # singlets → Lens, doublets → Doublet, image → IrradianceDetector
+
+.. note::
+
+   **Beta.** NSQ is a beta feature stabilizing toward a frozen 1.0. See
+   :ref:`nsq_limitations_and_roadmap` (canonical) for the v1 envelope, known
+   limitations (notably zero visibility gradients), and the development roadmap.
+
 .. rubric:: When to use the NSQ engine
 
 * **Illumination design** — uniform lighting, LED arrays, light-pipe uniformity
@@ -16,6 +37,35 @@ bouncing, refracting, and scattering on any surface they encounter.
 * **Scatter modelling** — diffuse coatings, rough mirrors (Harvey–Shack ABg model)
 * **Non-imaging optics** — solar concentrators, parabolic reflectors
 * **Detector characterisation** — encircled energy, spot diagrams, far-field patterns
+
+.. rubric:: Sequential vs. non-sequential
+
+Use the **sequential** engine for imaging design (lenses in a known order, one
+image plane, deterministic ray tracing). Reach for **NSQ** when light order is
+not fixed or when you care about where stray light lands.
+
+.. list-table::
+   :widths: 30 35 35
+   :header-rows: 1
+
+   * -
+     - Sequential
+     - Non-sequential (NSQ)
+   * - Propagation
+     - Ordered surface list
+     - Free 3-D propagation, any order
+   * - Typical job
+     - Imaging / aberration design
+     - Illumination, stray light, non-imaging
+   * - Targets
+     - One image surface
+     - Many detectors anywhere in the scene
+   * - Method
+     - Deterministic ray trace
+     - Monte Carlo sampling
+   * - Splitting
+     - Single path per ray
+     - Fresnel reflect/refract, scatter, ghosts
 
 .. rubric:: Core concepts
 
@@ -88,10 +138,10 @@ bouncing, refracting, and scattering on any surface they encounter.
      - ``FarFieldDetectorConfig``
      - ``FarFieldPattern`` — angular (θ, φ) intensity [W/sr]
    * - ``SpectralDetector``
-     - *(construct directly)*
+     - ``SpectralDetectorConfig``
      - ``SpectralResult`` — per-wavelength irradiance map
    * - ``RayDatabaseDetector``
-     - *(construct directly)*
+     - ``RayDatabaseConfig``
      - ``RayDatabase`` — full phase-space record
 
 **BSDFs (Surface Scatter)**
@@ -110,6 +160,8 @@ bouncing, refracting, and scattering on any surface they encounter.
      - Cosine-weighted hemisphere; ``reflectance_value`` ∈ [0, 1]
    * - ``HarveyShackBSDF``
      - ABg roughness model; ``b0``, ``l0``, ``s`` parameters
+   * - ``TabulatedBSDF``
+     - Measured BSDF from tabulated angular scatter data
 
 **Sequential conversion**
 
@@ -143,6 +195,11 @@ surface → ``IrradianceDetector``.
     result = scene.trace(num_rays=100_000, seed=42)
     result.detectors['D'].plot()
 
+This quickstart runs on the NumPy forward engine. To get gradients, call
+``be.set_backend("torch")`` before building the scene and optimize scene
+parameters with ``loss.backward()`` — see
+:doc:`notebook 11 <nonsequential/11_differentiable_optimization>`.
+
 Examples
 --------
 
@@ -158,3 +215,9 @@ Examples
    nonsequential/08_stray_light_analysis
    nonsequential/09_reflective_systems
    nonsequential/10_advanced_topics
+   nonsequential/11_differentiable_optimization
+
+.. toctree::
+   :hidden:
+
+   nonsequential/limitations_and_roadmap

@@ -1,11 +1,12 @@
-materials.catalog
+﻿materials.catalog
 =================
 
-.. automodule:: optiland.materials.catalog
+.. automodule:: materials.catalog
 
-
+   
    .. rubric:: Classes
 
    .. autosummary::
-
+   
       MaterialCatalog
+   

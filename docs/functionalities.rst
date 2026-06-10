@@ -82,8 +82,10 @@ Nonsequential Ray Tracing
   Analyze system performance with irradiance maps, spectral detectors, and far-field (angular) distributions.
 - **Stray Light and Ghost Analysis**:
   Identify and quantify unwanted light paths and ghost reflections.
-- **Hardware Acceleration**:
-  Take advantage of GPU acceleration (CuPy) for large-scale Monte Carlo traces.
+- **Two Engines, Two Jobs**:
+  A fast NumPy forward path for production illumination/stray-light traces (1e7+ rays), and a PyTorch path that builds a full autograd graph through the Monte Carlo loop for differentiable design (~1e5 rays, depth 16).
+- **Differentiable Illumination / Stray-Light Design**:
+  Optimize scene parameters (radii, positions, dispersion) end-to-end with ``loss.backward()`` by switching to the PyTorch backend.
 
 Material Database
 -----------------
