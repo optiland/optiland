@@ -7,6 +7,16 @@ from .ray_fan import RayFan, BestFitRayFan
 from .y_ybar import YYbar
 from .distortion import Distortion
 from .grid_distortion import GridDistortion
+from .distortion_strategies import (
+    AffineDistortionModel,
+    CentroidReferencePoint,
+    ChiefRayReferencePoint,
+    DistortionModel,
+    DistortionResult,
+    ReferencePointStrategy,
+    RotationalDistortionModel,
+    create_distortion_model,
+)
 from .field_curvature import FieldCurvature
 from .rms_vs_field import RmsSpotSizeVsField, RmsWavefrontErrorVsField
 from .pupil_aberration import PupilAberration

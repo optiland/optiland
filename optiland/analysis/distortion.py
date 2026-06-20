@@ -15,6 +15,7 @@ import numpy as np
 import optiland.backend as be
 
 from .base import BaseAnalysis
+from .distortion_strategies import DistortionModel, create_distortion_model
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -32,12 +33,20 @@ class Distortion(BaseAnalysis):
             analysis. Defaults to 128.
         distortion_type (str, optional): The type of distortion analysis.
             Defaults to 'f-tan'.
+        method (str or DistortionModel, optional): The distortion strategy to
+            use. ``"paraxial"`` (default) traces a chief ray against a
+            rotationally symmetric reference. ``"nonparaxial"`` uses the
+            transmitted-energy centroid against a best-fit affine reference,
+            enabling distortion for off-axis, freeform, or obscured systems
+            where no chief ray can be traced. A custom :class:`DistortionModel`
+            instance may also be supplied.
 
     Attributes:
         optic (Optic): The optic object being analyzed.
         wavelengths (list): The wavelengths being analyzed.
         num_points (int): The number of points generated for the analysis.
         distortion_type (str): The type of distortion analysis.
+        method: The distortion strategy used.
         data (list): The generated distortion data.
 
     Methods:
@@ -51,9 +60,11 @@ class Distortion(BaseAnalysis):
         wavelengths: str | list = "all",
         num_points: int = 128,
         distortion_type: str = "f-tan",
+        method: str | DistortionModel = "paraxial",
     ):
         self.num_points = num_points
         self.distortion_type = distortion_type
+        self.method = method
         super().__init__(optic, wavelengths)
 
     def view(
@@ -119,27 +130,16 @@ class Distortion(BaseAnalysis):
             list: A list of distortion data points.
 
         """
+        model = create_distortion_model(
+            self.method, distortion_type=self.distortion_type
+        )
+
         Hx = be.zeros(self.num_points)
         Hy = be.linspace(1e-10, 1, self.num_points)
 
         data = []
         for wp in self.wavelengths:
-            wavelength = wp.value
-            self.optic.trace_generic(Hx=Hx, Hy=Hy, Px=0, Py=0, wavelength=wavelength)
-            yr = self.optic.surfaces.y[-1, :]
-
-            const = yr[0] / (be.tan(1e-10 * be.radians(self.optic.fields.max_field)))
-
-            if self.distortion_type == "f-tan":
-                yp = const * be.tan(Hy * be.radians(self.optic.fields.max_field))
-            elif self.distortion_type == "f-theta":
-                yp = const * Hy * be.radians(self.optic.fields.max_field)
-            else:
-                raise ValueError(
-                    '''Distortion type must be "f-tan" or
-                                 "f-theta"'''
-                )
-
-            data.append(100 * (yr - yp) / yp)
+            result = model.compute(self.optic, Hx, Hy, wp.value)
+            data.append(model.percent(result, signed=True))
 
         return data

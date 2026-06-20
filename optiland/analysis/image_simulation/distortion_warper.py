@@ -1,6 +1,13 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import optiland.backend as be
+
+from ..distortion_strategies import ChiefRayReferencePoint
+
+if TYPE_CHECKING:
+    from ..distortion_strategies import ReferencePointStrategy
 
 
 class DistortionWarper:
@@ -13,10 +20,21 @@ class DistortionWarper:
         source_fov (tuple): (max_x, max_y) of the source field in system units
                             (degrees for infinite, mm for finite).
                             If None, attempts to infer from optic.fields.max_field.
+        reference_point (ReferencePointStrategy, optional): Strategy used to
+            locate per-field image reference points. Defaults to
+            :class:`ChiefRayReferencePoint` (chief-ray intercept). Supply a
+            :class:`CentroidReferencePoint` to warp off-axis, freeform, or
+            obscured systems where no chief ray can be traced.
     """
 
-    def __init__(self, optic, source_fov=None):
+    def __init__(
+        self,
+        optic,
+        source_fov=None,
+        reference_point: ReferencePointStrategy | None = None,
+    ):
         self.optic = optic
+        self.reference_point = reference_point or ChiefRayReferencePoint()
 
         if source_fov is None:
             # Infer from optic
@@ -60,23 +78,17 @@ class DistortionWarper:
         hx_norm = phys_x / optic_max
         hy_norm = phys_y / optic_max
 
-        # Trace Rays
-        self.optic.trace_generic(
-            Hx=hx_norm, Hy=hy_norm, Px=0, Py=0, wavelength=wavelength
+        # 2. Get Landing Coordinates (Real Image Plane) via the reference-point
+        # strategy, so obscured/off-axis systems can be warped via the bundle
+        # centroid when no chief ray exists.
+        x_real, y_real = self.reference_point.locate(
+            self.optic, hx_norm, hy_norm, wavelength
         )
 
-        # 2. Get Landing Coordinates (Real Image Plane)
-        x_real = self.optic.surfaces.x[-1, :]
-        y_real = self.optic.surfaces.y[-1, :]
-
-        # Center relative to chief ray
-        chief_ray = self.optic.trace_generic(
-            Hx=0, Hy=0, Px=0, Py=0, wavelength=wavelength
-        )
-        cx = chief_ray.x[0]
-        cy = chief_ray.y[0]
-        x_real = x_real - cx
-        y_real = y_real - cy
+        # Center relative to the field-center reference point
+        cx, cy = self.reference_point.locate(self.optic, 0.0, 0.0, wavelength)
+        x_real = x_real - cx[0]
+        y_real = y_real - cy[0]
 
         # 3. Fit Polynomial: (x_real, y_real) -> (gx, gy)
         X_features = self._poly_features(x_real, y_real, degree)

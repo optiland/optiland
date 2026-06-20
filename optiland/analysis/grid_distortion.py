@@ -12,12 +12,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import matplotlib.pyplot as plt
-import numpy as np
 from matplotlib.lines import Line2D
 
 import optiland.backend as be
 
 from .base import BaseAnalysis
+from .distortion_strategies import DistortionModel, create_distortion_model
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -34,10 +34,18 @@ class GridDistortion(BaseAnalysis):
         num_points (int, optional): Number of grid points per axis. Defaults to 10.
         distortion_type (str, optional): Distortion model, either 'f-tan' or 'f-theta'.
             Defaults to 'f-tan'.
+        method (str or DistortionModel, optional): The distortion strategy to
+            use. ``"paraxial"`` (default) traces a chief ray against a
+            rotationally symmetric reference. ``"nonparaxial"`` uses the
+            transmitted-energy centroid against a best-fit affine reference,
+            enabling grid distortion for off-axis, freeform, or obscured systems
+            where no chief ray can be traced. A custom :class:`DistortionModel`
+            instance may also be supplied.
 
     Attributes:
         num_points (int): Number of grid points per axis.
         distortion_type (str): Distortion model used.
+        method: The distortion strategy used.
         data (dict): Computed distortion data (after running _generate_data()).
 
     Methods:
@@ -51,6 +59,7 @@ class GridDistortion(BaseAnalysis):
         wavelength="primary",
         num_points=10,
         distortion_type="f-tan",
+        method: str | DistortionModel = "paraxial",
     ):
         if isinstance(wavelength, float | int):
             processed_wavelengths = [wavelength]
@@ -64,6 +73,7 @@ class GridDistortion(BaseAnalysis):
 
         self.num_points = num_points
         self.distortion_type = distortion_type
+        self.method = method
         super().__init__(optic, wavelengths=processed_wavelengths)
 
     def view(
@@ -158,33 +168,24 @@ class GridDistortion(BaseAnalysis):
         Raises:
             ValueError: If the distortion type is not 'f-tan' or 'f-theta'.
         """
-        current_wavelength = self.wavelengths[0].value
-        x_chief, y_chief = self._trace_chief_ray(current_wavelength)
-        y_ref = self._trace_reference_ray(current_wavelength, y_chief)
+        model = create_distortion_model(
+            self.method, distortion_type=self.distortion_type
+        )
+        wavelength = self.wavelengths[0].value
+        model.fit(self.optic, wavelength)
 
         Hx, Hy = self._build_field_grid()
-        xp, yp = self._compute_ideal_positions(Hx, Hy, y_chief, y_ref)
+        result = model.evaluate(self.optic, Hx.flatten(), Hy.flatten(), wavelength)
 
-        self.optic.trace_generic(
-            Hx=Hx.flatten(),
-            Hy=Hy.flatten(),
-            Px=0,
-            Py=0,
-            wavelength=current_wavelength,
-        )
+        shape = (self.num_points, self.num_points)
+        xp = be.reshape(result.x_ideal, shape)
+        yp = be.reshape(result.y_ideal, shape)
+        xr = be.reshape(result.x_real, shape)
+        yr = be.reshape(result.y_real, shape)
 
-        xr = (
-            be.reshape(self.optic.surfaces.x[-1, :], (self.num_points, self.num_points))
-            - x_chief
-        )
-        yr = (
-            be.reshape(self.optic.surfaces.y[-1, :], (self.num_points, self.num_points))
-            - y_chief
-        )
-
-        delta = be.sqrt((xp - xr) ** 2 + (yp - yr) ** 2)
-        rp = be.sqrt(xp**2 + yp**2)
-        max_distortion = be.max(100 * delta / rp)
+        pct = model.percent(result, signed=False)
+        finite = be.isfinite(pct)
+        max_distortion = be.max(pct[finite])
 
         return {
             "xp": xp,
@@ -194,35 +195,8 @@ class GridDistortion(BaseAnalysis):
             "max_distortion": max_distortion,
         }
 
-    def _trace_chief_ray(self, wavelength: float) -> tuple:
-        """Returns the image-plane (x, y) position of the on-axis chief ray."""
-        self.optic.trace_generic(Hx=0, Hy=0, Px=0, Py=0, wavelength=wavelength)
-        return self.optic.surfaces.x[-1, 0], self.optic.surfaces.y[-1, 0]
-
-    def _trace_reference_ray(self, wavelength: float, y_chief) -> float:
-        """Returns the image-plane y position of a near-axis reference ray."""
-        self.optic.trace_generic(Hx=0, Hy=1e-10, Px=0, Py=0, wavelength=wavelength)
-        return self.optic.surfaces.y[-1, 0]
-
     def _build_field_grid(self):
         """Returns (Hx, Hy) meshgrid spanning the normalised field square."""
-        max_field = np.sqrt(2) / 2
+        max_field = 2**0.5 / 2
         extent = be.linspace(-max_field, max_field, self.num_points)
         return be.meshgrid(extent, extent)
-
-    def _compute_ideal_positions(self, Hx, Hy, y_chief, y_ref):
-        """Returns (xp, yp) ideal grid positions for the chosen distortion model."""
-        max_field_rad = be.radians(self.optic.fields.max_field)
-
-        if self.distortion_type == "f-tan":
-            const = (y_ref - y_chief) / be.tan(1e-10 * max_field_rad)
-            xp = const * be.tan(Hx * max_field_rad)
-            yp = const * be.tan(Hy * max_field_rad)
-        elif self.distortion_type == "f-theta":
-            const = (y_ref - y_chief) / (1e-10 * max_field_rad)
-            xp = const * Hx * max_field_rad
-            yp = const * Hy * max_field_rad
-        else:
-            raise ValueError('distortion_type must be "f-tan" or "f-theta"')
-
-        return xp, yp
