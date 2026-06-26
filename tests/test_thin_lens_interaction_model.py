@@ -207,6 +207,29 @@ class TestThinLensInteractionModel:
             [ray_out.x, ray_out.y, ray_out.z, ray_out.L, ray_out.M, ray_out.N],
         )
 
+    @pytest.mark.parametrize("focal_length", [50.0, 100.0])
+    def test_paraxial_surface_constant_opd(self, focal_length, set_test_backend):
+        """All rays through an ideal thin lens in air must arrive with equal OPD."""
+        lens = Optic()
+        lens.surfaces.add(index=0, thickness=be.inf)
+        lens.surfaces.add(
+            index=1,
+            surface_type="paraxial",
+            thickness=focal_length,
+            f=focal_length,
+            is_stop=True,
+        )
+        lens.surfaces.add(index=2)
+        lens.set_aperture(aperture_type="EPD", value=20)
+        lens.fields.set_type(field_type="angle")
+        lens.fields.add(y=0)
+        lens.wavelengths.add(value=0.55, is_primary=True)
+
+        rays = lens.trace(
+            Hx=0, Hy=0, wavelength=0.55, distribution="uniform", num_rays=32
+        )
+        assert_allclose(rays.opd, rays.opd[0], atol=1e-10)
+
     def test_flip(self, surface):
         f_initial = be.copy(surface.interaction_model.f)
         surface.interaction_model.flip()
