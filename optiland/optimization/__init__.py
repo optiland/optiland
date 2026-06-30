@@ -33,6 +33,7 @@ except (ImportError, ModuleNotFoundError, OSError):
 from .optimizer.scipy import glass_expert
 
 from .optimizer.custom import (
+    CMAES,
     ParticleSwarm,
 )
 
