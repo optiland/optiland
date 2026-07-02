@@ -119,6 +119,6 @@ class AngleField(BaseFieldDefinition):
             float: The z-coordinate offset relative to the first surface.
 
         """
-        z = optic.surfaces.positions[1:-1]
+        z = optic.surfaces.positions[1:-1] - optic.surfaces.positions[1]
         offset = optic.paraxial.EPD()
         return offset - be.min(z)

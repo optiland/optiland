@@ -230,6 +230,22 @@ def _issue_613_reproducer() -> Optic:
     return system
 
 
+def _issue_636_reproducer() -> Optic:
+    """Build the infinite-object angle-field system from issue #636."""
+    system = Optic()
+    system.surfaces.add(index=0, thickness=np.inf, comment="start")
+    system.surfaces.add(index=1, thickness=10, comment="flat")
+    system.surfaces.add(index=2, thickness=10, comment="aperture")
+    system.surfaces.add(index=3, thickness=0, comment="end")
+    system.wavelengths.add(value=0.55)
+    system.surfaces[2].is_stop = True
+    system.fields.set_type(field_type="angle")
+    system.fields.add(y=0)
+    system.fields.add(y=10)
+    system.set_aperture(aperture_type="float_by_stop_size", value=4.0)
+    return system
+
+
 def _trace_aimed_chief_ray_to_stop(optic: Optic, Hy: float) -> float:
     """Aim a paraxial chief ray for field ``(0, Hy)``, trace it through every
     surface up to the stop, and return its y in the stop's local frame."""
@@ -382,6 +398,22 @@ def test_paraxial_aimer_infinite_object_chief_ray_matches_reference(
         y_ref = _trace_aimed_chief_ray_to_stop(optic_ref, Hy)
         y_shifted = _trace_aimed_chief_ray_to_stop(shifted, Hy)
         assert_allclose(y_shifted, y_ref, atol=1e-9)
+
+
+@pytest.mark.parametrize("dz", [100.0, -100.0])
+def test_infinite_object_ray_path_invariant_under_translation(
+    set_test_backend, dz
+):
+    """Issue #636: plotted ray paths must follow a rigid system translation."""
+    optic_ref = _issue_636_reproducer()
+    optic_ref.trace(0.0, 1.0, 0.55, 3, "line_y")
+
+    shifted = _issue_636_reproducer()
+    _shift_optic(shifted, dz)
+    shifted.trace(0.0, 1.0, 0.55, 3, "line_y")
+
+    assert_allclose(shifted.surfaces.y, optic_ref.surfaces.y)
+    assert_allclose(shifted.surfaces.z - dz, optic_ref.surfaces.z)
 
 
 @pytest.mark.parametrize("dz", [30.0, -10.0, 1000.0])
