@@ -211,6 +211,65 @@ class TestStandardGeometry:
         distance = geometry.distance(rays)
         assert_allclose(distance, 10.201933401020467)
 
+    def test_distance_parabola_axial_ray(self, set_test_backend):
+        # Regression test: for a parabolic surface (conic = -1) and an axial
+        # ray (L = M = 0, N = 1), the quadratic's leading coefficient
+        # a = k * N**2 + L**2 + M**2 + N**2 vanishes exactly, since k = -1.
+        # Without a guard for a == 0, this used to produce +/-inf distances.
+        cs = CoordinateSystem()
+        geometry = geometries.StandardGeometry(cs, radius=-100.0, conic=-1.0)
+
+        rays = RealRays(10.0, 0.0, -50.0, 0.0, 0.0, 1.0, 1.0, 0.55)
+        distance = geometry.distance(rays)
+        assert_allclose(distance, 49.5)
+
+        z_intersect = -50.0 + float(be.to_numpy(distance).item())
+        assert_allclose(z_intersect, geometry.sag(10.0, 0.0))
+
+    def test_distance_parabola_near_degenerate_a(self, set_test_backend):
+        # Regression test: for near-axial rays (tiny L, M) on a parabolic
+        # surface (conic = -1), the quadratic's leading coefficient
+        # a = k*N**2 + L**2 + M**2 + N**2 is only *exactly* zero when M and L
+        # are exactly zero. In a real multi-surface system, accumulated
+        # floating-point error leaves M as a tiny nonzero residual (e.g.
+        # ~1e-6), so a becomes a tiny nonzero float rather than exactly 0.
+        # The naive quadratic formula (-b +/- sqrt(d)) / (2a) then suffers
+        # catastrophic cancellation in the numerator amplified by dividing
+        # by a near-zero a, producing non-smooth/incorrect intersection
+        # points even though the a == 0 guard never triggers.
+        cs = CoordinateSystem()
+        geometry = geometries.StandardGeometry(cs, radius=-250.0, conic=-1.0)
+
+        y0, z0 = -33.49, -110.0
+        M_values = [-4e-6, -2e-6, -5e-7, 0.0, 5e-7, 2e-6, 4e-6]
+        N_values = [np.sqrt(1 - m**2) for m in M_values]
+
+        rays = RealRays(
+            [0.0] * len(M_values),
+            [y0] * len(M_values),
+            [z0] * len(M_values),
+            [0.0] * len(M_values),
+            M_values,
+            N_values,
+            [1.0] * len(M_values),
+            [0.55] * len(M_values),
+        )
+        t = geometry.distance(rays)
+
+        M_arr = be.array(M_values)
+        N_arr = be.array(N_values)
+        y_hit = y0 + M_arr * t
+        z_hit = z0 + N_arr * t
+
+        # every intersection must lie exactly on the parabola: y**2 = 2*R*z
+        assert_allclose(y_hit**2, 2 * geometry.radius * z_hit)
+
+        # the sag must vary smoothly (monotonically) as M sweeps through
+        # zero, not jump around due to amplified cancellation error
+        z_np = be.to_numpy(z_hit)
+        diffs = np.diff(z_np)
+        assert np.all(diffs > 0) or np.all(diffs < 0)
+
     def test_surface_normal(self, set_test_backend):
         cs = CoordinateSystem()
         geometry = geometries.StandardGeometry(cs, radius=10.0, conic=0.5)

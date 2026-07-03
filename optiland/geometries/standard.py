@@ -136,11 +136,24 @@ class StandardGeometry(BaseGeometry):
         # discriminant
         d = b**2 - 4 * a * c
 
-        # two solutions for distance to conic
+        # Two solutions for distance to conic, computed via the numerically
+        # stable form (Numerical Recipes / "citardauque" formula) rather
+        # than the textbook (-b +/- sqrt(d)) / (2a). For rays close to the
+        # optical axis (small L, M) and conics near a parabola (k = -1),
+        # "a" is a tiny value dominated by floating-point noise rather than
+        # 0 exactly, so the a == 0 guard below never triggers in practice.
+        # The textbook formula then subtracts two nearly-equal numbers
+        # (b and sqrt(d), both ~ -2*N*R) in the numerator while dividing by
+        # a near-zero "a", amplifying that cancellation error by orders of
+        # magnitude. This form avoids the cancellation entirely and reduces
+        # continuously to the a == 0 (linear) solution as a -> 0, so no
+        # separate branch is needed for that case.
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            t1 = (-b + be.sqrt(d)) / (2 * a)
-            t2 = (-b - be.sqrt(d)) / (2 * a)
+            sign_b = be.where(b >= 0, 1.0, -1.0)
+            q = -0.5 * (b + sign_b * be.sqrt(d))
+            t1 = q / a
+            t2 = c / q
 
         # find intersection points in z
         z1 = rays.z + t1 * rays.N
@@ -148,10 +161,6 @@ class StandardGeometry(BaseGeometry):
 
         # take intersection closest to z = 0 (i.e., vertex of geometry)
         t = be.where(be.abs(z1) <= be.abs(z2), t1, t2)
-
-        # handle case when a = 0
-        # Assumes b is not zero when a is zero, based on original logic.
-        t = be.where(a == 0, -c / b, t)
 
         return t
 
