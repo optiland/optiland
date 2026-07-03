@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import time
 import warnings
 from importlib import resources
@@ -112,6 +113,115 @@ class TestBaseMaterial:
         key2 = material._create_cache_key(large, temperature=25)
         assert key1 == key2
 
+    def test_large_array_key_is_content_addressed(self, set_test_backend):
+        """#630: the cache key must depend on array *contents*, not on the
+        array's memory location.
+
+        The old key embedded the buffer address, so two equal-content arrays
+        got different keys and -- worse -- a freed array's address could be
+        reused by a different array and collide, leaking the previous
+        wavelength's refractive index. Keying on a content digest makes equal
+        content yield an equal key regardless of identity or address.
+        """
+
+        class DummyMaterial(BaseMaterial):
+            def _calculate_n(self, wavelength, **kwargs):
+                return 1.0
+
+            def _calculate_k(self, wavelength, **kwargs):
+                return 0.0
+
+        material = DummyMaterial()
+
+        n = 2_000  # > _MAX_VALUE_KEY_ARRAY_SIZE -> metadata-key path
+        a = np.linspace(0.45, 0.65, n, dtype=np.float64)
+        b = a.copy()  # identical content, different object and buffer address
+        assert a.__array_interface__["data"][0] != b.__array_interface__["data"][0]
+
+        # Equal content -> equal key. (The location-based key failed this.)
+        assert material._create_cache_key(a) == material._create_cache_key(b)
+
+    def test_large_array_key_distinguishes_unsampled_difference(self, set_test_backend):
+        """The content digest must distinguish arrays that differ only at an
+        index the old 3-point (first/middle/last) sample never inspected --
+        otherwise n() leaks one wavelength's index to another once their
+        buffers alias (issue #630).
+        """
+
+        class DummyMaterial(BaseMaterial):
+            def _calculate_n(self, wavelength, **kwargs):
+                return 1.0
+
+            def _calculate_k(self, wavelength, **kwargs):
+                return 0.0
+
+        material = DummyMaterial()
+
+        n = 2_000
+        a = np.zeros(n, dtype=np.float64)
+        b = np.zeros(n, dtype=np.float64)
+        a[1] = 1.0  # differ only at an interior, unsampled index
+        b[2] = 1.0
+        # endpoints and midpoint coincide -> defeats the old 3-point sample key
+        assert (a[0], a[n // 2], a[-1]) == (b[0], b[n // 2], b[-1])
+
+        assert material._create_cache_key(a) != material._create_cache_key(b)
+
+    def test_large_array_digest_cache_evicts_dead_arrays(self, set_test_backend):
+        """#630: the per-array digest memo is weak -- entries are dropped when
+        the array is collected, so id() reuse cannot surface a stale digest and
+        the memo cannot grow without bound.
+        """
+        from optiland.materials.base import _ARRAY_DIGEST_CACHE
+
+        class DummyMaterial(BaseMaterial):
+            def _calculate_n(self, wavelength, **kwargs):
+                return float(np.asarray(wavelength)[1])
+
+            def _calculate_k(self, wavelength, **kwargs):
+                return 0.0
+
+        material = DummyMaterial()
+        n = 2_000
+
+        gc.collect()
+        baseline = len(_ARRAY_DIGEST_CACHE)
+        for i in range(50):
+            arr = np.zeros(n, dtype=np.float64)
+            arr[1] = float(i)  # content (and so the expected n) differs each round
+            assert material.n(arr) == float(i)  # never a stale cross-array value
+            del arr
+            gc.collect()  # free the buffer so the next array may reuse its address
+
+        gc.collect()
+        assert len(_ARRAY_DIGEST_CACHE) <= baseline + 2
+
+    def test_large_array_key_handles_non_weakref_sequence(self, set_test_backend):
+        """list/tuple wavelengths are content-addressed too, but cannot be
+        weak-referenced, so the digest memo is skipped (no error) while the keys
+        stay correct.
+        """
+
+        class DummyMaterial(BaseMaterial):
+            def _calculate_n(self, wavelength, **kwargs):
+                return 1.0
+
+            def _calculate_k(self, wavelength, **kwargs):
+                return 0.0
+
+        material = DummyMaterial()
+
+        # A list has no .shape, so it takes the metadata-key path; it also can't
+        # be weak-referenced, exercising the memo-skip branch.
+        a = [0.5] * 2_000
+        other = list(a)
+        other[7] = 0.6  # differ at one interior index
+
+        assert material._create_cache_key(a) == material._create_cache_key(list(a))
+        assert material._create_cache_key(a) != material._create_cache_key(other)
+        # tuples take the same (non-weak-referenceable) path without error
+        material._create_cache_key(tuple(a))
+
     def test_detach_if_tensor_numpy(self, set_test_backend):
         """_detach_if_tensor returns numpy arrays unchanged."""
         arr = np.array([1.5, 1.6])
@@ -164,6 +274,34 @@ class TestBaseMaterialTorchCaching:
 
         no_grad = torch.tensor(1.5)
         assert BaseMaterial._requires_grad(no_grad) is False
+
+    def test_large_array_key_is_content_addressed(self):
+        """#630 (torch): the large-array key is content-addressed, so two
+        tensors with equal content but different storage share a key, and an
+        in-place edit (which bumps tensor._version) invalidates it.
+        """
+        import torch
+
+        class DummyMaterial(BaseMaterial):
+            def _calculate_n(self, wavelength, **kwargs):
+                return 1.0
+
+            def _calculate_k(self, wavelength, **kwargs):
+                return 0.0
+
+        material = DummyMaterial()
+        n = 2_000  # > _MAX_VALUE_KEY_ARRAY_SIZE -> metadata-key path
+
+        t = torch.linspace(0.45, 0.65, n, dtype=torch.float64)
+        t2 = t.clone()  # equal content, different storage / data_ptr
+        assert t.data_ptr() != t2.data_ptr()
+        assert material._create_cache_key(t) == material._create_cache_key(t2)
+
+        # An in-place edit bumps tensor._version, invalidating the cached digest.
+        c = torch.zeros(n, dtype=torch.float64)
+        key_before = material._create_cache_key(c)
+        c[5] += 1.0
+        assert material._create_cache_key(c) != key_before
 
     def test_cached_value_is_detached_when_no_grad(self):
         """Cached n/k values must be detached when they don't require grad.

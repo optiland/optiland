@@ -25,6 +25,11 @@ class ImageSimulationEngine:
             - n_components (int): Number of EigenPSFs.
             - oversample (int): Upsampling factor for simulation accuracy.
             - padding (int): Pixel padding (guard band) to avoid edge artifacts.
+            - distortion_reference (ReferencePointStrategy): Strategy used to
+              locate per-field image reference points for the distortion warp.
+              Defaults to None (chief-ray intercept). Supply a
+              CentroidReferencePoint to simulate off-axis, freeform, or obscured
+              systems where no chief ray can be traced.
     """
 
     def __init__(self, optic, config=None):
@@ -40,6 +45,7 @@ class ImageSimulationEngine:
             "n_components": 3,
             "oversample": 1,
             "padding": 64,
+            "distortion_reference": None,
         }
         if config:
             self.config.update(config)
@@ -106,7 +112,9 @@ class ImageSimulationEngine:
         # 2. Simulation Loop per Channel
         processed_channels = []
         sim = SpatiallyVariableSimulator()
-        warper = DistortionWarper(self.optic)
+        warper = DistortionWarper(
+            self.optic, reference_point=self.config["distortion_reference"]
+        )
 
         for _i, (wave, channel_img) in enumerate(
             zip(wavelengths, input_channels, strict=False)

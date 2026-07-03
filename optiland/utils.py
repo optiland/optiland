@@ -20,8 +20,7 @@ class FieldPoint(NamedTuple):
     Attributes:
         coord: (x, y) field coordinate in the field coordinate system.
         weight: Non-negative relative importance scalar. Defaults to 1.0 for
-            user-supplied raw coordinates. Refer to optiland weight semantics in
-            SPEC_weights.md §2.1.
+            user-supplied raw coordinates.
     """
 
     coord: tuple[float, float]
@@ -34,8 +33,7 @@ class WavelengthPoint(NamedTuple):
     Attributes:
         value: Wavelength in micrometers.
         weight: Non-negative relative importance scalar. Defaults to 1.0 for
-            user-supplied raw values. Refer to optiland weight semantics in
-            SPEC_weights.md §2.1.
+            user-supplied raw values.
     """
 
     value: float

@@ -1089,7 +1089,7 @@ class AnalysisPanel(QWidget):
             return
 
         try:
-            with open(filepath) as f:
+            with open(filepath, encoding="utf-8") as f:
                 loaded_settings = json.load(f)
             self._apply_loaded_settings_to_ui(loaded_settings)
             self.logArea.append(
@@ -1598,7 +1598,7 @@ class AnalysisPanel(QWidget):
 
         if filepath:
             try:
-                with open(filepath, "w") as f:
+                with open(filepath, "w", encoding="utf-8") as f:
                     json.dump(settings_to_save, f, indent=4)
                 self.logArea.append(
                     f"Settings for {current_analysis_name} saved to {filepath}"
@@ -1623,7 +1623,7 @@ class AnalysisPanel(QWidget):
 
         if filepath:
             try:
-                with open(filepath) as f:
+                with open(filepath, encoding="utf-8") as f:
                     loaded_settings = json.load(f)
 
                 analysis_name = loaded_settings.get("analysis_name")

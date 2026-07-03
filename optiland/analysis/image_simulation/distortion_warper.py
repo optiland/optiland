@@ -1,6 +1,13 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import optiland.backend as be
+
+from ..distortion_strategies import ChiefRayReferencePoint
+
+if TYPE_CHECKING:
+    from ..distortion_strategies import ReferencePointStrategy
 
 
 class DistortionWarper:
@@ -13,10 +20,21 @@ class DistortionWarper:
         source_fov (tuple): (max_x, max_y) of the source field in system units
                             (degrees for infinite, mm for finite).
                             If None, attempts to infer from optic.fields.max_field.
+        reference_point (ReferencePointStrategy, optional): Strategy used to
+            locate per-field image reference points. Defaults to
+            :class:`ChiefRayReferencePoint` (chief-ray intercept). Supply a
+            :class:`CentroidReferencePoint` to warp off-axis, freeform, or
+            obscured systems where no chief ray can be traced.
     """
 
-    def __init__(self, optic, source_fov=None):
+    def __init__(
+        self,
+        optic,
+        source_fov=None,
+        reference_point: ReferencePointStrategy | None = None,
+    ):
         self.optic = optic
+        self.reference_point = reference_point or ChiefRayReferencePoint()
 
         if source_fov is None:
             # Infer from optic
@@ -60,41 +78,67 @@ class DistortionWarper:
         hx_norm = phys_x / optic_max
         hy_norm = phys_y / optic_max
 
-        # Trace Rays
-        self.optic.trace_generic(
-            Hx=hx_norm, Hy=hy_norm, Px=0, Py=0, wavelength=wavelength
+        # 2. Get Landing Coordinates (Real Image Plane) via the reference-point
+        # strategy, so obscured/off-axis systems can be warped via the bundle
+        # centroid when no chief ray exists.
+        x_real, y_real = self.reference_point.locate(
+            self.optic, hx_norm, hy_norm, wavelength
         )
 
-        # 2. Get Landing Coordinates (Real Image Plane)
-        x_real = self.optic.surfaces.x[-1, :]
-        y_real = self.optic.surfaces.y[-1, :]
+        # Center relative to the field-center reference point
+        cx, cy = self.reference_point.locate(self.optic, 0.0, 0.0, wavelength)
+        x_real = x_real - cx[0]
+        y_real = y_real - cy[0]
 
-        # Center relative to chief ray
-        chief_ray = self.optic.trace_generic(
-            Hx=0, Hy=0, Px=0, Py=0, wavelength=wavelength
-        )
-        cx = chief_ray.x[0]
-        cy = chief_ray.y[0]
-        x_real = x_real - cx
-        y_real = y_real - cy
+        # Normalize physical coordinates to [-1, 1] for a stable polynomial fit
+        max_x = be.max(be.abs(x_real))
+        max_y = be.max(be.abs(y_real))
+        scale_x = max_x if float(max_x) > 0 else 1.0
+        scale_y = max_y if float(max_y) > 0 else 1.0
 
-        # 3. Fit Polynomial: (x_real, y_real) -> (gx, gy)
-        X_features = self._poly_features(x_real, y_real, degree)
+        x_norm = x_real / scale_x
+        y_norm = y_real / scale_y
+
+        # 3. Fit Polynomial: (x_norm, y_norm) -> (gx, gy)
+        X_features = self._poly_features(x_norm, y_norm, degree)
 
         # Solve X * c = gx  => c = lstsq(X, gx)
         c_gx = be.lstsq(X_features, gx_flat)
         c_gy = be.lstsq(X_features, gy_flat)
 
+        # Check fit error to warn about discretization noise or poor fit
+        pred_gx = be.matmul(X_features, c_gx)
+        pred_gy = be.matmul(X_features, c_gy)
+        err_gx = be.max(be.abs(pred_gx - gx_flat))
+        err_gy = be.max(be.abs(pred_gy - gy_flat))
+
+        max_err = float(be.max(be.array([err_gx, err_gy])))
+        if max_err > 0.05:
+            import warnings
+
+            warnings.warn(
+                f"Distortion mapping polynomial fit error is high (max error: "
+                f"{max_err:.3f} in normalized field units). If using "
+                "CentroidReferencePoint, consider increasing `num_rays` to "
+                "reduce discretization noise.",
+                UserWarning,
+                stacklevel=2,
+            )
+
         # 4. Evaluate on Target Grid (Detector Pixels)
-        min_x, max_x = be.min(x_real), be.max(x_real)
-        min_y, max_y = be.min(y_real), be.max(y_real)
+        min_x_grid, max_x_grid = be.min(x_real), be.max(x_real)
+        min_y_grid, max_y_grid = be.min(y_real), be.max(y_real)
 
         # Create target mesh (H, W)
-        ty = be.linspace(max_y, min_y, H)
-        tx = be.linspace(min_x, max_x, W)
+        ty = be.linspace(max_y_grid, min_y_grid, H)
+        tx = be.linspace(min_x_grid, max_x_grid, W)
         grid_x, grid_y = be.meshgrid(tx, ty)
 
-        X_grid = self._poly_features(grid_x.flatten(), grid_y.flatten(), degree)
+        # Normalize target grid by the same scale factors
+        grid_x_norm = grid_x.flatten() / scale_x
+        grid_y_norm = grid_y.flatten() / scale_y
+
+        X_grid = self._poly_features(grid_x_norm, grid_y_norm, degree)
 
         # Predict normalized coordinates for every pixel
         target_gx = be.matmul(X_grid, c_gx).reshape([H, W])
