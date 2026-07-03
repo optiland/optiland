@@ -90,23 +90,55 @@ class DistortionWarper:
         x_real = x_real - cx[0]
         y_real = y_real - cy[0]
 
-        # 3. Fit Polynomial: (x_real, y_real) -> (gx, gy)
-        X_features = self._poly_features(x_real, y_real, degree)
+        # Normalize physical coordinates to [-1, 1] for a stable polynomial fit
+        max_x = be.max(be.abs(x_real))
+        max_y = be.max(be.abs(y_real))
+        scale_x = max_x if float(max_x) > 0 else 1.0
+        scale_y = max_y if float(max_y) > 0 else 1.0
+
+        x_norm = x_real / scale_x
+        y_norm = y_real / scale_y
+
+        # 3. Fit Polynomial: (x_norm, y_norm) -> (gx, gy)
+        X_features = self._poly_features(x_norm, y_norm, degree)
 
         # Solve X * c = gx  => c = lstsq(X, gx)
         c_gx = be.lstsq(X_features, gx_flat)
         c_gy = be.lstsq(X_features, gy_flat)
 
+        # Check fit error to warn about discretization noise or poor fit
+        pred_gx = be.matmul(X_features, c_gx)
+        pred_gy = be.matmul(X_features, c_gy)
+        err_gx = be.max(be.abs(pred_gx - gx_flat))
+        err_gy = be.max(be.abs(pred_gy - gy_flat))
+
+        max_err = float(be.max(be.array([err_gx, err_gy])))
+        if max_err > 0.05:
+            import warnings
+
+            warnings.warn(
+                f"Distortion mapping polynomial fit error is high (max error: "
+                f"{max_err:.3f} in normalized field units). If using "
+                "CentroidReferencePoint, consider increasing `num_rays` to "
+                "reduce discretization noise.",
+                UserWarning,
+                stacklevel=2,
+            )
+
         # 4. Evaluate on Target Grid (Detector Pixels)
-        min_x, max_x = be.min(x_real), be.max(x_real)
-        min_y, max_y = be.min(y_real), be.max(y_real)
+        min_x_grid, max_x_grid = be.min(x_real), be.max(x_real)
+        min_y_grid, max_y_grid = be.min(y_real), be.max(y_real)
 
         # Create target mesh (H, W)
-        ty = be.linspace(max_y, min_y, H)
-        tx = be.linspace(min_x, max_x, W)
+        ty = be.linspace(max_y_grid, min_y_grid, H)
+        tx = be.linspace(min_x_grid, max_x_grid, W)
         grid_x, grid_y = be.meshgrid(tx, ty)
 
-        X_grid = self._poly_features(grid_x.flatten(), grid_y.flatten(), degree)
+        # Normalize target grid by the same scale factors
+        grid_x_norm = grid_x.flatten() / scale_x
+        grid_y_norm = grid_y.flatten() / scale_y
+
+        X_grid = self._poly_features(grid_x_norm, grid_y_norm, degree)
 
         # Predict normalized coordinates for every pixel
         target_gx = be.matmul(X_grid, c_gx).reshape([H, W])
