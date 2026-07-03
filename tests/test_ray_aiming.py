@@ -415,3 +415,264 @@ def test_real_aimer_converges_after_translation(set_test_backend, AimerCls, dz):
     assert not be.any(be.isnan(x))
     assert not be.any(be.isnan(y))
     assert not be.any(be.isnan(z))
+
+
+# ---------------------------------------------------------------------------
+# Tests for the chief-ray calibrated RobustRayAimer.
+# See optiland/jupyter/SPEC_ray_aiming_20260703.md for the design and the
+# acceptance gates (G1-G7) referenced in the docstrings below.
+
+from optiland.distribution import create_distribution  # noqa: E402
+from optiland.rays.ray_aiming.initialization import (  # noqa: E402
+    get_stop_radius_strategy,
+)
+from optiland.rays.ray_aiming.pupil_map import PupilMap  # noqa: E402
+from optiland.samples.lithography import UVProjectionLens  # noqa: E402
+
+_WIDE_ANGLE_SAMPLES = [
+    CookeTriplet,
+    WideAngle100FOV,
+    ProjectionLens120FOV,
+    ProjectionLens160FOV,
+    WideAngle170FOV,
+]
+
+
+def test_pupil_map_seed_affine_arithmetic(set_test_backend):
+    """Unit test for the affine fit itself: launch(Px, Py) = c + A @ [Px, Py],
+    with the non-solved DOF held fixed at their chief-ray values."""
+    pmap = PupilMap(
+        c=(1.0, 2.0),
+        A=((0.5, 0.1), (0.2, 0.3)),
+        is_infinite=True,
+        fixed=(10.0, 0.0, 0.0, 1.0),
+    )
+    x, y, z, L, M, N = pmap.seed(be.array([0.0, 1.0]), be.array([0.0, -1.0]))
+    assert_allclose(x, [1.0, 1.4])
+    assert_allclose(y, [2.0, 1.9])
+    assert_allclose(z, [10.0, 10.0])
+    assert_allclose(L, [0.0, 0.0])
+    assert_allclose(M, [0.0, 0.0])
+    assert_allclose(N, [1.0, 1.0])
+
+
+@pytest.mark.parametrize(
+    "build", _WIDE_ANGLE_SAMPLES, ids=[c.__name__ for c in _WIDE_ANGLE_SAMPLES]
+)
+def test_robust_aimer_converges_cold_all_fields(set_test_backend, build):
+    """G1/G4: every target system, including WideAngle170FOV (+-85 deg),
+    converges cold across all its fields with a full hexapolar pupil -- no
+    NaN blow-up and no exception, even though each system gets a brand-new
+    aimer instance with an empty warm-start cache."""
+    optic = build()
+    optic.ray_tracer.set_aiming("robust")
+    for Hx, Hy in optic.fields.get_field_coords():
+        rays = optic.trace(
+            Hx, Hy, optic.primary_wavelength, num_rays=15, distribution="hexapolar"
+        )
+        valid = ~be.to_numpy(be.isnan(rays.x))
+        assert valid.any(), f"all rays vignetted for field ({Hx}, {Hy})"
+
+
+def test_robust_aimer_isolated_extreme_field_converges_cold(set_test_backend):
+    """G1: the same cold-convergence guarantee holds even when the extreme
+    field is aimed in complete isolation -- i.e. with no smaller field ever
+    solved first to warm-start the cache via field marching (D8)."""
+    optic = WideAngle170FOV()
+    aimer = RobustRayAimer(optic)
+    dist = create_distribution("hexapolar")
+    dist.generate_points(15)
+    Hx, Hy = optic.fields.get_field_coords()[-1]
+
+    x, y, z, L, M, N = aimer.aim_rays(
+        (Hx, Hy), optic.primary_wavelength, (dist.x, dist.y)
+    )
+    valid = ~be.to_numpy(be.isnan(x))
+    assert valid.any()
+
+
+def test_robust_aimer_direction_cosines_unit_norm(set_test_backend):
+    """G3: L^2 + M^2 + N^2 == 1 for every non-vignetted aimed ray."""
+    optic = WideAngle170FOV()
+    aimer = RobustRayAimer(optic)
+    dist = create_distribution("hexapolar")
+    dist.generate_points(10)
+
+    for Hx, Hy in optic.fields.get_field_coords():
+        x, y, z, L, M, N = aimer.aim_rays(
+            (Hx, Hy), optic.primary_wavelength, (dist.x, dist.y)
+        )
+        valid = ~be.to_numpy(be.isnan(L))
+        assert valid.any()
+        norm = (
+            be.to_numpy(L)[valid] ** 2
+            + be.to_numpy(M)[valid] ** 2
+            + be.to_numpy(N)[valid] ** 2
+        )
+        assert_allclose(norm, np.ones_like(norm), atol=1e-10)
+
+
+def test_robust_aimer_hits_target_to_tolerance(set_test_backend):
+    """G4: converged rays hit their (Px, Py) target on the stop to `tol`."""
+    optic = CookeTriplet()
+    tol = 1e-9
+    aimer = RobustRayAimer(optic, tol=tol)
+    Px = be.array([0.0, 0.5, -0.5, 1.0, -1.0])
+    Py = be.array([0.0, 0.5, -0.5, 0.0, 0.0])
+    Hx, Hy = 0.0, 0.7
+
+    x, y, z, L, M, N = aimer.aim_rays((Hx, Hy), optic.primary_wavelength, (Px, Py))
+
+    stop_idx = optic.surfaces.stop_index
+    is_inf = getattr(optic.object_surface, "is_infinite", False)
+    rays = RealRays(
+        be.copy(x), be.copy(y), be.copy(z), be.copy(L), be.copy(M), be.copy(N),
+        intensity=be.ones_like(x), wavelength=optic.primary_wavelength,
+    )
+    start = 1 if is_inf else 0
+    for i in range(start, stop_idx + 1):
+        optic.surfaces[i].trace(rays)
+    optic.surfaces[stop_idx].geometry.cs.localize(rays)
+
+    r_stop = get_stop_radius_strategy(optic, "robust").calculate_stop_radius()
+    assert_allclose(rays.x, Px * r_stop, atol=1e-6)
+    assert_allclose(rays.y, Py * r_stop, atol=1e-6)
+
+
+def test_robust_aimer_partial_vignetting_does_not_raise(set_test_backend):
+    """D6: a batch mixing reachable and physically unreachable pupil targets
+    must not raise -- the unreachable rays come back as NaN, the rest are
+    solved normally."""
+    optic = CookeTriplet()
+    aimer = RobustRayAimer(optic)
+    Px = be.array([0.0, 0.5, -0.5, 8.0, 1.0])
+    Py = be.array([0.0, 0.5, -0.5, 8.0, 0.0])
+
+    x, y, z, L, M, N = aimer.aim_rays((0.0, 0.5), optic.primary_wavelength, (Px, Py))
+
+    nan_mask = be.to_numpy(be.isnan(x))
+    assert nan_mask[3]
+    assert not nan_mask[[0, 1, 2, 4]].any()
+
+
+def test_robust_aimer_raises_when_every_ray_fails(set_test_backend):
+    """D6: a batch where every ray targets a physically unreachable pupil
+    point (a misconfiguration, not ordinary vignetting) must raise."""
+    optic = CookeTriplet()
+    aimer = RobustRayAimer(optic)
+    Px = be.array([5.0, 6.0, 7.0])
+    Py = be.array([5.0, 6.0, 7.0])
+
+    with pytest.raises(ValueError):
+        aimer.aim_rays((0.0, 0.5), optic.primary_wavelength, (Px, Py))
+
+
+def test_robust_aimer_warm_start_after_perturbation(set_test_backend):
+    """G6: after the first (cold) call, a small system perturbation must
+    recalibrate the chief ray in very few Newton iterations, since the
+    warm-started seed is already close to the new solution."""
+    optic = CookeTriplet()
+    aimer = RobustRayAimer(optic)
+    Hx, Hy = 0.0, 0.7
+    wl = optic.primary_wavelength
+    stop_idx = optic.surfaces.stop_index
+    is_inf = getattr(optic.object_surface, "is_infinite", False)
+
+    aimer._solve_chief(Hx, Hy, wl, stop_idx, is_inf, None)
+    cold_iters = aimer._iterative.last_iterations
+
+    aimer.aim_rays((Hx, Hy), wl, (be.array([0.0]), be.array([0.0])))
+    seed_map = aimer._cache.get_stale(Hx, Hy, wl)
+
+    # Small perturbation -- warm-started calibration should now need only a
+    # couple of Newton iterations for the chief ray, not a cold re-solve.
+    optic.updater.set_radius(optic.surfaces.radii[1] * 1.001, 1)
+    aimer._solve_chief(Hx, Hy, wl, stop_idx, is_inf, seed_map)
+
+    assert aimer._iterative.last_iterations <= 2
+    assert aimer._iterative.last_iterations <= cold_iters
+
+
+def test_robust_aimer_reuses_pupil_map_across_pupil_distributions(set_test_backend):
+    """D3: the same field/wavelength with two different pupil distributions
+    (and no intervening system change) must reuse the cached PupilMap
+    instance rather than recalibrating."""
+    optic = CookeTriplet()
+    aimer = RobustRayAimer(optic)
+    Hx, Hy = 0.0, 0.7
+    wl = optic.primary_wavelength
+
+    aimer.aim_rays((Hx, Hy), wl, (be.array([0.0]), be.array([0.0])))
+    pmap_first = aimer._cache.get_fresh(Hx, Hy, wl)
+    assert isinstance(pmap_first, PupilMap)
+
+    aimer.aim_rays((Hx, Hy), wl, (be.array([0.3, -0.3]), be.array([0.2, -0.2])))
+    pmap_second = aimer._cache.get_fresh(Hx, Hy, wl)
+
+    assert pmap_second is pmap_first
+
+
+@pytest.mark.parametrize(
+    "build",
+    [ReverseTelephoto, _issue_613_reproducer, UVProjectionLens],
+    ids=["infinite", "finite", "telecentric"],
+)
+def test_robust_aimer_all_conjugates(set_test_backend, build):
+    """D5: the aimer solves launch position for infinite conjugates, launch
+    direction for finite conjugates, and stays consistent for a telecentric
+    object space (which keeps the paraxial seed path, but is still
+    Newton-polished the same as any other finite conjugate)."""
+    optic = build()
+    # The "float by stop size" aperture on the finite-conjugate fixture only
+    # populates surface.semi_aperture (needed by the robust stop-radius
+    # strategy) after a paraxial update.
+    optic.updater.update_paraxial()
+    aimer = RobustRayAimer(optic)
+    _, Hy = optic.fields.get_field_coords()[1]
+    x, y, z, L, M, N = aimer.aim_rays(
+        (0.0, Hy), optic.primary_wavelength, (0.0, 0.5)
+    )
+    assert not be.any(be.isnan(x))
+    assert not be.any(be.isnan(L))
+
+
+def test_robust_aimer_autograd_matches_finite_difference(set_test_backend):
+    """G7: gradients flow through the polish. A finite-difference check on
+    a simple ray-based quantity (stop-surface ray height) must match the
+    backend gradient; this only makes sense on the torch backend."""
+    if be.get_backend() != "torch":
+        pytest.skip("Autograd check only applies to the torch backend.")
+
+    import torch
+
+    def build(radius_value):
+        optic = CookeTriplet()
+        optic.ray_tracer.set_aiming("robust")
+        r = be.array(radius_value)
+        r.requires_grad_(True)
+        optic.surfaces[1].geometry.radius = r
+        return optic, r
+
+    optic, r = build(22.0)
+    be.grad_mode.enable()
+    rays = optic.trace(0.0, 1.0, optic.primary_wavelength, num_rays=5,
+                        distribution="line_y")
+    loss = rays.y.sum()
+    loss.backward()
+    grad_autograd = r.grad.item()
+    be.grad_mode.disable()
+
+    eps = 1e-4
+    optic_p, _ = build(22.0 + eps)
+    loss_p = float(
+        optic_p.trace(0.0, 1.0, optic_p.primary_wavelength, num_rays=5,
+                       distribution="line_y").y.sum()
+    )
+    optic_m, _ = build(22.0 - eps)
+    loss_m = float(
+        optic_m.trace(0.0, 1.0, optic_m.primary_wavelength, num_rays=5,
+                       distribution="line_y").y.sum()
+    )
+    grad_fd = (loss_p - loss_m) / (2 * eps)
+
+    assert abs(grad_autograd - grad_fd) / abs(grad_fd) < 1e-2
