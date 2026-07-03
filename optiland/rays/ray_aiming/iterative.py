@@ -233,6 +233,15 @@ class IterativeRayAimer(BaseRayAimer):
             if be.all(converged):
                 break
 
+            # NaN errors never recover (NaN propagates through every
+            # subsequent Newton step), so once every non-converged ray is
+            # NaN, further iteration is pure wasted work -- stop early
+            # rather than burning the full max_iter budget on rays that
+            # cannot possibly converge.
+            stuck = be.logical_or(converged, be.isnan(error_sq))
+            if be.all(stuck):
+                break
+
             self.last_iterations = _iter_idx + 1
 
             # Active Set Strategy: only process non-converged rays

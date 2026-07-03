@@ -19,6 +19,7 @@ Kramer Harrison, 2026
 
 from __future__ import annotations
 
+import contextlib
 from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
@@ -33,6 +34,61 @@ if TYPE_CHECKING:
 
 # Cardinal edge probes on the stop, in (Px, Py) order: east, west, north, south.
 _EDGE_PROBES = ((1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0))
+
+
+@contextlib.contextmanager
+def _cached_paraxial_constants(optic: Optic):
+    """Temporarily memoize ``Paraxial.EPD``/``EPL`` on this optic.
+
+    Both are system-wide constants (independent of field/pupil), but each
+    call re-traces the whole system. The chief-ray field-marching fallback
+    (:meth:`RobustRayAimer._march_chief`) calls ``ParaxialRayAimer.aim_rays``
+    -- which calls these -- once per marching attempt, and a cold extreme
+    field can need dozens of attempts; without caching, that cost dominates
+    total aiming time. Scoped and reversible: the original bound methods are
+    restored on exit, so this never leaks stale values past one calibration.
+    """
+    para = optic.paraxial
+    orig_epd = para.EPD
+    orig_epl = para.EPL
+    cache: dict[str, Any] = {}
+
+    def cached_epd():
+        if "epd" not in cache:
+            cache["epd"] = orig_epd()
+        return cache["epd"]
+
+    def cached_epl():
+        if "epl" not in cache:
+            cache["epl"] = orig_epl()
+        return cache["epl"]
+
+    para.EPD = cached_epd
+    para.EPL = cached_epl
+    try:
+        yield
+    finally:
+        para.EPD = orig_epd
+        para.EPL = orig_epl
+
+
+@contextlib.contextmanager
+def _relaxed_tolerance(iterative, tol: float):
+    """Temporarily loosen ``iterative.tol`` for cheap intermediate solves.
+
+    Used only by the chief-ray marching fallback: an intermediate marching
+    step just needs to be "good enough" to warm-start the next one, since
+    the final per-ray polish (elsewhere, always at full tolerance) is what
+    actually guarantees exactness (D1). Tighter-than-needed intermediate
+    tolerance costs several extra Newton iterations per step for no
+    accuracy benefit that survives to the final result.
+    """
+    orig_tol = iterative.tol
+    iterative.tol = max(tol, orig_tol)
+    try:
+        yield
+    finally:
+        iterative.tol = orig_tol
 
 
 @register_aimer("robust")
@@ -174,9 +230,10 @@ class RobustRayAimer(BaseRayAimer):
                 seed_map = self._cache.get_stale(Hxk, Hyk, wlk)
                 if seed_map is None:
                     seed_map = self._cache.nearest(Hxk, Hyk)
-                pmap = self._calibrate_field(
-                    Hxk, Hyk, wlk, stop_idx, is_inf, r_stop, seed_map
-                )
+                with _cached_paraxial_constants(self.optic):
+                    pmap = self._calibrate_field(
+                        Hxk, Hyk, wlk, stop_idx, is_inf, r_stop, seed_map
+                    )
                 self._cache.put(Hxk, Hyk, wlk, pmap)
 
             Px_g = Px[idx]
@@ -262,20 +319,43 @@ class RobustRayAimer(BaseRayAimer):
     ) -> tuple[float, float, float, float, float, float]:
         """Solve the chief ray (stop target (0, 0)) for this field.
 
-        Seed order (D2/D8): warm-started map for this field or the nearest
+        Seed order: warm-started map for this field or the nearest
         already-solved field, then a direct paraxial guess. If both fail --
         the paraxial seed can be too far from the real solution at extreme
         field angles to converge in one Newton solve -- fall back to
         marching the chief ray outward in field angle from the axis
         (:meth:`_march_chief`), which is what makes a *cold* extreme-field
         solve (e.g. WideAngle170FOV) converge without recursive subdivision.
+
+        The fixed launch components (direction for infinite conjugates,
+        object position for finite ones) always come fresh from *this*
+        field's paraxial trace, never from ``seed_map`` -- they encode the
+        field angle itself, so reusing another field's fixed components
+        would silently solve the wrong (e.g. on-axis) problem even though
+        Newton still converges. Only the free 2-DOF is warm-started from
+        the seed map's chief launch.
         """
         wl_a = be.array([wl])
         tx = be.array([0.0])
         ty = be.array([0.0])
 
+        px0, py0, pz0, pL0, pM0, pN0 = self._paraxial.aim_rays(
+            (be.array([Hx]), be.array([Hy])),
+            wl_a,
+            (be.array([0.0]), be.array([0.0])),
+        )
+
         if seed_map is not None:
-            x0, y0, z0, L0, M0, N0 = seed_map.seed(be.array([0.0]), be.array([0.0]))
+            sx0, sy0, _sz0, sL0, sM0, _sN0 = seed_map.seed(
+                be.array([0.0]), be.array([0.0])
+            )
+            if is_inf:
+                x0, y0 = sx0, sy0
+                z0, L0, M0, N0 = pz0, pL0, pM0, pN0
+            else:
+                L0, M0 = sL0, sM0
+                x0, y0, z0, N0 = px0, py0, pz0, pN0
+
             x, y, z, L, M, N, converged, _ = self._iterative._solve_core(
                 x0, y0, z0, L0, M0, N0, wl_a, stop_idx, is_inf, tx, ty
             )
@@ -289,13 +369,8 @@ class RobustRayAimer(BaseRayAimer):
                     to_float(N),
                 )
 
-        x0, y0, z0, L0, M0, N0 = self._paraxial.aim_rays(
-            (be.array([Hx]), be.array([Hy])),
-            wl_a,
-            (be.array([0.0]), be.array([0.0])),
-        )
         x, y, z, L, M, N, converged, _ = self._iterative._solve_core(
-            x0, y0, z0, L0, M0, N0, wl_a, stop_idx, is_inf, tx, ty
+            px0, py0, pz0, pL0, pM0, pN0, wl_a, stop_idx, is_inf, tx, ty
         )
         if be.any(converged):
             return (
@@ -307,7 +382,14 @@ class RobustRayAimer(BaseRayAimer):
                 to_float(N),
             )
 
-        return self._march_chief(Hx, Hy, wl_a, stop_idx, is_inf, tx, ty)
+        marched = self._march_chief(Hx, Hy, wl_a, stop_idx, is_inf, tx, ty)
+        if marched is None:
+            raise ValueError(
+                f"RobustRayAimer: chief ray failed to converge for field "
+                f"(Hx={Hx}, Hy={Hy}) after marching from the axis; check "
+                f"the system configuration."
+            )
+        return marched
 
     def _march_chief(
         self,
@@ -318,33 +400,79 @@ class RobustRayAimer(BaseRayAimer):
         is_inf: bool,
         tx: Any,
         ty: Any,
-        num_steps: int = 8,
-    ) -> tuple[float, float, float, float, float, float]:
+        max_attempts: int = 150,
+        min_dt: float = 1e-4,
+    ) -> tuple[float, float, float, float, float, float] | None:
         """March the chief ray from the axis out to (Hx, Hy) in field angle.
 
-        A small, fixed number of steps -- each a single-ray 2-DOF solve
-        warm-started from the previous step's real (not paraxial) launch --
-        replaces the old recursive homotopy as the cold-start robustness
-        mechanism (D8). It is bounded (no subdivision/recursion) and
-        physically monotonic: only the free launch DOF carries over between
-        steps, while the fixed DOF (z, and direction for infinite conjugates
-        / object position for finite ones) is refreshed from the paraxial
-        trace at each step's actual field angle.
-        """
-        launch: tuple[float, float, float, float, float, float] | None = None
+        A step-halving walk -- each step a single-ray 2-DOF solve
+        warm-started from the *last successfully converged* launch, never
+        from a failed one -- replaces the old recursive homotopy as the
+        cold-start robustness mechanism (D8). It is bounded (a fixed attempt
+        budget, no recursion) and physically monotonic: only the free launch
+        DOF carries over between steps, while the fixed DOF (z, and
+        direction for infinite conjugates / object position for finite ones)
+        is refreshed from the paraxial trace at each step's actual field
+        angle.
 
-        for step in range(1, num_steps + 1):
-            t = step / num_steps
-            Hxt, Hyt = Hx * t, Hy * t
+        A step size is never grown back up after a success: this system's
+        maximum reliable step tends to shrink (never grow) as the field
+        angle increases, so re-attempting a larger step every time just
+        wastes evaluations that repeatedly fail the same way.
+
+        Returns ``None`` if the walk cannot reach ``t=1`` (the actual
+        target field) within the attempt budget -- the caller must treat
+        this as a hard failure, not silently accept whatever intermediate
+        field angle happened to converge. Returning a wrong-but-converged
+        intermediate result here is exactly the failure mode this method
+        exists to prevent (see SPEC_ray_aiming_20260703.md D8): the fixed
+        launch DOF encodes the field angle itself, so a caller that used a
+        partial march's result as the final chief ray would be aiming at
+        the wrong field entirely, not just aiming imprecisely.
+        """
+        t = 0.0
+        # t=0 (the axis) is trivial and always converges: L=M=0, N=+-1.
+        launch = self._paraxial.aim_rays(
+            (be.array([0.0]), be.array([0.0])), wl_a, (be.array([0.0]), be.array([0.0]))
+        )
+        launch = tuple(to_float(v) for v in launch)
+
+        dt = 1.0
+        relaxed_tol = max(self._iterative.tol, 1e-4)
+        for _attempt in range(max_attempts):
+            if t >= 1.0:
+                # Intermediate steps used a relaxed tolerance as a cheap
+                # warm-start; do one final full-tolerance solve so the
+                # chief anchor itself is exact, not just "close enough".
+                x0 = be.array([launch[0]])
+                y0 = be.array([launch[1]])
+                z0 = be.array([launch[2]])
+                L0 = be.array([launch[3]])
+                M0 = be.array([launch[4]])
+                N0 = be.array([launch[5]])
+                x, y, z, L, M, N, converged, _ = self._iterative._solve_core(
+                    x0, y0, z0, L0, M0, N0, wl_a, stop_idx, is_inf, tx, ty
+                )
+                if be.any(converged):
+                    return (
+                        to_float(x),
+                        to_float(y),
+                        to_float(z),
+                        to_float(L),
+                        to_float(M),
+                        to_float(N),
+                    )
+                return launch
+
+            t_next = min(t + dt, 1.0)
+            Hxt, Hyt = Hx * t_next, Hy * t_next
             px0, py0, pz0, pL0, pM0, pN0 = self._paraxial.aim_rays(
                 (be.array([Hxt]), be.array([Hyt])),
                 wl_a,
                 (be.array([0.0]), be.array([0.0])),
             )
 
-            if launch is None:
-                x0, y0, z0, L0, M0, N0 = px0, py0, pz0, pL0, pM0, pN0
-            elif is_inf:
+            if is_inf:
                 x0 = be.array([launch[0]])
                 y0 = be.array([launch[1]])
                 z0, L0, M0, N0 = pz0, pL0, pM0, pN0
@@ -353,9 +481,10 @@ class RobustRayAimer(BaseRayAimer):
                 M0 = be.array([launch[4]])
                 x0, y0, z0, N0 = px0, py0, pz0, pN0
 
-            x, y, z, L, M, N, converged, _ = self._iterative._solve_core(
-                x0, y0, z0, L0, M0, N0, wl_a, stop_idx, is_inf, tx, ty
-            )
+            with _relaxed_tolerance(self._iterative, relaxed_tol):
+                x, y, z, L, M, N, converged, _ = self._iterative._solve_core(
+                    x0, y0, z0, L0, M0, N0, wl_a, stop_idx, is_inf, tx, ty
+                )
 
             if be.any(converged):
                 launch = (
@@ -366,19 +495,17 @@ class RobustRayAimer(BaseRayAimer):
                     to_float(M),
                     to_float(N),
                 )
-            elif launch is None:
-                # Even the smallest step failed -- nothing to warm-start
-                # from yet; keep the raw paraxial guess and try the next.
-                launch = (
-                    to_float(x0),
-                    to_float(y0),
-                    to_float(z0),
-                    to_float(L0),
-                    to_float(M0),
-                    to_float(N0),
-                )
+                t = t_next
+                # Do not grow dt back up -- see docstring.
+            else:
+                # Retry the SAME target angle at half the step, warm-started
+                # from the last known-good launch -- never advance t on a
+                # failed step.
+                dt /= 2.0
+                if dt < min_dt:
+                    return None
 
-        return launch
+        return launch if t >= 1.0 else None
 
     def _solve_probe(
         self,

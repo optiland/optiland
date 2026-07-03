@@ -456,6 +456,82 @@ def test_pupil_map_seed_affine_arithmetic(set_test_backend):
     assert_allclose(N, [1.0, 1.0])
 
 
+def test_robust_aimer_chief_ray_matches_field_angle_per_field(set_test_backend):
+    """Regression test: for an infinite-conjugate (angle field) system, the
+    chief-ray direction cosines are fixed purely by the field angle (no
+    refraction occurs before the first surface), so they must equal
+    sin/cos of each field's *own* raw angle -- not collapse toward the
+    on-axis (or any other field's) direction. This is the bug class where
+    a field-marching warm start reused another field's fixed launch
+    components (direction, for infinite conjugates) instead of recomputing
+    them for the actual target field."""
+    optic = WideAngle170FOV()
+    aimer = RobustRayAimer(optic)
+    stop_idx = optic.surfaces.stop_index
+    is_inf = True
+
+    raw_degrees = [f.y for f in optic.fields.fields]
+    coords = optic.fields.get_field_coords()
+    assert raw_degrees == [0.0, 60.0, 85.0]
+
+    seen_M = []
+    for (Hx, Hy), deg in zip(coords, raw_degrees, strict=False):
+        # Fresh aimer per field: no cross-field warm start available, so
+        # this also exercises the cold chief-ray marching fallback.
+        aimer_fresh = RobustRayAimer(WideAngle170FOV())
+        chief = aimer_fresh._solve_chief(
+            Hx, Hy, optic.primary_wavelength, stop_idx, is_inf, None
+        )
+        _, _, _, L, M, N = chief
+        assert_allclose(M, math.sin(math.radians(deg)), atol=1e-6)
+        assert_allclose(N, math.cos(math.radians(deg)), atol=1e-6)
+        seen_M.append(M)
+
+    # The three fields must be genuinely distinct, not all collapsed to
+    # the same (e.g. on-axis) direction.
+    assert len({round(m, 3) for m in seen_M}) == 3
+
+
+def test_robust_aimer_multi_field_batch_matches_per_field_reference(
+    set_test_backend,
+):
+    """Regression test: aiming several distinct fields in a single batched
+    call (as ``optic.trace(Hx_array, Hy_array, ...)`` does when plotting
+    every field at once) must give the same result as aiming each field
+    individually. This reproduces the exact call pattern used by system
+    plotting, where a bug in cross-field warm-start reuse previously
+    caused every field to be aimed as if on-axis."""
+    optic_multi = CookeTriplet()
+    optic_multi.ray_tracer.set_aiming("robust")
+    coords = optic_multi.fields.get_field_coords()
+
+    Hx = be.array([c[0] for c in coords])
+    Hy = be.array([c[1] for c in coords])
+    rays = optic_multi.trace(
+        Hx, Hy, optic_multi.primary_wavelength, num_rays=3, distribution="hexapolar"
+    )
+    n_fields = len(coords)
+    per_field = len(be.to_numpy(rays.y)) // n_fields
+
+    for i, (Hxi, Hyi) in enumerate(coords):
+        optic_ref = CookeTriplet()
+        optic_ref.ray_tracer.set_aiming("robust")
+        rays_ref = optic_ref.trace(
+            Hxi, Hyi, optic_ref.primary_wavelength, num_rays=3,
+            distribution="hexapolar",
+        )
+        batch_slice = slice(i * per_field, (i + 1) * per_field)
+        assert_allclose(
+            be.to_numpy(rays.y)[batch_slice],
+            be.to_numpy(rays_ref.y),
+            atol=1e-6,
+        )
+
+    # Distinct (non-axial) fields must not produce identical image heights.
+    ys = [be.to_numpy(rays.y)[i * per_field] for i in range(n_fields)]
+    assert len({round(float(v), 3) for v in ys}) == n_fields
+
+
 @pytest.mark.parametrize(
     "build", _WIDE_ANGLE_SAMPLES, ids=[c.__name__ for c in _WIDE_ANGLE_SAMPLES]
 )
