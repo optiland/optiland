@@ -61,7 +61,7 @@ class ReferencePointStrategy(ABC):
 class ChiefRayReferencePoint(ReferencePointStrategy):
     """Reference point given by the chief ray (pupil center) intercept.
 
-    This reproduces the classical behaviour and is valid for rotationally
+    This reproduces the classical behavior and is valid for rotationally
     symmetric, well-behaved systems where a chief ray can be traced.
     """
 

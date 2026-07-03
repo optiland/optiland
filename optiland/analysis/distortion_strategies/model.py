@@ -190,7 +190,7 @@ class AffineDistortionModel(DistortionModel):
     A full ``2x2`` linear map ``u = A @ p + b`` from field-angle tangents
     ``p = (tan(alpha_x), tan(alpha_y))`` to image coordinates is fit by least
     squares over a field grid. The affine map absorbs intended first-order
-    behaviour (plate scale, anamorphic magnification, image rotation, shear,
+    behavior (plate scale, anamorphic magnification, image rotation, shear,
     origin offset); distortion is the residual about it. No chief ray or scalar
     focal length is required, so the model is valid for off-axis, freeform, and
     obscured systems.

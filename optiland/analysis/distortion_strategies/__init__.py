@@ -10,7 +10,7 @@ Two orthogonal abstractions are provided:
 
 * :class:`ReferencePointStrategy` — locates the per-field image reference point
   (the "chief-ray replacement"). :class:`ChiefRayReferencePoint` traces a single
-  chief ray (classical behaviour); :class:`CentroidReferencePoint` traces a pupil
+  chief ray (classical behavior); :class:`CentroidReferencePoint` traces a pupil
   bundle and returns the transmitted-energy centroid, which is obscuration-proof
   and works when no chief ray exists.
 
