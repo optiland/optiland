@@ -184,7 +184,16 @@ class Variable:
             ValueError: If the variable type is invalid.
 
         """
+        import optiland.backend as be
+
+        if isinstance(new_value, list | tuple):
+            new_value = new_value[0]
+
         unscaled_value = self.variable.inverse_scale(new_value)
+
+        if hasattr(unscaled_value, "ndim") and unscaled_value.ndim > 0:
+            unscaled_value = be.ravel(unscaled_value)[0]
+
         self.variable.update_value(unscaled_value)
 
     def reset(self):
