@@ -9,7 +9,7 @@ reference is reported. Two models are provided:
   reference ray and distortion is the radial departure from it.
 
 * :class:`AffineDistortionModel` — the axis-free, best-fit affine (plate-scale)
-  reference of ``jupyter/draft_dist_method_20260620.md``. A full ``2x2`` linear
+  reference. A full ``2x2`` linear
   map from field-angle tangents to image coordinates is fit by least squares
   over a field grid; distortion is the residual about that fit. This requires no
   symmetry, no scalar focal length, and no chief ray, so it is valid for

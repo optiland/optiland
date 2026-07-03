@@ -5,7 +5,7 @@ field direction. Classically this is the chief-ray intercept, but for off-axis,
 freeform, or obscured systems no chief ray exists. This module abstracts the
 reference point behind :class:`ReferencePointStrategy` so that the chief ray can
 be transparently replaced by the transmitted-energy centroid of a traced pupil
-bundle (the "chief-ray replacement" of ``jupyter/draft_dist_method_20260620.md``).
+bundle.
 
 All strategies expose the same :meth:`ReferencePointStrategy.locate` interface and
 are therefore interchangeable wherever a per-field landing point is required

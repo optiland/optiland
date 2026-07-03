@@ -17,8 +17,7 @@ Two orthogonal abstractions are provided:
 * :class:`DistortionModel` — defines the distortion-free reference mapping and the
   residual. :class:`RotationalDistortionModel` reproduces the classical
   ``f-tan`` / ``f-theta`` model; :class:`AffineDistortionModel` implements the
-  axis-free best-fit affine (plate-scale) reference described in
-  ``jupyter/draft_dist_method_20260620.md``.
+  axis-free best-fit affine (plate-scale).
 
 The :func:`create_distortion_model` factory wires these together from a simple
 ``method`` string, while still allowing fully custom strategy objects to be
