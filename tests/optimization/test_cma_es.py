@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
 from scipy import optimize
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 import optiland.backend as be
 from optiland import optimization
@@ -95,6 +98,7 @@ class TestCMAES:
         [
             ({"maxiter": 0}, "maxiter must be at least 1."),
             ({"population_size": 1}, "population_size must be at least 2."),
+            ({"population_size": 0}, "population_size must be at least 2."),
             ({"sigma0": 0.0}, "sigma0 must be positive."),
             ({"sigma0": -0.1}, "sigma0 must be positive."),
             ({"sigma0": np.nan}, "sigma0 must be positive."),
@@ -102,7 +106,6 @@ class TestCMAES:
             ({"tolx": np.nan}, "tolx must be non-negative."),
             ({"tolfun": -1.0}, "tolfun must be non-negative."),
             ({"tolfun": np.nan}, "tolfun must be non-negative."),
-            ({"max_resampling": 0}, "max_resampling must be at least 1."),
         ],
     )
     def test_invalid_parameters_fail_before_evaluation(
@@ -308,6 +311,37 @@ class TestCMAES:
         assert abs(result.x[0]) < 0.1
         assert abs(result.x[1]) < 1e-7
 
+    def test_covariance_is_returned_in_physical_units(self, set_test_backend) -> None:
+        """Test covariance scaling from normalized to physical coordinates."""
+
+        def run(spans: np.ndarray) -> optimize.OptimizeResult:
+            problem = MockProblem(
+                [MockVariable(0.5 * span, (0.0, span)) for span in spans],
+                target_fun=lambda values: sum(
+                    (value / span) ** 2
+                    for value, span in zip(values, spans, strict=True)
+                ),
+            )
+            return CMAES(problem).optimize(
+                maxiter=5,
+                population_size=6,
+                sigma0=0.1,
+                tolx=0.0,
+                tolfun=0.0,
+                seed=17,
+                disp=False,
+            )
+
+        unit_spans = np.ones(2)
+        physical_spans = np.array([10.0, 100.0])
+        unit_result = run(unit_spans)
+        physical_result = run(physical_spans)
+
+        np.testing.assert_allclose(
+            physical_result.covariance,
+            unit_result.covariance * np.outer(physical_spans, physical_spans),
+        )
+
     def test_rotated_ellipsoid_convergence(self, set_test_backend) -> None:
         """Test learning of correlation between variables."""
         rotation = np.array(
@@ -389,6 +423,34 @@ class TestCMAES:
 
         assert result.success is True
         assert result.nit == 10
+        assert "objective values changed by at most" in result.message
+
+    def test_tolfun_uses_generation_best_history(self, set_test_backend) -> None:
+        """Test convergence after an obsolete global best leaves history."""
+        evaluations = 0
+
+        def shifted_flat_objective(values: list[float]) -> float:
+            nonlocal evaluations
+            evaluations += 1
+            return 0.0 if evaluations <= 6 else 100.0
+
+        problem = MockProblem(
+            [MockVariable(0.5, (0.0, 1.0))],
+            target_fun=shifted_flat_objective,
+        )
+
+        result = CMAES(problem).optimize(
+            maxiter=12,
+            population_size=4,
+            sigma0=0.05,
+            tolx=0.0,
+            tolfun=0.0,
+            seed=18,
+            disp=False,
+        )
+
+        assert result.success is True
+        assert result.nit == 11
         assert "objective values changed by at most" in result.message
 
     def test_tolx_stopping(self, set_test_backend) -> None:
@@ -488,28 +550,63 @@ class TestCMAES:
         assert result.condition_number > 1e14
         assert result.message == "Covariance matrix condition number exceeded 1e14."
 
-    def test_resampling_exhaustion(self, set_test_backend) -> None:
-        """Test explicit failure when no bounded sample can be generated."""
+    def test_covariance_psd_safeguard(self, set_test_backend, monkeypatch) -> None:
+        """Test termination when covariance loses positive semidefiniteness."""
         problem = MockProblem(
             [
-                MockVariable(0.0, (0.0, 1.0)),
-                MockVariable(0.0, (0.0, 1.0)),
+                MockVariable(0.5, (0.0, 1.0)),
+                MockVariable(0.5, (0.0, 1.0)),
             ]
+        )
+        monkeypatch.setattr(
+            np.linalg,
+            "eigh",
+            lambda covariance: (
+                np.array([-1.0, 1.0]),
+                np.eye(2),
+            ),
         )
 
         result = CMAES(problem).optimize(
             maxiter=10,
-            population_size=4,
-            sigma0=100.0,
-            max_resampling=1,
-            seed=13,
+            population_size=6,
+            sigma0=0.1,
+            seed=19,
             disp=False,
         )
 
         assert result.success is False
-        assert result.nit == 0
-        assert result.nfev == 1
-        assert "Unable to sample a candidate within bounds" in result.message
+        assert result.nit == 1
+        assert result.message == "Covariance matrix lost positive semidefiniteness."
+
+    def test_large_steps_are_reflected_into_bounds(self, set_test_backend) -> None:
+        """Test feasible sampling for large steps in a bounded search space."""
+        evaluated: list[list[float]] = []
+
+        def objective(values: list[float]) -> float:
+            evaluated.append(values.copy())
+            return sum(value**2 for value in values)
+
+        problem = MockProblem(
+            [MockVariable(0.5, (0.0, 1.0)) for _ in range(8)],
+            target_fun=objective,
+        )
+
+        result = CMAES(problem).optimize(
+            maxiter=1,
+            population_size=10,
+            sigma0=100.0,
+            tolx=0.0,
+            tolfun=0.0,
+            seed=13,
+            disp=False,
+        )
+
+        assert result.nit == 1
+        assert result.nfev == 11
+        assert all(
+            0.0 <= value <= 1.0 for candidate in evaluated for value in candidate
+        )
 
     def test_result_updates_problem_state(self, set_test_backend) -> None:
         """Test that the final problem state matches the best result."""

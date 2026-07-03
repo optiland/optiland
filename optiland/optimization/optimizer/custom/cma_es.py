@@ -38,7 +38,6 @@ class CMAES(OptimizerGeneric):
         sigma0: float = 0.3,
         tolx: float = 1e-8,
         tolfun: float = 1e-12,
-        max_resampling: int = 100,
         seed: int | None = None,
         disp: bool = True,
         callback: Callable[[int, np.ndarray, float], bool | None] | None = None,
@@ -54,7 +53,6 @@ class CMAES(OptimizerGeneric):
                 this value.
             tolfun: Stop when recent best objective values vary by no more than
                 this value.
-            max_resampling: Maximum attempts to draw each bounded candidate.
             seed: Random seed for reproducibility.
             disp: Whether to print generation progress.
             callback: Optional callback called as
@@ -85,7 +83,6 @@ class CMAES(OptimizerGeneric):
             sigma0=sigma0,
             tolx=tolx,
             tolfun=tolfun,
-            max_resampling=max_resampling,
             has_movable_variables=dimension > 0,
         )
 
@@ -167,16 +164,8 @@ class CMAES(OptimizerGeneric):
                 eigenvectors=eigenvectors,
                 deviations=deviations,
                 population_size=population_size,
-                max_resampling=max_resampling,
                 rng=rng,
             )
-            if sampled is None:
-                message = (
-                    "Unable to sample a candidate within bounds after "
-                    f"{max_resampling} attempts."
-                )
-                break
-
             candidates, steps = sampled
             fitness = np.empty(population_size, dtype=float)
             for index, candidate in enumerate(candidates):
@@ -268,7 +257,7 @@ class CMAES(OptimizerGeneric):
             deviations = np.sqrt(eigenvalues)
             condition_number = float(np.max(eigenvalues) / np.min(eigenvalues))
             completed_generations = generation
-            best_history.append(best_value)
+            best_history.append(float(fitness[0]))
 
             if disp:
                 mean_shift = np.linalg.norm(mean - old_mean)
@@ -295,11 +284,10 @@ class CMAES(OptimizerGeneric):
                 )
                 break
 
-            if (
-                len(best_history) == history_size
-                and max(max(best_history), float(np.max(fitness)))
-                - min(min(best_history), float(np.min(fitness)))
-                <= tolfun
+            current_fitness_range = float(np.max(fitness) - np.min(fitness))
+            historic_fitness_range = max(best_history) - min(best_history)
+            if len(best_history) == history_size and (
+                current_fitness_range <= tolfun and historic_fitness_range <= tolfun
             ):
                 success = True
                 message = (
@@ -320,6 +308,7 @@ class CMAES(OptimizerGeneric):
             movable_lower,
             movable_span,
         )
+        physical_covariance = covariance * np.outer(movable_span, movable_span)
         return optimize.OptimizeResult(
             x=best_position.copy(),
             fun=best_value,
@@ -330,7 +319,7 @@ class CMAES(OptimizerGeneric):
             population_size=population_size,
             sigma=sigma,
             mean=physical_mean,
-            covariance=covariance.copy(),
+            covariance=physical_covariance,
             condition_number=condition_number,
         )
 
@@ -358,7 +347,6 @@ class CMAES(OptimizerGeneric):
         sigma0: float,
         tolx: float,
         tolfun: float,
-        max_resampling: int,
         has_movable_variables: bool,
     ) -> None:
         """Validate CMA-ES configuration."""
@@ -374,8 +362,6 @@ class CMAES(OptimizerGeneric):
             raise ValueError("tolx must be non-negative.")
         if not np.isfinite(tolfun) or tolfun < 0.0:
             raise ValueError("tolfun must be non-negative.")
-        if max_resampling < 1:
-            raise ValueError("max_resampling must be at least 1.")
 
     @staticmethod
     def _sample_population(
@@ -385,25 +371,21 @@ class CMAES(OptimizerGeneric):
         eigenvectors: np.ndarray,
         deviations: np.ndarray,
         population_size: int,
-        max_resampling: int,
         rng: np.random.Generator,
-    ) -> tuple[np.ndarray, np.ndarray] | None:
-        """Sample a population by rejecting candidates outside the unit box."""
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Sample a population and reflect candidates into the unit box."""
         dimension = mean.size
         candidates = np.empty((population_size, dimension), dtype=float)
         steps = np.empty_like(candidates)
 
         for candidate_index in range(population_size):
-            for _ in range(max_resampling):
-                normal = rng.standard_normal(dimension)
-                step = eigenvectors @ (deviations * normal)
-                candidate = mean + sigma * step
-                if np.all((candidate >= 0.0) & (candidate <= 1.0)):
-                    candidates[candidate_index] = candidate
-                    steps[candidate_index] = step
-                    break
-            else:
-                return None
+            normal = rng.standard_normal(dimension)
+            step = eigenvectors @ (deviations * normal)
+            candidate = mean + sigma * step
+            candidate = np.mod(candidate, 2.0)
+            candidate = np.where(candidate <= 1.0, candidate, 2.0 - candidate)
+            candidates[candidate_index] = candidate
+            steps[candidate_index] = (candidate - mean) / sigma
 
         return candidates, steps
 
