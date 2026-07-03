@@ -4,6 +4,11 @@ This module implements a caching wrapper for ray aiming algorithms.
 It stores previous results to speed up repetitive calculations, especially
 during optimization or tolerance analysis where system changes might be small.
 
+Retained for backward compatibility (explicit ``cache=True``) but no longer
+the default warm-start mechanism for ``"robust"``, which has its own
+intrinsic, always-on ``PupilMapCache`` (see ``pupil_map.py`` and
+``robust.py``).
+
 Kramer Harrison, 2025
 """
 
