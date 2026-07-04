@@ -40,12 +40,23 @@ class AngleField(BaseFieldDefinition):
         if obj.is_infinite:
             EPD = optic.paraxial.EPD()
             offset = self._get_starting_z_offset(optic)
-            x = -be.tan(be.radians(field_x)) * (offset + EPL)
-            y = -be.tan(be.radians(field_y)) * (offset + EPL)
-            z = optic.surfaces.positions[1] - offset
+            d = offset + EPL
+
+            # Past 90 deg, N = cos(theta) is negative, so the launch point
+            # must sit downstream of the pupil (ray runs backward into it)
+            # rather than upstream -- otherwise (L, M, N), which for
+            # infinite conjugates is never refined past this seed, folds
+            # back into (-90, 90) instead of reaching the true angle.
+            theta_total = be.sqrt(field_x**2 + field_y**2)
+            s = be.where(be.cos(be.radians(theta_total)) < 0, -1.0, 1.0)
+
+            z_pupil = optic.paraxial.entrance_pupil_z()
+            x = -s * be.tan(be.radians(field_x)) * d
+            y = -s * be.tan(be.radians(field_y)) * d
+            z = z_pupil - s * d
             x0 = be.array(Px) * EPD / 2 * be.array(vx) + x
             y0 = be.array(Py) * EPD / 2 * be.array(vy) + y
-            z0 = be.full_like(Px, z)
+            z0 = be.zeros_like(Px) + z
         else:
             dist_to_ep = optic.paraxial.entrance_pupil_z() - optic.surfaces.positions[0]
             x_local = be.atleast_1d(be.array(-be.tan(be.radians(field_x)) * dist_to_ep))

@@ -383,13 +383,79 @@ class RobustRayAimer(BaseRayAimer):
             )
 
         marched = self._march_chief(Hx, Hy, wl_a, stop_idx, is_inf, tx, ty)
-        if marched is None:
-            raise ValueError(
-                f"RobustRayAimer: chief ray failed to converge for field "
-                f"(Hx={Hx}, Hy={Hy}) after marching from the axis; check "
-                f"the system configuration."
+        if marched is not None:
+            return marched
+
+        if is_inf:
+            scanned = self._scan_chief(
+                px0, py0, pz0, pL0, pM0, pN0, wl_a, stop_idx, tx, ty
             )
-        return marched
+            if scanned is not None:
+                return scanned
+
+        raise ValueError(
+            f"RobustRayAimer: chief ray failed to converge for field "
+            f"(Hx={Hx}, Hy={Hy}) after marching from the axis; check "
+            f"the system configuration."
+        )
+
+    def _scan_chief(
+        self,
+        px0: Any,
+        py0: Any,
+        pz0: Any,
+        pL0: Any,
+        pM0: Any,
+        pN0: Any,
+        wl_a: Any,
+        stop_idx: int,
+        tx: Any,
+        ty: Any,
+        n: int = 2001,
+    ) -> tuple[float, float, float, float, float, float] | None:
+        """Last-resort chief-ray seed search for extreme (beyond +-90 degree)
+        field angles.
+
+        Sweeps candidate launch points along the line through the paraxial
+        guess and returns the first one the Newton polish converges from,
+        for when neither the paraxial guess nor field marching converges.
+        """
+        gx, gy = to_float(px0), to_float(py0)
+        norm = (gx**2 + gy**2) ** 0.5
+        if norm < 1e-9:
+            dirx, diry = 0.0, 1.0
+        else:
+            dirx, diry = gx / norm, gy / norm
+        scale = max(50.0, 20.0 * norm)
+
+        r = be.linspace(-scale, scale, n)
+        ones = be.ones(n)
+        x0 = dirx * r
+        y0 = diry * r
+        z0 = ones * to_float(pz0)
+        L0 = ones * to_float(pL0)
+        M0 = ones * to_float(pM0)
+        N0 = ones * to_float(pN0)
+        wl_b = ones * to_float(wl_a)
+        tx_b = ones * to_float(tx)
+        ty_b = ones * to_float(ty)
+
+        x, y, z, L, M, N, converged, _ = self._iterative._solve_core(
+            x0, y0, z0, L0, M0, N0, wl_b, stop_idx, True, tx_b, ty_b
+        )
+        if not be.any(converged):
+            return None
+
+        conv_np = be.to_numpy(converged).reshape(-1)
+        idx = int(conv_np.nonzero()[0][0])
+        return (
+            to_float(x[idx : idx + 1]),
+            to_float(y[idx : idx + 1]),
+            to_float(z[idx : idx + 1]),
+            to_float(L[idx : idx + 1]),
+            to_float(M[idx : idx + 1]),
+            to_float(N[idx : idx + 1]),
+        )
 
     def _march_chief(
         self,
@@ -485,6 +551,17 @@ class RobustRayAimer(BaseRayAimer):
                 x, y, z, L, M, N, converged, _ = self._iterative._solve_core(
                     x0, y0, z0, L0, M0, N0, wl_a, stop_idx, is_inf, tx, ty
                 )
+
+            if not be.any(converged) and is_inf:
+                # The free (x, y) launch warm-started from the previous step
+                # can occasionally be a worse seed than a fresh paraxial
+                # guess at the new angle (e.g. right where marching first
+                # takes a large stride); retry once from the fresh guess
+                # before giving up and shrinking the step.
+                with _relaxed_tolerance(self._iterative, relaxed_tol):
+                    x, y, z, L, M, N, converged, _ = self._iterative._solve_core(
+                        px0, py0, pz0, pL0, pM0, pN0, wl_a, stop_idx, is_inf, tx, ty
+                    )
 
             if be.any(converged):
                 launch = (
