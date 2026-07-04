@@ -160,9 +160,86 @@ class StandardGeometry(BaseGeometry):
         z2 = rays.z + t2 * rays.N
 
         # take intersection closest to z = 0 (i.e., vertex of geometry)
-        t = be.where(be.abs(z1) <= be.abs(z2), t1, t2)
+        geom_is_1 = be.abs(z1) <= be.abs(z2)
+        t_geom = be.where(geom_is_1, t1, t2)
 
-        return t
+        # "Closest to vertex" is also always the root a ray genuinely enters
+        # from the object side, *except* for rays steep enough that the two
+        # roots' proximity to the vertex no longer tracks which one is
+        # physically in front (e.g. extreme wide-angle field rays against a
+        # convex surface). That essentially never happens for a ray still
+        # heading generally forward (N comfortably positive), which covers
+        # ordinary usage, so skip the (otherwise unconditional, since which
+        # rays in a batch need it can't be known without computing it)
+        # disambiguation below entirely when every ray in this call clears
+        # that bar.
+        if bool(be.all(rays.N > 1e-2)):
+            return t_geom
+
+        # Only the entry-side dot product with the local normal actually
+        # distinguishes the two roots for the remaining (rare) rays: take
+        # "closest to vertex" unless it fails that check and the other root
+        # passes it, in which case take the other root instead. Uses the
+        # unnormalized normal -- only its sign matters here, so the
+        # sqrt(mag) normalization used by surface_normal() (needed for
+        # actual refraction) is skipped.
+        x1 = rays.x + t1 * rays.L
+        y1 = rays.y + t1 * rays.M
+        x2 = rays.x + t2 * rays.L
+        y2 = rays.y + t2 * rays.M
+
+        with be.errstate(invalid="ignore"):
+            dot1 = self._unnormalized_entry_dot(x1, y1, rays.L, rays.M, rays.N)
+            dot2 = self._unnormalized_entry_dot(x2, y2, rays.L, rays.M, rays.N)
+
+        geom_valid = be.where(geom_is_1, dot1 < 0, dot2 < 0)
+        other_valid = be.where(geom_is_1, dot2 < 0, dot1 < 0)
+        other_t = be.where(geom_is_1, t2, t1)
+
+        use_other = be.logical_and(be.logical_not(geom_valid), other_valid)
+        return be.where(use_other, other_t, t_geom)
+
+    def _unnormalized_entry_dot(self, x, y, L, M, N):
+        """Sign of the incident-direction dot the local surface normal, at
+        local (x, y) points on the surface.
+
+        Args:
+            x (be.ndarray): Local x-coordinate(s) on the surface.
+            y (be.ndarray): Local y-coordinate(s) on the surface.
+            L (be.ndarray): Incident direction cosine, x-component.
+            M (be.ndarray): Incident direction cosine, y-component.
+            N (be.ndarray): Incident direction cosine, z-component.
+
+        Returns:
+            be.ndarray: ``dot(incident, normal)`` up to a positive scale
+            factor -- unnormalized, since only its sign is used.
+        """
+        r2 = x**2 + y**2
+        denom = self.radius * be.sqrt(1 - (1 + self.k) * r2 / self.radius**2)
+        return L * x / denom + M * y / denom - N
+
+    def _normal_components(self, x, y):
+        """Compute the normalized surface normal at local (x, y) points on
+        the surface.
+
+        Args:
+            x (be.ndarray): Local x-coordinate(s) on the surface.
+            y (be.ndarray): Local y-coordinate(s) on the surface.
+
+        Returns:
+            tuple[be.ndarray, be.ndarray, be.ndarray]: The x, y, and z
+            components of the surface normal vectors.
+        """
+        r2 = x**2 + y**2
+
+        denom = self.radius * be.sqrt(1 - (1 + self.k) * r2 / self.radius**2)
+        dfdx = x / denom
+        dfdy = y / denom
+        dfdz = -1
+
+        mag = be.sqrt(dfdx**2 + dfdy**2 + dfdz**2)
+
+        return dfdx / mag, dfdy / mag, dfdz / mag
 
     def surface_normal(self, rays):
         """Calculate the surface normal of the geometry at the given points.
@@ -176,20 +253,7 @@ class StandardGeometry(BaseGeometry):
             components of the surface normal vectors.
 
         """
-        r2 = rays.x**2 + rays.y**2
-
-        denom = self.radius * be.sqrt(1 - (1 + self.k) * r2 / self.radius**2)
-        dfdx = rays.x / denom
-        dfdy = rays.y / denom
-        dfdz = -1
-
-        mag = be.sqrt(dfdx**2 + dfdy**2 + dfdz**2)
-
-        nx = dfdx / mag
-        ny = dfdy / mag
-        nz = dfdz / mag
-
-        return nx, ny, nz
+        return self._normal_components(rays.x, rays.y)
 
     def to_dict(self):
         """Convert the geometry to a dictionary.
