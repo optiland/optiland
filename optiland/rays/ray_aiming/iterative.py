@@ -56,9 +56,6 @@ class IterativeRayAimer(BaseRayAimer):
         self.max_iter = max_iter
         self.tol = tol
         self._paraxial_aimer = ParaxialRayAimer(optic)
-        # Number of Newton iterations actually run by the most recent
-        # _solve_core() call. Instrumentation for warm-start tests (G6);
-        # not part of the public contract.
         self.last_iterations = 0
 
     def aim_rays(
@@ -233,11 +230,6 @@ class IterativeRayAimer(BaseRayAimer):
             if be.all(converged):
                 break
 
-            # NaN errors never recover (NaN propagates through every
-            # subsequent Newton step), so once every non-converged ray is
-            # NaN, further iteration is pure wasted work -- stop early
-            # rather than burning the full max_iter budget on rays that
-            # cannot possibly converge.
             stuck = be.logical_or(converged, be.isnan(error_sq))
             if be.all(stuck):
                 break

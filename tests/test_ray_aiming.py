@@ -419,8 +419,6 @@ def test_real_aimer_converges_after_translation(set_test_backend, AimerCls, dz):
 
 # ---------------------------------------------------------------------------
 # Tests for the chief-ray calibrated RobustRayAimer.
-# See optiland/jupyter/SPEC_ray_aiming_20260703.md for the design and the
-# acceptance gates (G1-G7) referenced in the docstrings below.
 
 from optiland.distribution import create_distribution  # noqa: E402
 from optiland.rays.ray_aiming.initialization import (  # noqa: E402
@@ -553,7 +551,7 @@ def test_robust_aimer_converges_cold_all_fields(set_test_backend, build):
 def test_robust_aimer_isolated_extreme_field_converges_cold(set_test_backend):
     """G1: the same cold-convergence guarantee holds even when the extreme
     field is aimed in complete isolation -- i.e. with no smaller field ever
-    solved first to warm-start the cache via field marching (D8)."""
+    solved first to warm-start the cache via field marching."""
     optic = WideAngle170FOV()
     aimer = RobustRayAimer(optic)
     dist = create_distribution("hexapolar")
