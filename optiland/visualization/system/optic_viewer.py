@@ -186,10 +186,16 @@ class OpticViewer(BaseViewer):
         point -- fine for aiming, but if left to matplotlib's autoscale it
         dominates the view for wide-FOV systems, squeezing the actual lens
         system down to an unreadable sliver. Sizing instead from the real
-        surfaces (z) and the traced rays' extent *at* those surfaces (the
-        transverse axis, excluding the object launch point) keeps the lens
-        the focus while still leaving margin to see rays approaching and
-        entering the first surface.
+        surfaces (z) and ``r_extent`` -- the same radially-symmetric,
+        per-surface ray extent ``OpticalSystem`` already uses to size lens
+        and mirror components (see ``system.py``) -- keeps the transverse
+        limits centered on the optical axis and guaranteed to cover
+        whatever radius the lens components are actually drawn at (an
+        asymmetric min/max of the traced rays' signed coordinates isn't
+        enough: a field that's only ever traced on one side of the axis
+        would leave the *other*, still-drawn side of the lens clipped),
+        while still leaving margin to see rays approaching and entering
+        the first surface.
 
         Args:
             projection (str): The projection plane, 'XY', 'XZ', or 'YZ'.
@@ -213,21 +219,15 @@ class OpticViewer(BaseViewer):
         z_margin = max(0.15 * (z_max - z_min), 1e-6)
         auto_xlim = (z_min - z_margin, z_max + z_margin)
 
-        if projection == "XZ":
-            lo = be.to_numpy(self.rays.x_min_extent)[start_idx:]
-            hi = be.to_numpy(self.rays.x_max_extent)[start_idx:]
-        else:  # YZ
-            lo = be.to_numpy(self.rays.y_min_extent)[start_idx:]
-            hi = be.to_numpy(self.rays.y_max_extent)[start_idx:]
-
-        lo = lo[np.isfinite(lo)]
-        hi = hi[np.isfinite(hi)]
-        if lo.size == 0 or hi.size == 0:
+        r_extent = be.to_numpy(self.rays.r_extent)[start_idx:]
+        r_extent = r_extent[np.isfinite(r_extent)]
+        if r_extent.size == 0:
             return auto_xlim, None
 
-        r_min = float(lo.min())
-        r_max = float(hi.max())
-        r_margin = max(0.15 * (r_max - r_min), 1e-6)
-        auto_ylim = (r_min - r_margin, r_max + r_margin)
+        r_max = float(r_extent.max())
+        if r_max <= 0:
+            return auto_xlim, None
+        r_margin = max(0.15 * r_max, 1e-6)
+        auto_ylim = (-(r_max + r_margin), r_max + r_margin)
 
         return auto_xlim, auto_ylim

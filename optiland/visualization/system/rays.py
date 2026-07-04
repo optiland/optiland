@@ -47,15 +47,6 @@ class Rays2D:
 
         n = optic.surfaces.num_surfaces
         self.r_extent = be.zeros(n)
-        # Running (across every field/wavelength traced in one view() call)
-        # global-frame bounding box of ray coordinates at each surface, used
-        # to size default axis limits. Unlike r_extent (surface-local, for
-        # aperture-size comparisons), these stay in the same global frame
-        # the rays are actually plotted in.
-        self.y_min_extent = be.full(n, be.inf)
-        self.y_max_extent = be.full(n, -be.inf)
-        self.x_min_extent = be.full(n, be.inf)
-        self.x_max_extent = be.full(n, -be.inf)
 
     def plot(
         self,
@@ -182,10 +173,6 @@ class Rays2D:
     def _update_surface_extents(self):
         """Updates the extents of the surfaces in the optic's surface group."""
         r_extent_new = be.copy(be.zeros_like(self.r_extent))
-        y_min_new = be.copy(be.zeros_like(self.y_min_extent))
-        y_max_new = be.copy(be.zeros_like(self.y_max_extent))
-        x_min_new = be.copy(be.zeros_like(self.x_min_extent))
-        x_max_new = be.copy(be.zeros_like(self.x_max_extent))
         for i, surf in enumerate(self.optic.surfaces):
             x_surf = self.x[i]
             y_surf = self.y[i]
@@ -195,17 +182,7 @@ class Rays2D:
             x, y, _ = transform(x_surf, y_surf, z_surf, surf, is_global=True)
 
             r_extent_new[i] = be.nanmax(be.hypot(x, y))
-            # Global-frame bounds (as actually plotted), unlike r_extent
-            # above which is surface-local for aperture-size comparisons.
-            y_max_new[i] = be.nanmax(y_surf)
-            y_min_new[i] = -be.nanmax(-y_surf)
-            x_max_new[i] = be.nanmax(x_surf)
-            x_min_new[i] = -be.nanmax(-x_surf)
         self.r_extent = be.fmax(self.r_extent, r_extent_new)
-        self.y_max_extent = be.fmax(self.y_max_extent, y_max_new)
-        self.y_min_extent = -be.fmax(-self.y_min_extent, -y_min_new)
-        self.x_max_extent = be.fmax(self.x_max_extent, x_max_new)
-        self.x_min_extent = -be.fmax(-self.x_min_extent, -x_min_new)
 
     def _plot_lines(
         self,
