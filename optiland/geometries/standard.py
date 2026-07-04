@@ -168,12 +168,13 @@ class StandardGeometry(BaseGeometry):
         # roots' proximity to the vertex no longer tracks which one is
         # physically in front (e.g. extreme wide-angle field rays against a
         # convex surface). That essentially never happens for a ray still
-        # heading generally forward (N comfortably positive), which covers
-        # ordinary usage, so skip the (otherwise unconditional, since which
-        # rays in a batch need it can't be known without computing it)
-        # disambiguation below entirely when every ray in this call clears
-        # that bar.
-        if bool(be.all(rays.N > 1e-2)):
+        # comfortably clear of grazing incidence (|N| comfortably away from
+        # zero), which covers ordinary usage -- including systems where rays
+        # travel in the -z direction throughout (N uniformly negative) -- so
+        # skip the (otherwise unconditional, since which rays in a batch need
+        # it can't be known without computing it) disambiguation below
+        # entirely when every ray in this call clears that bar.
+        if bool(be.all(be.abs(rays.N) > 1e-2)):
             return t_geom
 
         # Only the entry-side dot product with the local normal actually
@@ -192,8 +193,16 @@ class StandardGeometry(BaseGeometry):
             dot1 = self._unnormalized_entry_dot(x1, y1, rays.L, rays.M, rays.N)
             dot2 = self._unnormalized_entry_dot(x2, y2, rays.L, rays.M, rays.N)
 
-        geom_valid = be.where(geom_is_1, dot1 < 0, dot2 < 0)
-        other_valid = be.where(geom_is_1, dot2 < 0, dot1 < 0)
+        # The "-N" term in the dot product bakes in a forward-propagation
+        # (+z) assumption; for systems where rays travel in -z overall, the
+        # entry side is the opposite sign, so flip the comparison by the
+        # ray's own propagation direction.
+        sign_n = be.where(rays.N < 0, -1.0, 1.0)
+        entry1 = dot1 * sign_n < 0
+        entry2 = dot2 * sign_n < 0
+
+        geom_valid = be.where(geom_is_1, entry1, entry2)
+        other_valid = be.where(geom_is_1, entry2, entry1)
         other_t = be.where(geom_is_1, t2, t1)
 
         use_other = be.logical_and(be.logical_not(geom_valid), other_valid)

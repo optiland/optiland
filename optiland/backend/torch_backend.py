@@ -1075,6 +1075,17 @@ class TorchBackend(AbstractBackend):
         """
         if isinstance(condition, bool):
             return x if condition else y
+
+        # Bare Python numbers passed straight to torch.where are "wrapped"
+        # scalars: combined with a non-scalar tensor of a different dtype,
+        # PyTorch's type promotion keeps the *tensor's* dtype rather than
+        # upcasting, so a plain 1.0/-1.0 silently downgrades a float64
+        # computation to float32. Materializing them at the configured
+        # precision first avoids that trap.
+        if not isinstance(x, torch.Tensor):
+            x = self.array(x)
+        if not isinstance(y, torch.Tensor):
+            y = self.array(y)
         return torch.where(condition, x, y)
 
     def maximum(self, a: Any, b: Any) -> Tensor:
