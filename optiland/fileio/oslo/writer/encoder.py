@@ -12,6 +12,7 @@ import math
 from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
+from optiland.fileio.common import FIELD_CLASS_TO_TYPE
 from optiland.fileio.oslo.model import OsloDataModel
 from optiland.fileio.oslo.surfaces import get_handler_for_optiland_type
 from optiland.materials import AbbeMaterial, IdealMaterial, Material
@@ -19,15 +20,6 @@ from optiland.physical_apertures import RadialAperture
 
 if TYPE_CHECKING:
     from optiland.optic import Optic
-
-
-# Map from field definition class name to Optiland field type string
-_FIELD_CLASS_TO_TYPE: dict[str, str] = {
-    "AngleField": "angle",
-    "ObjectHeightField": "object_height",
-    "ParaxialImageHeightField": "paraxial_image_height",
-    "RealImageHeightField": "real_image_height",
-}
 
 
 class OpticToOsloEncoder:
@@ -84,7 +76,7 @@ class OpticToOsloEncoder:
         if self.optic.fields:
             fd = self.optic.fields.field_definition
             f_type = (
-                _FIELD_CLASS_TO_TYPE.get(type(fd).__name__, "angle") if fd else "angle"
+                FIELD_CLASS_TO_TYPE.get(type(fd).__name__, "angle") if fd else "angle"
             )
             self.data_model.fields["type"] = f_type
             # OSLO convention: store only the maximum absolute field value.
