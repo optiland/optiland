@@ -78,5 +78,6 @@ auto-discovered on the first registry access.
    materials.material_file
    materials.material
    materials.material_spec
+   materials.material_utils
    materials.catalog
    materials.registry
