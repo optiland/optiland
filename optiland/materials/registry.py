@@ -309,19 +309,38 @@ class MaterialRegistry:
         max_wavelength: float | None,
     ) -> tuple[str, dict]:
         """Resolve a material and return ``(path, metadata_row_dict)``."""
-        df = self._get_combined_df()
-
-        # If catalog given, pre-filter to that manufacturer
-        if catalog is not None:
-            catalog_lower = catalog.lower()
-            df = df[df["catalog_dir"].str.lower() == catalog_lower].copy()
-            if df.empty:
-                raise ValueError(f"No catalog '{catalog}' found in material database.")
+        df = self._prefilter_by_catalog(self._get_combined_df(), catalog)
 
         filtered_df = self._find_matches(
             df, name, reference, min_wavelength, max_wavelength
         )
+        self._raise_if_no_matches(filtered_df, name, catalog, reference)
 
+        self._apply_match_policy(filtered_df, name, catalog, match_policy)
+
+        row = filtered_df.iloc[0].to_dict()
+        return self._row_to_path(row), row
+
+    def _prefilter_by_catalog(
+        self, df: pd.DataFrame, catalog: str | None
+    ) -> pd.DataFrame:
+        """Restrict ``df`` to a single manufacturer catalog, if given."""
+        if catalog is None:
+            return df
+        catalog_lower = catalog.lower()
+        filtered = df[df["catalog_dir"].str.lower() == catalog_lower].copy()
+        if filtered.empty:
+            raise ValueError(f"No catalog '{catalog}' found in material database.")
+        return filtered
+
+    def _raise_if_no_matches(
+        self,
+        filtered_df: pd.DataFrame,
+        name: str,
+        catalog: str | None,
+        reference: str | None,
+    ) -> None:
+        """Raise ``ValueError`` if no candidate rows survived filtering."""
         if filtered_df.empty:
             msg = f"No matches found for material '{name}'"
             if catalog:
@@ -330,6 +349,14 @@ class MaterialRegistry:
                 msg += f" with reference '{reference}'"
             raise ValueError(msg)
 
+    def _apply_match_policy(
+        self,
+        filtered_df: pd.DataFrame,
+        name: str,
+        catalog: str | None,
+        match_policy: MatchPolicy,
+    ) -> None:
+        """Enforce ``match_policy`` for a non-exact or ambiguous top match."""
         best_score = filtered_df["similarity_score"].iloc[0]
         exact_mask = filtered_df["similarity_score"] == 0
         n_exact_files = (
@@ -339,47 +366,70 @@ class MaterialRegistry:
         )
         ambiguous_exact = best_score == 0 and n_exact_files > 1
 
-        if best_score > 0 or ambiguous_exact:
-            if catalog is not None:
-                if match_policy == MatchPolicy.STRICT:
-                    raise ValueError(
-                        f"No exact match for '{name}' in catalog '{catalog}'. "
-                        "Use the exact name or a less strict match_policy."
-                    )
-                if best_score > 0:
-                    resolved = filtered_df.iloc[0]["name"]
-                    warnings.warn(
-                        f"No exact match for '{name}' in catalog '{catalog}'; "
-                        f"resolved to '{resolved}'. Use exact name to silence.",
-                        OptilandMaterialWarning,
-                        stacklevel=4,
-                    )
-            else:
-                if match_policy == MatchPolicy.STRICT:
-                    top = filtered_df.head(5)["name"].tolist()
-                    raise ValueError(
-                        f"No exact match for material '{name}'. "
-                        f"Top candidates: {top}. "
-                        "Use match_policy='warn' or 'best' for fuzzy matching."
-                    )
-                if match_policy == MatchPolicy.WARN and best_score > 0:
-                    resolved = filtered_df.iloc[0]["name"]
-                    warnings.warn(
-                        f"Material '{name}' resolved to '{resolved}' via fuzzy match.",
-                        OptilandMaterialWarning,
-                        stacklevel=4,
-                    )
+        if best_score <= 0 and not ambiguous_exact:
+            return
 
-        row = filtered_df.iloc[0].to_dict()
-        filename = row["filename"]
-
-        # Built-in filenames are relative paths stored in CSV; resolve them.
-        if not pathlib.Path(filename).is_absolute():
-            full_path = str(pathlib.Path(_DATA_NK_DIR) / filename)
+        if catalog is not None:
+            self._apply_match_policy_with_catalog(
+                filtered_df, name, catalog, match_policy, best_score
+            )
         else:
-            full_path = filename
+            self._apply_match_policy_without_catalog(
+                filtered_df, name, match_policy, best_score
+            )
 
-        return full_path, row
+    def _apply_match_policy_with_catalog(
+        self,
+        filtered_df: pd.DataFrame,
+        name: str,
+        catalog: str,
+        match_policy: MatchPolicy,
+        best_score: float,
+    ) -> None:
+        """Apply ``match_policy`` when resolution was scoped to one catalog."""
+        if match_policy == MatchPolicy.STRICT:
+            raise ValueError(
+                f"No exact match for '{name}' in catalog '{catalog}'. "
+                "Use the exact name or a less strict match_policy."
+            )
+        if best_score > 0:
+            resolved = filtered_df.iloc[0]["name"]
+            warnings.warn(
+                f"No exact match for '{name}' in catalog '{catalog}'; "
+                f"resolved to '{resolved}'. Use exact name to silence.",
+                OptilandMaterialWarning,
+                stacklevel=6,
+            )
+
+    def _apply_match_policy_without_catalog(
+        self,
+        filtered_df: pd.DataFrame,
+        name: str,
+        match_policy: MatchPolicy,
+        best_score: float,
+    ) -> None:
+        """Apply ``match_policy`` when resolution spans all catalogs."""
+        if match_policy == MatchPolicy.STRICT:
+            top = filtered_df.head(5)["name"].tolist()
+            raise ValueError(
+                f"No exact match for material '{name}'. "
+                f"Top candidates: {top}. "
+                "Use match_policy='warn' or 'best' for fuzzy matching."
+            )
+        if match_policy == MatchPolicy.WARN and best_score > 0:
+            resolved = filtered_df.iloc[0]["name"]
+            warnings.warn(
+                f"Material '{name}' resolved to '{resolved}' via fuzzy match.",
+                OptilandMaterialWarning,
+                stacklevel=6,
+            )
+
+    def _row_to_path(self, row: dict) -> str:
+        """Resolve a matched row's ``filename`` to an absolute path."""
+        filename = row["filename"]
+        if not pathlib.Path(filename).is_absolute():
+            return str(pathlib.Path(_DATA_NK_DIR) / filename)
+        return filename
 
     # ------------------------------------------------------------------
     # Discovery
