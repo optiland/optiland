@@ -20,6 +20,7 @@ from importlib import resources
 import pandas as pd
 import yaml
 
+import optiland.plugins as plugins
 from optiland.materials.material_spec import MatchPolicy
 from optiland.materials.warnings import OptilandMaterialWarning
 
@@ -292,6 +293,7 @@ class MaterialRegistry:
             ValueError: If no match found, or if ``match_policy='strict'``
                 and the match is not exact / is ambiguous.
         """
+        plugins.load_plugins(plugins.MATERIALS_GROUP)
         path, _ = self._resolve_with_row(
             name, catalog, reference, match_policy, min_wavelength, max_wavelength
         )

@@ -112,6 +112,52 @@ pytest
 
 Note: Coverage reporting is automatically handled by the CI pipeline when you submit a pull request.
 
+## Writing a Plugin
+
+Third-party packages can register a new surface geometry, material catalog,
+or analysis without editing Optiland's source, via Python entry points. A
+plugin package declares one of the `optiland.surfaces`, `optiland.materials`,
+or `optiland.analyses` groups in its own `pyproject.toml`, pointing at a
+zero-argument callable that registers itself against the relevant Optiland
+registry. Optiland discovers and calls it lazily, on first use of the
+corresponding factory (see `optiland/plugins.py`).
+
+Example: a trivial custom surface geometry shipped in a separate package
+`optiland-my-surface`:
+
+```python
+# my_surface_plugin/register.py
+from dataclasses import dataclass
+
+from optiland.surfaces.factories.geometry_factory import GeometryFactory
+
+
+@dataclass
+class MyConfig:
+    surface_type = "my_surface"
+    radius: float = float("inf")
+
+
+def _create_my_surface(cs, config):
+    from optiland.geometries import StandardGeometry
+
+    return StandardGeometry(cs, radius=config.radius)  # trivial passthrough
+
+
+def register() -> None:
+    GeometryFactory.register("my_surface", _create_my_surface, MyConfig)
+```
+
+```toml
+# my_surface_plugin's pyproject.toml
+[project.entry-points."optiland.surfaces"]
+my_surface = "my_surface_plugin.register:register"
+```
+
+Once `optiland-my-surface` is installed alongside Optiland,
+`optic.surfaces.add(surface_type="my_surface", ...)` works with no changes
+to Optiland itself.
+
 ## Dead-Code Audits
 
 If you suspect a file or function is unused, don't remove it on a hunch --

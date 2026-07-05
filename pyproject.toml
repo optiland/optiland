@@ -44,6 +44,14 @@ Documentation = "https://optiland.readthedocs.io/en/latest/"
 [project.scripts]
 optiland = "optiland_gui.run_gui:main"
 
+# Third-party plugin discovery (Phase 0.5, SPEC_Tech_Debt_20260705.md). A
+# plugin package declares one of these groups pointing at a zero-argument
+# callable that registers itself against the relevant Optiland registry; see
+# optiland/plugins.py and CONTRIBUTING.md for the "add a new X" walkthrough.
+[project.entry-points."optiland.surfaces"]
+[project.entry-points."optiland.materials"]
+[project.entry-points."optiland.analyses"]
+
 [tool.hatch.metadata]
 allow-direct-references = true
 
