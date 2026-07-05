@@ -150,7 +150,6 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
    developers_guide/extension_recipes
    developers_guide/plugin_packages
    developers_guide/deprecations
-   developers_guide/dead_code_audit
 
 
 .. toctree::
