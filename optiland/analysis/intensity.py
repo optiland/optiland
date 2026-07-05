@@ -430,6 +430,204 @@ class RadiantIntensity(BaseAnalysis):
 
         return cross_section_title
 
+    def _resolve_cross_section_request(self, cross_section, use_norm):
+        """Validate the ``cross_section`` argument of :meth:`view`.
+
+        Returns:
+            tuple: ``(requested, axis_type, slice_idx, title)`` where
+            ``requested`` is True only if ``cross_section`` was a
+            well-formed ``('cross-x' | 'cross-y', index)`` tuple.
+        """
+        if cross_section is None:
+            return False, None, -1, ""
+
+        if not (isinstance(cross_section, tuple) and len(cross_section) == 2):
+            print(
+                "[RadiantIntensity] Warning: Invalid cross_section type. "
+                "Expected tuple. Defaulting to 2D+cross plot."
+            )
+            return False, None, -1, ""
+
+        axis_type_in, slice_idx_in = cross_section
+        if not (
+            isinstance(axis_type_in, str)
+            and axis_type_in.lower() in ["cross-x", "cross-y"]
+            and (isinstance(slice_idx_in, int) or slice_idx_in is None)
+        ):
+            print(
+                "[RadiantIntensity] Warning: Invalid cross_section format. "
+                "Expected ('cross-x' or 'cross-y', int). "
+                "Defaulting to 2D+cross plot."
+            )
+            return False, None, -1, ""
+
+        axis_type = axis_type_in.lower()
+        slice_idx = slice_idx_in if slice_idx_in is not None else -1
+        title = self._get_cross_section_title(axis_type, slice_idx, normalize=use_norm)
+        return True, axis_type, slice_idx, title
+
+    def _compute_colorbar_range(self, use_norm):
+        """Compute ``(vmin, vmax, label)`` for the intensity colorbar."""
+        if use_norm:
+            return 0.0, 1.0, "Normalized Intensity"
+
+        all_peak_values = self.peak_intensity_values()
+        global_max_val = 0.0
+        if all_peak_values:
+            global_max_val = max(
+                max(be.to_numpy(p) for p in field_peaks)
+                for field_peaks in all_peak_values
+            )
+        if global_max_val == 0:
+            global_max_val = 1.0
+        return 0.0, global_max_val, "Radiant Intensity (W/sr)"
+
+    def _setup_intensity_axes(
+        self,
+        fig_to_plot_on,
+        is_gui_embedding,
+        plot_cross_section,
+        num_fields,
+        num_wavelengths,
+        figsize,
+    ):
+        """Build the figure/axes grid for :meth:`view`.
+
+        Returns ``(fig, axs)`` where ``axs`` holds either a single Axes per
+        (field, wavelength) cell (cross-section-only mode) or a
+        ``[ax_map, ax_cs]`` pair per cell (2D map + cross-section mode).
+        """
+        import numpy as _np  # Local import for plotting
+
+        if is_gui_embedding:
+            fig = fig_to_plot_on
+            fig.clear()  # Clear the figure for new content
+            if plot_cross_section:
+                axs = fig.subplots(
+                    nrows=num_fields, ncols=num_wavelengths, squeeze=False
+                )
+                return fig, axs
+
+            axs = _np.empty((num_fields, num_wavelengths), dtype=object)
+            for f_idx in range(num_fields):
+                for w_idx in range(num_wavelengths):
+                    gs = gridspec.GridSpec(1, 2, width_ratios=[2.5, 1.5], figure=fig)
+                    axs[f_idx, w_idx] = [
+                        fig.add_subplot(gs[0]),
+                        fig.add_subplot(gs[1]),
+                    ]
+            return fig, axs
+
+        if plot_cross_section:
+            fig, axs = plt.subplots(
+                nrows=num_fields,
+                ncols=num_wavelengths,
+                figsize=(figsize[0] * num_wavelengths, figsize[1] * num_fields),
+                squeeze=False,
+                tight_layout=True,
+            )
+            return fig, axs
+
+        fig = plt.figure(
+            figsize=(figsize[0] * num_wavelengths, figsize[1] * num_fields)
+        )
+        axs = _np.empty((num_fields, num_wavelengths), dtype=object)
+        for f_idx in range(num_fields):
+            for w_idx in range(num_wavelengths):
+                gs = gridspec.GridSpecFromSubplotSpec(
+                    1,
+                    2,
+                    width_ratios=[2.5, 1.5],
+                    subplot_spec=gridspec.GridSpec(
+                        num_fields, num_wavelengths, figure=fig
+                    )[f_idx, w_idx],
+                )
+                axs[f_idx, w_idx] = [fig.add_subplot(gs[0]), fig.add_subplot(gs[1])]
+        return fig, axs
+
+    def _plot_intensity_panel(
+        self,
+        fig,
+        ax,
+        f_idx,
+        w_idx,
+        cross_section_request,
+        cmap,
+        cross_section_style,
+        cross_section_color,
+        vmin_plot,
+        vmax_plot,
+        cbar_label,
+    ):
+        """Render one (field, wavelength) panel of :meth:`view`."""
+        requested, cs_axis_type, cs_slice_idx, use_norm, all_peak_values = (
+            cross_section_request
+        )
+
+        intensity_map_be, x_bins_be, y_bins_be, x_centers_be, y_centers_be = self.data[
+            f_idx
+        ][w_idx]
+        intensity_map = be.to_numpy(intensity_map_be)
+        x_bins = be.to_numpy(x_bins_be)
+        y_bins = be.to_numpy(y_bins_be)
+        x_centers = be.to_numpy(x_centers_be)
+        y_centers = be.to_numpy(y_centers_be)
+
+        current_display_map = intensity_map.copy()
+        if use_norm:
+            peak_val = be.to_numpy(all_peak_values[f_idx][w_idx])
+            if peak_val > 1e-9:
+                current_display_map = intensity_map / peak_val
+
+        title = f"Field: {self.fields[f_idx]}, λ={self.wavelengths[w_idx].value:.3f} µm"
+
+        if requested:
+            self._plot_cross_section(
+                ax=ax,
+                intensity_map=current_display_map,
+                x_centers=x_centers,
+                y_centers=y_centers,
+                axis_type=cs_axis_type,
+                slice_idx=cs_slice_idx,
+                title=title,
+                style=cross_section_style,
+                color=cross_section_color,
+                ylabel=cbar_label,
+            )
+            return
+
+        ax_map, ax_cs = ax
+
+        im = ax_map.imshow(
+            current_display_map.T,
+            aspect="auto",
+            origin="lower",
+            extent=[x_bins[0], x_bins[-1], y_bins[0], y_bins[-1]],
+            cmap=cmap,
+            vmin=vmin_plot,
+            vmax=vmax_plot,
+        )
+        ax_map.set_xlabel("X-Angle (degrees)")
+        ax_map.set_ylabel("Y-Angle (degrees)")
+        ax_map.set_title(title)
+        ax_map.grid(True, linestyle=":", alpha=0.7)
+        fig.colorbar(im, ax=ax_map, label=cbar_label, fraction=0.046, pad=0.04)
+
+        central_row_index = current_display_map.shape[1] // 2
+        cross_section_data = current_display_map[:, central_row_index]
+        ax_cs.plot(
+            x_centers,
+            cross_section_data,
+            linestyle=cross_section_style,
+            color=cross_section_color,
+        )
+        ax_cs.set_xlabel("X-Angle (degrees)")
+        ax_cs.set_ylabel(cbar_label)
+        ax_cs.grid(True, linestyle=":", alpha=0.7)
+        ax_cs.set_xlim(x_centers[0], x_centers[-1])
+        ax_cs.set_ylim(bottom=-0.05 * vmax_plot, top=vmax_plot * 1.1)
+        ax_cs.set_title("Central Cross-Section")
+
     def view(
         self,
         fig_to_plot_on=None,
@@ -473,8 +671,6 @@ class RadiantIntensity(BaseAnalysis):
         axs : numpy.ndarray
             Array of Axes objects for the subplots, or single Axes if only one subplot.
         """
-        import numpy as _np  # Local import for plotting
-
         is_gui_embedding = fig_to_plot_on is not None
         # Fix inverted normalization logic to match IncoherentIrradiance
         use_norm = not self.use_absolute_units if normalize is None else normalize
@@ -487,193 +683,48 @@ class RadiantIntensity(BaseAnalysis):
         if num_fields == 0 or num_wavelengths == 0:
             return None, None
 
-        # Process cross-section request
-        plot_cross_section_requested = False
-        valid_cross_section_request = False
-        cs_axis_type = None
-        cs_slice_idx = -1
-
-        if cross_section is not None:
-            if isinstance(cross_section, tuple) and len(cross_section) == 2:
-                axis_type_in, slice_idx_in = cross_section
-                if (
-                    isinstance(axis_type_in, str)
-                    and axis_type_in.lower() in ["cross-x", "cross-y"]
-                    and (isinstance(slice_idx_in, int) or slice_idx_in is None)
-                ):
-                    plot_cross_section_requested = True
-                    valid_cross_section_request = True
-                    cs_axis_type = axis_type_in.lower()
-                    cs_slice_idx = slice_idx_in if slice_idx_in is not None else -1
-                    # Get cross-section title for main title
-                    cross_section_title = self._get_cross_section_title(
-                        cs_axis_type, cs_slice_idx, normalize=use_norm
-                    )
-                else:
-                    print(
-                        "[RadiantIntensity] Warning: Invalid cross_section format. "
-                        "Expected ('cross-x' or 'cross-y', int). "
-                        "Defaulting to 2D+cross plot."
-                    )
-            else:
-                print(
-                    "[RadiantIntensity] Warning: Invalid cross_section type. "
-                    "Expected tuple. Defaulting to 2D+cross plot."
-                )
-
-        # Calculate global min/max for consistent colorbar
+        requested, cs_axis_type, cs_slice_idx, cross_section_title = (
+            self._resolve_cross_section_request(cross_section, use_norm)
+        )
+        vmin_plot, vmax_plot, cbar_label = self._compute_colorbar_range(use_norm)
         all_peak_values = self.peak_intensity_values()
-        global_max_val = 0.0
 
-        if not use_norm:  # Using absolute units
-            if all_peak_values:
-                global_max_val = max(
-                    max(be.to_numpy(p) for p in field_peaks)
-                    for field_peaks in all_peak_values
-                )
-            if global_max_val == 0:
-                global_max_val = 1.0
-            vmin_plot, vmax_plot = 0.0, global_max_val
-            cbar_label = "Radiant Intensity (W/sr)"
-        else:  # Normalize to peak for relative plot
-            vmin_plot, vmax_plot = 0.0, 1.0
-            cbar_label = "Normalized Intensity"
+        fig, axs = self._setup_intensity_axes(
+            fig_to_plot_on,
+            is_gui_embedding,
+            requested,
+            num_fields,
+            num_wavelengths,
+            figsize,
+        )
 
-        # Set up the figure and axes layout
-        if is_gui_embedding:
-            fig = fig_to_plot_on
-            fig.clear()  # Clear the figure for new content
-            if plot_cross_section_requested and valid_cross_section_request:
-                axs = fig.subplots(
-                    nrows=num_fields,
-                    ncols=num_wavelengths,
-                    squeeze=False,
-                )
-            else:
-                # Use GridSpec for 2D map + cross section layout
-                axs = _np.empty((num_fields, num_wavelengths), dtype=object)
-                for f_idx in range(num_fields):
-                    for w_idx in range(num_wavelengths):
-                        gs = gridspec.GridSpec(
-                            1, 2, width_ratios=[2.5, 1.5], figure=fig
-                        )
-                        axs[f_idx, w_idx] = [
-                            fig.add_subplot(gs[0]),
-                            fig.add_subplot(gs[1]),
-                        ]
-        else:
-            if plot_cross_section_requested and valid_cross_section_request:
-                fig, axs = plt.subplots(
-                    nrows=num_fields,
-                    ncols=num_wavelengths,
-                    figsize=(figsize[0] * num_wavelengths, figsize[1] * num_fields),
-                    squeeze=False,
-                    tight_layout=True,
-                )
-            else:
-                # For 2D map + cross section layout in a grid
-                fig = plt.figure(
-                    figsize=(figsize[0] * num_wavelengths, figsize[1] * num_fields)
-                )
-                axs = _np.empty((num_fields, num_wavelengths), dtype=object)
-                for f_idx in range(num_fields):
-                    for w_idx in range(num_wavelengths):
-                        gs = gridspec.GridSpecFromSubplotSpec(
-                            1,
-                            2,
-                            width_ratios=[2.5, 1.5],
-                            subplot_spec=gridspec.GridSpec(
-                                num_fields, num_wavelengths, figure=fig
-                            )[f_idx, w_idx],
-                        )
-                        ax_map = fig.add_subplot(gs[0])
-                        ax_cs = fig.add_subplot(gs[1])
-                        axs[f_idx, w_idx] = [ax_map, ax_cs]
-
-        # Set main title
         main_title = "Radiant Intensity Analysis"
-        if plot_cross_section_requested and valid_cross_section_request:
+        if requested:
             main_title += cross_section_title
 
-        # Plot the data
+        cross_section_request = (
+            requested,
+            cs_axis_type,
+            cs_slice_idx,
+            use_norm,
+            all_peak_values,
+        )
         for f_idx in range(num_fields):
             for w_idx in range(num_wavelengths):
-                intensity_map_be, x_bins_be, y_bins_be, x_centers_be, y_centers_be = (
-                    self.data[f_idx][w_idx]
+                self._plot_intensity_panel(
+                    fig,
+                    axs[f_idx, w_idx],
+                    f_idx,
+                    w_idx,
+                    cross_section_request,
+                    cmap,
+                    cross_section_style,
+                    cross_section_color,
+                    vmin_plot,
+                    vmax_plot,
+                    cbar_label,
                 )
 
-                intensity_map = be.to_numpy(intensity_map_be)
-                x_bins = be.to_numpy(x_bins_be)
-                y_bins = be.to_numpy(y_bins_be)
-                x_centers = be.to_numpy(x_centers_be)
-                y_centers = be.to_numpy(y_centers_be)
-
-                # Create display map with appropriate normalization
-                current_display_map = intensity_map.copy()
-
-                if use_norm:  # If we're normalizing (normalize=True)
-                    peak_val = be.to_numpy(all_peak_values[f_idx][w_idx])
-                    if peak_val > 1e-9:
-                        current_display_map = intensity_map / peak_val
-
-                # Get the current axes based on the plot type
-                if plot_cross_section_requested and valid_cross_section_request:
-                    ax = axs[f_idx, w_idx]
-                    self._plot_cross_section(
-                        ax=ax,
-                        intensity_map=current_display_map,
-                        x_centers=x_centers,
-                        y_centers=y_centers,
-                        axis_type=cs_axis_type,
-                        slice_idx=cs_slice_idx,
-                        title=f"Field: {self.fields[f_idx]}, "
-                        f"λ={self.wavelengths[w_idx].value:.3f} µm",
-                        style=cross_section_style,
-                        color=cross_section_color,
-                        ylabel=cbar_label,
-                    )
-                else:
-                    # 2D map + cross section
-                    ax_map, ax_cs = axs[f_idx, w_idx]
-
-                    # Plot 2D intensity map
-                    im = ax_map.imshow(
-                        current_display_map.T,
-                        aspect="auto",
-                        origin="lower",
-                        extent=[x_bins[0], x_bins[-1], y_bins[0], y_bins[-1]],
-                        cmap=cmap,
-                        vmin=vmin_plot,
-                        vmax=vmax_plot,
-                    )
-                    ax_map.set_xlabel("X-Angle (degrees)")
-                    ax_map.set_ylabel("Y-Angle (degrees)")
-                    ax_map.set_title(
-                        f"Field: {self.fields[f_idx]}, "
-                        f"λ={self.wavelengths[w_idx].value:.3f} µm"
-                    )
-                    ax_map.grid(True, linestyle=":", alpha=0.7)  # Add grid to 2D plots
-                    fig.colorbar(
-                        im, ax=ax_map, label=cbar_label, fraction=0.046, pad=0.04
-                    )
-
-                    # Plot cross-section
-                    central_row_index = current_display_map.shape[1] // 2
-                    cross_section_data = current_display_map[:, central_row_index]
-                    ax_cs.plot(
-                        x_centers,
-                        cross_section_data,
-                        linestyle=cross_section_style,
-                        color=cross_section_color,
-                    )
-                    ax_cs.set_xlabel("X-Angle (degrees)")
-                    ax_cs.set_ylabel(cbar_label)
-                    ax_cs.grid(True, linestyle=":", alpha=0.7)
-                    ax_cs.set_xlim(x_centers[0], x_centers[-1])
-                    ax_cs.set_ylim(bottom=-0.05 * vmax_plot, top=vmax_plot * 1.1)
-                    ax_cs.set_title("Central Cross-Section")
-
-        # Set overall title and layout
         fig.suptitle(main_title, fontsize=14)
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
 
