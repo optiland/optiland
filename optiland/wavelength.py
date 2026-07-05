@@ -19,7 +19,7 @@ import optiland.backend as be
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from optiland._types import ScalarOrArray
+    from optiland._types import BEArray, ScalarOrArray
 
 
 class Wavelength:
@@ -292,6 +292,58 @@ class WavelengthGroup:
         return new_group
 
 
+def _validate_wavelength_range(
+    min_value: float, max_value: float, num_wavelengths: int
+) -> None:
+    """Validates the inputs to `add_wavelengths`."""
+    if (
+        not isinstance(num_wavelengths, int)
+        or num_wavelengths % 2 == 0
+        or num_wavelengths <= 0
+    ):
+        raise ValueError("num_wavelengths must be an odd positive integer")
+
+    if min_value <= 0 or max_value <= 0:
+        raise ValueError("min_value and max_value must be positive")
+
+
+def _normalize_wavelength_scale(scale: str) -> str:
+    """Normalizes a `scale` argument to one of 'log', 'frequency', 'wavelength'."""
+    scale = scale.lower()
+    if scale in {"freq", "frequency"}:
+        return "frequency"
+    if scale == "wavelength":
+        return "wavelength"
+    if scale in {"log", "logarithmic"}:
+        return "log"
+    raise ValueError(f"Unknown scale: {scale!r}")
+
+
+def _sample_wavelength_nodes(num_wavelengths: int, sampling: str) -> BEArray:
+    """Samples `num_wavelengths` nodes in [0, 1] using the given algorithm."""
+    nodes = be.arange(1.0, num_wavelengths + 1.0)
+    if sampling == "chebyshev":
+        return 0.5 * (1.0 - be.cos((2 * nodes - 1) * be.pi / (2 * num_wavelengths)))
+    if sampling == "uniform":
+        return (nodes - 0.5) / num_wavelengths
+    return nodes
+
+
+def _wavelength_values_from_nodes(
+    nodes: BEArray, min_value: float, max_value: float, scale: str
+) -> list[float]:
+    """Maps sampled nodes in [0, 1] to wavelength values under the given scale."""
+    if scale == "log":
+        span = float(be.log2(be.array(max_value / min_value)))
+        return [min_value * 2 ** (span * node) for node in nodes]
+
+    power = -1.0 if scale == "frequency" else 1.0
+    min_p = min_value**power
+    max_p = max_value**power
+    span = max_p - min_p
+    return [(min_p + span * node) ** (1.0 / power) for node in nodes]
+
+
 def add_wavelengths(
     wavelength_group: WavelengthGroup,
     min_value: float,
@@ -320,54 +372,11 @@ def add_wavelengths(
                 'frequency' - nodes sampled in the frequency domain.
                 'wavelength' - nodes sampled in the frequency domain. Not recommended.
     """
-    if (
-        not isinstance(num_wavelengths, int)
-        or num_wavelengths % 2 == 0
-        or num_wavelengths <= 0
-    ):
-        raise ValueError("num_wavelengths must be an odd positive integer")
+    _validate_wavelength_range(min_value, max_value, num_wavelengths)
+    scale = _normalize_wavelength_scale(scale)
+    nodes = _sample_wavelength_nodes(num_wavelengths, sampling)
+    values = _wavelength_values_from_nodes(nodes, min_value, max_value, scale)
 
-    if min_value <= 0 or max_value <= 0:
-        raise ValueError("min_value and max_value must be positive")
-
-    scale = scale.lower()
-    if scale in {"freq", "frequency"}:
-        scale = "frequency"
-    elif scale in {"wavelength"}:
-        scale = "wavelength"
-    elif scale in {"log", "logarithmic"}:
-        scale = "log"
-    else:
-        raise ValueError(f"Unknown scale: {scale!r}")
-
-    if scale == "frequency":
-        power = -1.0
-    elif scale == "wavelength":
-        power = 1.0
-
-    nodes = be.arange(1.0, num_wavelengths + 1.0)
-
-    if sampling == "chebyshev":
-        nodes = 0.5 * (1.0 - be.cos((2 * nodes - 1) * be.pi / (2 * num_wavelengths)))
-
-    elif sampling == "uniform":
-        nodes = (nodes - 0.5) / num_wavelengths
-
-    if scale == "log":
-        span = float(be.log2(be.array(max_value / min_value)))
-        for i, node in enumerate(nodes):
-            is_primary = i == num_wavelengths // 2
-            value = min_value * 2 ** (span * node)
-            wavelength_group.wavelengths.append(
-                Wavelength(value, is_primary, unit, 1.0)
-            )
-    else:
-        min_value = min_value**power
-        max_value = max_value**power
-        span = max_value - min_value
-        for i, node in enumerate(nodes):
-            is_primary = i == num_wavelengths // 2
-            value = min_value + (span * node)
-            wavelength_group.wavelengths.append(
-                Wavelength(value ** (1.0 / power), is_primary, unit, 1.0)
-            )
+    for i, value in enumerate(values):
+        is_primary = i == num_wavelengths // 2
+        wavelength_group.wavelengths.append(Wavelength(value, is_primary, unit, 1.0))

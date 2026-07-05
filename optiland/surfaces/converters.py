@@ -99,6 +99,53 @@ class ParaxialToThickLensConverter:
                 return i
         return None
 
+    def _paraxial_index(self) -> float:
+        """Resolves the lens material's refractive index at the primary
+        wavelength to a plain Python float."""
+        n = self._material_instance.n(self.optic.primary_wavelength)
+        if hasattr(n, "item"):  # If n is a 0-dim array/tensor
+            n = n.item()
+        return n
+
+    @staticmethod
+    def _solve_symmetric_radius(
+        a_quad: float, b_quad: float, c_quad: float, positive: bool, label: str
+    ) -> float:
+        """Solves P*n*R1^2 - 2*n*(n-1)*R1 + (n-1)^2*d = 0 for R1, selecting the
+        root with the sign convention required by `positive` (True for
+        biconvex R1 > 0, False for biconcave R1 < 0).
+
+        Args:
+            a_quad, b_quad, c_quad: Quadratic coefficients.
+            positive: Whether the desired root must be positive (else negative).
+            label: "Biconvex" or "Biconcave", used in error messages.
+
+        Returns:
+            float: The selected root R1.
+        """
+
+        def _matches(x: float) -> bool:
+            return x > 0 if positive else x < 0
+
+        if abs(a_quad) < 1e-9:
+            if abs(b_quad) < 1e-9:
+                raise ValueError(f"Cannot solve for R1 in {label.lower()} (P=0, n=1).")
+            return -c_quad / b_quad  # Linear case
+
+        discriminant = b_quad**2 - 4 * a_quad * c_quad
+        if discriminant < 0:
+            raise ValueError(f"{label}: discriminant < 0, cannot find real R1.")
+
+        sol1 = (-b_quad + be.sqrt(discriminant)) / (2 * a_quad)
+        sol2 = (-b_quad - be.sqrt(discriminant)) / (2 * a_quad)
+        r1 = sol1 if _matches(sol1) else sol2
+        if not _matches(r1):
+            r1 = sol2 if _matches(sol2) else sol1
+            if not _matches(r1):
+                sign_word = "positive" if positive else "negative"
+                raise ValueError(f"{label}: No {sign_word} R1 solution found.")
+        return r1
+
     def _calculate_radii(self):
         """
         Calculates the front (R1) and back (R2) radii of curvature for the
@@ -122,68 +169,29 @@ class ParaxialToThickLensConverter:
         Returns:
             tuple[float, float]: (R1, R2)
         """
-        n = self._material_instance.n(self.optic.primary_wavelength)
-        if hasattr(n, "item"):  # If n is a 0-dim array/tensor
-            n = n.item()
+        n = self._paraxial_index()
         f_target = self.original_focal_length
         d = self.center_thickness
 
         if abs(f_target) < 1e-9:
             return be.inf, be.inf
 
+        # Biconvex/biconcave: P*n*R1^2 - 2*n*(n-1)*R1 + (n-1)^2*d = 0. For R1 = -R2.
         P = 1.0 / f_target  # Power
-        r1, r2 = 0.0, 0.0
+        a_quad = P * n
+        b_quad = -2 * n * (n - 1)
+        c_quad = (n - 1) ** 2 * d
 
         if f_target > 0:
-            # Biconvex: P*n*R1^2 - 2*n*(n-1)*R1 + (n-1)^2*d = 0. For R1 = -R2.
-            a_quad = P * n
-            b_quad = -2 * n * (n - 1)
-            c_quad = (n - 1) ** 2 * d
-
-            if abs(a_quad) < 1e-9:
-                if abs(b_quad) < 1e-9:
-                    raise ValueError("Cannot solve for R1 in biconvex (P=0, n=1).")
-                r1 = -c_quad / b_quad  # Linear case
-            else:
-                discriminant = b_quad**2 - 4 * a_quad * c_quad
-                if discriminant < 0:
-                    raise ValueError("Biconvex: discriminant < 0, cannot find real R1.")
-
-                sol1 = (-b_quad + be.sqrt(discriminant)) / (2 * a_quad)
-                sol2 = (-b_quad - be.sqrt(discriminant)) / (2 * a_quad)
-                r1 = sol1 if sol1 > 0 else sol2
-                if r1 <= 0:
-                    r1 = sol2 if sol2 > 0 else sol1
-                    if r1 <= 0:
-                        raise ValueError("Biconvex: No positive R1 solution found.")
-            r2 = -r1
-
+            r1 = self._solve_symmetric_radius(
+                a_quad, b_quad, c_quad, positive=True, label="Biconvex"
+            )
         else:
-            # Biconcave: P*n*R1^2 - 2*n*(n-1)*R1 + (n-1)^2*d = 0. For R1 = -R2.
-            a_quad = P * n
-            b_quad = -2 * n * (n - 1)
-            c_quad = (n - 1) ** 2 * d
-            if abs(a_quad) < 1e-9:
-                if abs(b_quad) < 1e-9:
-                    raise ValueError("Cannot solve for R1 in biconcave (P=0, n=1).")
-                r1 = -c_quad / b_quad
-            else:
-                discriminant = b_quad**2 - 4 * a_quad * c_quad
-                if discriminant < 0:
-                    raise ValueError(
-                        "Biconcave: discriminant < 0, cannot find real R1."
-                    )
-                # Choose solution for R1 < 0 if P < 0 (diverging)
-                sol1 = (-b_quad + be.sqrt(discriminant)) / (2 * a_quad)
-                sol2 = (-b_quad - be.sqrt(discriminant)) / (2 * a_quad)
-                r1 = sol1 if sol1 < 0 else sol2
-                if r1 >= 0:
-                    r1 = sol2 if sol2 < 0 else sol1
-                    if r1 >= 0:
-                        raise ValueError("Biconcave: No negative R1 solution found.")
-            r2 = -r1
+            r1 = self._solve_symmetric_radius(
+                a_quad, b_quad, c_quad, positive=False, label="Biconcave"
+            )
 
-        return float(r1), float(r2)
+        return float(r1), float(-r1)
 
     def _add_surfaces(self, r1: float, r2: float, original_index: int):
         """
