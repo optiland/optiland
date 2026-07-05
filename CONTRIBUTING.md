@@ -20,6 +20,50 @@ Thank you for your interest in contributing to **Optiland**! Contributions are w
 8. **Open** a pull request with a detailed description of your changes.
 
 
+## Development Setup
+
+1. Clone your fork and create a virtual environment (`.venv`) in the repository root.
+2. Install the project with its dev dependency group using [`uv`](https://docs.astral.sh/uv/):
+
+   ```sh
+   uv sync --group dev
+   ```
+
+   This installs Optiland in editable mode plus `pytest`, `ruff`, `mypy`, and `vulture`. If you
+   don't use `uv`, `pip install -e ".[dev]"` (or installing the packages listed under
+   `[dependency-groups].dev` in `pyproject.toml` manually) works too.
+3. Run the test suite scoped to what you're changing — **never run the full suite blindly**:
+
+   ```sh
+   .venv/Scripts/python.exe -m pytest -v tests/<area_you_touched>/
+   ```
+
+   The full suite (`pytest tests/`) is slow enough that it's rarely the right first check; let
+   CI run it in full and iterate locally on the scoped subset.
+
+## Quality Gates
+
+Every pull request runs the following in CI. Understanding what each one does (and doesn't) do
+helps you land a first PR without surprises:
+
+- **Ruff (lint + format):** blocking. `ruff check optiland/` and `ruff format optiland/` must
+  pass. This includes docstring checks (`D1xx`) on public classes/functions — but only on public,
+  non-underscore-prefixed names, so a new contributor's PR is never blocked by pre-existing
+  undocumented internals elsewhere in the file.
+- **mypy:** blocking, but only for modules explicitly listed under
+  `[[tool.mypy.overrides]]` in `pyproject.toml`. Files outside that allowlist are not
+  type-checked in CI, so touching an unrelated file never introduces a new type-checking
+  obligation. If you refactor a file onto the allowlist, add it to the override list in the
+  same PR.
+- **Golden-value regression snapshots** (`tests/regression/`): required for any change touching
+  `geometries/`, `materials/`, `psf/`, `rays/`, or `backend/`. This suite traces a fixed set of
+  representative optical systems at both backends and compares ray intercepts, OPD, spot
+  centroids, and PSF metrics against committed fixtures in `tests/regression/fixtures/`. Run it
+  locally with `pytest tests/regression/`. If you made an intentional numerical change, regenerate
+  the fixtures deliberately with `pytest tests/regression/ --update-golden` and explain why in
+  the PR description — never regenerate to silence an unexplained diff.
+- **`vulture` (dead-code scan):** dev-only, **not** part of CI. See "Dead-Code Audits" below.
+
 ## Task Workflow and Coordination
 
 We use a lightweight workflow to help contributors collaborate smoothly and avoid duplicated effort:
@@ -157,6 +201,10 @@ my_surface = "my_surface_plugin.register:register"
 Once `optiland-my-surface` is installed alongside Optiland,
 `optic.surfaces.add(surface_type="my_surface", ...)` works with no changes
 to Optiland itself.
+
+The same mechanism works for material catalogs (`optiland.materials`) and analyses
+(`optiland.analyses`) — see the [Plugin Packages](https://optiland.readthedocs.io/en/latest/developers_guide/plugin_packages.html)
+guide for full worked examples of all three.
 
 ## Dead-Code Audits
 
