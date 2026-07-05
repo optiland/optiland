@@ -65,4 +65,25 @@ Optiland's design prioritizes extensibility:
 .. note::
    For details on the architecture of the PySide6-based Graphical User Interface (GUI), please refer to the :ref:`developers_guide_gui` section.
 
+A Note on Circular References
+------------------------------
+
+``Optic`` holds a ``Paraxial``, an ``Aberrations`` helper, and a ``RealRayTracer``, and each of
+those in turn keeps a back-reference to the owning ``Optic`` (e.g. ``Paraxial.optic``) so it can
+read the current surfaces, fields, and wavelengths without every call site threading that state
+through as arguments. This is a deliberate, accepted design choice, not an oversight:
+
+- These helper classes are not meant to be used standalone — they exist to decompose ``Optic``'s
+  behavior into focused pieces, and always operate against exactly one ``Optic`` instance for
+  their whole lifetime.
+- The back-reference avoids a much larger refactor (passing ``Optic`` state into every paraxial,
+  aberration, and ray-tracing method call) for no practical benefit, since none of these helpers
+  are ever detached from their owner or shared across systems.
+- Python's garbage collector handles reference cycles like this without special-casing (there is
+  no manual memory management concern here as there might be in a language without cyclic GC).
+
+If you find yourself adding a new helper class of this shape, following the same pattern
+(store the owning ``Optic`` once in ``__init__``, keep the helper single-purpose) is expected and
+does not need to be redesigned away.
+
 With this high-level understanding of Optiland's backend architecture, we can now dive deeper into individual components in their dedicated sections.
