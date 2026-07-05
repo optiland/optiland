@@ -43,6 +43,11 @@ class CurvatureSolve(BaseSolve, ABC):
         """Applies the curvature solve to the optic."""
         pass  # pragma: no cover
 
+    def _set_curvature(self, c):
+        """Set surface curvature through the optic updater."""
+        radius = 1.0 / c if c != 0 else float("inf")
+        self.optic.updater.set_radius(radius, self.surface_idx)
+
     def to_dict(self):
         """Returns a dictionary representation of the solve."""
         solve_dict = super().to_dict()
@@ -134,14 +139,7 @@ class MarginalRayAngleCurvatureSolve(CurvatureSolve):
         den = y_surf * delta_n
         c = (num / den).item()
 
-        # Update curvature
-        if hasattr(self.optic.surfaces[self.surface_idx].geometry, "c"):
-            self.optic.surfaces[self.surface_idx].geometry.c = c
-        elif hasattr(self.optic.surfaces[self.surface_idx].geometry, "radius"):
-            if c != 0:
-                self.optic.surfaces[self.surface_idx].geometry.radius = 1.0 / c
-            else:
-                self.optic.surfaces[self.surface_idx].geometry.radius = float("inf")
+        self._set_curvature(c)
 
     def to_dict(self):
         """Returns a dictionary representation of the solve."""
@@ -244,12 +242,7 @@ class ChiefRayAngleCurvatureSolve(CurvatureSolve):
             damping = 0.5
             c = (1 - damping) * c_current + damping * c_target
 
-            # Update curvature
-            if hasattr(self.optic.surfaces[self.surface_idx].geometry, "radius"):
-                if c != 0:
-                    self.optic.surfaces[self.surface_idx].geometry.radius = 1.0 / c
-                else:
-                    self.optic.surfaces[self.surface_idx].geometry.radius = float("inf")
+            self._set_curvature(c)
 
     def to_dict(self):
         """Returns a dictionary representation of the solve."""
