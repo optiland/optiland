@@ -97,6 +97,7 @@ dev = [
     "pytest-cov>=7.0.0",
     "pytest-xdist>=3.6",
     "mypy>=1.13",
+    "vulture>=2.13", # dead-code audits (see CONTRIBUTING.md); not run in CI
 ]
 
 [tool.pytest.ini_options]

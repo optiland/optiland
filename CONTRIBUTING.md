@@ -112,6 +112,26 @@ pytest
 
 Note: Coverage reporting is automatically handled by the CI pipeline when you submit a pull request.
 
+## Dead-Code Audits
+
+If you suspect a file or function is unused, don't remove it on a hunch --
+dynamic dispatch (factories, plugin registries) makes static analysis prone
+to false positives. Use [`vulture`](https://github.com/jendrikseipp/vulture)
+as a starting point, then verify manually:
+
+```sh
+pip install vulture
+vulture optiland/ --min-confidence 80
+```
+
+For each hit, cross-reference `git log -1 --format=%ad -- <file>` --
+recently-touched code flagged by vulture is more likely a false positive
+(e.g. a factory-registered class vulture can't see being called) than
+genuinely dead code. Prioritize old, unreferenced hits. Include this
+evidence (last-touched date, confirmed absence of live references) in the
+PR description of any dead-code removal. `vulture` is a dev-only tool and
+is not part of the CI gate.
+
 ## Reporting Issues
 
 If you encounter any bugs or issues, please report them on our GitHub issue tracker. Include detailed steps to reproduce the issue, along with any relevant logs or error messages.
