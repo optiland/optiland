@@ -1,9 +1,8 @@
 """
 NumPy backend -- interpolation, polynomial, and signal-processing operations.
 
-Split out of numpy_backend.py for organization; combined into
-NumpyBackend as a mixin (Phase 3.1, tech-debt pass). Behavior is
-unchanged -- this is a pure file reorganization.
+Provides InterpolationMixin, one of the mixins composed into
+NumpyBackend (see optiland/backend/numpy_backend/__init__.py).
 """
 
 from __future__ import annotations
@@ -19,7 +18,7 @@ if TYPE_CHECKING:
     from numpy.typing import ArrayLike, NDArray
 
 
-class NumpyInterpolationMixin:
+class InterpolationMixin:
     """Interpolation, polynomial, and signal-processing operations."""
 
     # ------------------------------------------------------------------

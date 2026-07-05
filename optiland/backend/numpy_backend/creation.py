@@ -1,9 +1,8 @@
 """
 NumPy backend -- array creation, identity, and precision operations.
 
-Split out of numpy_backend.py for organization; combined into
-NumpyBackend as a mixin (Phase 3.1, tech-debt pass). Behavior is
-unchanged -- this is a pure file reorganization.
+Provides CreationMixin, one of the mixins composed into
+NumpyBackend (see optiland/backend/numpy_backend/__init__.py).
 """
 
 from __future__ import annotations
@@ -18,7 +17,7 @@ if TYPE_CHECKING:
     from numpy.typing import ArrayLike, NDArray
 
 
-class NumpyCreationMixin:
+class CreationMixin:
     """Array creation, identity, and precision operations."""
 
     # ------------------------------------------------------------------

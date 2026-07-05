@@ -1,9 +1,8 @@
 """
 PyTorch backend -- interpolation, polynomial, and signal-processing operations.
 
-Split out of torch_backend.py for organization; combined into
-TorchBackend as a mixin (Phase 3.1, tech-debt pass). Behavior is
-unchanged -- this is a pure file reorganization.
+Provides InterpolationMixin, one of the mixins composed into
+TorchBackend (see optiland/backend/torch_backend/__init__.py).
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ if TYPE_CHECKING:
     from torch import Tensor
 
 
-class TorchInterpolationMixin:
+class InterpolationMixin:
     """Interpolation, polynomial, and signal-processing operations."""
 
     # ------------------------------------------------------------------

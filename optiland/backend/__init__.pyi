@@ -8,7 +8,7 @@ from torch import Generator as TorchGenerator
 from torch import Tensor
 
 from optiland._types import BEArrayT, ScalarOrArrayT
-from optiland.backend.torch_backend import GradMode
+from optiland.backend.torch_backend.config import GradMode
 from optiland.backend import linalg  # noqa: F401
 from optiland.backend.base import BackendCapabilityError  # noqa: F401
 

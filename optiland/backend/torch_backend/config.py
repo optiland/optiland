@@ -1,9 +1,8 @@
 """
 PyTorch backend — configuration helpers (private to the backend package).
 
-Split out of torch_backend.py so both the concrete ``TorchBackend`` class
-and its capability-flag mixin can reference ``GradMode``/``_Config``
-without a circular import (Phase 3.1, tech-debt pass).
+Provides GradMode/_Config, shared by TorchBackend's __init__ and the
+capabilities mixin.
 
 Kramer Harrison, 2025
 """

@@ -1,9 +1,8 @@
 """
 PyTorch backend -- identity, capability flags, overrides, and precision.
 
-Split out of torch_backend.py for organization; combined into
-TorchBackend as a mixin (Phase 3.1, tech-debt pass). Behavior is
-unchanged -- this is a pure file reorganization.
+Provides CapabilitiesMixin, used by TorchBackend (see
+optiland/backend/torch_backend/__init__.py).
 """
 
 from __future__ import annotations
@@ -18,11 +17,11 @@ if TYPE_CHECKING:
     from numpy.typing import ArrayLike
     from torch import Tensor
 
-    from optiland.backend._torch_config import GradMode
+    from optiland.backend.torch_backend.config import GradMode
 
 
-class TorchCapabilitiesMixin:
-    """Identity, capability flags, capability-gated overrides, and precision."""
+class CapabilitiesMixin:
+    """Identity, capability flags, overrides, and precision."""
 
     # ------------------------------------------------------------------
     # Identity
