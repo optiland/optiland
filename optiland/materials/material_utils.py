@@ -1,3 +1,5 @@
+"""Utility functions for working with materials."""
+
 from __future__ import annotations
 
 import csv

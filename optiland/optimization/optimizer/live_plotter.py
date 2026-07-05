@@ -1,3 +1,5 @@
+"""Live plotting of optimization progress."""
+
 from __future__ import annotations
 
 import gc
@@ -15,6 +17,8 @@ import optiland.backend as be
 
 
 class LiveOptimizationPlotter:
+    """Live matplotlib plot of the optimizer's merit-function history."""
+
     def __init__(self, optimizer: Any) -> None:
         self.optimizer = optimizer
         self.history: list[float] = []

@@ -1,4 +1,5 @@
-# Defines sample microscope objective optical systems.
+"""Defines sample microscope objective optical systems."""
+
 from __future__ import annotations
 
 import optiland.backend as be

@@ -544,6 +544,8 @@ class ForbesQNormalSlopeGeometry(ForbesGeometryBase):
 
 
 class ForbesQ2dGeometry(ForbesGeometryBase):
+    """Forbes Q2D (freeform) surface geometry."""
+
     # Default surface-normal path: direct-Cartesian (harmonic powers).
     # Regular at the origin with finite autograd gradients — the legacy
     # polar path's `1/r` artefact produced NaN gradients at the vertex.

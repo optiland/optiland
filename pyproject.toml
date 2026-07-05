@@ -55,7 +55,7 @@ packages = ["optiland", "optiland_gui"]
 
 [tool.ruff]
 line-length = 88
-exclude = ["tests", "docs"]
+exclude = ["tests", "docs", "optiland_gui/resources/resources_rc.py"]
 
 [tool.ruff.lint]
 select = [
@@ -67,8 +67,25 @@ select = [
     "I",   # isort
     "PYI", # pyright
     "TC",  # type-checking
+    # pydocstyle: missing-docstring only, scoped to top-level public API
+    # (module/class/function). D102 (methods), D105 (magic methods), and
+    # D107 (__init__) are intentionally excluded — enabling them today would
+    # flag ~480 pre-existing internals, which is exactly the one-time fixup
+    # burden constraint 4 rules out. D2xx/D4xx (content/format) stay off too.
+    "D100", # undocumented-public-module
+    "D101", # undocumented-public-class
+    "D103", # undocumented-public-function
 ]
 exclude = ["*.ipynb"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D100", "D101", "D103"]
+"docs/**" = ["D100", "D101", "D103"]
+# Standalone debug/reproduction scripts, not part of the package API.
+"optiland/scripts/**" = ["D100", "D101", "D103"]
 
 [tool.ruff.lint.isort]
 required-imports = ["from __future__ import annotations"]

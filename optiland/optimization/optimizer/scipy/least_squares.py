@@ -1,3 +1,5 @@
+"""SciPy least-squares optimizer wrapper."""
+
 from __future__ import annotations
 
 import warnings
@@ -14,6 +16,8 @@ if TYPE_CHECKING:
 
 
 class LeastSquares(OptimizerGeneric):
+    """Optimizer using SciPy's least-squares solver."""
+
     def __init__(self, problem: OptimizationProblem):
         super().__init__(problem)
 

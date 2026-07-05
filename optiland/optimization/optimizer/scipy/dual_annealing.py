@@ -1,3 +1,5 @@
+"""SciPy dual annealing optimizer wrapper."""
+
 from __future__ import annotations
 
 import warnings

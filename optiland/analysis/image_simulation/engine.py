@@ -1,3 +1,5 @@
+"""Image simulation engine combining PSF convolution and distortion."""
+
 from __future__ import annotations
 
 import numpy as np

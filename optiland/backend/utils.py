@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 # Conversion functions for backends
 def torch_to_numpy(obj: Tensor) -> NDArray:
+    """Convert a torch Tensor to a NumPy array; raise TypeError otherwise."""
     if importlib.util.find_spec("torch"):
         import torch
 
