@@ -107,91 +107,97 @@ class ZemaxToOpticConverter(BaseOpticReader):
             surf = self.data["surfaces"][idx]
 
             if surf.get("type") == "coordinate_break":
-                # Consume CB: update cumulative CS only
-                dx = float(surf.get("param_0", 0.0))
-                dy = float(surf.get("param_1", 0.0))
-                dz = float(surf.get("thickness", 0.0))
-                rx = be.deg2rad(surf.get("param_2", 0.0))
-                ry = be.deg2rad(surf.get("param_3", 0.0))
-                rz = be.deg2rad(surf.get("param_4", 0.0))
-
-                # Chain: first apply rotations/decenters, then thickness (Z)
-                cs_rot = CoordinateSystem(
-                    x=dx,
-                    y=dy,
-                    z=0.0,
-                    rx=rx,
-                    ry=ry,
-                    rz=rz,
-                    reference_cs=self.current_cs,
-                )
-                self.current_cs = CoordinateSystem(
-                    x=0.0,
-                    y=0.0,
-                    z=dz,
-                    reference_cs=cs_rot,
-                )
+                self._consume_coordinate_break(surf)
                 continue
 
-            # Resolve effective global position and orientation
-            translation, _ = self.current_cs.get_effective_transform()
-            rx_, ry_, rz_ = self.current_cs.get_effective_rotation_euler()
-            coeffs = self._configure_surface_coefficients(surf)
-
-            surface_params: dict[str, Any] = {
-                "index": surf_idx,
-                "surface_type": surf["type"],
-                "conic": surf.get("conic"),
-                "is_stop": surf.get("is_stop", False),
-                "material": surf.get("material"),
-                "coefficients": coeffs,
-            }
-
-            if surf.get("aperture") is not None:
-                surface_params["aperture"] = surf["aperture"]
-
-            if surf["type"] == "paraxial":
-                surface_params["f"] = float(surf.get("param_0", 0.0))
-
-            if surf["type"] == "toroidal":
-                surface_params["radius_y"] = surf["radius"]
-                surface_params["toroidal_coeffs_poly_y"] = coeffs
-                radius_x = surf.get("param_1", 0.0)
-                if radius_x == 0.0:
-                    radius_x = be.inf
-                surface_params["radius_x"] = radius_x
-            else:
-                surface_params["radius"] = surf["radius"]
-
-            thickness = surf.get("thickness", 0.0)
-            if be.isinf(float(thickness)):
-                surface_params["thickness"] = thickness
-                surface_params.update(
-                    {"rx": float(rx_), "ry": float(ry_), "rz": float(rz_)}
-                )
-            else:
-                surface_params.update(
-                    {
-                        "x": float(translation[0]),
-                        "y": float(translation[1]),
-                        "z": float(translation[2]),
-                        "rx": float(rx_),
-                        "ry": float(ry_),
-                        "rz": float(rz_),
-                    }
-                )
-
-            self.optic.surfaces.add(**surface_params)
+            self._add_surface_with_current_cs(surf, surf_idx)
             surf_idx += 1
 
-            dt = surf.get("thickness", 0.0)
-            if not be.isinf(dt):
-                self.current_cs = CoordinateSystem(
-                    x=0.0,
-                    y=0.0,
-                    z=dt,
-                    reference_cs=self.current_cs,
-                )
+    def _consume_coordinate_break(self, surf: dict[str, Any]) -> None:
+        """Fold a COORDBRK surface's transform into the running CoordinateSystem."""
+        dx = float(surf.get("param_0", 0.0))
+        dy = float(surf.get("param_1", 0.0))
+        dz = float(surf.get("thickness", 0.0))
+        rx = be.deg2rad(surf.get("param_2", 0.0))
+        ry = be.deg2rad(surf.get("param_3", 0.0))
+        rz = be.deg2rad(surf.get("param_4", 0.0))
+
+        # Chain: first apply rotations/decenters, then thickness (Z)
+        cs_rot = CoordinateSystem(
+            x=dx,
+            y=dy,
+            z=0.0,
+            rx=rx,
+            ry=ry,
+            rz=rz,
+            reference_cs=self.current_cs,
+        )
+        self.current_cs = CoordinateSystem(
+            x=0.0,
+            y=0.0,
+            z=dz,
+            reference_cs=cs_rot,
+        )
+
+    def _add_surface_with_current_cs(self, surf: dict[str, Any], surf_idx: int) -> None:
+        """Add a non-CB surface, resolving its effective global CS first."""
+        translation, _ = self.current_cs.get_effective_transform()
+        rx_, ry_, rz_ = self.current_cs.get_effective_rotation_euler()
+        coeffs = self._configure_surface_coefficients(surf)
+
+        surface_params: dict[str, Any] = {
+            "index": surf_idx,
+            "surface_type": surf["type"],
+            "conic": surf.get("conic"),
+            "is_stop": surf.get("is_stop", False),
+            "material": surf.get("material"),
+            "coefficients": coeffs,
+        }
+
+        if surf.get("aperture") is not None:
+            surface_params["aperture"] = surf["aperture"]
+
+        if surf["type"] == "paraxial":
+            surface_params["f"] = float(surf.get("param_0", 0.0))
+
+        if surf["type"] == "toroidal":
+            surface_params["radius_y"] = surf["radius"]
+            surface_params["toroidal_coeffs_poly_y"] = coeffs
+            radius_x = surf.get("param_1", 0.0)
+            if radius_x == 0.0:
+                radius_x = be.inf
+            surface_params["radius_x"] = radius_x
+        else:
+            surface_params["radius"] = surf["radius"]
+
+        thickness = surf.get("thickness", 0.0)
+        if be.isinf(float(thickness)):
+            surface_params["thickness"] = thickness
+            surface_params.update(
+                {"rx": float(rx_), "ry": float(ry_), "rz": float(rz_)}
+            )
+        else:
+            surface_params.update(
+                {
+                    "x": float(translation[0]),
+                    "y": float(translation[1]),
+                    "z": float(translation[2]),
+                    "rx": float(rx_),
+                    "ry": float(ry_),
+                    "rz": float(rz_),
+                }
+            )
+
+        self.optic.surfaces.add(**surface_params)
+
+        dt = surf.get("thickness", 0.0)
+        if not be.isinf(dt):
+            self.current_cs = CoordinateSystem(
+                x=0.0,
+                y=0.0,
+                z=dt,
+                reference_cs=self.current_cs,
+            )
 
     def _configure_surface(self, index: int, data: dict[str, Any]) -> None:
         """Configure a single surface without coordinate-break logic.

@@ -171,39 +171,45 @@ class ZemaxFileEncoder:
         lines.append("  MIRR 2 1")
         lines.append("  SLAB 0")
 
-        # Thickness
+        self._encode_thickness(lines, raw)
+        self._encode_conic(lines, raw)
+        self._encode_glass_line(lines, raw)
+        self._encode_diameter(lines, raw)
+        self._encode_physical_aperture(lines, raw)
+        self._encode_parameters(lines, raw)
+
+    def _encode_thickness(self, lines: list[str], raw: dict[str, Any]) -> None:
         disz = raw.get("DISZ", 0.0)
         if disz == "INFINITY" or (isinstance(disz, float) and math.isinf(disz)):
             lines.append("  DISZ INFINITY")
         else:
             lines.append(f"  DISZ {_fmt(float(disz))}")
 
-        # Conic (omit if 0)
+    def _encode_conic(self, lines: list[str], raw: dict[str, Any]) -> None:
         coni = raw.get("CONI", 0.0)
         if coni is not None and abs(float(coni)) > 1e-16:
             lines.append(f"  CONI {_fmt(float(coni))}")
 
-        # Glass
+    def _encode_glass_line(self, lines: list[str], raw: dict[str, Any]) -> None:
         glas = raw.get("GLAS")
         if glas is not None:
             lines.append(self._encode_glas(glas))
 
-        # Diameter
+    def _encode_diameter(self, lines: list[str], raw: dict[str, Any]) -> None:
         diam = raw.get("DIAM")
         if diam is not None:
             lines.append(f"  DIAM {_fmt(float(diam))}")
 
-        # Physical aperture (CLAP)
+    def _encode_physical_aperture(self, lines: list[str], raw: dict[str, Any]) -> None:
         clap = raw.get("CLAP")
-        if clap is not None:
-            try:
-                lines.append(
-                    f"  CLAP {_fmt(float(clap.r_min))} {_fmt(float(clap.r_max))}"
-                )
-            except AttributeError:
-                lines.append("  CLAP 0")
+        if clap is None:
+            return
+        try:
+            lines.append(f"  CLAP {_fmt(float(clap.r_min))} {_fmt(float(clap.r_max))}")
+        except AttributeError:
+            lines.append("  CLAP 0")
 
-        # Parameters (PARM) — skip zeros
+    def _encode_parameters(self, lines: list[str], raw: dict[str, Any]) -> None:
         for i in range(1, 17):
             key = f"PARM_{i}"
             if key in raw:

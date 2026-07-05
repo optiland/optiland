@@ -253,11 +253,11 @@ class TestUnsupportedSurface:
 
 class TestOpticToZemaxConverterExtended:
     def test_field_type_string_none(self):
-        from optiland.fileio.zemax.writer.formatter import _field_type_string
+        from optiland.fileio.common import field_type_string
 
         optic = Optic()
         # No fields added
-        assert _field_type_string(optic) == "angle"
+        assert field_type_string(optic) == "angle"
 
     def test_warn_unknown_aperture(self):
         optic = Optic()
@@ -304,11 +304,11 @@ class TestOpticToZemaxConverterExtended:
         assert model.surfaces[1]["GLAS"]["name"] == "MODEL"
 
     def test_is_air_ideal(self):
-        from optiland.fileio.zemax.writer.formatter import _is_air
+        from optiland.fileio.common import is_air
         from optiland.materials import IdealMaterial
 
-        assert _is_air(IdealMaterial(1.0)) is True
-        assert _is_air(IdealMaterial(1.5)) is False
+        assert is_air(IdealMaterial(1.0)) is True
+        assert is_air(IdealMaterial(1.5)) is False
 
 
 # ---------------------------------------------------------------------------
