@@ -12,11 +12,13 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from optiland._types import ScalarOrArray
 
 
@@ -73,7 +75,7 @@ class Wavelength:
         return "um"
 
     @unit.setter
-    def unit(self, new_unit: str):
+    def unit(self, new_unit: str) -> None:
         """Sets the unit of the wavelength.
 
         Args:
@@ -99,10 +101,10 @@ class Wavelength:
 
         if self._unit in unit_conversion:
             conversion_factor = unit_conversion[self._unit]
-            return self._value * conversion_factor
+            return float(self._value * conversion_factor)
         raise ValueError("Unsupported unit for conversion to microns.")
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Get a dictionary representation of the wavelength.
 
         Returns:
@@ -117,7 +119,7 @@ class Wavelength:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> Wavelength:
+    def from_dict(cls, data: dict[str, Any]) -> Wavelength:
         """Create a Wavelength instance from a dictionary representation.
 
         Args:
@@ -159,7 +161,8 @@ class WavelengthGroup:
 
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Initialize an empty WavelengthGroup."""
         self.wavelengths: list[Wavelength] = []
 
     @property
@@ -172,13 +175,16 @@ class WavelengthGroup:
         """The number of wavelengths"""
         return len(self.wavelengths)
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: int) -> Wavelength:
+        """Return the wavelength at *index*."""
         return self.wavelengths[index]
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[Wavelength]:
+        """Iterate over the wavelengths in the group."""
         return iter(self.wavelengths)
 
-    def __len__(self):
+    def __len__(self) -> int:
+        """Return the number of wavelengths in the group."""
         return len(self.wavelengths)
 
     @property
@@ -191,7 +197,7 @@ class WavelengthGroup:
         return next(i for i, w in enumerate(self.wavelengths) if w.is_primary)
 
     @primary_index.setter
-    def primary_index(self, index: int):
+    def primary_index(self, index: int) -> None:
         """set the wavelength indexed by `index` as primary"""
         if not 0 <= index < len(self.wavelengths):
             raise ValueError("Index out of range")
@@ -209,7 +215,7 @@ class WavelengthGroup:
         is_primary: bool = False,
         unit: str = "um",
         weight: float = 1.0,
-    ):
+    ) -> None:
         """Adds a new wavelength to the list of wavelengths.
 
         Args:
@@ -255,7 +261,7 @@ class WavelengthGroup:
         """
         return [wave.value for wave in self.wavelengths]
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Get a dictionary representation of the wavelength group.
 
         Returns:
@@ -265,7 +271,7 @@ class WavelengthGroup:
         return {"wavelengths": [wave.to_dict() for wave in self.wavelengths]}
 
     @classmethod
-    def from_dict(cls, data) -> WavelengthGroup:
+    def from_dict(cls, data: dict[str, Any]) -> WavelengthGroup:
         """Create a WavelengthGroup instance from a dictionary representation.
 
         Args:
@@ -295,7 +301,7 @@ def add_wavelengths(
     *,
     sampling: str = "chebyshev",
     scale: str = "log",
-):
+) -> None:
     """Add new wavelengths corresponding to the geometrically-spaced Chebyshev nodes
 
     Args:
@@ -348,7 +354,7 @@ def add_wavelengths(
         nodes = (nodes - 0.5) / num_wavelengths
 
     if scale == "log":
-        span = be.log2(max_value / min_value)
+        span = float(be.log2(be.array(max_value / min_value)))
         for i, node in enumerate(nodes):
             is_primary = i == num_wavelengths // 2
             value = min_value * 2 ** (span * node)

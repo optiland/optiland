@@ -96,8 +96,18 @@ dev = [
     "codecov>=2.1.13",
     "pytest-cov>=7.0.0",
     "pytest-xdist>=3.6",
+    "mypy>=1.13",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--dist loadfile"
+
+[tool.mypy]
+ignore_missing_imports = true
+warn_unused_ignores = true
+exclude = ["^tests/", "^docs/", "^optiland_gui/"]
+
+[[tool.mypy.overrides]]
+module = "optiland.wavelength"
+strict = true
