@@ -1,6 +1,0 @@
-﻿solves
-======
-
-.. automodule:: solves
-
-   

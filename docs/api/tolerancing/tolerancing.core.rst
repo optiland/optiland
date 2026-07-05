@@ -1,4 +1,4 @@
-tolerancing.core
+﻿tolerancing.core
 ================
 
 .. automodule:: tolerancing.core
@@ -8,7 +8,6 @@ tolerancing.core
 
    .. autosummary::
    
-      Tolerancing
       OperandEvaluator
-
+      Tolerancing
    
