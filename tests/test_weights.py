@@ -1,7 +1,5 @@
 """Tests for field and wavelength weighting system.
 
-Tests all 20 requirements from SPEC_weights.md §10.
-
 Kramer Harrison, 2026
 """
 

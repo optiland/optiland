@@ -23,3 +23,4 @@ While these lenses are perhaps more complex, they are built using the same basic
     specialized_lenses/projection_120fov
     specialized_lenses/projection_160fov
     specialized_lenses/wide_angle_170fov
+    specialized_lenses/projection_210fov

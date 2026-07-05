@@ -516,10 +516,6 @@ class MatplotlibViewer(QWidget):
             ax.set_xlim(xlim[0] + dx, xlim[1] + dx)
             ax.set_ylim(ylim[0] + dy, ylim[1] + dy)
 
-            # Update the starting position for the next move
-            self._pan_start_x = event.xdata
-            self._pan_start_y = event.ydata
-
             # Redraw the canvas
             self.canvas.draw_idle()
             return  # Skip the coordinate display when panning
