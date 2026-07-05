@@ -465,69 +465,91 @@ class CodeVDataParser:
             return None
 
         upper = token.upper()
-
         if upper == "REFL":
             return "mirror"
 
-        # <Nd>:<Vd> fictitious glass
-        if ":" in token:
-            try:
-                nd_str, vd_str = token.split(":", 1)
-                return AbbeMaterial(float(nd_str), float(vd_str), model="buchdahl")
-            except (ValueError, TypeError):
-                pass
-
-        # Legacy NNN.VVV decimal glass code (e.g. 569.631 -> Nd=1.569, Vd=63.1)
-        # Also handles extended-precision forms like 517000.520000
-        if re.match(r"^\d+\.\d+$", token):
-            try:
-                int_str, dec_str = token.split(".", 1)
-                nd = 1.0 + int(int_str[:3]) / 1000.0
-                vd = int(dec_str[:3].ljust(3, "0")) / 10.0
-                if 1.0 < nd < 4.0 and 0.0 < vd < 200.0:
-                    return AbbeMaterial(nd, vd, model="buchdahl")
-            except (ValueError, IndexError):
-                pass
-
-        # 6-digit glass code: NNN VVV -> Nd = 1 + NNN/1000, Vd = VVV/10
-        # e.g. 516800 -> Nd=1.516, Vd=80.0
-        if len(token) == 6 and token.isdigit():
-            try:
-                nd = 1.0 + int(token[:3]) / 1000.0
-                vd = int(token[3:]) / 10.0
-                return AbbeMaterial(nd, vd, model="buchdahl")
-            except ValueError:
-                pass
-
-        # <name>_<catalog> format
-        if "_" in token:
-            parts = token.rsplit("_", 1)
-            name, catalog = parts[0], parts[1]
-            catalog_lower = catalog.lower()
-            for candidate in _glass_name_candidates(name):
-                try:
-                    return Material(candidate, catalog_lower)
-                except ValueError:
-                    pass
-            # Try without catalog
-            for candidate in _glass_name_candidates(name):
-                try:
-                    return Material(candidate)
-                except ValueError:
-                    pass
-
-        # Bare glass name — try catalog lookup with hyphen normalization
-        for candidate in _glass_name_candidates(upper):
-            try:
-                return Material(candidate)
-            except ValueError:
-                pass
+        for parse_attempt in (
+            self._parse_glass_abbe_ratio,
+            self._parse_glass_legacy_decimal_code,
+            self._parse_glass_six_digit_code,
+            self._parse_glass_name_catalog,
+            self._parse_glass_bare_name,
+        ):
+            result = parse_attempt(token, upper)
+            if result is not None:
+                return result
 
         warnings.warn(
             f"Glass '{token}' could not be resolved; treating as air.",
             UserWarning,
             stacklevel=2,
         )
+        return None
+
+    def _parse_glass_abbe_ratio(self, token: str, upper: str) -> BaseMaterial | None:
+        """Parse ``<Nd>:<Vd>`` fictitious glass notation."""
+        if ":" not in token:
+            return None
+        try:
+            nd_str, vd_str = token.split(":", 1)
+            return AbbeMaterial(float(nd_str), float(vd_str), model="buchdahl")
+        except (ValueError, TypeError):
+            return None
+
+    def _parse_glass_legacy_decimal_code(
+        self, token: str, upper: str
+    ) -> BaseMaterial | None:
+        """Parse legacy ``NNN.VVV`` decimal glass code (e.g. 569.631)."""
+        if not re.match(r"^\d+\.\d+$", token):
+            return None
+        try:
+            int_str, dec_str = token.split(".", 1)
+            nd = 1.0 + int(int_str[:3]) / 1000.0
+            vd = int(dec_str[:3].ljust(3, "0")) / 10.0
+            if 1.0 < nd < 4.0 and 0.0 < vd < 200.0:
+                return AbbeMaterial(nd, vd, model="buchdahl")
+        except (ValueError, IndexError):
+            pass
+        return None
+
+    def _parse_glass_six_digit_code(
+        self, token: str, upper: str
+    ) -> BaseMaterial | None:
+        """Parse 6-digit glass code NNNVVV -> Nd = 1 + NNN/1000, Vd = VVV/10."""
+        if len(token) != 6 or not token.isdigit():
+            return None
+        try:
+            nd = 1.0 + int(token[:3]) / 1000.0
+            vd = int(token[3:]) / 10.0
+            return AbbeMaterial(nd, vd, model="buchdahl")
+        except ValueError:
+            return None
+
+    def _parse_glass_name_catalog(self, token: str, upper: str) -> BaseMaterial | None:
+        """Parse ``<name>_<catalog>`` format, falling back to name-only lookup."""
+        if "_" not in token:
+            return None
+        name, catalog = token.rsplit("_", 1)
+        catalog_lower = catalog.lower()
+        for candidate in _glass_name_candidates(name):
+            try:
+                return Material(candidate, catalog_lower)
+            except ValueError:
+                pass
+        for candidate in _glass_name_candidates(name):
+            try:
+                return Material(candidate)
+            except ValueError:
+                pass
+        return None
+
+    def _parse_glass_bare_name(self, token: str, upper: str) -> BaseMaterial | None:
+        """Bare glass name lookup with hyphen normalization."""
+        for candidate in _glass_name_candidates(upper):
+            try:
+                return Material(candidate)
+            except ValueError:
+                pass
         return None
 
     # ------------------------------------------------------------------

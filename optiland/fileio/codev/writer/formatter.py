@@ -15,24 +15,11 @@ from typing import TYPE_CHECKING, Any
 import optiland.backend as be
 from optiland.fileio.codev.model import CodeVDataModel
 from optiland.fileio.codev.surfaces import get_handler_for_optiland_type
-from optiland.materials.ideal import IdealMaterial
+from optiland.fileio.common import compute_abbe_number, field_type_string, is_air
 from optiland.materials.material import Material
 
 if TYPE_CHECKING:
     from optiland.optic import Optic
-
-# CIE standard wavelengths for Abbe number calculation (um)
-_WL_d = 0.5876  # helium d-line
-_WL_F = 0.4861  # hydrogen F-line
-_WL_C = 0.6563  # hydrogen C-line
-
-# Map from Optiland field class name to CODE V field type
-_FIELD_CLASS_TO_TYPE: dict[str, str] = {
-    "AngleField": "angle",
-    "ObjectHeightField": "object_height",
-    "ParaxialImageHeightField": "paraxial_image_height",
-    "RealImageHeightField": "real_image_height",
-}
 
 # Map from Optiland geometry str() to surface type string
 _GEOM_STR_TO_TYPE: dict[str, str] = {
@@ -40,26 +27,6 @@ _GEOM_STR_TO_TYPE: dict[str, str] = {
     "Standard": "standard",
     "Even Asphere": "even_asphere",
 }
-
-
-def _is_air(material: Any) -> bool:
-    """Return True if *material* represents air (n ≈ 1.0, non-absorbing)."""
-    if material is None:
-        return True
-    if isinstance(material, str) and material.lower() in ("air", ""):
-        return True
-    if isinstance(material, IdealMaterial):
-        n_val = float(be.atleast_1d(material.index)[0])
-        return abs(n_val - 1.0) < 1e-6
-    return False
-
-
-def _field_type_string(optic: Optic) -> str:
-    """Derive the Optiland field type string from the optic's field definition."""
-    fd = optic.fields.field_definition
-    if fd is None:
-        return "angle"
-    return _FIELD_CLASS_TO_TYPE.get(type(fd).__name__, "angle")
 
 
 class OpticToCodeVConverter:
@@ -123,7 +90,7 @@ class OpticToCodeVConverter:
     # ------------------------------------------------------------------
 
     def _convert_fields(self, model: CodeVDataModel) -> None:
-        field_type = _field_type_string(self._optic)
+        field_type = field_type_string(self._optic)
         fields = self._optic.fields
         n = fields.num_fields
 
@@ -215,59 +182,7 @@ class OpticToCodeVConverter:
         output_idx += 1
 
         for surface in real_surfaces:
-            geom = surface.geometry
-            geom_str = str(geom)
-            optiland_type = _GEOM_STR_TO_TYPE.get(geom_str)
-
-            if optiland_type is None:
-                raise NotImplementedError(
-                    f"Surface {output_idx}: geometry type '{geom_str}' "
-                    "is not supported by the CODE V writer."
-                )
-
-            handler = get_handler_for_optiland_type(optiland_type)
-            raw = handler.format(surface)
-
-            thickness = float(be.atleast_1d(be.array(surface.thickness)).ravel()[0])
-            raw["thickness"] = thickness
-            raw["type"] = "standard"
-
-            if surface.is_stop:
-                raw["is_stop"] = True
-
-            # Physical aperture
-            if surface.aperture is not None:
-                raw["aperture"] = surface.aperture
-
-            # Glass — check reflective flag first (mirror)
-            is_reflective = getattr(
-                getattr(surface, "interaction_model", None), "is_reflective", False
-            )
-            mat = surface.material_post
-            glass_entry = self._format_glass(mat, output_idx, is_reflective)
-            if glass_entry is not None:
-                raw["glass"] = glass_entry
-
-            # Coordinate system — encode as decenters/tilts
-            cs = geom.cs
-            rx_val = float(getattr(cs, "rx", 0.0))
-            ry_val = float(getattr(cs, "ry", 0.0))
-            rz_val = float(getattr(cs, "rz", 0.0))
-            x_val = float(getattr(cs, "x", 0.0))
-            y_val = float(getattr(cs, "y", 0.0))
-
-            if abs(x_val) > 1e-12:
-                raw["xde"] = x_val
-            if abs(y_val) > 1e-12:
-                raw["yde"] = y_val
-            if abs(rx_val) > 1e-12:
-                raw["ade"] = math.degrees(rx_val)
-            if abs(ry_val) > 1e-12:
-                raw["bde"] = math.degrees(ry_val)
-            if abs(rz_val) > 1e-12:
-                raw["cde"] = math.degrees(rz_val)
-
-            model.surfaces[output_idx] = raw
+            model.surfaces[output_idx] = self._convert_real_surface(surface, output_idx)
             output_idx += 1
 
         # Image surface
@@ -276,6 +191,56 @@ class OpticToCodeVConverter:
             "radius": 0.0,
             "thickness": 0.0,
         }
+
+    def _convert_real_surface(self, surface: Any, output_idx: int) -> dict[str, Any]:
+        """Build the raw CODE V surface dict for a single non-object/image surface."""
+        geom = surface.geometry
+        geom_str = str(geom)
+        optiland_type = _GEOM_STR_TO_TYPE.get(geom_str)
+
+        if optiland_type is None:
+            raise NotImplementedError(
+                f"Surface {output_idx}: geometry type '{geom_str}' "
+                "is not supported by the CODE V writer."
+            )
+
+        handler = get_handler_for_optiland_type(optiland_type)
+        raw = handler.format(surface)
+
+        thickness = float(be.atleast_1d(be.array(surface.thickness)).ravel()[0])
+        raw["thickness"] = thickness
+        raw["type"] = "standard"
+
+        if surface.is_stop:
+            raw["is_stop"] = True
+
+        # Physical aperture
+        if surface.aperture is not None:
+            raw["aperture"] = surface.aperture
+
+        # Glass — check reflective flag first (mirror)
+        is_reflective = getattr(
+            getattr(surface, "interaction_model", None), "is_reflective", False
+        )
+        glass_entry = self._format_glass(
+            surface.material_post, output_idx, is_reflective
+        )
+        if glass_entry is not None:
+            raw["glass"] = glass_entry
+
+        raw.update(self._encode_decenters_tilts(geom.cs))
+        return raw
+
+    def _encode_decenters_tilts(self, cs: Any) -> dict[str, float]:
+        """Encode a coordinate system's decenters/tilts as CODE V raw keys."""
+        values = {
+            "xde": float(getattr(cs, "x", 0.0)),
+            "yde": float(getattr(cs, "y", 0.0)),
+            "ade": math.degrees(float(getattr(cs, "rx", 0.0))),
+            "bde": math.degrees(float(getattr(cs, "ry", 0.0))),
+            "cde": math.degrees(float(getattr(cs, "rz", 0.0))),
+        }
+        return {k: v for k, v in values.items() if abs(v) > 1e-12}
 
     def _format_glass(
         self,
@@ -298,7 +263,7 @@ class OpticToCodeVConverter:
         if is_reflective:
             return {"name": "REFL"}
 
-        if _is_air(mat):
+        if is_air(mat):
             return None
 
         # Mirror material string fallback
@@ -314,20 +279,7 @@ class OpticToCodeVConverter:
             return {"name": mat.name.upper()}
 
         # AbbeMaterial or unknown -> Nd:Vd fictitious glass
-        try:
-            primary_wl = float(self._optic.primary_wavelength)
-            n_d = float(be.atleast_1d(be.array(mat.n(primary_wl))).ravel()[0])
-        except Exception:
-            n_d = 1.5
-
-        try:
-            n_F = float(be.atleast_1d(be.array(mat.n(_WL_F))).ravel()[0])
-            n_C = float(be.atleast_1d(be.array(mat.n(_WL_C))).ravel()[0])
-            n_d_cie = float(be.atleast_1d(be.array(mat.n(_WL_d))).ravel()[0])
-            denom = n_F - n_C
-            v_d = 99.99 if abs(denom) < 1e-12 else (n_d_cie - 1.0) / denom
-        except Exception:
-            v_d = 64.17
+        n_d, v_d = compute_abbe_number(mat, float(self._optic.primary_wavelength))
 
         mat_name = getattr(mat, "name", type(mat).__name__)
         warnings.warn(
