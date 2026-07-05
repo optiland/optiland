@@ -1080,11 +1080,18 @@ class TorchBackend(AbstractBackend):
         # scalars: combined with a non-scalar tensor of a different dtype,
         # PyTorch's type promotion keeps the *tensor's* dtype rather than
         # upcasting, so a plain 1.0/-1.0 silently downgrades a float64
-        # computation to float32. Materializing them at the configured
-        # precision first avoids that trap.
-        if not isinstance(x, torch.Tensor):
+        # computation to float32. Materializing a bare scalar against the
+        # other operand's own dtype (when it's a tensor) preserves that
+        # operand's precision/kind instead -- including int index tensors
+        # and complex tensors, which the backend's default float precision
+        # would otherwise clobber.
+        if not isinstance(x, torch.Tensor) and isinstance(y, torch.Tensor):
+            x = torch.tensor(x, device=y.device, dtype=y.dtype)
+        elif not isinstance(x, torch.Tensor):
             x = self.array(x)
-        if not isinstance(y, torch.Tensor):
+        if not isinstance(y, torch.Tensor) and isinstance(x, torch.Tensor):
+            y = torch.tensor(y, device=x.device, dtype=x.dtype)
+        elif not isinstance(y, torch.Tensor):
             y = self.array(y)
         return torch.where(condition, x, y)
 
