@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
+from optiland.geometries.plane import Plane
+from optiland.geometries.standard import StandardGeometry
 from optiland.solves.base import BaseSolve
 
 
@@ -42,6 +44,23 @@ class CurvatureSolve(BaseSolve, ABC):
     def apply(self):
         """Applies the curvature solve to the optic."""
         pass  # pragma: no cover
+
+    def _set_curvature(self, c: float):
+        """Set curvature on the target surface, converting Plane to Standard
+        geometry when the curvature is non-zero."""
+        surface = self.optic.surfaces[self.surface_idx]
+        geom = surface.geometry
+
+        if isinstance(geom, Plane) and c != 0:
+            surface.geometry = StandardGeometry(
+                coordinate_system=geom.cs, radius=1.0 / c
+            )
+            return
+
+        if hasattr(geom, "c"):
+            geom.c = c
+        elif hasattr(geom, "radius"):
+            geom.radius = 1.0 / c if c != 0 else float("inf")
 
     def to_dict(self):
         """Returns a dictionary representation of the solve."""
@@ -134,14 +153,7 @@ class MarginalRayAngleCurvatureSolve(CurvatureSolve):
         den = y_surf * delta_n
         c = (num / den).item()
 
-        # Update curvature
-        if hasattr(self.optic.surfaces[self.surface_idx].geometry, "c"):
-            self.optic.surfaces[self.surface_idx].geometry.c = c
-        elif hasattr(self.optic.surfaces[self.surface_idx].geometry, "radius"):
-            if c != 0:
-                self.optic.surfaces[self.surface_idx].geometry.radius = 1.0 / c
-            else:
-                self.optic.surfaces[self.surface_idx].geometry.radius = float("inf")
+        self._set_curvature(c)
 
     def to_dict(self):
         """Returns a dictionary representation of the solve."""
@@ -244,12 +256,7 @@ class ChiefRayAngleCurvatureSolve(CurvatureSolve):
             damping = 0.5
             c = (1 - damping) * c_current + damping * c_target
 
-            # Update curvature
-            if hasattr(self.optic.surfaces[self.surface_idx].geometry, "radius"):
-                if c != 0:
-                    self.optic.surfaces[self.surface_idx].geometry.radius = 1.0 / c
-                else:
-                    self.optic.surfaces[self.surface_idx].geometry.radius = float("inf")
+            self._set_curvature(c)
 
     def to_dict(self):
         """Returns a dictionary representation of the solve."""
