@@ -557,7 +557,7 @@ class TestWeightBreakdown:
 
 
 class TestPolychromaticWeightedAverageFormula:
-    """Verifies the weighted average helper can be used for polychromatic aggregation."""
+    """Verifies weighted averages for polychromatic aggregation."""
 
     def test_weighted_psf_average_formula(self):
         # Simulate two PSF "scalars" representing peak values at two wavelengths
@@ -586,7 +586,7 @@ class TestPolychromaticWeightedAverageFormula:
 
 class TestBackwardCompatibility:
     def test_resolve_fields_all_weight_one_for_default_optic(self):
-        """Default optic has all field weights=1.0 — resolve_fields should reflect this."""
+        """Default optic field weights are all 1.0."""
         lens = CookeTriplet()
         fps = resolve_fields(lens, "all")
         assert all(fp.weight == pytest.approx(1.0) for fp in fps)
@@ -609,20 +609,36 @@ class TestBackwardCompatibility:
         ew = op.effective_weight()
         assert ew == pytest.approx(3.7)
 
-    def test_fun_array_unchanged_behavior_with_default_weights(self):
-        """fun_array with all-1.0 weights: ew * delta^2 == weight * delta^2 == fun()^2."""
+    def test_fun_array_matches_squared_residual_with_operand_weight(self):
+        """sum_squared must match the least-squares residual objective."""
         lens = CookeTriplet()
         problem = OptimizationProblem()
+        weight = 3.7
         problem.add_operand(
             operand_type="f2",
             target=100.0,
-            weight=1.0,
+            weight=weight,
             input_data={"optic": lens},
         )
-        # With all weights=1.0, effective_weight=1.0, so:
-        # fun_array()[0] == 1.0 * delta^2 == delta^2
+
         op = problem.operands[0]
         delta = float(be.to_numpy(be.array(op.delta())))
-        values = problem.fun_array()
-        computed = float(be.to_numpy(values[0]))
-        assert computed == pytest.approx(delta**2)
+        contribution = float(be.to_numpy(problem.fun_array()[0]))
+        residual = float(be.to_numpy(problem.residual_vector()[0]))
+
+        assert contribution == pytest.approx((weight * delta) ** 2)
+        assert residual == pytest.approx(weight * delta)
+        assert float(be.to_numpy(problem.sum_squared())) == pytest.approx(
+            float(be.to_numpy(be.sum(problem.residual_vector() ** 2))),
+        )
+
+    def test_fun_array_matches_squared_residual_with_field_wavelength_weights(self):
+        """Field/wavelength weights should affect merit and residuals consistently."""
+        optic = _make_weighted_optic()
+        problem = OptimizationProblem()
+        problem.add_operand(
+            operand_type="f2",
+            target=80.0,
+            weight=1.5,
+            input_data={"optic": optic, "field": 0, "wavelength": 1},
+        )

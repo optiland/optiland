@@ -493,7 +493,7 @@ class BatchedRayEvaluator:
                     f"Operand {i} ({operand.operand_type}) was not evaluated"
                 )
             delta = self._compute_delta(operand, value)
-            terms.append(ew * delta**2)
+            terms.append((ew * delta) ** 2)
         return terms
 
     # ------------------------------------------------------------------
@@ -595,7 +595,10 @@ class BatchedRayEvaluator:
                     [self.problem.operands[i].target for i in matching_op_indices]
                 )
                 weights = be.array(
-                    [self.problem.operands[i].weight for i in matching_op_indices]
+                    [
+                        self.problem.operands[i].effective_weight()
+                        for i in matching_op_indices
+                    ]
                 )
 
                 # Compute all deltas for this group simultaneously
@@ -616,7 +619,11 @@ class BatchedRayEvaluator:
                     operand.operand_type, sg, operand.input_data, local_idx
                 )
                 delta = self._compute_delta(operand, val)
-                computed_residuals[global_op_idx] = operand.weight * delta
+                ew = operand.effective_weight()
+                if ew == 0.0:
+                    computed_residuals[global_op_idx] = be.array(0.0)
+                else:
+                    computed_residuals[global_op_idx] = ew * delta
 
         # --- 2. Process Distribution Jobs ---
         for job_idx, job in enumerate(self._distribution_jobs):
@@ -632,7 +639,11 @@ class BatchedRayEvaluator:
                         val = metric_fn(**operand.input_data)
 
                     delta = self._compute_delta(operand, val)
-                    computed_residuals[i] = operand.weight * delta
+                    ew = operand.effective_weight()
+                    if ew == 0.0:
+                        computed_residuals[i] = be.array(0.0)
+                    else:
+                        computed_residuals[i] = ew * delta
 
         # --- 3. Process Direct Jobs ---
         for i in range(num_operands):
@@ -641,11 +652,15 @@ class BatchedRayEvaluator:
             plan_type, _, _ = self._operand_plan[i]
             if plan_type == "direct":
                 operand = self.problem.operands[i]
+                ew = operand.effective_weight()
+                if ew == 0.0:
+                    computed_residuals[i] = be.array(0.0)
+                    continue
                 metric_fn = operand_registry.get(operand.operand_type)
                 val = metric_fn(**operand.input_data)
 
                 delta = self._compute_delta(operand, val)
-                computed_residuals[i] = operand.weight * delta
+                computed_residuals[i] = ew * delta
 
         # --- Final Graph Assembly ---
         for i, res in enumerate(computed_residuals):
