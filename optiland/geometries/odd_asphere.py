@@ -70,6 +70,11 @@ class OddAsphere(EvenAsphere):
     def __str__(self):
         return "Odd Asphere"
 
+    def flip(self):
+        """Flip the geometry and negate the odd asphere coefficients."""
+        super().flip()
+        self.coefficients = [-coefficient for coefficient in self.coefficients]
+
     def scale(self, scale_factor: float):
         """Scale the geometry parameters.
 

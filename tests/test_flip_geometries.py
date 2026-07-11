@@ -120,7 +120,7 @@ def test_flip_even_asphere_geometry():
     assert geom.coefficients == initial_coeffs
 
 
-def test_flip_odd_asphere_geometry():
+def test_flip_odd_asphere_geometry(set_test_backend):
     initial_radius = 75.0
     initial_conic = -1.0
     # Coefficients for OddAsphere are C_i * r^(i+1)
@@ -138,7 +138,7 @@ def test_flip_odd_asphere_geometry():
 
     assert geom.radius == -initial_radius
     assert geom.k == initial_conic
-    assert geom.coefficients == initial_coeffs
+    assert geom.coefficients == [-coefficient for coefficient in initial_coeffs]
 
 
 def test_flip_polynomial_geometry():
