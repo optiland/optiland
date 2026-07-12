@@ -83,14 +83,11 @@ class OrthogonalDescent(BaseOptimizer):
         # Calculate initial cost
         f_start = self.problem.rss().item()
 
-        # Determine bounds
-        # Use explicit bounds if available, otherwise use wide range to prevent overflow
-        min_v = generic_var.min_val
-        max_v = generic_var.max_val
-
         limit = 1e12  # Soft limit for unbounded variables
-        low = min_v if min_v is not None else -limit
-        high = max_v if max_v is not None else limit
+        # ``value`` and ``bounds`` are both expressed in the variable's scaled space.
+        bounds = generic_var.bounds
+        low = bounds[0] if bounds is not None and bounds[0] is not None else -limit
+        high = bounds[1] if bounds is not None and bounds[1] is not None else limit
 
         def objective_func(x):
             # Enforce bounds manually for 'brent' method
