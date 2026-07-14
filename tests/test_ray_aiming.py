@@ -6,6 +6,8 @@ import numpy as np
 import pytest
 
 import optiland.backend as be
+from optiland.coordinate_system import CoordinateSystem
+from optiland.materials.ideal import IdealMaterial
 from optiland.optic import Optic
 from optiland.rays import RealRays
 from optiland.rays.ray_aiming.iterative import IterativeRayAimer
@@ -782,3 +784,187 @@ def test_robust_aimer_autograd_matches_finite_difference(set_test_backend):
     grad_fd = (loss_p - loss_m) / (2 * eps)
 
     assert abs(grad_autograd - grad_fd) / abs(grad_fd) < 1e-2
+
+
+# ---------------------------------------------------------------------------
+# Issue #654: ray aiming with non-trivial stop geometry (tilted / decentered /
+# back-surface stops). All three of these systems drove the Newton/Broyden
+# aiming core to NaN before the fix.
+# ---------------------------------------------------------------------------
+
+
+def _issue_654_tilted_mirror(tilt_rx=0.0):
+    """Single parabolic mirror used directly as the stop (issue #654, bug 4).
+
+    The surface after the stop is at focus, so the pre-fix off-by-one paraxial
+    Jacobian collapsed to exactly zero and the Newton step blew up to NaN.
+    """
+    mirror = Optic()
+    mirror.surfaces.add(index=0, thickness=np.inf)
+    mirror.surfaces.add(
+        index=1,
+        radius=-100,
+        thickness=-50,
+        conic=-1,
+        material="mirror",
+        is_stop=True,
+    )
+    mirror.surfaces.add(index=2)
+    mirror.wavelengths.add(value=0.55, is_primary=True)
+    mirror.set_aperture(aperture_type="EPD", value=20)
+    mirror.fields.set_type(field_type="angle")
+    mirror.fields.add(x=0, y=0)
+    mirror.fields.add(x=5, y=5)
+    if tilt_rx:
+        mirror.surfaces[1].geometry.cs = CoordinateSystem(rx=tilt_rx)
+    return mirror
+
+
+def _issue_654_back_surface_stop():
+    """Infinite-conjugate singlet whose stop is the last lens surface, sitting
+    just before focus (issue #654, bug 2)."""
+    optic = Optic()
+    optic.surfaces.add(index=0, thickness=np.inf)
+    optic.surfaces.add(
+        index=1, radius=50.0, thickness=5.0, material=IdealMaterial(n=1.5)
+    )
+    optic.surfaces.add(
+        index=2, radius=-50.0, thickness=48.0, is_stop=True, aperture=10.0
+    )
+    optic.surfaces.add(index=3)
+    optic.fields.set_type("angle")
+    optic.fields.add(y=0)
+    optic.fields.add(y=2)
+    optic.set_aperture("EPD", 20.0)
+    optic.wavelengths.add(0.55)
+    return optic
+
+
+def _issue_654_tilted_finite_stop(tilt_deg=120.0):
+    """Finite-conjugate system with a strongly tilted stop (issue #654, bug 1).
+
+    A large tilt flips the stop's local y-axis relative to the launch DOF, so
+    the pre-fix paraxial diagonal Jacobian had the wrong *sign* on M and the
+    Broyden step diverged to NaN for the off-axis (diagonal) pupil rays.
+    """
+    optic = Optic()
+    optic.surfaces.add(index=0, thickness=60.0)
+    optic.surfaces.add(
+        index=1, radius=40.0, thickness=8.0, material=IdealMaterial(n=1.5)
+    )
+    optic.surfaces.add(index=2, radius=-40.0, thickness=20.0)
+    optic.surfaces.add(index=3, thickness=30.0, is_stop=True, aperture=8.0)
+    optic.surfaces.add(index=4)
+    optic.fields.set_type("angle")
+    optic.fields.add(y=0)
+    optic.fields.add(y=3)
+    optic.set_aperture("EPD", 16.0)
+    optic.wavelengths.add(0.55)
+    optic.surfaces[3].geometry.cs.rx = np.deg2rad(tilt_deg)
+    return optic
+
+
+def _disk_pupil(n=5):
+    """Return the (Px, Py) of an ``n x n`` grid clipped to the unit disk."""
+    t = np.linspace(-1, 1, n)
+    Px, Py = np.meshgrid(t, t)
+    keep = (Px**2 + Py**2) <= 1.0 + 1e-9
+    return Px[keep].ravel(), Py[keep].ravel()
+
+
+@pytest.mark.parametrize(
+    "build", [CookeTriplet, _issue_654_tilted_mirror], ids=["CookeTriplet", "mirror"]
+)
+def test_paraxial_jacobian_matches_finite_difference_issue654(set_test_backend, build):
+    """The paraxial-Jacobian seed for the aiming solver must match a finite
+    difference of the real launch->stop response.
+
+    A prior off-by-one in the ``skip=1`` (infinite-conjugate) branch read the
+    surface *after* the stop; that collapses to ~0 whenever the following
+    surface sits near a focus, giving a near-zero Jacobian and a Newton step
+    that overshoots to NaN (issue #654, bugs 2 & 4). Even on an ordinary Cooke
+    triplet the pre-fix value was wrong by ~10%.
+    """
+    optic = build()
+    stop_idx = optic.surfaces.stop_index
+    is_inf = getattr(optic.object_surface, "is_infinite", False)
+    wl = float(optic.wavelengths.primary_wavelength.value)
+    aimer = IterativeRayAimer(optic)
+
+    j = float(
+        be.to_numpy(aimer._get_paraxial_jacobian(wl, stop_idx, is_inf)).ravel()[0]
+    )
+
+    seed = aimer._paraxial_aimer.aim_rays(
+        (be.array([0.0]), be.array([0.0])),
+        be.array([wl]),
+        (be.array([0.0]), be.array([0.0])),
+    )
+    x, y, z, L, M, N = (be.as_array_1d(v) for v in seed)
+    wl_a = be.array([wl])
+    h = 1e-5
+
+    def stop_x(xx, ll):
+        rays = aimer._trace_subset(xx, y, z, ll, M, N, wl_a, stop_idx, is_inf)
+        lx, _ = aimer._get_local_stop_coords(rays, stop_idx)
+        return float(be.to_numpy(lx).ravel()[0])
+
+    if is_inf:
+        j_fd = (stop_x(x + h, L) - stop_x(x, L)) / h
+    else:
+        j_fd = (stop_x(x, L + h) - stop_x(x, L)) / h
+
+    assert_allclose(j, j_fd, atol=1e-3, rtol=1e-2)
+
+
+def test_tilted_mirror_stop_aims_without_nan_issue654(set_test_backend):
+    """A slightly tilted mirror-stop must aim without producing NaN, and the
+    marginal ray must reach the aperture edge (issue #654, bug 4)."""
+    mirror = _issue_654_tilted_mirror(tilt_rx=np.pi / 64)
+    mirror.ray_tracer.set_aiming("robust")
+
+    Hx = be.array([0.0, 1.0, 0.0, 1.0])
+    Hy = be.array([0.0, 0.0, 0.0, 0.0])
+    Px = be.array([0.0, 0.0, 1.0, 1.0])
+    Py = be.array([0.0, 0.0, 0.0, 0.0])
+    mirror.trace_generic(Hx, Hy, Px, Py, 0.55)
+
+    s = mirror.surfaces[1]
+    assert not be.any(be.isnan(s.x))
+    assert not be.any(be.isnan(s.y))
+    # marginal rays (Px = 1) land at ~ EPD/2 = 10 mm in x
+    x = be.to_numpy(s.x).ravel()
+    assert abs(abs(float(x[2])) - 10.0) < 0.1
+
+
+def test_back_surface_stop_fills_pupil_issue654(set_test_backend):
+    """With the stop on the last surface (near a focus), every pupil ray must
+    aim to the stop -- not just the chief ray (issue #654, bug 2)."""
+    optic = _issue_654_back_surface_stop()
+    optic.ray_tracer.set_aiming("robust")
+    stop_idx = optic.surfaces.stop_index
+    Px, Py = _disk_pupil(5)
+    zeros = be.zeros(len(Px))
+
+    optic.trace_generic(zeros, zeros, be.array(Px), be.array(Py), 0.55)
+
+    sx = be.to_numpy(optic.surfaces[stop_idx].x).ravel()
+    sy = be.to_numpy(optic.surfaces[stop_idx].y).ravel()
+    assert not np.any(np.isnan(sx))
+    assert not np.any(np.isnan(sy))
+
+
+def test_tilted_finite_stop_converges_all_pupil_rays_issue654(set_test_backend):
+    """A finite-conjugate system with a strongly tilted stop must converge for
+    every pupil ray, including the diagonal corners whose local-frame sign flip
+    defeated the diagonal paraxial Jacobian (issue #654, bug 1)."""
+    optic = _issue_654_tilted_finite_stop(tilt_deg=120.0)
+    optic.ray_tracer.set_aiming("robust")
+    stop_idx = optic.surfaces.stop_index
+    Px, Py = _disk_pupil(5)
+    zeros = be.zeros(len(Px))
+
+    optic.trace_generic(zeros, zeros, be.array(Px), be.array(Py), 0.55)
+
+    sx = be.to_numpy(optic.surfaces[stop_idx].x).ravel()
+    assert not np.any(np.isnan(sx))
