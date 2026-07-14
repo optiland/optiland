@@ -147,43 +147,47 @@ class CodeVFileEncoder:
             self._encode_surface(lines, raw)
 
     def _encode_surface(self, lines: list[str], raw: dict[str, Any]) -> None:
-        surf_type = raw.get("type", "standard")
-        radius = raw.get("radius", 0.0)
-        thickness = raw.get("thickness", 0.0)
-        glass = raw.get("glass")
+        lines.append(self._encode_surface_line(raw))
 
-        r_str = _fmt(float(radius))
-        t_str = _fmt(float(thickness))
-
-        if surf_type == "object":
-            line = f"SO {r_str} {t_str}"
-        elif surf_type == "image":
-            line = f"SI {r_str} {t_str}"
-        else:
-            glass_str = self._encode_glass_inline(glass) if glass else ""
-            line = f"S  {r_str} {t_str}"
-            if glass_str:
-                line += f"  {glass_str}"
-
-        lines.append(line)
-
-        # Surface modifiers (indented for readability)
         if raw.get("is_stop"):
             lines.append("  STO")
 
+        self._encode_conic(lines, raw)
+        self._encode_asphere_coeffs(lines, raw)
+        self._encode_decenters_tilts(lines, raw)
+        self._encode_physical_aperture(lines, raw)
+
+    def _encode_surface_line(self, raw: dict[str, Any]) -> str:
+        surf_type = raw.get("type", "standard")
+        r_str = _fmt(float(raw.get("radius", 0.0)))
+        t_str = _fmt(float(raw.get("thickness", 0.0)))
+
+        if surf_type == "object":
+            return f"SO {r_str} {t_str}"
+        if surf_type == "image":
+            return f"SI {r_str} {t_str}"
+
+        glass = raw.get("glass")
+        glass_str = self._encode_glass_inline(glass) if glass else ""
+        line = f"S  {r_str} {t_str}"
+        if glass_str:
+            line += f"  {glass_str}"
+        return line
+
+    def _encode_conic(self, lines: list[str], raw: dict[str, Any]) -> None:
         conic = raw.get("conic", 0.0)
         if conic is not None and abs(float(conic)) > 1e-16:
             lines.append(f"  K {_fmt(float(conic))}")
 
-        # Aspheric coefficients
-        profile = raw.get("profile", "SPH")
-        if profile == "ASP":
-            for i, key in enumerate(_ASPH_KEYS):
-                val = float(raw.get(f"coeff_{i}", 0.0))
-                if abs(val) > 1e-30:
-                    lines.append(f"  {key} {_fmt(val)}")
+    def _encode_asphere_coeffs(self, lines: list[str], raw: dict[str, Any]) -> None:
+        if raw.get("profile", "SPH") != "ASP":
+            return
+        for i, key in enumerate(_ASPH_KEYS):
+            val = float(raw.get(f"coeff_{i}", 0.0))
+            if abs(val) > 1e-30:
+                lines.append(f"  {key} {_fmt(val)}")
 
-        # Decenters and tilts
+    def _encode_decenters_tilts(self, lines: list[str], raw: dict[str, Any]) -> None:
         for cv_key, label in (
             ("xde", "XDE"),
             ("yde", "YDE"),
@@ -196,14 +200,15 @@ class CodeVFileEncoder:
             if abs(val) > 1e-12:
                 lines.append(f"  {label} {_fmt(val)}")
 
-        # Physical aperture
+    def _encode_physical_aperture(self, lines: list[str], raw: dict[str, Any]) -> None:
         aperture = raw.get("aperture")
-        if aperture is not None:
-            try:
-                r_max = float(aperture.r_max)
-                lines.append(f"  CIR CLR {_fmt(r_max)}")
-            except AttributeError:
-                pass
+        if aperture is None:
+            return
+        try:
+            r_max = float(aperture.r_max)
+            lines.append(f"  CIR CLR {_fmt(r_max)}")
+        except AttributeError:
+            pass
 
     def _encode_glass_inline(self, glass: dict[str, Any]) -> str:
         """Build the glass string for the surface line.

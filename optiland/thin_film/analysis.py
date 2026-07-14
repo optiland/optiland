@@ -320,6 +320,90 @@ class SpectralAnalyzer:
 
         return fig, ax
 
+    def _resolve_map_grid(
+        self,
+        wavelength_values: float | Array,
+        wavelength_unit: WavelengthUnit,
+        aoi_values: float | Array,
+        aoi_unit: AngleUnit,
+        polarization: PolInput,
+        to_plot: PlotType | list[PlotType],
+    ) -> tuple[Array, Array, list[Pol], list[PlotType], Array, Array]:
+        """Normalize map_view inputs into computation- and plot-ready arrays."""
+        if aoi_values is None:
+            aoi_values = (
+                be.linspace(0, 80, 81)
+                if aoi_unit == "deg"
+                else be.linspace(0, be.deg2rad(80), 81)
+            )
+
+        wl_um = self._convert_to_wavelength_um(wavelength_values, wavelength_unit)
+        aoi_rad = self._convert_angle_to_radians(aoi_values, aoi_unit)
+
+        polarizations = self._normalize_polarizations(polarization)
+        if isinstance(to_plot, str):
+            to_plot = [to_plot]
+        for quantity in to_plot:
+            if quantity not in ("R", "T", "A"):
+                raise ValueError("to_plot must be 'R', 'T', 'A' or a list of these")
+
+        wl_plot = self._convert_wavelength_for_plotting(wl_um, wavelength_unit)
+        aoi_plot = be.atleast_1d(aoi_values)
+
+        # Create meshgrid for plotting with backend-agnostic ij indexing
+        aoi_grid, wl_grid = be.meshgrid(aoi_plot, wl_plot)
+        wl_mesh = self._plot_array(wl_grid)
+        aoi_mesh = self._plot_array(aoi_grid)
+
+        return wl_um, aoi_rad, polarizations, to_plot, wl_mesh, aoi_mesh
+
+    def _prepare_map_axes(
+        self,
+        fig: plt.Figure,
+        axs: plt.Axes | list[plt.Axes],
+        nrows: int,
+        ncols: int,
+    ) -> tuple[plt.Figure, list[list[plt.Axes]]]:
+        """Create or normalize the figure/axes grid for map_view."""
+        if fig is None or axs is None:
+            # Organize subplots: polarizations as columns, quantities as rows
+            fig, axs = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4 * nrows))
+
+            # Ensure axs is always 2D array for consistent indexing
+            if nrows == 1 and ncols == 1:
+                axs = [[axs]]
+            elif nrows == 1:
+                axs = [axs]
+            elif ncols == 1:
+                axs = [[ax] for ax in axs]
+        else:
+            # If axs is provided, assume it's properly formatted
+            if not isinstance(axs, list):
+                axs = [[axs]]
+            elif not isinstance(axs[0], list):
+                axs = [axs]
+
+        return fig, axs
+
+    @staticmethod
+    def _select_map_return(
+        fig: plt.Figure,
+        axs: list[list[plt.Axes]],
+        to_plot: list[PlotType],
+        polarizations: list[Pol],
+    ) -> tuple[plt.Figure, plt.Axes | list[plt.Axes]]:
+        """Pick the return shape for map_view based on the requested grid."""
+        if len(to_plot) == 1 and len(polarizations) == 1:
+            return fig, axs[0][0]
+        elif len(to_plot) == 1:
+            return fig, axs[0]  # Return list of axes for different polarizations
+        elif len(polarizations) == 1:
+            return fig, [
+                row[0] for row in axs
+            ]  # Return list of axes for different quantities
+        else:
+            return fig, axs  # Return 2D array of axes
+
     def map_view(
         self,
         wavelength_values: float | Array,
@@ -347,67 +431,31 @@ class SpectralAnalyzer:
         Returns:
             Tuple of (figure, axes or list of axes)
         """
-        # Default AOI range if not provided
-        if aoi_values is None:
-            aoi_values = (
-                be.linspace(0, 80, 81)
-                if aoi_unit == "deg"
-                else be.linspace(0, be.deg2rad(80), 81)
+        wl_um, aoi_rad, polarizations, to_plot, wl_mesh, aoi_mesh = (
+            self._resolve_map_grid(
+                wavelength_values,
+                wavelength_unit,
+                aoi_values,
+                aoi_unit,
+                polarization,
+                to_plot,
             )
+        )
 
-        # Convert inputs
-        wl_um = self._convert_to_wavelength_um(wavelength_values, wavelength_unit)
-        aoi_rad = self._convert_angle_to_radians(aoi_values, aoi_unit)
-
-        # Normalize inputs to lists
-        polarizations = self._normalize_polarizations(polarization)
-        if isinstance(to_plot, str):
-            to_plot = [to_plot]
-
-        # Convert back for plotting axes
-        wl_plot = self._convert_wavelength_for_plotting(wl_um, wavelength_unit)
-        aoi_plot = be.atleast_1d(aoi_values)
-
-        # Create meshgrid for plotting with backend-agnostic ij indexing
-        _aoi_grid, _wl_grid = be.meshgrid(aoi_plot, wl_plot)
-        WL, AOI = _wl_grid, _aoi_grid
-        WL_plot = self._plot_array(WL)
-        AOI_plot = self._plot_array(AOI)
-
-        # Create figure and axes
-        if fig is None or axs is None:
-            # Organize subplots: polarizations as columns, quantities as rows
-            nrows = len(to_plot)
-            ncols = len(polarizations)
-            fig, axs = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4 * nrows))
-
-            # Ensure axs is always 2D array for consistent indexing
-            if nrows == 1 and ncols == 1:
-                axs = [[axs]]
-            elif nrows == 1:
-                axs = [axs]
-            elif ncols == 1:
-                axs = [[ax] for ax in axs]
-        else:
-            # If axs is provided, assume it's properly formatted
-            if not isinstance(axs, list):
-                axs = [[axs]]
-            elif not isinstance(axs[0], list):
-                axs = [axs]
+        fig, axs = self._prepare_map_axes(
+            fig, axs, nrows=len(to_plot), ncols=len(polarizations)
+        )
 
         # Plot each quantity and polarization combination
         for qty_idx, quantity in enumerate(to_plot):
-            if quantity not in ("R", "T", "A"):
-                raise ValueError("to_plot must be 'R', 'T', 'A' or a list of these")
-
             for pol_idx, pol in enumerate(polarizations):
                 # Compute R/T/A for this polarization
                 rta_data = self.stack.compute_rtRTA(wl_um, aoi_rad, pol)
 
                 ax_i = axs[qty_idx][pol_idx]
                 im = ax_i.pcolormesh(
-                    WL_plot,
-                    AOI_plot,
+                    wl_mesh,
+                    aoi_mesh,
                     self._plot_array(rta_data[quantity]),
                     shading="auto",
                     vmin=0,
@@ -426,17 +474,7 @@ class SpectralAnalyzer:
 
         fig.tight_layout()
 
-        # Return format depends on the number of plots
-        if len(to_plot) == 1 and len(polarizations) == 1:
-            return fig, axs[0][0]
-        elif len(to_plot) == 1:
-            return fig, axs[0]  # Return list of axes for different polarizations
-        elif len(polarizations) == 1:
-            return fig, [
-                row[0] for row in axs
-            ]  # Return list of axes for different quantities
-        else:
-            return fig, axs  # Return 2D array of axes
+        return self._select_map_return(fig, axs, to_plot, polarizations)
 
     def _get_single_polarization(self, polarization: PolInput) -> Pol:
         """Normalize and validate a single polarization selection."""

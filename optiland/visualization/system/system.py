@@ -7,6 +7,7 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING
 
 import optiland.backend as be
@@ -249,10 +250,28 @@ class OpticalSystem:
             else:
                 continue
 
-            # Define local coordinates based on projection
-            x_local = be.array([x_min, x_max])
-            y_local = be.array([y_min, y_max])
-            z_local = be.array([0.0, 0.0])
+            # Define local coordinates based on projection. Only the axis
+            # actually shown in this projection is swept between its aperture
+            # bounds; the other is held at 0 (its axis-of-symmetry value)
+            # rather than paired corner-to-corner, which would otherwise mix
+            # in the wrong sag contribution for offset apertures. The sag is
+            # evaluated at each point (instead of assuming z=0) so the
+            # indicator line follows the true, possibly-tilted surface
+            # instead of a flat plane through the vertex.
+            if projection == "XZ":
+                x_local = be.array([x_min, x_max])
+                y_local = be.array([0.0, 0.0])
+            else:  # YZ
+                x_local = be.array([0.0, 0.0])
+                y_local = be.array([y_min, y_max])
+            # Apertures with an unbounded extent (e.g. an annular
+            # obstruction defined with r_max = inf) have no well-defined
+            # sag at their outer edge; fall back to the vertex plane there
+            # rather than evaluating sag() out of its domain.
+            finite = be.isfinite(x_local) & be.isfinite(y_local)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                z_local = be.where(finite, surface.geometry.sag(x_local, y_local), 0.0)
             x_global, y_global, z_global = transform(
                 x_local, y_local, z_local, surface, is_global=False
             )

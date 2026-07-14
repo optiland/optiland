@@ -1,3 +1,5 @@
+"""SciPy least-squares optimizer wrapper."""
+
 from __future__ import annotations
 
 import warnings

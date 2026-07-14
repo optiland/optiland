@@ -26,3 +26,9 @@ from .mtf_vs_field import MTFvsField
 from .through_focus_mtf import ThroughFocusMTF
 from .through_focus_spot_diagram import ThroughFocusSpotDiagram
 from .jones_pupil import JonesPupil
+
+import optiland.plugins as _plugins
+
+# Unlike surfaces/materials, analyses have no factory to lazily trigger
+# discovery from, so plugin analyses are loaded eagerly on package import.
+_plugins.load_plugins(_plugins.ANALYSES_GROUP)

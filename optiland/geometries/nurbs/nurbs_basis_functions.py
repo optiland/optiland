@@ -1,3 +1,5 @@
+"""NURBS basis function evaluation routines."""
+
 from __future__ import annotations
 
 import numba as nb
@@ -8,6 +10,8 @@ from optiland import backend as be
 if be.get_backend() == "torch":
 
     def jit(nopython=True, cache=True):
+        """No-op stand-in for numba.jit when running on the torch backend."""
+
         def decorator(func):
             return func
 

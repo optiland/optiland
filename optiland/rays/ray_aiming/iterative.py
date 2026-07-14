@@ -56,6 +56,7 @@ class IterativeRayAimer(BaseRayAimer):
         self.max_iter = max_iter
         self.tol = tol
         self._paraxial_aimer = ParaxialRayAimer(optic)
+        self.last_iterations = 0
 
     def aim_rays(
         self,
@@ -115,7 +116,6 @@ class IterativeRayAimer(BaseRayAimer):
         Px = be.as_array_1d(Px)
         Py = be.as_array_1d(Py)
         stop_idx = self.optic.surfaces.stop_index
-        self.optic.surfaces[stop_idx]
         is_inf = getattr(self.optic.object_surface, "is_infinite", False)
 
         # Determine target coordinates
@@ -131,6 +131,59 @@ class IterativeRayAimer(BaseRayAimer):
         tx = tx * be.ones_like(x)
         ty = ty * be.ones_like(y)
 
+        x, y, z, L, M, N, converged, had_initial_nan = self._solve_core(
+            x, y, z, L, M, N, wavelengths, stop_idx, is_inf, tx, ty
+        )
+
+        if had_initial_nan:
+            raise ValueError(
+                "Initial ray aiming guess produced NaNs. "
+                "Consider using the 'robust' method instead."
+            )
+
+        if not be.all(converged):
+            raise ValueError("Iterative aimer failed to converge.")
+
+        return x, y, z, L, M, N
+
+    def _solve_core(
+        self,
+        x: Any,
+        y: Any,
+        z: Any,
+        L: Any,
+        M: Any,
+        N: Any,
+        wavelengths: Any,
+        stop_idx: int,
+        is_inf: bool,
+        tx: Any,
+        ty: Any,
+    ) -> tuple:
+        """Core 2-DOF Newton/Broyden solve against an arbitrary local-stop
+        target, without raising.
+
+        This is the reusable solver core: it drives ``(x, y)`` (infinite
+        conjugates) or ``(L, M)`` (finite conjugates) so that the ray lands
+        at local-stop coordinates ``(tx, ty)``. Unlike the public
+        :meth:`aim_rays`, this never raises -- NaNs and non-convergence are
+        reported per-ray via the returned mask, so callers such as
+        ``RobustRayAimer`` can treat individual ray failures gracefully
+        instead of aborting the whole batch.
+
+        Args:
+            x, y, z, L, M, N: Initial ray launch guess.
+            wavelengths: Wavelengths of the rays.
+            stop_idx: Index of the stop surface.
+            is_inf: Whether the object is at infinity.
+            tx, ty: Target local-stop coordinates for each ray.
+
+        Returns:
+            tuple: ``(x, y, z, L, M, N, converged, had_initial_nan)`` where
+            ``converged`` is a per-ray boolean mask and ``had_initial_nan``
+            indicates whether the initial guess produced NaN errors for any
+            ray.
+        """
         tol_sq = self.tol**2
 
         # Initial trace (all rays)
@@ -138,11 +191,7 @@ class IterativeRayAimer(BaseRayAimer):
         lx, ly = self._get_local_stop_coords(rays, stop_idx)
         ex, ey = lx - tx, ly - ty
 
-        if be.any(be.isnan(ex)):
-            raise ValueError(
-                "Initial ray aiming guess produced NaNs. "
-                "Consider using the 'robust' method instead."
-            )
+        had_initial_nan = bool(be.any(be.isnan(ex)) or be.any(be.isnan(ey)))
 
         num_rays = len(x)
         full_indices = be.arange_indices(num_rays)
@@ -162,16 +211,6 @@ class IterativeRayAimer(BaseRayAimer):
         J21 = be.zeros(num_rays)
         J22 = be.full(num_rays, J_factor)
 
-        # Store previous state for Broyden
-        if is_inf:
-            be.copy(x)
-            be.copy(y)
-        else:
-            be.copy(L)
-            be.copy(M)
-        be.copy(ex)
-        be.copy(ey)
-
         # Ensure we are not modifying leaf variables in-place
         x = be.copy(x)
         y = be.copy(y)
@@ -180,13 +219,22 @@ class IterativeRayAimer(BaseRayAimer):
         M = be.copy(M)
         N = be.copy(N)
 
+        converged = ex**2 + ey**2 < tol_sq
+        self.last_iterations = 0
+
         for _iter_idx in range(self.max_iter):
             # Check convergence
             error_sq = ex**2 + ey**2
             converged = error_sq < tol_sq
 
             if be.all(converged):
-                return x, y, z, L, M, N
+                break
+
+            stuck = be.logical_or(converged, be.isnan(error_sq))
+            if be.all(stuck):
+                break
+
+            self.last_iterations = _iter_idx + 1
 
             # Active Set Strategy: only process non-converged rays
             active_mask = ~converged
@@ -196,11 +244,6 @@ class IterativeRayAimer(BaseRayAimer):
             # Extract active data
             ex_curr = ex[idx]
             ey_curr = ey[idx]
-            # Handle wavelengths (could be scalar or array)
-            if hasattr(wavelengths, "__len__"):
-                wavelengths[idx]
-            else:
-                pass
 
             # Update solution (Newton Step)
             # [dx] = - [J]^-1 * [error]
@@ -275,10 +318,8 @@ class IterativeRayAimer(BaseRayAimer):
             ex = ex_new
             ey = ey_new
 
-        if not be.all((ex**2 + ey**2) < tol_sq):
-            raise ValueError("Iterative aimer failed to converge.")
-
-        return x, y, z, L, M, N
+        converged = ex**2 + ey**2 < tol_sq
+        return x, y, z, L, M, N, converged, had_initial_nan
 
     def _get_paraxial_jacobian(
         self, wavelength: float, stop_idx: int, is_inf: bool

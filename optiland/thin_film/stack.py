@@ -30,6 +30,38 @@ PlotType = Literal["R", "T", "A"]
 Array: TypeAlias = Any  # be.ndarray
 
 
+def _to_float(value: Any) -> float:
+    """Convert a scalar (possibly a torch tensor) to a Python float."""
+    if hasattr(value, "detach") and hasattr(value, "cpu"):
+        value = value.detach().cpu()
+    if hasattr(value, "item"):
+        return float(value.item())
+    return float(value)
+
+
+def _material_display_name(obj: Any) -> str:
+    """Human-readable label for a material or layer used in stack plots.
+
+    IdealMaterial may not have a name, so its refractive index is used
+    for labeling instead.
+    """
+    name = getattr(obj, "name", "") or ""
+    if isinstance(obj, IdealMaterial):
+        name = f"$n$ = {_to_float(obj.index[0])}"
+    return name
+
+
+@dataclass
+class _StackBand:
+    """One rectangle band (substrate, layer, or incident medium) to render."""
+
+    y: float
+    height: float
+    color: str
+    label: str
+    text: str | None = None
+
+
 @dataclass
 class ThinFilmStack:
     """Multilayer thin-film stack with inlined TMM calculations.
@@ -443,6 +475,86 @@ class ThinFilmStack:
         parts = [layer.name or f"Layer({i})" for i, layer in enumerate(self.layers)]
         return f"ThinFilmStack({len(self.layers)} layers: " + " -> ".join(parts) + ")"
 
+    def _stack_material_colors(self) -> dict[str, str]:
+        """Assign a unique color to each distinct material in the stack."""
+        import matplotlib.colors as mcolors
+
+        color_cycle = list(mcolors.TABLEAU_COLORS.values())
+        material_names = (
+            [_material_display_name(self.incident_material)]
+            + [_material_display_name(layer.material) for layer in self.layers]
+            + [_material_display_name(self.substrate_material)]
+        )
+        return {
+            name: color_cycle[i % len(color_cycle)]
+            for i, name in enumerate(dict.fromkeys(material_names))
+        }
+
+    def _compute_stack_bands(self) -> list[_StackBand]:
+        """Compute the substrate/layer/incident-medium bands for plot_structure.
+
+        Layout only — no matplotlib calls — so it can be reused by both the
+        rendering code and tests.
+        """
+        colors = self._stack_material_colors()
+
+        total_layer_thickness = _to_float(
+            sum(layer.thickness_um for layer in self.layers)
+        )
+        # Ensure minimum thickness for visualization (avoid singular ylim
+        # on empty stacks)
+        if total_layer_thickness == 0:
+            total_layer_thickness = 1.0
+
+        incident_thickness = 0.08 * total_layer_thickness
+        substrate_thickness = 0.08 * total_layer_thickness
+
+        bands = []
+
+        # Substrate (bottom, negative y)
+        substrate_name = _material_display_name(self.substrate_material)
+        bands.append(
+            _StackBand(
+                y=-substrate_thickness,
+                height=substrate_thickness,
+                color=colors[substrate_name],
+                label=substrate_name,
+                text=substrate_name,
+            )
+        )
+
+        # Layers (middle, positive y)
+        y = 0.0
+        for layer in self.layers:
+            material_name = _material_display_name(layer.material)
+            label = layer.name or material_name
+            if label:
+                label = re.sub(r"\d+", lambda m: str(int(m.group())), label)
+            height = _to_float(layer.thickness_um)
+            bands.append(
+                _StackBand(
+                    y=y,
+                    height=height,
+                    color=colors[material_name],
+                    label=label,
+                )
+            )
+            y += height
+
+        # Incident medium (top)
+        incident_name = _material_display_name(self.incident_material)
+        bands.append(
+            _StackBand(
+                y=y,
+                height=incident_thickness,
+                color=colors[incident_name],
+                label=incident_name,
+                text=incident_name,
+            )
+        )
+
+        return bands
+
     def plot_structure(self, ax: plt.Axes = None) -> tuple[plt.Figure, plt.Axes]:
         """Plots a schematic representation of the thin film stack structure.
         This method visualizes the stack as a series of colored rectangles, each
@@ -463,102 +575,36 @@ class ThinFilmStack:
         """
         if ax is None:
             fig, ax = plt.subplots()
-        import matplotlib.colors as mcolors
 
-        color_cycle = list(mcolors.TABLEAU_COLORS.values())
+        bands = self._compute_stack_bands()
 
-        def _to_float(value) -> float:
-            if hasattr(value, "detach") and hasattr(value, "cpu"):
-                value = value.detach().cpu()
-            if hasattr(value, "item"):
-                return float(value.item())
-            return float(value)
-
-        def _get_name(obj):
-            """
-            Get the name of a material or layer, or its refractive index if it's an
-            IdealMaterial. Because IdealMaterial may not have a name, we use its
-            refractive index for labeling.
-            """
-            name = getattr(obj, "name", "") or ""
-            if isinstance(obj, IdealMaterial):
-                name = f"$n$ = {_to_float(obj.index[0])}"
-            return name
-
-        def _add_rect(y, height, color, label, text=None):
-            y = _to_float(y)
-            height = _to_float(height)
+        for band in bands:
             ax.add_patch(
-                plt.Rectangle((0, y), 1, height, color=color, label=label, alpha=0.7)
+                plt.Rectangle(
+                    (0, band.y),
+                    1,
+                    band.height,
+                    color=band.color,
+                    label=band.label,
+                    alpha=0.7,
+                )
             )
-            if text is not None:
+            if band.text is not None:
                 ax.text(
                     0.5,
-                    y + height / 2,
-                    text,
+                    band.y + band.height / 2,
+                    band.text,
                     ha="center",
                     va="center",
                     fontsize=10,
                     rotation=0,
                 )
 
-        material_names = (
-            [_get_name(self.incident_material)]
-            + [_get_name(layer.material) for layer in self.layers]
-            + [_get_name(self.substrate_material)]
-        )
-        unique_materials = {
-            name: color_cycle[i % len(color_cycle)]
-            for i, name in enumerate(dict.fromkeys(material_names))
-        }
-        total_layer_thickness = sum(layer.thickness_um for layer in self.layers)
-        total_layer_thickness = _to_float(total_layer_thickness)
-
-        # Ensure minimum thickness for visualization (avoid singular ylim
-        # on empty stacks)
-        if total_layer_thickness == 0:
-            total_layer_thickness = 1.0
-
-        incident_thickness = 0.08 * total_layer_thickness
-        substrate_thickness = 0.08 * total_layer_thickness
-        y = -substrate_thickness
-
-        # Substrate (bottom, negative y)
-        _add_rect(
-            y,
-            substrate_thickness,
-            unique_materials[_get_name(self.substrate_material)],
-            label=_get_name(self.substrate_material),
-            text=_get_name(self.substrate_material),
-        )
-        y = 0
-
-        # Layers (middle, positive y)
-        for _, layer in enumerate(self.layers):
-            color = unique_materials[_get_name(layer.material)]
-            label = layer.name or _get_name(layer.material)
-            if label:
-                label = re.sub(r"\d+", lambda m: str(int(m.group())), label)
-            _add_rect(
-                y,
-                layer.thickness_um,
-                color,
-                label=label,
-                text=None,
-            )
-            y += _to_float(layer.thickness_um)
-
-        # Incident medium (top)
-        _add_rect(
-            y,
-            incident_thickness,
-            unique_materials[_get_name(self.incident_material)],
-            label=_get_name(self.incident_material),
-            text=_get_name(self.incident_material),
-        )
+        y_min = bands[0].y
+        y_max = bands[-1].y + bands[-1].height
 
         ax.set_xlim(0, 1)
-        ax.set_ylim(-substrate_thickness, y + incident_thickness)
+        ax.set_ylim(y_min, y_max)
         ax.set_ylabel("Thickness (µm)")
         ax.set_xticks([])
         handles, labels = ax.get_legend_handles_labels()

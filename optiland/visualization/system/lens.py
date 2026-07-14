@@ -177,15 +177,39 @@ class Lens2D:
         else:
             vertices = be.to_numpy(be.column_stack((z, y)))
 
-        polygon = Polygon(
-            vertices,
-            closed=True,
-            facecolor=facecolor,
-            edgecolor=edgecolor,
-            label="Lens",
-        )
-        ax.add_patch(polygon)
-        return polygon
+        polygons = []
+        for segment in self._finite_vertex_segments(vertices):
+            polygon = Polygon(
+                segment,
+                closed=True,
+                facecolor=facecolor,
+                edgecolor=edgecolor,
+                label="Lens",
+            )
+            ax.add_patch(polygon)
+            polygons.append(polygon)
+        return polygons
+
+    def _finite_vertex_segments(self, vertices):
+        """Split closed polygon vertices into finite contiguous segments."""
+        finite = np.isfinite(vertices).all(axis=1)
+        if finite.all():
+            return [vertices]
+
+        finite_indices = np.flatnonzero(finite)
+        if finite_indices.size == 0:
+            return []
+
+        breaks = np.where(np.diff(finite_indices) > 1)[0] + 1
+        segments = np.split(finite_indices, breaks)
+
+        # The polygon is closed, so finite runs at the start and end are
+        # contiguous across the closing edge and should form one patch.
+        if finite[0] and finite[-1] and len(segments) > 1:
+            segments[0] = np.concatenate([segments[-1], segments[0]])
+            segments = segments[:-1]
+
+        return [vertices[segment] for segment in segments if len(segment) > 2]
 
     def _plot_lenses(self, ax, sags, theme=None, projection="YZ"):
         """Plot the lenses on the given matplotlib axis.
@@ -211,10 +235,15 @@ class Lens2D:
             y = be.concatenate([y1, be.flip(y2)])
             z = be.concatenate([z1, be.flip(z2)])
 
-            artist = self._plot_single_lens(
+            artists_for_lens = self._plot_single_lens(
                 ax, x, y, z, theme=theme, projection=projection
             )
-            artists[artist] = self
+            if artists_for_lens is None:
+                continue
+            if not isinstance(artists_for_lens, list):
+                artists_for_lens = [artists_for_lens]
+            for artist in artists_for_lens:
+                artists[artist] = self
         return artists
 
 

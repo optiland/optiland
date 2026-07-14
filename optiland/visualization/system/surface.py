@@ -42,7 +42,12 @@ class Surface2D:
 
         if self.surf.aperture:
             x_min, x_max, y_min, y_max = self.surf.aperture.extent
-            extent = be.max(be.array([x_min, x_max, y_min, y_max]))
+            # Use the largest absolute bound so that apertures offset from
+            # the surface vertex (e.g. OffsetRadialAperture) are fully
+            # covered by the symmetric [-extent, extent] sampling window
+            # used in _compute_sag; a plain max() would collapse to the
+            # aperture radius and miss the offset region entirely.
+            extent = be.max(be.abs(be.array([x_min, x_max, y_min, y_max])))
             # Fall back to ray extent if aperture extent is infinite
             self.extent = extent if be.isfinite(be.array(extent)) else ray_extent
         else:

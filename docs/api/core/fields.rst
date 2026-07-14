@@ -1,6 +1,0 @@
-﻿fields
-======
-
-.. automodule:: fields
-
-   

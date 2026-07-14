@@ -18,4 +18,4 @@ from optiland.visualization.component_renderer import (
     ComponentRenderer as ComponentRenderer,
 )
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"

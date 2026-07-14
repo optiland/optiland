@@ -1,10 +1,9 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "versioningit"]
 build-backend = "hatchling.build"
 
 [project]
 name = "optiland"
-version = "0.6.0"
 authors = [{ name = "Kramer Harrison", email = "kdanielharrison@gmail.com" }]
 description = "Open Source Optical Design in Python"
 readme = "README.md"
@@ -27,6 +26,7 @@ dependencies = [
     "typing-extensions>=4.1.0",
 ]
 license = { text = "MIT License" }
+dynamic = ["version"]
 
 [project.optional-dependencies]
 prescription-console = ["rich>=13.0"]
@@ -44,6 +44,14 @@ Documentation = "https://optiland.readthedocs.io/en/latest/"
 [project.scripts]
 optiland = "optiland_gui.run_gui:main"
 
+# Third-party plugin discovery (Phase 0.5, SPEC_Tech_Debt_20260705.md). A
+# plugin package declares one of these groups pointing at a zero-argument
+# callable that registers itself against the relevant Optiland registry; see
+# optiland/plugins.py and CONTRIBUTING.md for the "add a new X" walkthrough.
+[project.entry-points."optiland.surfaces"]
+[project.entry-points."optiland.materials"]
+[project.entry-points."optiland.analyses"]
+
 [tool.hatch.metadata]
 allow-direct-references = true
 
@@ -53,9 +61,13 @@ packages = ["optiland", "optiland_gui"]
 [tool.hatch.metadata.files]
 "optiland/database" = ["*.csv", "*.yml", "**/*.yml", "*.npy"]
 
+[tool.hatch.version]
+source = "versioningit"
+default-version = "0.0.0+unknown"
+
 [tool.ruff]
 line-length = 88
-exclude = ["tests", "docs"]
+exclude = ["tests", "docs", "optiland_gui/resources/resources_rc.py"]
 
 [tool.ruff.lint]
 select = [
@@ -67,8 +79,25 @@ select = [
     "I",   # isort
     "PYI", # pyright
     "TC",  # type-checking
+    # pydocstyle: missing-docstring only, scoped to top-level public API
+    # (module/class/function). D102 (methods), D105 (magic methods), and
+    # D107 (__init__) are intentionally excluded — enabling them today would
+    # flag ~480 pre-existing internals, which is exactly the one-time fixup
+    # burden constraint 4 rules out. D2xx/D4xx (content/format) stay off too.
+    "D100", # undocumented-public-module
+    "D101", # undocumented-public-class
+    "D103", # undocumented-public-function
 ]
 exclude = ["*.ipynb"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D100", "D101", "D103"]
+"docs/**" = ["D100", "D101", "D103"]
+# Standalone debug/reproduction scripts, not part of the package API.
+"optiland/scripts/**" = ["D100", "D101", "D103"]
 
 [tool.ruff.lint.isort]
 required-imports = ["from __future__ import annotations"]
@@ -79,8 +108,19 @@ dev = [
     "codecov>=2.1.13",
     "pytest-cov>=7.0.0",
     "pytest-xdist>=3.6",
+    "mypy>=1.13",
+    "vulture>=2.13", # dead-code audits (see CONTRIBUTING.md); not run in CI
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--dist loadfile"
+
+[tool.mypy]
+ignore_missing_imports = true
+warn_unused_ignores = true
+exclude = ["^tests/", "^docs/", "^optiland_gui/"]
+
+[[tool.mypy.overrides]]
+module = "optiland.wavelength"
+strict = true

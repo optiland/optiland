@@ -1,3 +1,5 @@
+"""Core types for thin-film optimization operands."""
+
 from __future__ import annotations
 
 import abc
@@ -58,6 +60,8 @@ for _name, _func in {
 
 @dataclass(slots=True)
 class ThinFilmEvaluationContext:
+    """Bundles a thin-film stack for evaluation by a registered operand."""
+
     stack: ThinFilmStack
 
 

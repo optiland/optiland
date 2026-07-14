@@ -14,6 +14,7 @@ from optiland.physical_apertures.base import BaseAperture
 
 
 def configure_aperture(aperture):
+    """Normalize a raw aperture spec (None, number, or BaseAperture)."""
     if aperture is None:
         return None
     elif isinstance(aperture, Number):

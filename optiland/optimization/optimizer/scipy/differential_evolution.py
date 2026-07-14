@@ -1,3 +1,5 @@
+"""SciPy differential evolution optimizer wrapper."""
+
 from __future__ import annotations
 
 import warnings

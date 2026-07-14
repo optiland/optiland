@@ -330,10 +330,10 @@ class IncoherentIrradiance(BaseAnalysis):
             indices, weights = be.get_bilinear_weights(
                 ray_coords, (x_edges_be, y_edges_be)
             )
-            power_map = be.zeros((self.npix_y, self.npix_x))
+            power_map = be.zeros((self.npix_x, self.npix_y))
             for i in range(4):
                 power_map = power_map.index_put(
-                    (indices[:, i, 1].long(), indices[:, i, 0].long()),
+                    (indices[:, i, 0].long(), indices[:, i, 1].long()),
                     weights[:, i] * power,
                     accumulate=True,
                 )

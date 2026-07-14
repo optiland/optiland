@@ -39,6 +39,10 @@ We sincerely appreciate the contributions of the following individuals, whose ef
 - **RayPragma** (`GitHub <https://github.com/RayPragma>`_)
 - **Doron Behar** (`GitHub <https://github.com/doronbehar>`_)
 - **Ayachi Padmanabh Mishra** (`GitHub <https://github.com/AyachiMishra>`_)
+- **somnus-J-307** (`GitHub <https://github.com/somnus-J-307>`_)
+- **Nikita Vladimirov** (`GitHub <https://github.com/nvladimus>`_)
+- **Michele Castriotta** (`GitHub <https://github.com/mikics>`_)
+- **Abu Hossain Foysal** (`GitHub <https://github.com/ahfoysal>`_)
 
 
 Your contributions, whether in the form of code, documentation, feedback, or discussions, are what make **Optiland** better for everyone.

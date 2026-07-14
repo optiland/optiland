@@ -347,7 +347,7 @@ class TestRayOperand:
         }
         assert_allclose(
             operand.RayOperand.OPD_difference(**data),
-             0.001328702368213,
+            0.001329917133127,
         )
 
     def test_opd_diff_new_dist(self, set_test_backend, hubble):

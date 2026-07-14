@@ -22,6 +22,45 @@ How to Contribute
 8. **Open** a pull request with a detailed description of your changes.
 
 
+Development Setup
+------------------
+
+1. Clone your fork and create a virtual environment (``.venv``) in the repository root.
+2. Install the project with its dev dependency group using `uv <https://docs.astral.sh/uv/>`_::
+
+       uv sync --group dev
+
+   This installs Optiland in editable mode plus ``pytest``, ``ruff``, ``mypy``, and ``vulture``.
+   Without ``uv``, ``pip install -e ".[dev]"`` (or installing the packages listed under
+   ``[dependency-groups].dev`` in ``pyproject.toml`` manually) works too.
+3. Run the test suite scoped to what you're changing — **never run the full suite blindly**::
+
+       pytest -v tests/<area_you_touched>/
+
+   The full suite (``pytest tests/``) is slow enough that it's rarely the right first check; let
+   CI run it in full and iterate locally on the scoped subset.
+
+Quality Gates
+-------------
+
+Every pull request runs the following in CI:
+
+- **Ruff (lint + format):** blocking, including docstring checks on public classes/functions
+  only — pre-existing undocumented internals elsewhere in a touched file never block a PR.
+- **mypy:** blocking, but only for modules listed under ``[[tool.mypy.overrides]]`` in
+  ``pyproject.toml``. Untouched, unlisted modules are never checked. If you refactor a file onto
+  the allowlist, add it to the override list in the same PR.
+- **Golden-value regression snapshots** (``tests/regression/``): required for changes touching
+  ``geometries/``, ``materials/``, ``psf/``, ``rays/``, or ``backend/``. Run locally with
+  ``pytest tests/regression/``; regenerate deliberately with ``--update-golden`` only after an
+  intentional numerical change, and explain why in the PR description.
+- **vulture (dead-code scan):** dev-only, not part of CI — see "Dead-Code Audits" in
+  ``CONTRIBUTING.md``.
+
+For the full plugin-package mechanism (shipping a new surface geometry, material catalog, or
+analysis as an installable package rather than editing Optiland's source) see
+:doc:`developers_guide/plugin_packages`.
+
 Task Workflow and Coordination
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -1,3 +1,5 @@
+"""Generates a field-dependent PSF basis for image simulation."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -22,16 +24,29 @@ class PSFBasisGenerator:
         psf_grid_size (int, optional): PSF grid size (e.g., 256 for 256x256).
 
             If None, calculated from num_rays.
+        strategy (str, optional): Wavefront reference strategy.
+            Default: "chief_ray".
+        remove_tilt (bool, optional): Whether to remove wavefront tilt.
+            Default: False.
     """
 
     def __init__(
-        self, optic, wavelength, grid_shape=(5, 5), num_rays=128, psf_grid_size=None
+        self,
+        optic,
+        wavelength,
+        grid_shape=(5, 5),
+        num_rays=128,
+        psf_grid_size=None,
+        strategy="chief_ray",
+        remove_tilt=False,
     ):
         self.optic = optic
         self.wavelength = wavelength
         self.grid_shape = grid_shape
         self.num_rays = num_rays
         self.psf_grid_size = psf_grid_size
+        self.strategy = strategy
+        self.remove_tilt = remove_tilt
 
     def generate_basis(self, n_components=3):
         """
@@ -116,6 +131,8 @@ class PSFBasisGenerator:
                     wavelength=self.wavelength,
                     num_rays=self.num_rays,
                     grid_size=self.psf_grid_size,
+                    strategy=self.strategy,
+                    remove_tilt=self.remove_tilt,
                 )
 
                 # Normalize sum to 1 to treat as probability distribution

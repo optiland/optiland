@@ -36,6 +36,15 @@ jobs:
       - uses: ./.github/actions/setup
       - run: uvx ruff format --check .
 
+  typing:
+    runs-on: ubuntu-latest
+    needs: [lock_file]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: uv sync --dev
+      - run: uv run mypy optiland/wavelength.py
+
   tests:
     runs-on: ubuntu-latest
     needs: [lock_file]

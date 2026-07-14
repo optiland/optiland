@@ -45,93 +45,151 @@ def approximate_surface(points, size_u, size_v, degree_u, degree_v, **kwargs):
     kv_u = compute_knot_vector(degree_u, size_u, num_cpts_u, uk)
     kv_v = compute_knot_vector(degree_v, size_v, num_cpts_v, vl)
 
-    matrix_nu = []
-    for i in range(1, size_u - 1):
+    ctrlpts_tmp = _fit_u_direction(
+        points, size_u, size_v, degree_u, num_cpts_u, kv_u, uk, dim
+    )
+    ctrlpts = _fit_v_direction(
+        ctrlpts_tmp, size_u, size_v, degree_v, num_cpts_u, num_cpts_v, kv_v, vl, dim
+    )
+
+    return ctrlpts, degree_u, degree_v, num_cpts_u, num_cpts_v, kv_u, kv_v
+
+
+def _build_normal_matrix_lu(degree, num_cpts, kv, params, num_params):
+    """Builds and LU-factorizes the basis normal matrix for one direction.
+
+    This is the ``N^T N`` matrix from Algorithm A9.7 (The NURBS Book, 2nd
+    Edition, pp.422-423), factorized once and reused to solve for every
+    row/column of interior control points along this direction.
+
+    Args:
+        degree: The degree of the direction's basis polynomials.
+        num_cpts: The number of control points to solve for.
+        kv: The knot vector for this direction.
+        params: The parameter values (``u_k`` or ``v_l``) for this direction.
+        num_params: The number of data points in this direction.
+
+    Returns:
+        The ``(lu, piv)`` factorization as returned by
+        :func:`scipy.linalg.lu_factor`.
+    """
+    matrix_n = []
+    for i in range(1, num_params - 1):
         m_temp = []
-        for j in range(1, num_cpts_u - 1):
-            m_temp.append(basis_function_one(degree_u, kv_u, j, uk[i]))
-        matrix_nu.append(m_temp)
-    matrix_nu = be.asarray(matrix_nu)
-    matrix_ntu = matrix_nu.T
-    matrix_ntnu = be.matmul(matrix_ntu, matrix_nu)
-    lu, piv = lu_factor(matrix_ntnu)
+        for j in range(1, num_cpts - 1):
+            m_temp.append(basis_function_one(degree, kv, j, params[i]))
+        matrix_n.append(m_temp)
+    matrix_n = be.asarray(matrix_n)
+    matrix_nt = matrix_n.T
+    matrix_ntn = be.matmul(matrix_nt, matrix_n)
+    return lu_factor(matrix_ntn)
+
+
+def _fit_interior_row(row_points, degree, num_cpts, kv, params, num_params, lu_piv):
+    """Solves for one row's interior control points via least squares.
+
+    Args:
+        row_points: The data points along this row/column (length
+            ``num_params``).
+        degree: The degree of the direction's basis polynomials.
+        num_cpts: The number of control points to solve for.
+        kv: The knot vector for this direction.
+        params: The parameter values for this direction.
+        num_params: The number of data points in this direction.
+        lu_piv: The ``(lu, piv)`` factorization from
+            :func:`_build_normal_matrix_lu`.
+
+    Returns:
+        A list of interior control points (length ``num_cpts - 2``).
+    """
+    dim = len(row_points[0])
+    pt0 = row_points[0]
+    ptm = row_points[-1]
+    residuals = []
+    for i in range(1, num_params - 1):
+        ptk = row_points[i]
+        n0p = basis_function_one(degree, kv, 0, params[i])
+        nnp = basis_function_one(degree, kv, num_cpts - 1, params[i])
+        elem2 = [c * n0p for c in pt0]
+        elem3 = [c * nnp for c in ptm]
+        residuals.append(
+            [a - b - c for a, b, c in zip(ptk, elem2, elem3, strict=False)]
+        )
+
+    rhs = [[0.0 for _ in range(dim)] for _ in range(num_cpts - 2)]
+    for i in range(1, num_cpts - 1):
+        for idx, pt in enumerate(residuals):
+            weight = basis_function_one(degree, kv, i, params[idx + 1])
+            for d in range(dim):
+                rhs[i - 1][d] += pt[d] * weight
+
+    lu, piv = lu_piv
+    interior = [[0.0 for _ in range(dim)] for _ in range(num_cpts - 2)]
+    for d in range(dim):
+        x = lu_solve((lu, piv), [pt[d] for pt in rhs])
+        for i in range(num_cpts - 2):
+            interior[i][d] = x[i]
+
+    return interior
+
+
+def _fit_u_direction(points, size_u, size_v, degree_u, num_cpts_u, kv_u, uk, dim):
+    """Least-squares fits control points along the u-direction.
+
+    Corresponds to the first control-point pass of Algorithm A9.7 (The
+    NURBS Book, 2nd Edition, pp.422-423): interpolates the u-boundary
+    points and solves for the interior ones via a single, reusable LU
+    factorization of the u-direction basis normal matrix.
+
+    Returns:
+        A flat list of intermediate (u-fitted, not yet v-fitted) control
+        points, indexed as ``ctrlpts_tmp[j + size_v * i]``.
+    """
+    lu_piv = _build_normal_matrix_lu(degree_u, num_cpts_u, kv_u, uk, size_u)
 
     ctrlpts_tmp = [[0.0 for _ in range(dim)] for _ in range(num_cpts_u * size_v)]
     for j in range(size_v):
-        ctrlpts_tmp[j + (size_v * 0)] = list(points[j + (size_v * 0)])
-        ctrlpts_tmp[j + (size_v * (num_cpts_u - 1))] = list(
-            points[j + (size_v * (size_u - 1))]
-        )
-        pt0 = points[j + (size_v * 0)]
-        ptm = points[j + (size_v * (size_u - 1))]
-        rku = []
-        for i in range(1, size_u - 1):
-            ptk = points[j + (size_v * i)]
-            n0p = basis_function_one(degree_u, kv_u, 0, uk[i])
-            nnp = basis_function_one(degree_u, kv_u, num_cpts_u - 1, uk[i])
-            elem2 = [c * n0p for c in pt0]
-            elem3 = [c * nnp for c in ptm]
-            rku.append([a - b - c for a, b, c in zip(ptk, elem2, elem3, strict=False)])
-        ru = [[0.0 for _ in range(dim)] for _ in range(num_cpts_u - 2)]
-        for i in range(1, num_cpts_u - 1):
-            ru_tmp = []
-            for idx, pt in enumerate(rku):
-                ru_tmp.append(
-                    [p * basis_function_one(degree_u, kv_u, i, uk[idx + 1]) for p in pt]
-                )
-            for d in range(dim):
-                for idx in range(len(ru_tmp)):
-                    ru[i - 1][d] += ru_tmp[idx][d]
-        for d in range(dim):
-            b = [pt[d] for pt in ru]
-            x = lu_solve((lu, piv), b)
-            for i in range(1, num_cpts_u - 1):
-                ctrlpts_tmp[j + (size_v * i)][d] = x[i - 1]
+        row_points = [points[j + (size_v * i)] for i in range(size_u)]
+        ctrlpts_tmp[j + (size_v * 0)] = list(row_points[0])
+        ctrlpts_tmp[j + (size_v * (num_cpts_u - 1))] = list(row_points[-1])
 
-    matrix_nv = []
-    for i in range(1, size_v - 1):
-        m_temp = []
-        for j in range(1, num_cpts_v - 1):
-            m_temp.append(basis_function_one(degree_v, kv_v, j, vl[i]))
-        matrix_nv.append(m_temp)
-    matrix_nv = be.asarray(matrix_nv)
-    matrix_ntv = matrix_nv.T
-    matrix_ntnv = be.matmul(matrix_ntv, matrix_nv)
-    lu, piv = lu_factor(matrix_ntnv)
+        interior = _fit_interior_row(
+            row_points, degree_u, num_cpts_u, kv_u, uk, size_u, lu_piv
+        )
+        for i in range(1, num_cpts_u - 1):
+            ctrlpts_tmp[j + (size_v * i)] = interior[i - 1]
+
+    return ctrlpts_tmp
+
+
+def _fit_v_direction(
+    ctrlpts_tmp, size_u, size_v, degree_v, num_cpts_u, num_cpts_v, kv_v, vl, dim
+):
+    """Least-squares fits control points along the v-direction.
+
+    Second control-point pass of Algorithm A9.7: takes the u-fitted
+    intermediate control points and repeats the same interpolate-and-solve
+    procedure along v, producing the final control-point grid.
+
+    Returns:
+        A flat list of final control points, indexed as
+        ``ctrlpts[j + num_cpts_v * i]``.
+    """
+    lu_piv = _build_normal_matrix_lu(degree_v, num_cpts_v, kv_v, vl, size_v)
 
     ctrlpts = [[0.0 for _ in range(dim)] for _ in range(num_cpts_u * num_cpts_v)]
     for i in range(num_cpts_u):
-        ctrlpts[0 + (num_cpts_v * i)] = list(ctrlpts_tmp[0 + (size_v * i)])
-        ctrlpts[num_cpts_v - 1 + (num_cpts_v * i)] = list(
-            ctrlpts_tmp[size_v - 1 + (size_v * i)]
-        )
-        pt0 = ctrlpts_tmp[0 + (size_v * i)]
-        ptm = ctrlpts_tmp[size_v - 1 + (size_v * i)]
-        rkv = []
-        for j in range(1, size_v - 1):
-            ptk = ctrlpts_tmp[j + (size_v * i)]
-            n0p = basis_function_one(degree_v, kv_v, 0, vl[j])
-            nnp = basis_function_one(degree_v, kv_v, num_cpts_v - 1, vl[j])
-            elem2 = [c * n0p for c in pt0]
-            elem3 = [c * nnp for c in ptm]
-            rkv.append([a - b - c for a, b, c in zip(ptk, elem2, elem3, strict=False)])
-        rv = [[0.0 for _ in range(dim)] for _ in range(num_cpts_v - 2)]
-        for j in range(1, num_cpts_v - 1):
-            rv_tmp = []
-            for idx, pt in enumerate(rkv):
-                rv_tmp.append(
-                    [p * basis_function_one(degree_v, kv_v, j, vl[idx + 1]) for p in pt]
-                )
-            for d in range(dim):
-                for idx in range(len(rv_tmp)):
-                    rv[j - 1][d] += rv_tmp[idx][d]
-        for d in range(dim):
-            b = [pt[d] for pt in rv]
-            x = lu_solve((lu, piv), b)
-            for j in range(1, num_cpts_v - 1):
-                ctrlpts[j + (num_cpts_v * i)][d] = x[j - 1]
+        row_points = [ctrlpts_tmp[j + (size_v * i)] for j in range(size_v)]
+        ctrlpts[0 + (num_cpts_v * i)] = list(row_points[0])
+        ctrlpts[num_cpts_v - 1 + (num_cpts_v * i)] = list(row_points[-1])
 
-    return ctrlpts, degree_u, degree_v, num_cpts_u, num_cpts_v, kv_u, kv_v
+        interior = _fit_interior_row(
+            row_points, degree_v, num_cpts_v, kv_v, vl, size_v, lu_piv
+        )
+        for j in range(1, num_cpts_v - 1):
+            ctrlpts[j + (num_cpts_v * i)] = interior[j - 1]
+
+    return ctrlpts
 
 
 def compute_knot_vector(degree, num_dpts, num_cpts, params):

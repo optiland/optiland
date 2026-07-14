@@ -13,7 +13,9 @@ re-worked by Manuel Fragata Mendes, june 2025
 from __future__ import annotations
 
 import matplotlib.pyplot as plt
+import numpy as np
 
+import optiland.backend as be
 from optiland.visualization.base import BaseViewer
 from optiland.visualization.system.interaction import InteractionManager
 from optiland.visualization.system.rays import Rays2D
@@ -156,6 +158,11 @@ class OpticViewer(BaseViewer):
 
         if title:
             ax.set_title(title, color=params["text.color"])
+
+        if xlim is None or ylim is None:
+            auto_xlim, auto_ylim = self._default_axis_limits(projection)
+            xlim = xlim or auto_xlim
+            ylim = ylim or auto_ylim
         if xlim:
             ax.set_xlim(xlim)
         if ylim:
@@ -169,3 +176,58 @@ class OpticViewer(BaseViewer):
 
         # Return the figure, axes and interaction_manager
         return fig, ax, interaction_manager
+
+    def _default_axis_limits(self, projection):
+        """Compute default axis limits sized to the lens system rather than
+        the full ray extent.
+
+        For an infinite-conjugate (angle field) system, the object-side ray
+        segment is drawn from an arbitrary, often very distant, launch
+        point -- fine for aiming, but if left to matplotlib's autoscale it
+        dominates the view for wide-FOV systems, squeezing the actual lens
+        system down to an unreadable sliver. Sizing instead from the real
+        surfaces (z) and ``r_extent`` -- the same radially-symmetric,
+        per-surface ray extent ``OpticalSystem`` already uses to size lens
+        and mirror components (see ``system.py``) -- keeps the transverse
+        limits centered on the optical axis and guaranteed to cover
+        whatever radius the lens components are actually drawn at (an
+        asymmetric min/max of the traced rays' signed coordinates isn't
+        enough: a field that's only ever traced on one side of the axis
+        would leave the *other*, still-drawn side of the lens clipped),
+        while still leaving margin to see rays approaching and entering
+        the first surface.
+
+        Args:
+            projection (str): The projection plane, 'XY', 'XZ', or 'YZ'.
+
+        Returns:
+            tuple: ``(xlim, ylim)``, each either a ``(min, max)`` tuple or
+            ``None`` if there isn't enough information to size that axis
+            (falls back to matplotlib's own autoscale).
+        """
+        if projection == "XY":
+            # A single cross-section at one z -- no object-segment issue.
+            return None, None
+
+        positions = be.to_numpy(self.optic.surfaces.positions).reshape(-1)
+        start_idx = 1 if self.optic.object_surface.is_infinite else 0
+        if start_idx >= len(positions) - 1:
+            return None, None
+
+        z_min = float(positions[start_idx])
+        z_max = float(positions[-1])
+        z_margin = max(0.15 * (z_max - z_min), 1e-6)
+        auto_xlim = (z_min - z_margin, z_max + z_margin)
+
+        r_extent = be.to_numpy(self.rays.r_extent)[start_idx:]
+        r_extent = r_extent[np.isfinite(r_extent)]
+        if r_extent.size == 0:
+            return auto_xlim, None
+
+        r_max = float(r_extent.max())
+        if r_max <= 0:
+            return auto_xlim, None
+        r_margin = max(0.15 * r_max, 1e-6)
+        auto_ylim = (-(r_max + r_margin), r_max + r_margin)
+
+        return auto_xlim, auto_ylim

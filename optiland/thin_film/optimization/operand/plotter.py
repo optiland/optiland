@@ -1,3 +1,5 @@
+"""Plotting utilities for thin-film optimization operands."""
+
 from __future__ import annotations
 
 import numpy as np

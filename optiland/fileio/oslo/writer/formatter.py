@@ -30,94 +30,92 @@ class OsloDataFormatter:
         Returns:
             The complete OSLO .len file as a string.
         """
-        lines = []
-
-        # Comment header
+        lines: list[str] = []
         lines.append("// OSLO 5.00 0 0 0")
-
-        # System declaration
         lines.append(
             f'LEN NEW "{self.model.name}" '
             f"{self._fmt(self.model.scaling)} {self.model.num_surfaces}"
         )
 
-        # Global properties
-        if "EPD" in self.model.aperture:
-            lines.append(f"EBR {self._fmt(self.model.aperture['EPD'] / 2.0)}")
-
-        if "FNO" in self.model.aperture:
-            lines.append(f"FNO {self._fmt(self.model.aperture['FNO'])}")
-
-        if "NAO" in self.model.aperture:
-            lines.append(f"NAO {self._fmt(self.model.aperture['NAO'])}")
+        self._format_global_aperture(lines)
 
         # DES and UNI are always emitted (OSLO EDU convention)
         lines.append('DES "Optiland"')
         lines.append(f"UNI {self._fmt(self.model.units)}")
 
-        if "y" in self.model.fields:
-            field_type_cmd = (
-                "OBH" if self.model.fields.get("type") == "object_height" else "ANG"
-            )
-            for y in self.model.fields["y"]:
-                lines.append(f"{field_type_cmd} {self._fmt(y)}")
+        self._format_field_commands(lines)
+        self._format_notes(lines)
 
-        for cmd, content in self.model.notes.items():
-            if cmd == "DES":
-                continue  # already emitted explicitly above
-            lines.append(f'{cmd} "{content}"')
-
-        # Surfaces
         for idx in sorted(self.model.surfaces.keys()):
             self._format_surface(lines, idx, self.model.surfaces[idx])
 
-        # Wavelengths - written in the footer (after surfaces, before END),
-        # matching OSLO .len file convention.
-        wl_data = self.model.wavelengths
-        if wl_data.get("values"):
-            vals = wl_data["values"]
-            if len(vals) >= 3:
-                lines.append(
-                    f"WV {self._fmt(vals[0])} {self._fmt(vals[1])} {self._fmt(vals[2])}"
-                )
-            elif len(vals) == 2:
-                lines.append(f"WV {self._fmt(vals[0])} {self._fmt(vals[1])}")
-            else:
-                lines.append(f"WV {self._fmt(vals[0])}")
+        self._format_wavelength_footer(lines)
 
-            if "weights" in wl_data and len(wl_data["weights"]) >= len(vals):
-                w = wl_data["weights"]
-                if len(vals) >= 3:
-                    lines.append(
-                        f"WW {self._fmt(w[0])} {self._fmt(w[1])} {self._fmt(w[2])}"
-                    )
-                elif len(vals) == 2:
-                    lines.append(f"WW {self._fmt(w[0])} {self._fmt(w[1])}")
-                else:
-                    lines.append(f"WW {self._fmt(w[0])}")
-
-        # End
         lines.append(f"END {self.model.num_surfaces}")
         lines.append("")
 
         return "\n".join(lines)
 
+    def _format_global_aperture(self, lines: list[str]) -> None:
+        if "EPD" in self.model.aperture:
+            lines.append(f"EBR {self._fmt(self.model.aperture['EPD'] / 2.0)}")
+        if "FNO" in self.model.aperture:
+            lines.append(f"FNO {self._fmt(self.model.aperture['FNO'])}")
+        if "NAO" in self.model.aperture:
+            lines.append(f"NAO {self._fmt(self.model.aperture['NAO'])}")
+
+    def _format_field_commands(self, lines: list[str]) -> None:
+        if "y" not in self.model.fields:
+            return
+        field_type_cmd = (
+            "OBH" if self.model.fields.get("type") == "object_height" else "ANG"
+        )
+        for y in self.model.fields["y"]:
+            lines.append(f"{field_type_cmd} {self._fmt(y)}")
+
+    def _format_notes(self, lines: list[str]) -> None:
+        for cmd, content in self.model.notes.items():
+            if cmd == "DES":
+                continue  # already emitted explicitly above
+            lines.append(f'{cmd} "{content}"')
+
+    def _format_wavelength_footer(self, lines: list[str]) -> None:
+        """Emit WV/WW footer lines (after surfaces, before END) per convention."""
+        wl_data = self.model.wavelengths
+        vals = wl_data.get("values")
+        if not vals:
+            return
+
+        lines.append(f"WV {self._fmt_vals(vals)}")
+
+        weights = wl_data.get("weights")
+        if weights and len(weights) >= len(vals):
+            lines.append(f"WW {self._fmt_vals(weights[: len(vals)])}")
+
+    def _fmt_vals(self, values: list[float]) -> str:
+        """Format up to the first 3 values, matching OSLO's WV/WW convention."""
+        return " ".join(self._fmt(v) for v in values[:3])
+
     def _format_surface(
         self, lines: list[str], index: int, data: dict[str, Any]
     ) -> None:
-        # Medium
-        mat = data.get("material", "AIR")
-        lines.append(mat)
+        lines.append(data.get("material", "AIR"))
 
-        # Geometry
+        self._format_surface_geometry(lines, data)
+        self._format_surface_aspherics(lines, data)
+        self._format_surface_decenter_tilt(lines, data)
+        self._format_surface_solve_pickup(lines, data)
+
+        if index < self.model.num_surfaces:
+            lines.append("NXT")
+
+    def _format_surface_geometry(self, lines: list[str], data: dict[str, Any]) -> None:
         if "RD" in data and not math.isinf(data["RD"]):
             lines.append(f"RD {self._fmt(data['RD'])}")
 
         if "TH" in data:
-            if math.isinf(data["TH"]):
-                lines.append(f"TH {self._fmt(1e10)}")  # OSLO infinity representation
-            else:
-                lines.append(f"TH {self._fmt(data['TH'])}")
+            th = 1e10 if math.isinf(data["TH"]) else data["TH"]
+            lines.append(f"TH {self._fmt(th)}")  # 1e10 is OSLO's infinity convention
 
         if "AP" in data:
             lines.append(f"AP {self._fmt(data['AP'])}")
@@ -128,30 +126,25 @@ class OsloDataFormatter:
         if "CC" in data and data["CC"] != 0:
             lines.append(f"CC {self._fmt(data['CC'])}")
 
-        # Aspherics
-        if "AD" in data:
-            lines.append(f"AD {self._fmt(data['AD'])}")
-        if "AE" in data:
-            lines.append(f"AE {self._fmt(data['AE'])}")
-        if "AF" in data:
-            lines.append(f"AF {self._fmt(data['AF'])}")
-        if "AG" in data:
-            lines.append(f"AG {self._fmt(data['AG'])}")
+    def _format_surface_aspherics(self, lines: list[str], data: dict[str, Any]) -> None:
+        for key in ("AD", "AE", "AF", "AG"):
+            if key in data:
+                lines.append(f"{key} {self._fmt(data[key])}")
 
-        # Decenter/Tilt
-        for k in ["DCX", "DCY", "DCZ", "TLA", "TLB", "TLC"]:
-            if k in data and data[k] != 0:
-                lines.append(f"{k} {self._fmt(data[k])}")
+    def _format_surface_decenter_tilt(
+        self, lines: list[str], data: dict[str, Any]
+    ) -> None:
+        for key in ("DCX", "DCY", "DCZ", "TLA", "TLB", "TLC"):
+            if key in data and data[key] != 0:
+                lines.append(f"{key} {self._fmt(data[key])}")
 
-        # Solve/Pickup (optional/partial)
+    def _format_surface_solve_pickup(
+        self, lines: list[str], data: dict[str, Any]
+    ) -> None:
         if "PY" in data:
             lines.append(f"PY {self._fmt(data['PY'])}")
-
         if "PK" in data:
             lines.append(f"PK {' '.join(str(it) for it in data['PK'])}")
-
-        if index < self.model.num_surfaces:
-            lines.append("NXT")
 
     def _fmt(self, val: float) -> str:
         """Format float for OSLO using compact decimal notation (≤7 sig figs)."""

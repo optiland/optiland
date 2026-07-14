@@ -5,7 +5,7 @@
 **Optiland** is an open-source optical design library in Python for designing, analyzing, and optimizing optical systems. It provides comprehensive tools for ray tracing, optical system definition, aberration analysis, optimization, and visualization.
 
 ### Key Facts
-- **Version**: 0.6.0
+- **Version**: 0.6.1
 - **Languages**: Python 3.11-3.14
 - **Size**: ~25 core modules, 1700+ tests, comprehensive documentation
 - **Dependencies**: numpy, scipy, matplotlib, vtk, pandas, pyyaml, tabulate, numba, requests, seaborn

@@ -1441,6 +1441,48 @@ class TestIncoherentIrradiance:
         assert grad is not None
         assert be.to_numpy(grad) != 0
 
+    def test_irradiance_autodiff_matches_xy_indexing(
+        self, set_test_backend, test_system_irradiance_v1
+    ):
+        if be.get_backend() != "torch":
+            pytest.skip("Autodiff test only runs for torch backend")
+
+        optic_sys = test_system_irradiance_v1
+        res = (4, 6)
+        x_centers = np.array([-1.875, -0.625, 0.625, 1.875])
+        y_centers = np.array([-2.0833333333333335, -1.25, -0.4166666666666667])
+        x_coords = np.repeat(x_centers, len(y_centers))
+        y_coords = np.tile(y_centers, len(x_centers))
+        intensities = np.arange(1, x_coords.size + 1, dtype=float)
+
+        def make_rays():
+            num_rays = x_coords.size
+            return RealRays(
+                x=be.array(x_coords),
+                y=be.array(y_coords),
+                z=be.zeros((num_rays,)),
+                L=be.zeros((num_rays,)),
+                M=be.zeros((num_rays,)),
+                N=be.ones((num_rays,)),
+                intensity=be.array(intensities),
+                wavelength=be.full((num_rays,), 0.55),
+            )
+
+        be.grad_mode.disable()
+        irr_hist = analysis.IncoherentIrradiance(
+            optic_sys, res=res, user_initial_rays=make_rays()
+        )
+        hist_map = be.to_numpy(irr_hist.data[0][0][0])
+
+        be.grad_mode.enable()
+        irr_grad = analysis.IncoherentIrradiance(
+            optic_sys, res=res, user_initial_rays=make_rays()
+        )
+        grad_map = be.to_numpy(irr_grad.data[0][0][0])
+
+        assert grad_map.shape == hist_map.shape == res
+        assert_allclose(grad_map, hist_map, atol=1e-9)
+
 
 def test_incoherent_irradiance_initialization(
     set_test_backend, test_system_irradiance_v1

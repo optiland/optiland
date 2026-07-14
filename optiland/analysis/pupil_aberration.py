@@ -62,6 +62,34 @@ class PupilAberration(BaseAnalysis):
 
         super().__init__(optic, wavelengths)
 
+    def _plot_pupil_aberration_field(self, ax_y, ax_x, field, Px, Py) -> None:
+        """Plot the Py/Px aberration curves and axis styling for one field."""
+        for wp in self.wavelengths:
+            wavelength = wp.value
+            ex = self.data[f"{field}"][f"{wavelength}"]["x"]
+            ey = self.data[f"{field}"][f"{wavelength}"]["y"]
+            ax_y.plot(
+                be.to_numpy(Py),
+                be.to_numpy(ey),
+                zorder=3,
+                label=f"{wavelength:.4f} µm",
+            )
+            ax_x.plot(
+                be.to_numpy(Px),
+                be.to_numpy(ex),
+                zorder=3,
+                label=f"{wavelength:.4f} µm",
+            )
+
+        for ax, xlabel in ((ax_y, "$P_y$"), (ax_x, "$P_x$")):
+            ax.grid()
+            ax.axhline(0, lw=1, c="gray")
+            ax.axvline(0, lw=1, c="gray")
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel("Pupil Aberration (%)")
+            ax.set_xlim(-1, 1)
+            ax.set_title(f"Hx: {field[0]:.3f}, Hy: {field[1]:.3f}")
+
     def view(
         self,
         fig_to_plot_on: Figure | None = None,
@@ -131,39 +159,7 @@ class PupilAberration(BaseAnalysis):
 
         for k, fp in enumerate(self.fields):
             field = fp.coord
-            ax_y, ax_x = axs[k, 0], axs[k, 1]
-            for wp in self.wavelengths:
-                wavelength = wp.value
-                ex = self.data[f"{field}"][f"{wavelength}"]["x"]
-                ey = self.data[f"{field}"][f"{wavelength}"]["y"]
-                ax_y.plot(
-                    be.to_numpy(Py),
-                    be.to_numpy(ey),
-                    zorder=3,
-                    label=f"{wavelength:.4f} µm",
-                )
-                ax_x.plot(
-                    be.to_numpy(Px),
-                    be.to_numpy(ex),
-                    zorder=3,
-                    label=f"{wavelength:.4f} µm",
-                )
-
-            ax_y.grid()
-            ax_y.axhline(0, lw=1, c="gray")
-            ax_y.axvline(0, lw=1, c="gray")
-            ax_y.set_xlabel("$P_y$")
-            ax_y.set_ylabel("Pupil Aberration (%)")
-            ax_y.set_xlim(-1, 1)
-            ax_y.set_title(f"Hx: {field[0]:.3f}, Hy: {field[1]:.3f}")
-
-            ax_x.grid()
-            ax_x.axhline(0, lw=1, c="gray")
-            ax_x.axvline(0, lw=1, c="gray")
-            ax_x.set_xlabel("$P_x$")
-            ax_x.set_ylabel("Pupil Aberration (%)")
-            ax_x.set_xlim(-1, 1)
-            ax_x.set_title(f"Hx: {field[0]:.3f}, Hy: {field[1]:.3f}")
+            self._plot_pupil_aberration_field(axs[k, 0], axs[k, 1], field, Px, Py)
 
         if num_fields > 0:
             handles, labels = axs[0, 0].get_legend_handles_labels()

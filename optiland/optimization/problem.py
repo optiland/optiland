@@ -184,7 +184,7 @@ class OptimizationProblem:
 
         Each term is computed as::
 
-            effective_weight(op) * op.delta() ** 2
+            (effective_weight(op) * op.delta()) ** 2
 
         where ``effective_weight = operand.weight * field_weight * wl_weight``.
         Field and wavelength weights are read from the optic stored in each
@@ -207,7 +207,7 @@ class OptimizationProblem:
             ew = op.effective_weight()
             if ew == 0.0:
                 continue
-            terms.append(ew * op.delta() ** 2)
+            terms.append((ew * op.delta()) ** 2)
         if not terms:
             return be.array([0.0])
         return be.stack(terms)
@@ -230,13 +230,14 @@ class OptimizationProblem:
             active (non-zero effective-weight) operands.
         """
         if self._batched_evaluator is not None:
-            return self._batched_evaluator.weighted_residuals()
+            return self._batched_evaluator.residual_vector()
         terms = []
         for op in self.operands:
             ew = op.effective_weight()
             if ew == 0.0:
-                continue
-            terms.append(be.sqrt(be.array(ew)) * op.delta())
+                terms.append(be.array(0.0))
+            else:
+                terms.append(ew * op.delta())
         if not terms:
             return be.array([])
         return be.stack(terms)
@@ -352,14 +353,14 @@ class OptimizationProblem:
 
         df = pd.DataFrame(data)
 
-        # Contribution uses effective_weight × delta² per operand
+        # Contribution uses (effective_weight × delta)² per operand.
         ew_list = [op.effective_weight() for op in self.operands]
         contrib_values = []
         for op, ew in zip(self.operands, ew_list, strict=False):
             if ew == 0.0:
                 contrib_values.append(be.array(0.0))
             else:
-                contrib_values.append(be.array(ew) * op.delta() ** 2)
+                contrib_values.append((be.array(ew) * op.delta()) ** 2)
 
         total = sum(self._to_item(v) for v in contrib_values)
 
@@ -418,7 +419,7 @@ class OptimizationProblem:
         field weight (looked up from the optic via the operand's ``input_data``),
         and the wavelength weight.  The formula used in the merit function is::
 
-            effective_weight × delta ** 2
+            (effective_weight × delta) ** 2
 
         Each returned dict contains:
 

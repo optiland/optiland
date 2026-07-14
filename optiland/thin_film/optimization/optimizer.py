@@ -236,57 +236,11 @@ class ThinFilmOptimizer:
             ...     polarization="p",
             ... )
         """
-        operand_name = property if property is not None else operand_type
-        if (
-            property is not None
-            and operand_type is not None
-            and property != operand_type
-        ):
-            raise ValueError("property and operand_type must match when both set")
-        if operand_name is None:
-            raise ValueError("property or operand_type must be provided")
+        operand_name = self._resolve_operand_name(property, operand_type)
 
-        is_builtin_spectral = operand_name in ["R", "T", "A"]
-
-        if is_builtin_spectral:
-            if wavelength_nm is None:
-                raise ValueError("wavelength_nm is required for R/T/A operands")
-            if target_type is None:
-                raise ValueError("target_type is required for R/T/A operands")
-            if value is None:
-                raise ValueError("value is required for R/T/A operands")
-            if target_type not in ["equal", "below", "over"]:
-                raise ValueError(
-                    f"Invalid target_type '{target_type}'. Must be "
-                    "'equal', 'below', 'over'"
-                )
-
-            # Check that wavelength_nm and aoi_deg are not both arrays
-            is_wl_array = isinstance(wavelength_nm, list | np.ndarray)
-            is_aoi_array = isinstance(aoi_deg, list | np.ndarray)
-
-            if is_wl_array and is_aoi_array:
-                raise ValueError(
-                    "Cannot specify both wavelength_nm and aoi_deg as arrays "
-                    "simultaneously. Use one as array and the other as scalar."
-                )
-
-            # Validate value array dimensions
-            is_value_array = isinstance(value, list | np.ndarray)
-            if is_value_array:
-                if is_wl_array and len(value) != len(wavelength_nm):
-                    raise ValueError(
-                        f"Length of value array ({len(value)}) must match "
-                        f"length of wavelength_nm array ({len(wavelength_nm)})"
-                    )
-                if is_aoi_array and len(value) != len(aoi_deg):
-                    raise ValueError(
-                        f"Length of value array ({len(value)}) must match "
-                        f"length of aoi_deg array ({len(aoi_deg)})"
-                    )
-
-            operand = SpectralOptimizationOperand(
-                property=operand_name,
+        if operand_name in ("R", "T", "A"):
+            operand = self._build_spectral_operand(
+                operand_name,
                 wavelength_nm=wavelength_nm,
                 target_type=target_type,
                 value=value,
@@ -295,9 +249,111 @@ class ThinFilmOptimizer:
                 polarization=polarization,
                 tolerance=tolerance,
             )
-            self.operands.add(operand)
-            return self
+        else:
+            operand = self._build_custom_operand(
+                operand_name,
+                target_type=target_type,
+                wavelength_nm=wavelength_nm,
+                value=value,
+                target=target,
+                min_val=min_val,
+                max_val=max_val,
+                weight=weight,
+                input_data=input_data,
+                label=label,
+            )
 
+        self.operands.add(operand)
+        return self
+
+    @staticmethod
+    def _resolve_operand_name(property: str | None, operand_type: str | None) -> str:
+        """Resolve and validate the `property`/`operand_type` alias pair."""
+        if (
+            property is not None
+            and operand_type is not None
+            and property != operand_type
+        ):
+            raise ValueError("property and operand_type must match when both set")
+        operand_name = property if property is not None else operand_type
+        if operand_name is None:
+            raise ValueError("property or operand_type must be provided")
+        return operand_name
+
+    @staticmethod
+    def _build_spectral_operand(
+        operand_name: str,
+        *,
+        wavelength_nm: float | list[float] | None,
+        target_type: TargetType | None,
+        value: float | list[float] | None,
+        weight: float,
+        aoi_deg: float | list[float],
+        polarization: str,
+        tolerance: float,
+    ) -> SpectralOptimizationOperand:
+        """Validate and build a built-in R/T/A spectral operand."""
+        if wavelength_nm is None:
+            raise ValueError("wavelength_nm is required for R/T/A operands")
+        if target_type is None:
+            raise ValueError("target_type is required for R/T/A operands")
+        if value is None:
+            raise ValueError("value is required for R/T/A operands")
+        if target_type not in ["equal", "below", "over"]:
+            raise ValueError(
+                f"Invalid target_type '{target_type}'. Must be 'equal', 'below', 'over'"
+            )
+
+        # Check that wavelength_nm and aoi_deg are not both arrays
+        is_wl_array = isinstance(wavelength_nm, list | np.ndarray)
+        is_aoi_array = isinstance(aoi_deg, list | np.ndarray)
+
+        if is_wl_array and is_aoi_array:
+            raise ValueError(
+                "Cannot specify both wavelength_nm and aoi_deg as arrays "
+                "simultaneously. Use one as array and the other as scalar."
+            )
+
+        # Validate value array dimensions
+        is_value_array = isinstance(value, list | np.ndarray)
+        if is_value_array:
+            if is_wl_array and len(value) != len(wavelength_nm):
+                raise ValueError(
+                    f"Length of value array ({len(value)}) must match "
+                    f"length of wavelength_nm array ({len(wavelength_nm)})"
+                )
+            if is_aoi_array and len(value) != len(aoi_deg):
+                raise ValueError(
+                    f"Length of value array ({len(value)}) must match "
+                    f"length of aoi_deg array ({len(aoi_deg)})"
+                )
+
+        return SpectralOptimizationOperand(
+            property=operand_name,
+            wavelength_nm=wavelength_nm,
+            target_type=target_type,
+            value=value,
+            weight=weight,
+            aoi_deg=aoi_deg,
+            polarization=polarization,
+            tolerance=tolerance,
+        )
+
+    @staticmethod
+    def _build_custom_operand(
+        operand_name: str,
+        *,
+        target_type: TargetType | None,
+        wavelength_nm: float | list[float] | None,
+        value: float | list[float] | None,
+        target: float | None,
+        min_val: float | None,
+        max_val: float | None,
+        weight: float,
+        input_data: dict[str, Any] | None,
+        label: str | None,
+    ) -> ThinFilmCustomOperand:
+        """Validate and build a registered custom operand."""
         if operand_name not in thin_film_operand_registry:
             raise ValueError(
                 f"Invalid property '{operand_name}'. Must be 'R', 'T', 'A' "
@@ -315,7 +371,7 @@ class ThinFilmOptimizer:
                 "Custom operand cannot mix equality and inequality targets"
             )
 
-        operand = ThinFilmCustomOperand(
+        return ThinFilmCustomOperand(
             operand_type=operand_name,
             target=target,
             min_val=min_val,
@@ -324,8 +380,6 @@ class ThinFilmOptimizer:
             input_data=input_data,
             label=label,
         )
-        self.operands.add(operand)
-        return self
 
     def add_angular_operand(
         self,
@@ -664,6 +718,140 @@ class ThinFilmOptimizer:
             num_points=num_points,
         )
 
+    @staticmethod
+    def _print_table(rows: list[list], headers: list[str], tabulate) -> None:
+        """Print *rows* as a grid table, falling back to fixed-width columns."""
+        if tabulate:
+            print(tabulate(rows, headers=headers, tablefmt="grid"))
+            return
+
+        widths = [
+            max(len(h), 15) if i == 0 else max(len(h), 10)
+            for i, h in enumerate(headers)
+        ]
+        print(" ".join(f"{h:<{w}}" for h, w in zip(headers, widths, strict=False)))
+        print("-" * (sum(widths) + len(widths)))
+        for row in rows:
+            print(
+                " ".join(f"{cell!s:<{w}}" for cell, w in zip(row, widths, strict=False))
+            )
+
+    def _print_summary_table(self, tabulate) -> None:
+        """Print the layer/variable/target counts table."""
+        summary_data = [
+            ["Stack layers", len(self.stack.layers)],
+            ["Variables", len(self.variables)],
+            ["Targets", len(self.targets)],
+        ]
+        self._print_table(summary_data, ["Property", "Count"], tabulate)
+        print()
+
+    def _format_variable_bound(
+        self, var_info: VariableInfo, bound: float | None
+    ) -> str:
+        """Format a variable's min/max bound in nm, undoing scaling if applied."""
+        if bound is None:
+            return "None"
+        if var_info.variable.apply_scaling:
+            bound_um = var_info.variable.inverse_scale(bound)
+            return f"{bound_um * 1000:.1f}"
+        return f"{bound * 1000:.1f}"
+
+    def _print_variables_table(self, tabulate) -> None:
+        """Print the per-variable thickness/bounds table."""
+        print("Variables:")
+        var_data = []
+        for i, var_info in enumerate(self.variables):
+            layer = self.stack.layers[var_info.layer_index]
+            var_data.append(
+                [
+                    i,
+                    var_info.layer_index,
+                    f"{layer.thickness_um * 1000:.1f}",
+                    self._format_variable_bound(var_info, var_info.min_val),
+                    self._format_variable_bound(var_info, var_info.max_val),
+                ]
+            )
+
+        headers = ["ID", "Layer", "Thickness (nm)", "Min (nm)", "Max (nm)"]
+        self._print_table(var_data, headers, tabulate)
+        print()
+
+    @staticmethod
+    def _format_custom_target_row(index: int, target) -> list:
+        """Format a table row for a non-spectral (custom) target."""
+        return [
+            index,
+            getattr(target, "display_name", getattr(target, "operand_type", "custom")),
+            "custom",
+            getattr(target, "target", ""),
+            "-",
+            "-",
+            f"{target.weight:.1f}",
+            "-",
+        ]
+
+    @staticmethod
+    def _format_spectral_target_row(index: int, target) -> list:
+        """Format a table row for a spectral R/T/A target."""
+        if isinstance(target.wavelength_nm, list | np.ndarray):
+            wl_str = (
+                f"{len(target.wavelength_nm)} λ "
+                f"({min(target.wavelength_nm):.0f}-{max(target.wavelength_nm):.0f})"
+            )
+        else:
+            wl_str = f"{target.wavelength_nm:.0f}"
+
+        if isinstance(target.aoi_deg, list | np.ndarray):
+            aoi_str = (
+                f"{len(target.aoi_deg)} θ "
+                f"({min(target.aoi_deg):.0f}-{max(target.aoi_deg):.0f}°)"
+            )
+        else:
+            aoi_str = f"{target.aoi_deg:.1f}°"
+
+        if isinstance(target.value, list | np.ndarray):
+            value_str = f"interp ({min(target.value):.3f}-{max(target.value):.3f})"
+        else:
+            value_str = f"{float(target.value):.3f}"
+
+        return [
+            index,
+            target.property,
+            target.target_type,
+            value_str,
+            wl_str,
+            aoi_str,
+            f"{target.weight:.1f}",
+            target.polarization,
+        ]
+
+    def _print_targets_table(self, tabulate) -> None:
+        """Print the per-target optimization operand table."""
+        print("Targets:")
+        target_data = [
+            self._format_spectral_target_row(i, target)
+            if isinstance(target, SpectralOptimizationOperand)
+            else self._format_custom_target_row(i, target)
+            for i, target in enumerate(self.targets)
+        ]
+
+        headers = ["ID", "Prop", "Type", "Value", "Wavelength", "AOI", "Weight", "Pol"]
+        self._print_table(target_data, headers, tabulate)
+        print()
+
+    def _print_results_table(self, tabulate) -> None:
+        """Print the last optimization result table."""
+        print("Last Optimization Result:")
+        result_data = [
+            ["Success", "Yes" if self.result.success else "No"],
+            ["Merit Function", f"{self.result.fun:.6f}"],
+            ["Iterations", f"{self.result.nit}"],
+            ["Method", getattr(self.result, "method", "N/A")],
+        ]
+        self._print_table(result_data, ["Metric", "Value"], tabulate)
+        print()
+
     def info(self) -> None:
         """Display information about the optimizer state in tabular format."""
         try:
@@ -675,184 +863,10 @@ class ThinFilmOptimizer:
         print("ThinFilm Optimizer Information")
         print("=" * 50)
 
-        # Summary table
-        summary_data = [
-            ["Stack layers", len(self.stack.layers)],
-            ["Variables", len(self.variables)],
-            ["Targets", len(self.targets)],
-        ]
-
-        if tabulate:
-            print(
-                tabulate(summary_data, headers=["Property", "Count"], tablefmt="grid")
-            )
-        else:
-            print(f"{'Property':<15} {'Count':<10}")
-            print("-" * 25)
-            for prop, count in summary_data:
-                print(f"{prop:<15} {count:<10}")
-        print()
-
-        # Variables table
+        self._print_summary_table(tabulate)
         if self.variables:
-            print("Variables:")
-            var_data = []
-            for i, var_info in enumerate(self.variables):
-                layer = self.stack.layers[var_info.layer_index]
-                thickness_nm = layer.thickness_um * 1000
-
-                # Handle bounds correctly with scaling
-                if var_info.min_val is not None:
-                    # If scaling was applied, inverse scale to get real μm value,
-                    # then convert to nm
-                    if var_info.variable.apply_scaling:
-                        min_um = var_info.variable.inverse_scale(var_info.min_val)
-                        min_bound = f"{min_um * 1000:.1f}"
-                    else:
-                        min_bound = f"{var_info.min_val * 1000:.1f}"
-                else:
-                    min_bound = "None"
-
-                if var_info.max_val is not None:
-                    # If scaling was applied, inverse scale to get real μm value,
-                    # then convert to nm
-                    if var_info.variable.apply_scaling:
-                        max_um = var_info.variable.inverse_scale(var_info.max_val)
-                        max_bound = f"{max_um * 1000:.1f}"
-                    else:
-                        max_bound = f"{var_info.max_val * 1000:.1f}"
-                else:
-                    max_bound = "None"
-
-                var_data.append(
-                    [
-                        i,
-                        var_info.layer_index,
-                        f"{thickness_nm:.1f}",
-                        min_bound,
-                        max_bound,
-                    ]
-                )
-
-            headers = ["ID", "Layer", "Thickness (nm)", "Min (nm)", "Max (nm)"]
-            if tabulate:
-                print(tabulate(var_data, headers=headers, tablefmt="grid"))
-            else:
-                print(
-                    f"{'ID':<4} {'Layer':<6} {'Thickness (nm)':<15} "
-                    f"{'Min (nm)':<10} {'Max (nm)':<10}"
-                )
-                print("-" * 60)
-                for row in var_data:
-                    print(
-                        f"{row[0]:<4} {row[1]:<6} {row[2]:<15} "
-                        f"{row[3]:<10} {row[4]:<10}"
-                    )
-            print()
-
-        # Targets table
+            self._print_variables_table(tabulate)
         if self.targets:
-            print("Targets:")
-            target_data = []
-            for i, target in enumerate(self.targets):
-                if not isinstance(target, SpectralOptimizationOperand):
-                    target_data.append(
-                        [
-                            i,
-                            getattr(
-                                target,
-                                "display_name",
-                                getattr(target, "operand_type", "custom"),
-                            ),
-                            "custom",
-                            getattr(target, "target", ""),
-                            "-",
-                            "-",
-                            f"{target.weight:.1f}",
-                            "-",
-                        ]
-                    )
-                    continue
-
-                # Handle different parameter types for display
-                if isinstance(target.wavelength_nm, list | np.ndarray):
-                    wl_str = (
-                        f"{len(target.wavelength_nm)} λ "
-                        f"({min(target.wavelength_nm):.0f}-{max(target.wavelength_nm):.0f})"
-                    )
-                else:
-                    wl_str = f"{target.wavelength_nm:.0f}"
-
-                if isinstance(target.aoi_deg, list | np.ndarray):
-                    aoi_str = (
-                        f"{len(target.aoi_deg)} θ "
-                        f"({min(target.aoi_deg):.0f}-{max(target.aoi_deg):.0f}°)"
-                    )
-                else:
-                    aoi_str = f"{target.aoi_deg:.1f}°"
-
-                if isinstance(target.value, list | np.ndarray):
-                    value_str = (
-                        f"interp ({min(target.value):.3f}-{max(target.value):.3f})"
-                    )
-                else:
-                    value_str = f"{float(target.value):.3f}"
-
-                target_data.append(
-                    [
-                        i,
-                        target.property,
-                        target.target_type,
-                        value_str,
-                        wl_str,
-                        aoi_str,
-                        f"{target.weight:.1f}",
-                        target.polarization,
-                    ]
-                )
-
-            headers = [
-                "ID",
-                "Prop",
-                "Type",
-                "Value",
-                "Wavelength",
-                "AOI",
-                "Weight",
-                "Pol",
-            ]
-            if tabulate:
-                print(tabulate(target_data, headers=headers, tablefmt="grid"))
-            else:
-                print(
-                    f"{'ID':<3} {'Prop':<4} {'Type':<6} {'Value':<18} "
-                    f"{'Wavelength':<12} {'AOI':<12} {'Weight':<7} {'Pol':<3}"
-                )
-                print("-" * 80)
-                for row in target_data:
-                    print(
-                        f"{row[0]:<3} {row[1]:<4} {row[2]:<6} {row[3]:<18} "
-                        f"{row[4]:<12} {row[5]:<12} {row[6]:<7} {row[7]:<3}"
-                    )
-            print()
-
-        # Optimization results table
+            self._print_targets_table(tabulate)
         if self.result:
-            print("Last Optimization Result:")
-            result_data = [
-                ["Success", "Yes" if self.result.success else "No"],
-                ["Merit Function", f"{self.result.fun:.6f}"],
-                ["Iterations", f"{self.result.nit}"],
-                ["Method", getattr(self.result, "method", "N/A")],
-            ]
-
-            if tabulate:
-                print(
-                    tabulate(result_data, headers=["Metric", "Value"], tablefmt="grid")
-                )
-            else:
-                print(f"{'Metric':<15} {'Value':<15}")
-                print("-" * 30)
-                for metric, value in result_data:
-                    print(f"{metric:<15} {value:<15}")
-            print()
+            self._print_results_table(tabulate)
