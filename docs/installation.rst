@@ -61,10 +61,11 @@ Development Extras
 ------------------
 
 To install Optiland's development dependencies-pytest, codecov, and linting tools-use:
+*(Note: This requires cloning the repository from source)*
 
 .. code-block:: console
 
-   pip install optiland[dev]
+   pip install "." --group dev
 
 GPU‑Enabled PyTorch (Manual Install)
 ------------------------------------
@@ -83,7 +84,7 @@ Installing from Source
 
 To clone and install the latest development version:
 
-1. **Clone the repository**  
+1. **Clone the repository**
 
    .. code-block:: console
 
@@ -95,25 +96,25 @@ To clone and install the latest development version:
 
       cd optiland
 
-3. **Install with optional extras**  
+3. **Install with optional extras**
 
-   - Core only:  
+   - Core only:
 
      .. code-block:: console
 
         pip install .
 
-   - With PyTorch support (CPU‑only):  
+   - With PyTorch support (CPU‑only):
 
      .. code-block:: console
 
         pip install .[torch]
 
-   - With development dependencies:  
+   - With development dependencies:
 
      .. code-block:: console
 
-        pip install .[dev]
+        pip install "." --group dev
 
 
 Verify Your Installation
