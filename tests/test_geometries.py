@@ -1317,6 +1317,48 @@ class TestZernikeGeometry:
         assert new_geometry.zernike_type == geometry.zernike_type
         assert new_geometry.norm_radius == geometry.norm_radius
 
+    @pytest.mark.parametrize(
+        "coefficients",
+        [
+            [0.0, 0.5, 0.0],
+            [0.0, 0.0, 0.5],
+        ],
+    )
+    def test_surface_normal_at_center(self, set_test_backend, coefficients):
+        geometry = self.create_geometry(
+            coefficients=coefficients,
+            norm_radius=2.0,
+            zernike_type="standard",
+            radius=be.inf,
+        )
+
+        h = 1e-6
+        dzdx = (geometry.sag(h, 0.0) - geometry.sag(-h, 0.0)) / (2 * h)
+        dzdy = (geometry.sag(0.0, h) - geometry.sag(0.0, -h)) / (2 * h)
+
+        norm = be.sqrt(dzdx**2 + dzdy**2 + 1)
+        expected = (dzdx / norm, dzdy / norm, -1 / norm)
+
+        actual = geometry._surface_normal(be.array(0.0), be.array(0.0))
+
+        assert_allclose(actual, expected, atol=1e-8)
+
+    @pytest.mark.parametrize("set_test_backend", ["torch"], indirect=True)
+    def test_surface_normal_at_center_autograd(self, set_test_backend):
+        geometry = self.create_geometry(
+            coefficients=[0.0, 0.0, 0.5],
+            norm_radius=2.0,
+            zernike_type="standard",
+            radius=be.inf,
+        )
+        geometry.coefficients.requires_grad_(True)
+
+        nx, _, _ = geometry._surface_normal(be.array(0.0), be.array(0.0))
+        nx.backward()
+
+        assert geometry.coefficients.grad is not None
+        assert be.all(be.isfinite(geometry.coefficients.grad))
+
 
 # --- Fixtures for Toroidal Tests ---
 @pytest.fixture

@@ -281,9 +281,26 @@ class ZernikePolynomialGeometry(NewtonRaphsonGeometry):
             dZdrho, dZdphi = self.zernike.get_derivative(n, m, rho, phi)
             norm_constant = self.zernike._norm_constant(n, m)
 
-            # Partial derivatives w.r.t. x and y
-            dzdx = dzdx + norm_constant * c * (dZdrho * drho_dx + dZdphi * dphi_dx)
-            dzdy = dzdy + norm_constant * c * (dZdrho * drho_dy + dZdphi * dphi_dy)
+            derivative_x = dZdrho * drho_dx + dZdphi * dphi_dx
+            derivative_y = dZdrho * drho_dy + dZdphi * dphi_dy
+
+            if abs(m) == 1:
+                center_slope = (
+                    self.zernike._radial_derivative(
+                        n,
+                        m,
+                        be.zeros_like(rho),
+                    )
+                    / self.norm_radius
+                )
+
+                if m > 0:
+                    derivative_x = be.where(center, center_slope, derivative_x)
+                else:
+                    derivative_y = be.where(center, center_slope, derivative_y)
+
+            dzdx = dzdx + norm_constant * c * derivative_x
+            dzdy = dzdy + norm_constant * c * derivative_y
 
         # Surface normal vector in cartesian coords: (-dzdx, -dzdy, 1)
         # normalized. Check sign conventions!
