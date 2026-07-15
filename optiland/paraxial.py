@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import optiland.backend as be
-from optiland.fields import ParaxialImageHeightField
+from optiland.fields import ObjectHeightField, ParaxialImageHeightField
 from optiland.raytrace.paraxial_ray_tracer import ParaxialRayTracer
 
 if TYPE_CHECKING:
@@ -405,12 +405,20 @@ class Paraxial:
         y_obj_unit = y_rev_unit[-1]
         u_obj_unit = u_rev_unit[-1]
 
+        field_definition = self.optic.fields.field_definition
+        if not self.optic.object_surface.is_infinite and isinstance(
+            field_definition, ObjectHeightField
+        ):
+            first_surface_z = self.surfaces.positions[1, 0]
+            object_z = self.optic.object_surface.geometry.cs.z
+            y_obj_unit = y_obj_unit + (first_surface_z - object_z) * u_obj_unit
+
         # Scale based on field definition
-        if self.optic.fields.field_definition is None:
+        if field_definition is None:
             # TODO: make some nice error message
             raise ValueError()
 
-        scaling_factor = self.optic.fields.field_definition.scale_chief_ray_for_field(
+        scaling_factor = field_definition.scale_chief_ray_for_field(
             self.optic, y_obj_unit, u_obj_unit, y_img_unit
         )
 
