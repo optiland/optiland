@@ -113,3 +113,16 @@ These examples demonstrate how Optiland can be used in conjunction with machine 
    Tutorial 9d: Optimizing Aspheric Singlet Lenses using Reinforcement Learning <examples/Tutorial_9d_Optimizing_Aspheric_Singlets_via_Reinforcement_Learning>
    Tutorial 9e: Wavefront Map Super-Resolution Using Generative Adversarial Networks (SR-GAN) <examples/Tutorial_9e_Wavefront_Super_Resolution_via_Generative_Adversarial_Networks>
    Tutorial 9f: Predicting Physical Lens Misalignments from Optical Spot Diagrams <examples/Tutorial_9f_Predicting_Physical_Lens_Misalignments_from_Spot_Diagrams>
+
+
+10. Manufacturing & Fabrication Drawings
+----------------------------------------
+
+This example demonstrates how to generate ISO 10110-compliant fabrication
+drawings (DXF and PDF) directly from an Optiland lens design, including
+per-surface and per-element tolerance annotations.
+
+.. toctree::
+   :maxdepth: 1
+
+   Tutorial 10a: ISO 10110 Fabrication Drawings <examples/Tutorial_10a_ISO_10110_Drawings>
