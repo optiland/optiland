@@ -78,6 +78,18 @@ class TestToroidalRadiusVariable:
         assert_allclose(radius_x.get_value(), 30.0)
         assert_allclose(radius_y.get_value(), 40.0)
 
+    @pytest.mark.parametrize(
+        ("axis", "expected"),
+        [
+            ("x", "Radius X, Surface 1"),
+            ("y", "Radius Y, Surface 1"),
+        ],
+    )
+    def test_string_representation(self, optic, axis, expected):
+        radius = variable.RadiusVariable(optic, surface_number=1, axis=axis)
+
+        assert str(radius) == expected
+
     def test_update_x_radius(self, optic):
         radius_x = variable.RadiusVariable(optic, surface_number=1, axis="x")
         radius_x.update_value(35.0)
