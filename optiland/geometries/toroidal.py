@@ -83,6 +83,33 @@ class ToroidalGeometry(NewtonRaphsonGeometry):
         )
         self.eps = 1e-14  # safe div
 
+    def set_radius_x(self, value: float) -> None:
+        """Set the X-Z radius of rotation.
+
+        Args:
+            value: New X-Z radius of rotation.
+        """
+        self.R_rot = be.array(value)
+
+    def set_radius(self, value: float) -> None:
+        """Set the default radius, which is the Y-Z profile radius.
+
+        Args:
+            value: New Y-Z profile radius.
+        """
+        self.set_radius_y(value)
+
+    def set_radius_y(self, value: float) -> None:
+        """Set the Y-Z profile radius and dependent geometry state.
+
+        Args:
+            value: New Y-Z profile radius.
+        """
+        radius = be.array(value)
+        self.R_yz = radius
+        self.radius = radius
+        self.c_yz = 1.0 / radius if be.isfinite(radius) and radius != 0 else 0.0
+
     def _calculate_zy(self, y: be.ndarray) -> be.ndarray:
         """Calculates the sag of the base Y-Z curve.
 
