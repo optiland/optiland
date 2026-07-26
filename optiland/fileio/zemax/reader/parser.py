@@ -171,29 +171,18 @@ class ZemaxDataParser:
             fields["num_fields"] = 1
 
     def _read_x_fields(self, data: list[str]) -> None:
-        if self._ftyp:
-            n = self.data_model.fields["num_fields"]
-        else:
-            n = len(data)
+        n = self.data_model.fields["num_fields"] if self._ftyp else len(data)
         self.data_model.fields["x"] = [float(v) for v in data[1 : n + 1]]
 
     def _read_y_fields(self, data: list[str]) -> None:
-        if self._ftyp:
-            n = self.data_model.fields["num_fields"]
-        else:
-            n = len(data)
+        n = self.data_model.fields["num_fields"] if self._ftyp else len(data)
         self.data_model.fields["y"] = [float(v) for v in data[1 : n + 1]]
 
     def _read_wavelength(self, data: list[str]) -> None:
         val = float(data[2])
         weight = float(data[3]) if len(data) > 3 else 1.0
-        if self._ftyp:
-            n = self.data_model.wavelengths["num_wavelengths"]
-        else:
-            n = len(data)
-        if (
-            len(self.data_model.wavelengths["data"]) < n
-        ):
+        n = self.data_model.wavelengths["num_wavelengths"] if self._ftyp else len(data)
+        if len(self.data_model.wavelengths["data"]) < n:
             self.data_model.wavelengths["data"].append(val)
             self.data_model.wavelengths["weights"].append(weight)
 

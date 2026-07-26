@@ -230,7 +230,7 @@ class OpticToZemaxConverter:
     def _resolve_geometry_type(self, surface: Any, output_idx: int) -> str:
         """Map a surface's geometry to a Zemax-supported Optiland type string."""
         geom_str = str(surface.geometry)
-        if (surface.interaction_model.interaction_type == "thin_lens"):
+        if surface.interaction_model.interaction_type == "thin_lens":
             optiland_type = "paraxial"
         else:
             optiland_type = _GEOM_STR_TO_TYPE.get(geom_str)

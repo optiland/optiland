@@ -172,11 +172,11 @@ class OsloToOpticConverter(BaseOpticReader):
         if th >= 9.9e9:
             th = be.inf
         surface_params["thickness"] = th
-        
+
         # Is paraxial?
         if "PFL" in data:
             surface_params["surface_type"] = "paraxial"
-            surface_params["f"] = data["PFL"]        
+            surface_params["f"] = data["PFL"]
 
         # Handle material
         material_raw = data.get("material", "AIR")

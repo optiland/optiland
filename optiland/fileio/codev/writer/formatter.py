@@ -221,7 +221,7 @@ class OpticToCodeVConverter:
         # Paraxial surface
         if surface.interaction_model.interaction_type == "thin_lens":
             raw["paraxial"] = float(surface.interaction_model.f)
-            
+
         # Glass — check reflective flag first (mirror)
         is_reflective = getattr(
             getattr(surface, "interaction_model", None), "is_reflective", False

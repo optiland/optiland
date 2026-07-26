@@ -210,11 +210,11 @@ class CodeVFileEncoder:
             lines.append(f"  CIR CLR {_fmt(r_max)}")
         except AttributeError:
             pass
-        
+
     def _encode_paraxial(self, lines: list[str], raw: dict[str, Any]) -> None:
         paraxial = raw.get("paraxial")
         if paraxial is not None:
-            lines.append(f"  MFL {_fmt(float(paraxial))}")        
+            lines.append(f"  MFL {_fmt(float(paraxial))}")
 
     def _encode_glass_inline(self, glass: dict[str, Any]) -> str:
         """Build the glass string for the surface line.

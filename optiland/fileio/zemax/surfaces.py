@@ -181,8 +181,8 @@ class StandardSurfaceHandler(BaseSurfaceHandler):
             "CURV": _curvature(float(geom.radius)),
             "CONI": float(getattr(geom, "k", 0.0)),
         }
-    
-    
+
+
 @register
 class ParaxialSurfaceHandler(BaseSurfaceHandler):
     """Handler for PARAXIAL surfaces."""
@@ -217,7 +217,7 @@ class ParaxialSurfaceHandler(BaseSurfaceHandler):
         return {
             "TYPE": self.zemax_type,
             "CURV": _curvature(float(geom.radius)),
-            "PARM_1": float(surface.interaction_model.f)
+            "PARM_1": float(surface.interaction_model.f),
         }
 
 

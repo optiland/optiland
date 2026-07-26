@@ -125,7 +125,7 @@ class OsloDataFormatter:
 
         if data.get("PFL"):
             lines.append(f"  PFL {self._fmt(data['PFL'])}")
-            
+
         if "CC" in data and data["CC"] != 0:
             lines.append(f"CC {self._fmt(data['CC'])}")
 

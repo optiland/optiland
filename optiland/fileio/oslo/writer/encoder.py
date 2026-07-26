@@ -151,7 +151,7 @@ class OpticToOsloEncoder:
                 # fields; without it only the chief ray is plotted.
                 with contextlib.suppress(Exception):
                     surf_data["AP"] = float(self.optic.paraxial.EPD()) / 2.0
-                    
+
             # Paraxial case
             if is_paraxial:
                 surf_data["PFL"] = float(surface.interaction_model.f)
