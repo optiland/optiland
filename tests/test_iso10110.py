@@ -2621,3 +2621,97 @@ class TestOptionalEzdxfDependency:
         report = ISO10110Report(spec)
         with pytest.raises(ImportError, match="manufacturing"):
             report.save_dxf(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# elements.py — LensElement.semi_aperture() must respect a physical aperture
+# (e.g. RadialAperture) rather than ignoring it in favor of the ray-traced
+# or paraxial marginal-ray height. Reported by Axel: drawings did not show
+# the correct diameter for surfaces with a RadialAperture.
+# ---------------------------------------------------------------------------
+
+def _make_singlet_with_aperture(r_max, call_update_paraxial=False):
+    """Return a singlet Optic with an explicit RadialAperture on surface 1."""
+    from optiland.optic import Optic
+    from optiland.physical_apertures import RadialAperture
+
+    lens = Optic()
+    lens.surfaces.add(index=0, thickness=float("inf"))
+    lens.surfaces.add(
+        index=1, thickness=6.0, radius=50.0, material="N-BK7", is_stop=True,
+        aperture=RadialAperture(r_max=r_max),
+    )
+    lens.surfaces.add(index=2, thickness=50.0)
+    lens.surfaces.add(index=3)
+    lens.set_aperture(aperture_type="EPD", value=10.0)
+    lens.fields.set_type("angle")
+    lens.fields.add(y=0)
+    lens.wavelengths.add(value=0.5876)
+    if call_update_paraxial:
+        lens.updater.update_paraxial()
+    return lens
+
+
+class TestRadialApertureSemiAperture:
+    def test_aperture_respected_without_update_paraxial(self):
+        """RadialAperture must be used even when update_paraxial() was never
+        called — surf.semi_aperture is None in that case, so the fix must
+        not rely on it having been populated first."""
+        from optiland.iso10110.elements import identify_elements
+
+        lens = _make_singlet_with_aperture(r_max=8.0, call_update_paraxial=False)
+        e = identify_elements(lens)[0]
+        assert e.semi_aperture(0, lens) == 8.0
+
+    def test_aperture_respected_after_update_paraxial(self):
+        """RadialAperture must win even when it is larger than the marginal
+        ray height (EPD=10 -> ray height 5.0 < r_max=8.0)."""
+        from optiland.iso10110.elements import identify_elements
+
+        lens = _make_singlet_with_aperture(r_max=8.0, call_update_paraxial=True)
+        e = identify_elements(lens)[0]
+        assert e.semi_aperture(0, lens) == 8.0
+
+    def test_aperture_smaller_than_ray_height_vignetting(self):
+        """When the physical aperture is *smaller* than the ray bundle
+        (vignetting), the drawing must show the true, smaller mechanical
+        edge -- not the larger unclipped ray height."""
+        from optiland.iso10110.elements import identify_elements
+
+        lens = _make_singlet_with_aperture(r_max=3.0, call_update_paraxial=True)
+        e = identify_elements(lens)[0]
+        assert e.semi_aperture(0, lens) == 3.0
+
+    def test_no_aperture_falls_back_to_paraxial(self):
+        """Surfaces without a physical aperture must still fall back to the
+        paraxial marginal-ray estimate, unchanged from before this fix."""
+        from optiland.iso10110.elements import identify_elements
+
+        lens = _make_singlet()  # no aperture set on the surfaces
+        e = identify_elements(lens)[0]
+        # EPD=20 -> marginal ray height at surface 1 == 10.0
+        assert e.semi_aperture(0, lens) == pytest.approx(10.0)
+
+    def test_offset_radial_aperture_uses_max_abs_extent(self):
+        """OffsetRadialAperture's extent is off-axis; the drawing's single
+        symmetric radius must cover the full offset reach."""
+        from optiland.optic import Optic
+        from optiland.physical_apertures import OffsetRadialAperture
+        from optiland.iso10110.elements import identify_elements
+
+        lens = Optic()
+        lens.surfaces.add(index=0, thickness=float("inf"))
+        lens.surfaces.add(
+            index=1, thickness=6.0, radius=50.0, material="N-BK7", is_stop=True,
+            aperture=OffsetRadialAperture(r_max=3.0, offset_x=2.0),
+        )
+        lens.surfaces.add(index=2, thickness=50.0)
+        lens.surfaces.add(index=3)
+        lens.set_aperture(aperture_type="EPD", value=10.0)
+        lens.fields.set_type("angle")
+        lens.fields.add(y=0)
+        lens.wavelengths.add(value=0.5876)
+
+        e = identify_elements(lens)[0]
+        # extent = (2.0-3.0, 2.0+3.0, -3.0, 3.0) = (-1.0, 5.0, -3.0, 3.0)
+        assert e.semi_aperture(0, lens) == 5.0

@@ -38,6 +38,28 @@ def is_air(material) -> bool:
         return False
 
 
+def _physical_aperture_radius(aperture) -> float | None:
+    """Return the max radial extent of a physical aperture, or None.
+
+    Mirrors the priority given to ``surface.aperture.extent`` in
+    ``optiland.visualization.system.surface`` — an explicitly configured
+    physical aperture (e.g. ``RadialAperture``) defines the actual
+    manufactured/clipped edge of the surface, so it must take priority over
+    any ray-traced or paraxial estimate: that is the whole point of setting
+    one, whether it is larger *or* smaller than the illuminated ray bundle
+    (vignetting). Returns None when the aperture has no finite extent (e.g.
+    an unbounded boolean combination), so the caller can fall back.
+    """
+    try:
+        extent = np.abs(np.asarray(be.to_numpy(be.array(aperture.extent)), dtype=float))
+    except Exception:
+        return None
+    finite = extent[np.isfinite(extent)]
+    if finite.size == 0:
+        return None
+    return float(finite.max())
+
+
 # ---------------------------------------------------------------------------
 # LensElement
 # ---------------------------------------------------------------------------
@@ -83,14 +105,27 @@ class LensElement:
     def semi_aperture(self, surf_local_idx: int, optic: Optic) -> float:
         """Return the semi-aperture of a surface within this element.
 
-        Falls back to the paraxial marginal ray height when ``semi_aperture``
-        has not yet been populated by a real ray trace.
+        An explicitly configured physical aperture (e.g. ``RadialAperture``)
+        takes priority, since it defines the actual manufactured/clipped
+        edge of the surface — this matters both when it is smaller than the
+        ray bundle (vignetting: the drawing must show the true, smaller
+        mechanical edge, not the unclipped ray height) and when it is
+        larger (an intentionally oversized blank). Falls back to
+        ``semi_aperture`` populated by ``optic.updater.update_paraxial()``,
+        and finally to a direct paraxial marginal-ray estimate when neither
+        is available.
 
         Args:
             surf_local_idx: 0-based index within this element's surface list.
             optic: The parent optic (used for the paraxial fallback).
         """
         surf = self.surfaces[surf_local_idx]
+
+        if surf.aperture is not None:
+            r = _physical_aperture_radius(surf.aperture)
+            if r is not None:
+                return r
+
         if surf.semi_aperture is not None:
             return float(abs(np.asarray(be.to_numpy(be.array(surf.semi_aperture)))))
         # Paraxial fallback
