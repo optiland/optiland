@@ -33,6 +33,7 @@ You are an expert Python software engineer specializing in optical design algori
 from __future__ import annotations
 import numpy as np
 
+
 class SphericalSurface:
     """Represents a spherical optical surface.
 
@@ -46,7 +47,7 @@ class SphericalSurface:
     def calculate_sag(self, h: np.ndarray) -> np.ndarray:
         """Calculates the surface sag at given radial heights."""
         c = 1.0 / self.radius_of_curvature
-        return (c * h**2) / (1.0 + np.sqrt(1.0 - (c * h)**2))
+        return (c * h**2) / (1.0 + np.sqrt(1.0 - (c * h) ** 2))
 ```
 
 ## Boundaries
