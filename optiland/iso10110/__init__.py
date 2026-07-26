@@ -44,9 +44,11 @@ from optiland.iso10110.elements import LensElement, identify_elements
 from optiland.iso10110.notation import ElementSpec, SurfaceSpec
 from optiland.iso10110.report import ISO10110Report
 from optiland.iso10110.spec import DrawingSpec
+from optiland.iso10110.style import DrawingStyle
 
 __all__ = [
     "DrawingSpec",
+    "DrawingStyle",
     "ISO10110Report",
     "ElementDrawing",
     "LensElement",

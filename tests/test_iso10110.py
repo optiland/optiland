@@ -2715,3 +2715,140 @@ class TestRadialApertureSemiAperture:
         e = identify_elements(lens)[0]
         # extent = (2.0-3.0, 2.0+3.0, -3.0, 3.0) = (-1.0, 5.0, -3.0, 3.0)
         assert e.semi_aperture(0, lens) == 5.0
+
+
+# ---------------------------------------------------------------------------
+# style.py — DrawingStyle font-size scale factors and border margin.
+# Requested by Axel: font sizes / text positions should be user-configurable
+# rather than hardcoded in the renderers.
+# ---------------------------------------------------------------------------
+
+class TestDrawingStyle:
+    def test_defaults(self):
+        from optiland.iso10110 import DrawingStyle
+
+        s = DrawingStyle()
+        assert s.table_body_scale == 1.0
+        assert s.dimension_scale == 1.0
+        assert s.axis_label_scale == 1.0
+        assert s.border_margin == 10.0
+
+    def test_unknown_field_raises(self):
+        from optiland.iso10110 import DrawingStyle
+
+        with pytest.raises(ValueError, match="table_bdoy_scale|extra"):
+            DrawingStyle(table_bdoy_scale=1.2)  # typo'd field name
+
+    @pytest.mark.parametrize(
+        "field", ["table_body_scale", "dimension_scale", "border_margin"]
+    )
+    def test_non_positive_value_raises(self, field):
+        from optiland.iso10110 import DrawingStyle
+
+        with pytest.raises(ValueError):
+            DrawingStyle(**{field: 0.0})
+        with pytest.raises(ValueError):
+            DrawingStyle(**{field: -1.0})
+
+
+class TestDrawingStyleRendering:
+    """Verify DrawingStyle overrides actually change rendered output, and
+    that the default reproduces the built-in (scale=1.0) appearance."""
+
+    @pytest.fixture
+    def element_and_spec(self):
+        from optiland.iso10110 import DrawingSpec, identify_elements
+
+        lens = _make_singlet()
+        spec = DrawingSpec(lens)
+        return identify_elements(lens)[0], spec
+
+    def test_mpl_default_style_matches_no_style(self, element_and_spec):
+        """Passing no style and passing DrawingStyle() explicitly must
+        produce the identical set of rendered font sizes."""
+        from optiland.iso10110 import ElementDrawing, DrawingStyle
+
+        element, spec = element_and_spec
+        fig_a = ElementDrawing(element, spec, element_index=0)._mpl_figure()
+        fig_b = ElementDrawing(
+            element, spec, element_index=0, style=DrawingStyle()
+        )._mpl_figure()
+        sizes_a = sorted(t.get_fontsize() for ax in fig_a.axes for t in ax.texts)
+        sizes_b = sorted(t.get_fontsize() for ax in fig_b.axes for t in ax.texts)
+        assert sizes_a == sizes_b
+
+    def test_mpl_table_body_scale_changes_fontsize(self, element_and_spec):
+        from optiland.iso10110 import ElementDrawing, DrawingStyle
+
+        element, spec = element_and_spec
+
+        def _spec_table_fontsize(fig):
+            # The 3/ form-error row is always rendered in the spec table
+            # body, regardless of what the user has set.
+            for ax in fig.axes:
+                for t in ax.texts:
+                    if t.get_text().startswith("3/"):
+                        return t.get_fontsize()
+            raise AssertionError("no '3/' spec-table text found")
+
+        fig_default = ElementDrawing(element, spec, element_index=0)._mpl_figure()
+        assert _spec_table_fontsize(fig_default) == 7.5
+
+        style = DrawingStyle(table_body_scale=2.0)
+        fig_scaled = ElementDrawing(
+            element, spec, element_index=0, style=style
+        )._mpl_figure()
+        assert _spec_table_fontsize(fig_scaled) == 15.0
+
+    def test_dxf_dimension_scale_changes_height(self, element_and_spec):
+        from optiland.iso10110 import ElementDrawing, DrawingStyle
+
+        element, spec = element_and_spec
+        doc_default = ElementDrawing(element, spec, element_index=0).generate()
+        heights_default = {
+            round(t.dxf.height, 3) for t in doc_default.modelspace().query("TEXT")
+        }
+
+        style = DrawingStyle(dimension_scale=2.0)
+        doc_scaled = ElementDrawing(
+            element, spec, element_index=0, style=style
+        ).generate()
+        heights_scaled = {
+            round(t.dxf.height, 3) for t in doc_scaled.modelspace().query("TEXT")
+        }
+
+        assert 2.5 in heights_default
+        assert 5.0 in heights_scaled
+
+    def test_border_margin_shifts_dxf_layout(self, element_and_spec):
+        from optiland.iso10110 import ElementDrawing, DrawingStyle
+
+        element, spec = element_and_spec
+        doc_default = ElementDrawing(element, spec, element_index=0).generate()
+        border_default = list(
+            next(iter(doc_default.modelspace().query("LWPOLYLINE"))).get_points()
+        )[0][:2]
+
+        style = DrawingStyle(border_margin=20.0)
+        doc_custom = ElementDrawing(
+            element, spec, element_index=0, style=style
+        ).generate()
+        polylines_custom = list(doc_custom.modelspace().query("LWPOLYLINE"))
+        border_custom = list(polylines_custom[1].get_points())[0][:2]
+
+        assert border_default != (20.0, 20.0)
+        assert border_custom == (20.0, 20.0)
+
+    def test_report_forwards_style_to_all_elements(self):
+        """ISO10110Report must apply the same style to every element drawing."""
+        from optiland.iso10110 import DrawingSpec, DrawingStyle, ISO10110Report
+
+        lens = _make_triplet()
+        spec = DrawingSpec(lens)
+        style = DrawingStyle(table_body_scale=1.75)
+        report = ISO10110Report(spec, style=style)
+        report.generate()
+
+        assert len(report.drawings) >= 2
+        for d in report.drawings:
+            assert d.style is style

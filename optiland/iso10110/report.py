@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from optiland.iso10110.spec import DrawingSpec
 
 from optiland.iso10110.drawing import ElementDrawing
+from optiland.iso10110.style import DrawingStyle
 
 
 class ISO10110Report:
@@ -24,6 +25,10 @@ class ISO10110Report:
     Args:
         spec: The :class:`~optiland.iso10110.spec.DrawingSpec` that carries
             both the optic geometry and all tolerance annotations.
+        style: :class:`~optiland.iso10110.style.DrawingStyle` font-size scale
+            factors and border margin, applied to every element's drawing.
+            Defaults to ``DrawingStyle()``, reproducing the built-in
+            appearance exactly.
 
     Example::
 
@@ -39,10 +44,12 @@ class ISO10110Report:
         spec: DrawingSpec,
         paper: str = "A4",
         orientation: str = "portrait",
+        style: DrawingStyle | None = None,
     ) -> None:
         self.spec = spec
         self.paper = paper
         self.orientation = orientation
+        self.style = style if style is not None else DrawingStyle()
         self._drawings: list[ElementDrawing] = []
 
     # ------------------------------------------------------------------
@@ -70,6 +77,7 @@ class ISO10110Report:
                 paper=self.paper,
                 orientation=self.orientation,
                 total_sheets=total,
+                style=self.style,
             )
             for idx, element in enumerate(self.spec.elements)
         ]

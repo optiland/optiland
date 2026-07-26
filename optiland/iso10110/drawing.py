@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 import optiland.backend as be
+from optiland.iso10110.style import DrawingStyle
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -632,6 +633,7 @@ class _Geo:
         bottom_h: float = _BOT_H,
         cal_x: float = 22.5,
         cal_y: float = 30.0,
+        border_margin: float = BORDER,
     ) -> None:
         self.element = element
         self.spec = spec
@@ -639,6 +641,7 @@ class _Geo:
         self._bottom_h = bottom_h
         self._cal_x = cal_x
         self._cal_y = cal_y
+        self._border = border_margin
         self._build()
 
     def _build(self):
@@ -654,14 +657,18 @@ class _Geo:
         z_span = max(self.opt_z_max - self.opt_z_min, 0.5)
         y_span = 2.0 * self.sa_max
 
-        aw = (self.pw - 2 * BORDER) - 2 * self._cal_x
-        ah = (self.ph - 2 * BORDER - self._bottom_h) - 2 * self._cal_y
+        aw = (self.pw - 2 * self._border) - 2 * self._cal_x
+        ah = (self.ph - 2 * self._border - self._bottom_h) - 2 * self._cal_y
 
         raw = min(aw / z_span, ah / y_span)
         self.scale = _nice_scale(raw)
 
         cx = self.pw / 2.0
-        cy = BORDER + self._bottom_h + (self.ph - 2 * BORDER - self._bottom_h) / 2.0
+        cy = (
+            self._border
+            + self._bottom_h
+            + (self.ph - 2 * self._border - self._bottom_h) / 2.0
+        )
 
         self._ox = cx - ((self.opt_z_min + self.opt_z_max) / 2.0) * self.scale
         self._oy = cy
@@ -759,6 +766,8 @@ class _MatplotlibRenderer:
         rotational_axis_y: y-offset (optical mm) of the rotational axis.
             ``0.0`` (default) = coincides with optical axis and is shown combined.
             Non-zero = separate rotational-axis line is drawn at that offset.
+        style:         :class:`~optiland.iso10110.style.DrawingStyle` font-size
+            scale factors and border margin. Defaults to ``DrawingStyle()``.
     """
 
     def __init__(
@@ -770,6 +779,7 @@ class _MatplotlibRenderer:
         pw: float,
         ph: float,
         rotational_axis_y: float = 0.0,
+        style: DrawingStyle | None = None,
     ) -> None:
         self.element = element
         self.spec = spec
@@ -778,7 +788,17 @@ class _MatplotlibRenderer:
         self.pw = pw
         self.ph = ph
         self.rotational_axis_y = rotational_axis_y
-        self._geo = _Geo(element, spec, pw, ph, bottom_h=_BOT_H, cal_x=12.0, cal_y=18.0)
+        self.style = style if style is not None else DrawingStyle()
+        self._geo = _Geo(
+            element,
+            spec,
+            pw,
+            ph,
+            bottom_h=_BOT_H,
+            cal_x=12.0,
+            cal_y=18.0,
+            border_margin=self.style.border_margin,
+        )
 
     # ── helpers ─────────────────────────────────────────────────────────────
 
@@ -839,7 +859,13 @@ class _MatplotlibRenderer:
         # ── Borders ──────────────────────────────────────────────────────
         for x, y, w, h, lw in [
             (0, 0, pw, ph, 0.4),
-            (BORDER, BORDER, pw - 2 * BORDER, ph - 2 * BORDER, 0.8),
+            (
+                self.style.border_margin,
+                self.style.border_margin,
+                pw - 2 * self.style.border_margin,
+                ph - 2 * self.style.border_margin,
+                0.8,
+            ),
         ]:
             ax.add_patch(
                 mpatches.Rectangle(
@@ -923,7 +949,7 @@ class _MatplotlibRenderer:
                 "opt./rot. axis",
                 ha="right",
                 va="center",
-                fontsize=5.5,
+                fontsize=5.5 * self.style.axis_label_scale,
                 color="black",
                 zorder=2,
             )
@@ -935,7 +961,7 @@ class _MatplotlibRenderer:
                 "opt. axis",
                 ha="right",
                 va="center",
-                fontsize=5.5,
+                fontsize=5.5 * self.style.axis_label_scale,
                 color="black",
                 zorder=2,
             )
@@ -955,7 +981,7 @@ class _MatplotlibRenderer:
                 "rot. axis",
                 ha="right",
                 va="center",
-                fontsize=5.5,
+                fontsize=5.5 * self.style.axis_label_scale,
                 color="black",
                 zorder=2,
             )
@@ -970,7 +996,7 @@ class _MatplotlibRenderer:
                 f"S{si + 1}",
                 ha="center",
                 va="top",
-                fontsize=6.0,
+                fontsize=6.0 * self.style.surface_label_scale,
                 fontweight="bold",
                 color="black",
                 zorder=5,
@@ -992,7 +1018,7 @@ class _MatplotlibRenderer:
                 "0",
                 ha="center",
                 va="top",
-                fontsize=8.0,
+                fontsize=8.0 * self.style.symbol_annotation_scale,
                 fontweight="bold",
                 color="black",
                 zorder=7,
@@ -1029,7 +1055,7 @@ class _MatplotlibRenderer:
                 f"Ø\u2091 {ca_d:.2f}",
                 ha=label_ha,
                 va="center",
-                fontsize=5.5,
+                fontsize=5.5 * self.style.axis_label_scale,
                 color="black",
                 zorder=6,
             )
@@ -1108,7 +1134,7 @@ class _MatplotlibRenderer:
                 f"S{si + 1}",
                 ha="center",
                 va="center",
-                fontsize=6.0,
+                fontsize=6.0 * self.style.surface_label_scale,
                 fontweight="bold",
                 color="black",
                 zorder=7,
@@ -1141,7 +1167,7 @@ class _MatplotlibRenderer:
             ct_txt,
             ha="center",
             va="top",
-            fontsize=9,
+            fontsize=9 * self.style.dimension_scale,
             zorder=8,
         )
 
@@ -1160,7 +1186,7 @@ class _MatplotlibRenderer:
             d_txt,
             ha="left",
             va="center",
-            fontsize=9,
+            fontsize=9 * self.style.dimension_scale,
             zorder=8,
         )
 
@@ -1185,7 +1211,7 @@ class _MatplotlibRenderer:
             f"({et:.2f})",
             ha="center",
             va="bottom",
-            fontsize=8,
+            fontsize=8 * self.style.dimension_scale,
             zorder=8,
         )
 
@@ -1209,7 +1235,7 @@ class _MatplotlibRenderer:
                     f"t{ci + 1} = {th:.2f}",
                     ha="center",
                     va="bottom",
-                    fontsize=7,
+                    fontsize=7 * self.style.component_dimension_scale,
                 )
 
         # ── ISO spec table ────────────────────────────────────────────────
@@ -1217,10 +1243,10 @@ class _MatplotlibRenderer:
         mats = self.element.glass_materials
         n_cols = n + n_comps
 
-        tbl_y0 = BORDER + _TTL_H
+        tbl_y0 = self.style.border_margin + _TTL_H
         tbl_y1 = tbl_y0 + _SPEC_H
-        tbl_x0 = BORDER
-        tbl_x1 = pw - BORDER
+        tbl_x0 = self.style.border_margin
+        tbl_x1 = pw - self.style.border_margin
         tbl_w = tbl_x1 - tbl_x0
         col_w = tbl_w / n_cols
         H_HDR = 7.0
@@ -1251,7 +1277,7 @@ class _MatplotlibRenderer:
                 txt,
                 ha="center",
                 va="center",
-                fontsize=6.5,
+                fontsize=6.5 * self.style.table_header_scale,
                 fontweight="bold",
                 zorder=8,
             )
@@ -1267,7 +1293,7 @@ class _MatplotlibRenderer:
                     txt,
                     ha="left",
                     va="top",
-                    fontsize=7.5,
+                    fontsize=7.5 * self.style.table_body_scale,
                     zorder=8,
                 )
 
@@ -1336,7 +1362,7 @@ class _MatplotlibRenderer:
                     "λ",
                     ha="center",
                     va="center",
-                    fontsize=5.0,
+                    fontsize=5.0 * self.style.lambda_symbol_scale,
                     color="black",
                     fontstyle="italic",
                     zorder=9,
@@ -1347,7 +1373,7 @@ class _MatplotlibRenderer:
                     coating_str,
                     ha="left",
                     va="top",
-                    fontsize=7.5,
+                    fontsize=7.5 * self.style.table_body_scale,
                     zorder=9,
                 )
 
@@ -1378,12 +1404,12 @@ class _MatplotlibRenderer:
         # Placed at bottom-left of drawing field per Annex A examples.
         ref_wl = getattr(self.spec, "reference_wavelength", 546.07)
         ax.text(
-            BORDER + 2.0,
-            BORDER + _BOT_H + 3.0,
+            self.style.border_margin + 2.0,
+            self.style.border_margin + _BOT_H + 3.0,
             f"Ang. nach ISO\u00a010110;\u2002\u03bb = {ref_wl:.2f}\u00a0nm",
             ha="left",
             va="bottom",
-            fontsize=6.0,
+            fontsize=6.0 * self.style.reference_note_scale,
             color="black",
             fontstyle="italic",
             zorder=8,
@@ -1393,12 +1419,12 @@ class _MatplotlibRenderer:
         try:
             _efl = float(self.spec.optic.paraxial.f2())
             ax.text(
-                BORDER + 2.0,
-                ph - BORDER - 5.0,
+                self.style.border_margin + 2.0,
+                ph - self.style.border_margin - 5.0,
                 f"f\u2032 = {_efl:.2f} mm",
                 ha="left",
                 va="top",
-                fontsize=7.5,
+                fontsize=7.5 * self.style.efl_annotation_scale,
                 fontweight="bold",
                 color="black",
                 zorder=8,
@@ -1407,12 +1433,12 @@ class _MatplotlibRenderer:
             pass
 
         # ── Title block ───────────────────────────────────────────────────
-        ttl_x0 = BORDER
-        ttl_x1 = pw - BORDER
+        ttl_x0 = self.style.border_margin
+        ttl_x1 = pw - self.style.border_margin
         ttl_w = ttl_x1 - ttl_x0
-        r1_y0 = BORDER + _TTL_R2_H
-        r1_y1 = BORDER + _TTL_H
-        r2_y0 = BORDER
+        r1_y0 = self.style.border_margin + _TTL_R2_H
+        r1_y1 = self.style.border_margin + _TTL_H
+        r2_y0 = self.style.border_margin
         r2_y1 = r1_y0
 
         ax.add_patch(
@@ -1437,7 +1463,7 @@ class _MatplotlibRenderer:
                 lbl,
                 ha="center",
                 va="center",
-                fontsize=5.5,
+                fontsize=5.5 * self.style.title_label_scale,
                 zorder=8,
             )
             ax.text(
@@ -1446,7 +1472,7 @@ class _MatplotlibRenderer:
                 val,
                 ha="center",
                 va="center",
-                fontsize=7.5,
+                fontsize=7.5 * self.style.title_value_scale,
                 fontweight="bold",
                 zorder=8,
             )
@@ -1474,7 +1500,7 @@ class _MatplotlibRenderer:
             "NOTES",
             ha="left",
             va="top",
-            fontsize=5.5,
+            fontsize=5.5 * self.style.title_label_scale,
             color="#555555",
             zorder=8,
         )
@@ -1485,7 +1511,7 @@ class _MatplotlibRenderer:
                 espec.notes,
                 ha="left",
                 va="center",
-                fontsize=6.5,
+                fontsize=6.5 * self.style.title_notes_scale,
                 zorder=8,
             )
 
@@ -1501,7 +1527,7 @@ class _MatplotlibRenderer:
             "DIM. IN mm",
             ha="center",
             va="top",
-            fontsize=5.5,
+            fontsize=5.5 * self.style.title_label_scale,
             color="#555555",
             zorder=8,
         )
@@ -1513,7 +1539,7 @@ class _MatplotlibRenderer:
             f"{defs['form_error']}  {defs['centration']}  {defs['imperfections']}",
             ha="center",
             va="center",
-            fontsize=5.0,
+            fontsize=5.0 * self.style.title_general_tol_scale,
             zorder=8,
         )
 
@@ -1574,6 +1600,10 @@ class _DxfRenderer:
     """Renders a single element ISO 10110 drawing into an ezdxf document.
 
     Isolated from matplotlib logic per HarrisonKramer's architectural feedback.
+
+    Args:
+        style: :class:`~optiland.iso10110.style.DrawingStyle` font-size scale
+            factors and border margin. Defaults to ``DrawingStyle()``.
     """
 
     def __init__(
@@ -1585,6 +1615,7 @@ class _DxfRenderer:
         pw: float,
         ph: float,
         rotational_axis_y: float = 0.0,
+        style: DrawingStyle | None = None,
     ) -> None:
         self.element = element
         self.spec = spec
@@ -1593,7 +1624,17 @@ class _DxfRenderer:
         self.pw = pw
         self.ph = ph
         self.rotational_axis_y = rotational_axis_y
-        self._geo = _Geo(element, spec, pw, ph, bottom_h=_BOT_H, cal_x=12.0, cal_y=18.0)
+        self.style = style if style is not None else DrawingStyle()
+        self._geo = _Geo(
+            element,
+            spec,
+            pw,
+            ph,
+            bottom_h=_BOT_H,
+            cal_x=12.0,
+            cal_y=18.0,
+            border_margin=self.style.border_margin,
+        )
 
     def render(self, doc) -> None:
         """Populate *doc* (an ezdxf Drawing) with the element drawing."""
@@ -1642,10 +1683,10 @@ class _DxfRenderer:
         )
         msp.add_lwpolyline(
             [
-                (BORDER, BORDER),
-                (pw - BORDER, BORDER),
-                (pw - BORDER, ph - BORDER),
-                (BORDER, ph - BORDER),
+                (self.style.border_margin, self.style.border_margin),
+                (pw - self.style.border_margin, self.style.border_margin),
+                (pw - self.style.border_margin, ph - self.style.border_margin),
+                (self.style.border_margin, ph - self.style.border_margin),
             ],
             close=True,
             dxfattribs={**a, "lineweight": 50},
@@ -1657,8 +1698,11 @@ class _DxfRenderer:
             f"Ang. nach ISO\u00a010110;\u2002\u03bb = {ref_wl:.2f}\u00a0nm",
             dxfattribs={
                 "layer": L_BORDER,
-                "height": 1.8,
-                "insert": (BORDER + 2.0, BORDER + _BOT_H + 3.0),
+                "height": 1.8 * self.style.reference_note_scale,
+                "insert": (
+                    self.style.border_margin + 2.0,
+                    self.style.border_margin + _BOT_H + 3.0,
+                ),
                 "halign": 0,
                 "valign": 1,
             },
@@ -1671,8 +1715,11 @@ class _DxfRenderer:
                 f"f\u2032 = {_efl:.2f} mm",
                 dxfattribs={
                     "layer": L_BORDER,
-                    "height": 2.5,
-                    "insert": (BORDER + 2.0, ph - BORDER - 5.0),
+                    "height": 2.5 * self.style.efl_annotation_scale,
+                    "insert": (
+                        self.style.border_margin + 2.0,
+                        ph - self.style.border_margin - 5.0,
+                    ),
                     "halign": 0,
                     "valign": 3,
                 },
@@ -1688,12 +1735,12 @@ class _DxfRenderer:
         espec = self.spec.get_element_spec(self.element_index)
         a = {"layer": L_BORDER}
 
-        ttl_x0 = BORDER
-        ttl_x1 = pw - BORDER
+        ttl_x0 = self.style.border_margin
+        ttl_x1 = pw - self.style.border_margin
         ttl_w = ttl_x1 - ttl_x0
-        r1_y0 = BORDER + _TTL_R2_H
-        r1_y1 = BORDER + _TTL_H
-        r2_y0 = BORDER
+        r1_y0 = self.style.border_margin + _TTL_R2_H
+        r1_y1 = self.style.border_margin + _TTL_H
+        r2_y0 = self.style.border_margin
         r2_y1 = r1_y0
 
         msp.add_lwpolyline(
@@ -1731,7 +1778,7 @@ class _DxfRenderer:
                 lbl,
                 dxfattribs={
                     "layer": L_BORDER,
-                    "height": 1.8,
+                    "height": 1.8 * self.style.title_label_scale,
                     "insert": (cx, r1_y0 + _TTL_R1_H * 0.25),
                     "halign": 4,
                     "valign": 2,
@@ -1742,7 +1789,7 @@ class _DxfRenderer:
                 val,
                 dxfattribs={
                     "layer": L_BORDER,
-                    "height": 2.5,
+                    "height": 2.5 * self.style.title_value_scale,
                     "insert": (cx, r1_y0 + _TTL_R1_H * 0.70),
                     "halign": 4,
                     "valign": 2,
@@ -1758,7 +1805,7 @@ class _DxfRenderer:
             "NOTES",
             dxfattribs={
                 "layer": L_BORDER,
-                "height": 1.8,
+                "height": 1.8 * self.style.title_label_scale,
                 "insert": (ttl_x0 + 2, r2_y1 - 1.5),
                 "halign": 0,
                 "valign": 3,
@@ -1769,7 +1816,7 @@ class _DxfRenderer:
                 espec.notes,
                 dxfattribs={
                     "layer": L_BORDER,
-                    "height": 2.0,
+                    "height": 2.0 * self.style.title_notes_scale,
                     "insert": (ttl_x0 + 2, cy_r2),
                     "halign": 0,
                     "valign": 2,
@@ -1785,7 +1832,7 @@ class _DxfRenderer:
             "DIM. IN mm",
             dxfattribs={
                 "layer": L_BORDER,
-                "height": 1.8,
+                "height": 1.8 * self.style.title_label_scale,
                 "insert": (std_text_cx, r2_y1 - 1.5),
                 "halign": 4,
                 "valign": 3,
@@ -1803,7 +1850,7 @@ class _DxfRenderer:
             "GENERAL TOL. PER ISO 10110-11",
             dxfattribs={
                 "layer": L_BORDER,
-                "height": 1.8,
+                "height": 1.8 * self.style.title_general_tol_scale,
                 "insert": (std_text_cx, cy_r2 + 1.2),
                 "halign": 4,
                 "valign": 1,
@@ -1817,7 +1864,7 @@ class _DxfRenderer:
             f"{_defs_tb['imperfections']}",
             dxfattribs={
                 "layer": L_BORDER,
-                "height": 1.8,
+                "height": 1.8 * self.style.title_general_tol_scale,
                 "insert": (std_text_cx, cy_r2 - 1.2),
                 "halign": 4,
                 "valign": 3,
@@ -1868,10 +1915,10 @@ class _DxfRenderer:
         a = {"layer": L_TABLE}
         H_HDR = 7.0
 
-        tbl_y0 = BORDER + _TTL_H
+        tbl_y0 = self.style.border_margin + _TTL_H
         tbl_y1 = tbl_y0 + _SPEC_H
-        tbl_x0 = BORDER
-        tbl_x1 = pw - BORDER
+        tbl_x0 = self.style.border_margin
+        tbl_x1 = pw - self.style.border_margin
         tbl_w = tbl_x1 - tbl_x0
         col_w = tbl_w / n_cols
 
@@ -1891,7 +1938,7 @@ class _DxfRenderer:
                 txt,
                 dxfattribs={
                     "layer": L_TABLE,
-                    "height": 2.0,
+                    "height": 2.0 * self.style.table_header_scale,
                     "insert": (cx, tbl_y1 - H_HDR / 2),
                     "halign": 4,
                     "valign": 2,
@@ -1908,7 +1955,7 @@ class _DxfRenderer:
                     txt,
                     dxfattribs={
                         "layer": L_TABLE,
-                        "height": 2.0,
+                        "height": 2.0 * self.style.table_body_scale,
                         "insert": (x0, tbl_y1 - H_HDR - 2.0 - j * sp),
                         "halign": 0,
                         "valign": 3,
@@ -1978,7 +2025,7 @@ class _DxfRenderer:
                     "\u03bb",
                     dxfattribs={
                         "layer": L_TABLE,
-                        "height": _LAMBDA_R * 1.4,
+                        "height": _LAMBDA_R * 1.4 * self.style.lambda_symbol_scale,
                         "insert": (_coat_x + _LAMBDA_R, _coat_y - _LAMBDA_R),
                         "halign": 4,
                         "valign": 2,
@@ -1989,7 +2036,7 @@ class _DxfRenderer:
                     coating_str,
                     dxfattribs={
                         "layer": L_TABLE,
-                        "height": 2.0,
+                        "height": 2.0 * self.style.table_body_scale,
                         "insert": (_coat_x + 2 * _LAMBDA_R + 1.0, _coat_y - _LAMBDA_R),
                         "halign": 0,
                         "valign": 2,
@@ -2034,7 +2081,7 @@ class _DxfRenderer:
                 "opt./rot. axis",
                 dxfattribs={
                     "layer": L_AXIS,
-                    "height": 2.0,
+                    "height": 2.0 * self.style.axis_label_scale,
                     "insert": (x0 - 1.0, y0),
                     "halign": 2,
                     "valign": 2,
@@ -2047,7 +2094,7 @@ class _DxfRenderer:
                 "opt. axis",
                 dxfattribs={
                     "layer": L_AXIS,
-                    "height": 2.0,
+                    "height": 2.0 * self.style.axis_label_scale,
                     "insert": (x0 - 1.0, y0),
                     "halign": 2,
                     "valign": 2,
@@ -2071,7 +2118,7 @@ class _DxfRenderer:
                 "rot. axis",
                 dxfattribs={
                     "layer": L_AXIS,
-                    "height": 2.0,
+                    "height": 2.0 * self.style.axis_label_scale,
                     "insert": (rot_x0 - 1.0, rot_y0),
                     "halign": 2,
                     "valign": 2,
@@ -2086,7 +2133,7 @@ class _DxfRenderer:
                 f"S{si + 1}",
                 dxfattribs={
                     "layer": L_AXIS,
-                    "height": 2.0,
+                    "height": 2.0 * self.style.surface_label_scale,
                     "insert": (lbl_x, y0 - 2.5),
                     "halign": 4,
                     "valign": 3,
@@ -2181,7 +2228,7 @@ class _DxfRenderer:
             f"{ct:.2f}{_ct_tol_p}{_m_dxf}",
             dxfattribs={
                 "layer": L_DIMS,
-                "height": 2.5,
+                "height": 2.5 * self.style.dimension_scale,
                 "insert": ((p0x + p1x) / 2, dy - 4),
                 "halign": 4,
                 "valign": 3,
@@ -2218,7 +2265,7 @@ class _DxfRenderer:
             f"\u00d8 {phys_d_dxf:.2f}{_d_tol_p}",
             dxfattribs={
                 "layer": L_DIMS,
-                "height": 2.5,
+                "height": 2.5 * self.style.dimension_scale,
                 "insert": (dax_dxf + 3, (top_r_dxf[1] + bot_r_dxf[1]) / 2),
                 "halign": 0,
                 "valign": 2,
@@ -2242,7 +2289,7 @@ class _DxfRenderer:
             f"({et:.2f})",
             dxfattribs={
                 "layer": L_DIMS,
-                "height": 2.5,
+                "height": 2.5 * self.style.dimension_scale,
                 "insert": ((et_x0 + et_x1) / 2, et_dy + 2),
                 "halign": 4,
                 "valign": 1,
@@ -2270,7 +2317,7 @@ class _DxfRenderer:
                     f"t{ci + 1} = {th:.2f}",
                     dxfattribs={
                         "layer": L_DIMS,
-                        "height": 2.0,
+                        "height": 2.0 * self.style.component_dimension_scale,
                         "insert": ((xa + xb) / 2, th_y + 2),
                         "halign": 4,
                         "valign": 1,
@@ -2305,7 +2352,7 @@ class _DxfRenderer:
                 f"\u00d8\u2091 {ca_d_e:.2f}",
                 dxfattribs={
                     "layer": L_DIMS,
-                    "height": 2.0,
+                    "height": 2.0 * self.style.axis_label_scale,
                     "insert": (lbl_x_e, (ca_yt_e + ca_yb_e) / 2),
                     "halign": lbl_ha,
                     "valign": 2,
@@ -2372,7 +2419,7 @@ class _DxfRenderer:
                 f"S{si + 1}",
                 dxfattribs={
                     "layer": L_CALLOUT,
-                    "height": 2.0,
+                    "height": 2.0 * self.style.surface_label_scale,
                     "insert": (lbl_x, lbl_y),
                     "halign": 4,
                     "valign": 2,
@@ -2391,7 +2438,7 @@ class _DxfRenderer:
                 "0",
                 dxfattribs={
                     "layer": L_CALLOUT,
-                    "height": 3.0,
+                    "height": 3.0 * self.style.symbol_annotation_scale,
                     "insert": (vx_se, vy_se - 3.5),
                     "halign": 4,
                     "valign": 3,
@@ -2421,6 +2468,9 @@ class ElementDrawing:
         total_sheets:  Total sheet count for X/Y numbering.
         rotational_axis_y: y-offset (optical mm) of the rotational axis when
             it differs from the optical axis.  Default ``0.0`` = coincident.
+        style:         :class:`~optiland.iso10110.style.DrawingStyle` font-size
+            scale factors and border margin. Defaults to ``DrawingStyle()``,
+            reproducing the built-in appearance exactly.
     """
 
     def __init__(
@@ -2432,6 +2482,7 @@ class ElementDrawing:
         orientation: str = "portrait",
         total_sheets: int = 1,
         rotational_axis_y: float = 0.0,
+        style: DrawingStyle | None = None,
     ) -> None:
         self.element = element
         self.spec = spec
@@ -2440,6 +2491,7 @@ class ElementDrawing:
         self.orientation = orientation.lower()
         self.total_sheets = total_sheets
         self.rotational_axis_y = rotational_axis_y
+        self.style = style if style is not None else DrawingStyle()
         self._pw, self._ph = _paper_wh(paper, orientation)
         self._doc = None
 
@@ -2466,6 +2518,7 @@ class ElementDrawing:
             self._pw,
             self._ph,
             rotational_axis_y=self.rotational_axis_y,
+            style=self.style,
         )
         renderer.render(doc)
         # ezdxf.write() calls update_extents() which overwrites $EXTMIN/$EXTMAX
@@ -2527,6 +2580,7 @@ class ElementDrawing:
             self._pw,
             self._ph,
             rotational_axis_y=self.rotational_axis_y,
+            style=self.style,
         )
         return renderer.render(figsize)
 
@@ -2582,10 +2636,16 @@ def draw_element(
     element_index: int = 0,
     paper: str = "A4",
     orientation: str = "portrait",
+    style: DrawingStyle | None = None,
 ) -> ElementDrawing:
     """Build and generate an :class:`ElementDrawing` for *element* in one call."""
     d = ElementDrawing(
-        element, spec, element_index, paper=paper, orientation=orientation
+        element,
+        spec,
+        element_index,
+        paper=paper,
+        orientation=orientation,
+        style=style,
     )
     d.generate()
     return d
