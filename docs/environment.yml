@@ -9,9 +9,9 @@ dependencies:
   - pyyaml
   - scipy
   - seaborn
+  - tabulate
   - xeus-python
   - pip:
     - ./jupyterlite/mock_libraries/numba
     - ./jupyterlite/mock_libraries/vtk
-    - tabulate
     - ..
