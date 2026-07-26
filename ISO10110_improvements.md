@@ -533,3 +533,67 @@ real, not just theoretical.
   `builtins.__import__` and verifies the full `generate()`/`save_pdf()`/
   `save_png()` workflow works, while `save_dxf()` raises a clear error naming
   the extra.
+
+---
+
+## W — Fixes from Axel's PR review comments (2026-07-26)
+
+### W1 · Fixed deprecated Optic API calls in Tutorial_10a ✅
+- `lens.add_surface()`, `set_field_type()`, `add_field()`, `add_wavelength()`,
+  `image_solve()`, `update_paraxial()`, and `.surface_group` all triggered
+  `DeprecationWarning` (removal in v0.7.0). Switched to `lens.surfaces.add()`,
+  `lens.fields.set_type()`/`add()`, `lens.wavelengths.add()`,
+  `lens.updater.image_solve()`/`update_paraxial()`, `lens.surfaces`. Verified
+  identical numeric output before/after.
+- Also regenerated `docs/examples/iso10110_output/` by re-running the
+  notebook — these tracked artifacts had drifted from the notebook's own spec
+  (they were actually last produced by `regen_iso10110.py`, a since-removed
+  separate script that set `coating=` values the notebook never did). The
+  notebook is now the single source of truth for these outputs.
+
+### W2 · Fixed diameter shown for surfaces with a physical aperture (e.g. RadialAperture) ✅
+- Root cause in `LensElement.semi_aperture()` (`elements.py`): it only
+  consulted `surf.semi_aperture` (populated solely by
+  `optic.updater.update_paraxial()`) or, failing that, a raw paraxial
+  marginal-ray estimate — completely ignoring any physical aperture
+  (`surf.aperture`, e.g. `RadialAperture`) configured on the surface. This
+  broke in two ways: (1) if `update_paraxial()` was never called (a common
+  workflow), the aperture was silently ignored entirely; (2) even when it
+  was called, `update_paraxial()`'s own logic takes `max(ray_height,
+  aperture_extent)`, which shows too *large* a diameter when the aperture is
+  the smaller, vignetting factor — exactly backwards for a fabrication
+  drawing, which must show the true, smaller mechanical edge.
+- Fix: `semi_aperture()` now checks `surf.aperture` first and uses its
+  `.extent` directly whenever finite, before falling back to
+  `surf.semi_aperture` or the paraxial estimate — mirroring the same
+  priority `optiland.visualization.system.surface` already gives
+  `surface.aperture.extent` when drawing the system layout.
+- Five new tests: aperture respected with/without `update_paraxial()` called,
+  the vignetting case (aperture smaller than ray height), the no-aperture
+  fallback (unchanged), and `OffsetRadialAperture`'s off-axis extent.
+
+### W3 · Made font sizes and border margin user-configurable via `DrawingStyle` ✅
+- Added `optiland/iso10110/style.py`: `DrawingStyle` (pydantic `BaseModel`,
+  `extra="forbid"`) with 14 named multiplicative scale factors (grouped by
+  semantic role — axis labels, surface index labels, the sharp-edge "0"
+  symbol, primary/component dimension callouts, spec-table header/body, the
+  encircled-λ glyph, the bottom reference note, the EFL annotation, and the
+  three title-block text roles) plus one absolute field, `border_margin`
+  (mm). Each renderer's own already-tuned base value per role is unchanged;
+  a scale factor of `1.0` (the default everywhere) reproduces the built-in
+  appearance exactly, since matplotlib (pt) and DXF (mm) were never on a
+  common unit scale to begin with — inventing a pt↔mm conversion would have
+  been fictitious, not a restatement of the existing design.
+- Threaded `style: DrawingStyle | None = None` through `_Geo`,
+  `_MatplotlibRenderer`, `_DxfRenderer`, `ElementDrawing`, `draw_element()`,
+  and `ISO10110Report`, defaulting to `DrawingStyle()` everywhere.
+- Verified behavior-preserving: regenerated example drawings with the
+  default style and diffed against the prior commit — zero content
+  differences (only ezdxf's own nondeterministic noise). Ten new tests
+  cover defaults, unknown-field/non-positive-value rejection, that overrides
+  actually change the rendered mpl fontsize and DXF text height for a given
+  role, that `border_margin` shifts the DXF layout, and that
+  `ISO10110Report` forwards one shared style instance to every element's
+  drawing.
+- Tutorial_10a gained a new "§7 Customising Font Sizes and Layout" section
+  demonstrating `DrawingStyle` on the cemented-doublet example.
