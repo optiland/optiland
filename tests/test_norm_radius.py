@@ -110,6 +110,86 @@ def test_reversibility(zernike_optic, set_test_backend):
     assert norm_radius_val != custom_norm_radius
 
 
+def _build_tma_578(dy_last):
+    """Three-mirror Zernike TMA from optiland/optiland#578.
+
+    Reproduces the reporter's example: three off-axis (tilted + decentered)
+    Zernike mirrors with no coefficients (i.e. spherical/conic in shape).
+    With `dy_last=-75` the system traces cleanly; decentering the last
+    mirror by only 5 mm (`dy_last=-70`) previously raised
+    ``ValueError: Zernike coordinates must be normalized to [-1, 1]`` because
+    the paraxial marginal/chief ray heights used to size the normalization
+    radius are an axisymmetric estimate that under-represents the true ray
+    footprint once surfaces are decentered/tilted.
+    """
+    optic = Optic()
+    optic.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+    optic.surfaces.add(index=1, radius=be.inf, thickness=120, is_stop=True)
+    optic.surfaces.add(
+        index=2,
+        radius=-400,
+        thickness=-125,
+        conic=0,
+        material="mirror",
+        rx=be.radians(-10.0),
+        surface_type="zernike",
+        zernike_type="fringe",
+        coefficients=[],
+    )
+    optic.surfaces.add(
+        index=3,
+        radius=300,
+        thickness=125,
+        conic=0,
+        material="mirror",
+        rx=be.radians(-3.0),
+        dy=-45,
+        surface_type="zernike",
+        zernike_type="fringe",
+        coefficients=[],
+    )
+    optic.surfaces.add(
+        index=4,
+        radius=-100,
+        thickness=-135,
+        conic=0,
+        material="mirror",
+        rx=be.radians(2.0),
+        dy=dy_last,
+        surface_type="zernike",
+        zernike_type="fringe",
+        coefficients=[],
+    )
+    optic.surfaces.add(index=5, dy=-100)
+    optic.set_aperture(aperture_type="EPD", value=30)
+    optic.fields.set_type("angle")
+    optic.fields.add(x=0, y=-5)
+    optic.fields.add(x=0, y=0)
+    optic.fields.add(x=0, y=5)
+    optic.wavelengths.add(value=0.7, is_primary=True)
+    return optic
+
+
+def test_off_axis_zernike_normalization_regression_578(set_test_backend):
+    """Decentering an off-axis Zernike TMA by 5 mm must not raise (#578)."""
+    optic = _build_tma_578(dy_last=-70)
+    optic.updater.update_paraxial()
+
+    # This is the exact field/pupil combination that previously overflowed
+    # the auto-sized normalization radius of the last (most off-axis)
+    # mirror.
+    optic.trace_generic(Hx=0, Hy=-1, Px=0, Py=1, wavelength=0.7)
+
+
+def test_off_axis_zernike_normalization_working_baseline_578(set_test_backend):
+    """The reporter's original (working) decenter must keep tracing cleanly."""
+    optic = _build_tma_578(dy_last=-75)
+    optic.updater.update_paraxial()
+
+    optic.trace_generic(Hx=0, Hy=-1, Px=0, Py=1, wavelength=0.7)
+    optic.trace_generic(Hx=0, Hy=1, Px=0, Py=-1, wavelength=0.7)
+
+
 def test_optimizer_precedence(zernike_optic, set_test_backend):
     # Fix it
     custom_norm_radius = 42.0
