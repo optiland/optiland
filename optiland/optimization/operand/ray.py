@@ -407,10 +407,13 @@ class RayOperand:
         This operand is useful for creating clearance or interference constraints,
         particularly in off-axis reflective systems.
 
-        The sign convention is such that for Line A propagating generally in the
-        +Z direction (N direction cosine > 0), the signed distance is positive
-        if Point B is on the +Y side of Line A. If Line A propagates generally
-        in the -Z direction (N direction cosine < 0), this sign is flipped.
+        The sign convention follows the direction of propagation of Line A: for
+        Line A propagating generally in the +Z direction (N direction cosine >
+        0), the signed distance is positive if Point B is on the +Y side of
+        Line A. For Line A propagating generally in the -Z direction (N
+        direction cosine < 0), the sign convention naturally flips (positive
+        indicates Point B is on the -Y side) -- no separate correction should
+        be applied for this case.
 
         Args:
             optic: The optical system model.
@@ -456,6 +459,4 @@ class RayOperand:
         else:
             numerator = nA * (yB - yA) - mA * (zB - zA)
             d = numerator / denominator
-            if nA < 0:
-                d = -d
         return d

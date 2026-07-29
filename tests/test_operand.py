@@ -415,7 +415,7 @@ class TestRayOperand:
             point_ray_pupil_coords=(0.0, 0.0),
             wavelength=wavelength,
         )
-        assert_allclose(dist1, -7.412094834746042)
+        assert_allclose(dist1, 7.4120948347460525)
 
         dist2 = RayOperand.clearance(
             optic=optic,
@@ -427,7 +427,7 @@ class TestRayOperand:
             point_ray_pupil_coords=(0.0, 0.0),
             wavelength=wavelength,
         )
-        assert_allclose(dist2, -13.065596389231768)
+        assert_allclose(dist2, 13.065596389231784)
 
         dist3 = RayOperand.clearance(
             optic=optic,
@@ -439,7 +439,28 @@ class TestRayOperand:
             point_ray_pupil_coords=(0.0, 0.0),
             wavelength=wavelength,
         )
-        assert_allclose(dist3, -15.730530102711754)
+        assert_allclose(dist3, 15.730530102711763)
+
+    def test_clearance_non_reflective(self, set_test_backend, cooke_triplet):
+        """Sign should not flip for a forward-propagating (N > 0) line ray.
+
+        This guards against reintroducing a blanket sign correction in
+        `clearance` (see issue #354): such a change would leave the
+        mirror-based `test_clearance` cases looking fixed while silently
+        flipping this case, which is expected to be unaffected since N > 0
+        throughout this system.
+        """
+        dist = RayOperand.clearance(
+            optic=cooke_triplet,
+            line_ray_surface_idx=1,
+            line_ray_field_coords=(0.0, 0.0),
+            line_ray_pupil_coords=(0.0, -1.0),
+            point_ray_surface_idx=7,
+            point_ray_field_coords=(0.0, 1.0),
+            point_ray_pupil_coords=(0.0, 0.0),
+            wavelength=0.55,
+        )
+        assert_allclose(dist, 17.765903028537014)
 
     def test_AOI(self, set_test_backend, cooke_triplet):
         """Test the angle of incidence operand using CookeTriplet."""
