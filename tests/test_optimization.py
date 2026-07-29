@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import warnings
 
 import pytest
@@ -380,6 +381,43 @@ class TestLeastSquares:
             "'trf' method."  # Updated expected warning
         )
         assert expected_warning in captured.out
+
+    @pytest.mark.parametrize("x_scale", [None, "jac", 2.0, [2.0]])
+    def test_x_scale_forwarding(self, monkeypatch, x_scale):
+        lens = Microscope20x()
+        problem = optimization.OptimizationProblem()
+        problem.add_variable(lens, "conic", surface_number=1)
+        problem.add_operand(
+            operand_type="f2",
+            target=90,
+            weight=1.0,
+            input_data={"optic": lens},
+        )
+        least_squares_module = importlib.import_module(
+            "optiland.optimization.optimizer.scipy.least_squares"
+        )
+        scipy_least_squares = least_squares_module.optimize.least_squares
+        captured_kwargs = {}
+
+        def spy_least_squares(*args, **kwargs):
+            captured_kwargs.update(kwargs)
+            return scipy_least_squares(*args, **kwargs)
+
+        monkeypatch.setattr(
+            least_squares_module.optimize,
+            "least_squares",
+            spy_least_squares,
+        )
+
+        optimizer = optimization.LeastSquares(problem)
+        optimize_kwargs = {} if x_scale is None else {"x_scale": x_scale}
+        result = optimizer.optimize(method_choice="trf", maxiter=10, **optimize_kwargs)
+
+        assert result.success
+        if x_scale is None:
+            assert "x_scale" not in captured_kwargs
+        else:
+            assert captured_kwargs["x_scale"] == x_scale
 
 
 class MockOperandNaN:
