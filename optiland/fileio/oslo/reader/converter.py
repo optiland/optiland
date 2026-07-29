@@ -173,6 +173,11 @@ class OsloToOpticConverter(BaseOpticReader):
             th = be.inf
         surface_params["thickness"] = th
 
+        # Is paraxial?
+        if "PFL" in data:
+            surface_params["surface_type"] = "paraxial"
+            surface_params["f"] = data["PFL"]
+
         # Handle material
         material_raw = data.get("material", "AIR")
         surface_params["material"] = self._resolve_material(material_raw)

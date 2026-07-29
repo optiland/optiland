@@ -32,6 +32,7 @@ class ZemaxDataParser:
         self.data_model = ZemaxDataModel()
         self._current_surf = -1
         self._current_surf_data: dict[str, Any] = {}
+        self._ftyp = None
 
         # Operand dispatch table — maps operand string to handler method
         self._operand_table = {
@@ -41,8 +42,11 @@ class ZemaxDataParser:
             "OBNA": self._read_object_na,
             "FLOA": self._read_floating_stop,
             "FTYP": self._read_config_data,
+            "XFLD": self._read_x_fields,
+            "YFLD": self._read_y_fields,
             "XFLN": self._read_x_fields,
             "YFLN": self._read_y_fields,
+            "WAVL": self._read_wavelength,
             "WAVM": self._read_wavelength,
             "PWAV": self._read_primary_wave,
             "SURF": self._read_surface,
@@ -142,6 +146,9 @@ class ZemaxDataParser:
             except ValueError:
                 return default
 
+        # Safety for losely compatible files (e.g: optalix exports)
+        if data == [0]:
+            return
         fields = self.data_model.fields
         fields["num_fields"] = _safe_int(3, 0)
         fields["type"] = {
@@ -164,20 +171,18 @@ class ZemaxDataParser:
             fields["num_fields"] = 1
 
     def _read_x_fields(self, data: list[str]) -> None:
-        n = self.data_model.fields["num_fields"]
+        n = self.data_model.fields["num_fields"] if self._ftyp else len(data)
         self.data_model.fields["x"] = [float(v) for v in data[1 : n + 1]]
 
     def _read_y_fields(self, data: list[str]) -> None:
-        n = self.data_model.fields["num_fields"]
+        n = self.data_model.fields["num_fields"] if self._ftyp else len(data)
         self.data_model.fields["y"] = [float(v) for v in data[1 : n + 1]]
 
     def _read_wavelength(self, data: list[str]) -> None:
         val = float(data[2])
         weight = float(data[3]) if len(data) > 3 else 1.0
-        if (
-            len(self.data_model.wavelengths["data"])
-            < self.data_model.wavelengths["num_wavelengths"]
-        ):
+        n = self.data_model.wavelengths["num_wavelengths"] if self._ftyp else len(data)
+        if len(self.data_model.wavelengths["data"]) < n:
             self.data_model.wavelengths["data"].append(val)
             self.data_model.wavelengths["weights"].append(weight)
 

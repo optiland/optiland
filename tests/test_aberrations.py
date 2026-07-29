@@ -58,6 +58,29 @@ def simple_singlet():
     return lens
 
 
+@pytest.fixture
+def finite_conjugate_singlet():
+    """Finite-conjugate singlet from issue #683."""
+    lens = Optic(name="Convex/Plano")
+    lens.surfaces.add(index=0, thickness=50.0)
+    lens.surfaces.add(
+        index=1,
+        thickness=7.0,
+        radius=20.0,
+        is_stop=True,
+        material="N-SF11",
+    )
+    lens.surfaces.add(index=2, thickness=43.0)
+    lens.surfaces.add(index=3)
+
+    lens.wavelengths.add(value=0.55, is_primary=True)
+    lens.set_aperture(aperture_type="EPD", value=10.0)
+    lens.fields.set_type(field_type="object_height")
+    lens.fields.add(x=0, y=0)
+    lens.fields.add(x=0, y=5)
+    return lens
+
+
 class TestDoubleGaussAberrations:
     def test_init(self, set_test_backend, double_gauss):
         aberrations = Aberrations(double_gauss)
@@ -259,6 +282,26 @@ class TestSimpleSinglet:
 
         # Other Seidel coefficients are expected to be zero for on-axis field
         assert_allclose(S[1:], [0, 0, 0, 0], atol=1e-8)
+
+
+class TestFiniteConjugateAberrations:
+    """Regression coverage for issue #683."""
+
+    def test_chief_ray_is_finite(self, set_test_backend, finite_conjugate_singlet):
+        y, u = finite_conjugate_singlet.paraxial.chief_ray()
+
+        assert not be.any(~be.isfinite(y))
+        assert not be.any(~be.isfinite(u))
+        assert_allclose(y[0], -5.0)
+        assert_allclose(y[1], 0.0, atol=1e-12)
+
+    def test_third_order_coefficients_are_finite(
+        self, set_test_backend, finite_conjugate_singlet
+    ):
+        coefficients = finite_conjugate_singlet.aberrations.third_order()
+
+        for coefficient in coefficients:
+            assert not be.any(~be.isfinite(coefficient))
 
 
 class TestReflectiveSystemSeidels:

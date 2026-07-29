@@ -111,17 +111,20 @@ class OsloDataFormatter:
 
     def _format_surface_geometry(self, lines: list[str], data: dict[str, Any]) -> None:
         if "RD" in data and not math.isinf(data["RD"]):
-            lines.append(f"RD {self._fmt(data['RD'])}")
+            lines.append(f"  RD {self._fmt(data['RD'])}")
 
         if "TH" in data:
             th = 1e10 if math.isinf(data["TH"]) else data["TH"]
-            lines.append(f"TH {self._fmt(th)}")  # 1e10 is OSLO's infinity convention
+            lines.append(f"  TH {self._fmt(th)}")  # 1e10 is OSLO's infinity convention
 
         if "AP" in data:
-            lines.append(f"AP {self._fmt(data['AP'])}")
+            lines.append(f"  AP {self._fmt(data['AP'])}")
 
         if data.get("AST"):
-            lines.append("AST")
+            lines.append("  AST")
+
+        if data.get("PFL"):
+            lines.append(f"  PFL {self._fmt(data['PFL'])}")
 
         if "CC" in data and data["CC"] != 0:
             lines.append(f"CC {self._fmt(data['CC'])}")

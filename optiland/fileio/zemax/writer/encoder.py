@@ -204,10 +204,10 @@ class ZemaxFileEncoder:
         clap = raw.get("CLAP")
         if clap is None:
             return
-        try:
+        if hasattr(clap, "r_min"):
             lines.append(f"  CLAP {_fmt(float(clap.r_min))} {_fmt(float(clap.r_max))}")
-        except AttributeError:
-            lines.append("  CLAP 0")
+        elif hasattr(clap, "x_min"):
+            lines.append(f"  CLAP {_fmt(0.0)} {_fmt(float(clap.x_max))}")
 
     def _encode_parameters(self, lines: list[str], raw: dict[str, Any]) -> None:
         for i in range(1, 17):
