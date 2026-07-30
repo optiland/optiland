@@ -29,6 +29,7 @@ from optiland.samples.simple import (
     TelescopeDoublet,
 )
 from optiland.samples.telescopes import HubbleTelescope
+from optiland.surfaces.object_surface import ObjectSurface
 
 from .utils import assert_allclose
 
@@ -1273,3 +1274,26 @@ def test_equivalence(paraxial_surfaces, real_surfaces, set_test_backend):
         _get_paraxial_items(paraxial_lens.paraxial),
         _get_paraxial_items(real_lens.paraxial),
     )
+
+
+def test_marginal_ray_without_object_surface_raises_descriptive_error(
+    set_test_backend,
+):
+    lens = CookeTriplet()
+    lens.surfaces.surfaces = [
+        surface
+        for surface in lens.surfaces.surfaces
+        if not isinstance(surface, ObjectSurface)
+    ]
+    assert lens.object_surface is None
+
+    with pytest.raises(ValueError, match="No object surface is defined"):
+        lens.paraxial.marginal_ray()
+
+
+def test_chief_ray_without_field_definition_raises_descriptive_error(set_test_backend):
+    lens = CookeTriplet()
+    lens.fields.field_definition = None
+
+    with pytest.raises(ValueError, match="No field definition is set"):
+        lens.paraxial.chief_ray()

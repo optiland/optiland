@@ -356,8 +356,11 @@ class Paraxial:
         obj_z = self.surfaces.positions[1] - 10  # 10 mm before first surface
 
         if self.optic.object_surface is None:
-            # TODO: make some nice error message
-            raise ValueError()
+            raise ValueError(
+                "No object surface is defined on the optical system. The marginal "
+                "ray starts at the object, so an object surface is required. Add "
+                "one with `optic.add_surface(index=0, ...)`."
+            )
 
         if self.optic.object_surface.is_infinite:
             ya = EPD / 2
@@ -415,8 +418,11 @@ class Paraxial:
 
         # Scale based on field definition
         if field_definition is None:
-            # TODO: make some nice error message
-            raise ValueError()
+            raise ValueError(
+                "No field definition is set on the optical system. The chief ray "
+                "is scaled by the field, so a field type is required. Set one with "
+                '`optic.fields.set_type(...)`, e.g. "angle" or "object_height".'
+            )
 
         scaling_factor = field_definition.scale_chief_ray_for_field(
             self.optic, y_obj_unit, u_obj_unit, y_img_unit
