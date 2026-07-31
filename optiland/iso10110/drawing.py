@@ -834,16 +834,9 @@ class _MatplotlibRenderer:
 
     def render(self, figsize: tuple | None = None):
         """Build and return a matplotlib Figure for this element."""
-        import matplotlib.patches as mpatches
         import matplotlib.pyplot as plt
-        from matplotlib.path import Path as MPath
 
         pw, ph = self.pw, self.ph
-        geo = self._geo
-        s = geo.scale
-        espec = self.spec.get_element_spec(self.element_index)
-        surfs = self.element.surfaces
-        n = len(surfs)
 
         if figsize is None:
             figsize = (pw / 25.4, ph / 25.4)
@@ -855,6 +848,27 @@ class _MatplotlibRenderer:
         ax.set_aspect("equal")
         ax.axis("off")
         ax.set_facecolor("white")
+
+        self._draw_borders(ax)
+        sa_e, top_f, top_r, bot_r, bot_f = self._draw_lens_outline(ax)
+        self._draw_axes(ax)
+        self._draw_sharp_edge_symbols(ax)
+        self._draw_aperture_brackets(ax)
+        self._draw_surface_finish_callouts(ax, sa_e)
+        phys_d = self._draw_dimension_lines(ax, sa_e, top_f, top_r, bot_r, bot_f)
+        self._draw_spec_table(ax)
+        self._draw_reference_annotation(ax)
+        self._draw_efl_annotation(ax)
+        self._draw_title_block(ax, phys_d)
+
+        return fig
+
+    # ── render sections ────────────────────────────────────────────────────
+
+    def _draw_borders(self, ax) -> None:
+        import matplotlib.patches as mpatches
+
+        pw, ph = self.pw, self.ph
 
         # ── Borders ──────────────────────────────────────────────────────
         for x, y, w, h, lw in [
@@ -872,6 +886,12 @@ class _MatplotlibRenderer:
                     (x, y), w, h, lw=lw, ec="black", fc="none", zorder=10
                 )
             )
+
+    def _draw_lens_outline(
+        self, ax
+    ) -> tuple[float, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        geo = self._geo
+        n = len(self.element.surfaces)
 
         # ── Lens cross-section ────────────────────────────────────────────
         sa_e = geo.sa_max
@@ -925,6 +945,14 @@ class _MatplotlibRenderer:
         for i in range(1, n - 1):  # cement interfaces
             cp = self._curve_sa(i, geo.sa[i])
             ax.plot(cp[:, 0], cp[:, 1], "k-", lw=0.8, zorder=5)
+
+        return sa_e, top_f, top_r, bot_r, bot_f
+
+    def _draw_axes(self, ax) -> None:
+        geo = self._geo
+        s = geo.scale
+        surfs = self.element.surfaces
+        n = len(surfs)
 
         # ── Axes ─────────────────────────────────────────────────────────
         mg = 10.0 / s
@@ -1002,6 +1030,10 @@ class _MatplotlibRenderer:
                 zorder=5,
             )
 
+    def _draw_sharp_edge_symbols(self, ax) -> None:
+        geo = self._geo
+        surfs = self.element.surfaces
+
         # ── Sharp-edge "0" symbols (§5.9.5.2) ────────────────────────────
         # A "0" near the surface vertex signals that no protective chamfer
         # is permitted; the edge must remain sharp.
@@ -1023,6 +1055,11 @@ class _MatplotlibRenderer:
                 color="black",
                 zorder=7,
             )
+
+    def _draw_aperture_brackets(self, ax) -> None:
+        geo = self._geo
+        surfs = self.element.surfaces
+        n = len(surfs)
 
         # ── Effective aperture brackets (ISO 10110-11) — always shown ─────
         for si, surf in enumerate(surfs):
@@ -1059,6 +1096,14 @@ class _MatplotlibRenderer:
                 color="black",
                 zorder=6,
             )
+
+    def _draw_surface_finish_callouts(self, ax, sa_e: float) -> None:
+        import matplotlib.patches as mpatches
+        from matplotlib.path import Path as MPath
+
+        geo = self._geo
+        surfs = self.element.surfaces
+        n = len(surfs)
 
         # ── Surface finish callout symbols ────────────────────────────────
         sym_fracs = {0: 0.85, n - 1: 0.65}
@@ -1139,6 +1184,14 @@ class _MatplotlibRenderer:
                 color="black",
                 zorder=7,
             )
+
+    def _draw_dimension_lines(
+        self, ax, sa_e: float, top_f, top_r, bot_r, bot_f
+    ) -> float:
+        geo = self._geo
+        s = geo.scale
+        espec = self.spec.get_element_spec(self.element_index)
+        surfs = self.element.surfaces
 
         # ── Dimension lines ───────────────────────────────────────────────
         aw_dim = dict(arrowstyle="<->", color="black", lw=0.6, mutation_scale=7)
@@ -1237,6 +1290,16 @@ class _MatplotlibRenderer:
                     va="bottom",
                     fontsize=7 * self.style.component_dimension_scale,
                 )
+
+        return phys_d
+
+    def _draw_spec_table(self, ax) -> None:
+        import matplotlib.patches as mpatches
+
+        pw = self.pw
+        geo = self._geo
+        surfs = self.element.surfaces
+        n = len(surfs)
 
         # ── ISO spec table ────────────────────────────────────────────────
         n_comps = self.element.num_components
@@ -1400,6 +1463,7 @@ class _MatplotlibRenderer:
             _col_hdr(ci, "MATERIAL" if n_comps == 1 else f"GLASS {mi + 1}")
             _col_body(ci, lines)
 
+    def _draw_reference_annotation(self, ax) -> None:
         # ── ISO 10110 reference + λ annotation (§4, mandatory since 2019) ─
         # Placed at bottom-left of drawing field per Annex A examples.
         ref_wl = getattr(self.spec, "reference_wavelength", 546.07)
@@ -1414,6 +1478,9 @@ class _MatplotlibRenderer:
             fontstyle="italic",
             zorder=8,
         )
+
+    def _draw_efl_annotation(self, ax) -> None:
+        ph = self.ph
 
         # ── f' (EFL) annotation — shown in all ISO Annex A examples ──────
         try:
@@ -1431,6 +1498,13 @@ class _MatplotlibRenderer:
             )
         except Exception:
             pass
+
+    def _draw_title_block(self, ax, phys_d: float) -> None:
+        import matplotlib.patches as mpatches
+
+        pw = self.pw
+        geo = self._geo
+        espec = self.spec.get_element_spec(self.element_index)
 
         # ── Title block ───────────────────────────────────────────────────
         ttl_x0 = self.style.border_margin
@@ -1587,8 +1661,6 @@ class _MatplotlibRenderer:
             linestyle=(0, (4, 1.5, 1, 1.5)),
             zorder=9,
         )
-
-        return fig
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
