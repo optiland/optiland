@@ -1003,7 +1003,7 @@ class TestTitleBlock:
 
     def test_mat_display_name_helper(self):
         """_mat_display_name must append catalog from material_data."""
-        from optiland.iso10110.drawing import _mat_display_name
+        from optiland.iso10110._geometry import _mat_display_name
         from optiland.materials import Material
 
         m = Material("N-BK7")
@@ -1012,7 +1012,7 @@ class TestTitleBlock:
 
     def test_mat_display_name_no_dup(self):
         """_mat_display_name must NOT duplicate name when ref equals name."""
-        from optiland.iso10110.drawing import _mat_display_name
+        from optiland.iso10110._geometry import _mat_display_name
 
         class _Fake:
             name = "F2"
@@ -1087,7 +1087,7 @@ class TestSurfaceHeaderLines:
         return surf
 
     def test_standard_sphere_front(self):
-        from optiland.iso10110.drawing import _surface_header_lines
+        from optiland.iso10110._geometry import _surface_header_lines
         from optiland.iso10110.notation import SurfaceSpec
         from optiland.geometries.standard import StandardGeometry
         from optiland.coordinate_system import CoordinateSystem
@@ -1099,7 +1099,7 @@ class TestSurfaceHeaderLines:
         assert "CX" in lines[0]   # r>0, front → CX
 
     def test_standard_sphere_rear(self):
-        from optiland.iso10110.drawing import _surface_header_lines
+        from optiland.iso10110._geometry import _surface_header_lines
         from optiland.iso10110.notation import SurfaceSpec
         from optiland.geometries.standard import StandardGeometry
         from optiland.coordinate_system import CoordinateSystem
@@ -1110,7 +1110,7 @@ class TestSurfaceHeaderLines:
         assert "CC" in lines[0]   # r>0, rear → CC
 
     def test_flat_surface(self):
-        from optiland.iso10110.drawing import _surface_header_lines
+        from optiland.iso10110._geometry import _surface_header_lines
         from optiland.iso10110.notation import SurfaceSpec
         from optiland.geometries.plane import Plane
         from optiland.coordinate_system import CoordinateSystem
@@ -1121,7 +1121,7 @@ class TestSurfaceHeaderLines:
         assert lines[0] == "R ∞"
 
     def test_even_asphere(self):
-        from optiland.iso10110.drawing import _surface_header_lines
+        from optiland.iso10110._geometry import _surface_header_lines
         from optiland.iso10110.notation import SurfaceSpec
         from optiland.geometries.even_asphere import EvenAsphere
         from optiland.coordinate_system import CoordinateSystem
@@ -1143,7 +1143,7 @@ class TestSurfaceHeaderLines:
         §4.3.1 states the conic coefficient κ shall be given *when it is non-zero*.
         An EvenAsphere with κ=0 is a spherical base — no κ line should appear.
         """
-        from optiland.iso10110.drawing import _surface_header_lines
+        from optiland.iso10110._geometry import _surface_header_lines
         from optiland.iso10110.notation import SurfaceSpec
         from optiland.geometries.even_asphere import EvenAsphere
         from optiland.coordinate_system import CoordinateSystem
@@ -1160,7 +1160,7 @@ class TestSurfaceHeaderLines:
 
     def test_even_asphere_conic_nonzero_shown(self):
         """ASPH header must include κ when conic is non-zero (ISO 10110-12 §4.3.1)."""
-        from optiland.iso10110.drawing import _surface_header_lines
+        from optiland.iso10110._geometry import _surface_header_lines
         from optiland.iso10110.notation import SurfaceSpec
         from optiland.geometries.even_asphere import EvenAsphere
         from optiland.coordinate_system import CoordinateSystem
@@ -1175,7 +1175,7 @@ class TestSurfaceHeaderLines:
 
     def test_even_asphere_r_tolerance(self):
         """ASPH vertex radius line must include r_tolerance (ISO 10110-12 §5.3.1)."""
-        from optiland.iso10110.drawing import _surface_header_lines
+        from optiland.iso10110._geometry import _surface_header_lines
         from optiland.iso10110.notation import SurfaceSpec
         from optiland.geometries.even_asphere import EvenAsphere
         from optiland.coordinate_system import CoordinateSystem
@@ -1196,7 +1196,7 @@ class TestSurfaceHeaderLines:
 
     def test_toroidal_cyl(self):
         """ToroidalGeometry with infinite R_rot → CYL."""
-        from optiland.iso10110.drawing import _surface_header_lines
+        from optiland.iso10110._geometry import _surface_header_lines
         from optiland.iso10110.notation import SurfaceSpec
         from optiland.geometries.toroidal import ToroidalGeometry
         from optiland.coordinate_system import CoordinateSystem
@@ -1210,7 +1210,7 @@ class TestSurfaceHeaderLines:
 
     def test_toroidal_cyl_r_tolerance(self):
         """CYL R line must include r_tolerance when set."""
-        from optiland.iso10110.drawing import _surface_header_lines
+        from optiland.iso10110._geometry import _surface_header_lines
         from optiland.iso10110.notation import SurfaceSpec
         from optiland.geometries.toroidal import ToroidalGeometry
         from optiland.coordinate_system import CoordinateSystem
@@ -1230,7 +1230,7 @@ class TestSurfaceHeaderLines:
 
         Radii must be labelled Rx / Ry (consistent with BICONIC notation).
         """
-        from optiland.iso10110.drawing import _surface_header_lines
+        from optiland.iso10110._geometry import _surface_header_lines
         from optiland.iso10110.notation import SurfaceSpec
         from optiland.geometries.toroidal import ToroidalGeometry
         from optiland.coordinate_system import CoordinateSystem
@@ -1247,7 +1247,7 @@ class TestSurfaceHeaderLines:
             f"Expected 'Ry ...' radius line in TOROID header, got: {lines}"
 
     def test_biconic(self):
-        from optiland.iso10110.drawing import _surface_header_lines
+        from optiland.iso10110._geometry import _surface_header_lines
         from optiland.iso10110.notation import SurfaceSpec
         from optiland.geometries.biconic import BiconicGeometry
         from optiland.coordinate_system import CoordinateSystem
@@ -1263,7 +1263,7 @@ class TestSurfaceHeaderLines:
 
     def test_biconic_conic_constants_shown_when_nonzero(self):
         """BICONIC header must include κx/κy when conic constants are non-zero."""
-        from optiland.iso10110.drawing import _surface_header_lines
+        from optiland.iso10110._geometry import _surface_header_lines
         from optiland.iso10110.notation import SurfaceSpec
         from optiland.geometries.biconic import BiconicGeometry
         from optiland.coordinate_system import CoordinateSystem
@@ -1280,7 +1280,7 @@ class TestSurfaceHeaderLines:
 
     def test_biconic_conic_constants_omitted_when_zero(self):
         """BICONIC header must not include κx/κy lines when both are zero."""
-        from optiland.iso10110.drawing import _surface_header_lines
+        from optiland.iso10110._geometry import _surface_header_lines
         from optiland.iso10110.notation import SurfaceSpec
         from optiland.geometries.biconic import BiconicGeometry
         from optiland.coordinate_system import CoordinateSystem
@@ -1295,7 +1295,7 @@ class TestSurfaceHeaderLines:
 
     def test_cyl_conic_constant_shown_when_nonzero(self):
         """CYL header must include κ for the base curve when non-zero."""
-        from optiland.iso10110.drawing import _surface_header_lines
+        from optiland.iso10110._geometry import _surface_header_lines
         from optiland.iso10110.notation import SurfaceSpec
         from optiland.geometries.toroidal import ToroidalGeometry
         from optiland.coordinate_system import CoordinateSystem
@@ -1311,7 +1311,7 @@ class TestSurfaceHeaderLines:
 
     def test_toroid_conic_constant_shown_when_nonzero(self):
         """TOROID header must include κ for the base YZ curve when non-zero."""
-        from optiland.iso10110.drawing import _surface_header_lines
+        from optiland.iso10110._geometry import _surface_header_lines
         from optiland.iso10110.notation import SurfaceSpec
         from optiland.geometries.toroidal import ToroidalGeometry
         from optiland.coordinate_system import CoordinateSystem
@@ -1326,7 +1326,7 @@ class TestSurfaceHeaderLines:
             f"Expected κ line in TOROID header with non-zero conic: {lines}"
 
     def test_polynomial_gs(self):
-        from optiland.iso10110.drawing import _surface_header_lines
+        from optiland.iso10110._geometry import _surface_header_lines
         from optiland.iso10110.notation import SurfaceSpec
         from optiland.geometries.polynomial import PolynomialGeometry
         from optiland.coordinate_system import CoordinateSystem
@@ -1340,7 +1340,7 @@ class TestSurfaceHeaderLines:
 
     def test_plane_grating(self):
         """PlaneGrating yields ISO 10110-16 type symbol, GRAT, frequency and order."""
-        from optiland.iso10110.drawing import _surface_header_lines
+        from optiland.iso10110._geometry import _surface_header_lines
         from optiland.iso10110.notation import SurfaceSpec
         from optiland.geometries.plane_grating import PlaneGrating
         from optiland.coordinate_system import CoordinateSystem
@@ -1360,7 +1360,7 @@ class TestSurfaceHeaderLines:
 
     def test_plane_grating_standard_geometry(self):
         """StandardGratingGeometry shows frequency (lines/mm) and order."""
-        from optiland.iso10110.drawing import _surface_header_lines
+        from optiland.iso10110._geometry import _surface_header_lines
         from optiland.iso10110.notation import SurfaceSpec
         from optiland.geometries.standard_grating import StandardGratingGeometry
         from optiland.coordinate_system import CoordinateSystem
@@ -1388,7 +1388,7 @@ class TestSurfaceHeaderLines:
 
     def test_grating_type_override(self):
         """grating_type field controls the ISO 10110-16 symbol shown."""
-        from optiland.iso10110.drawing import _surface_header_lines
+        from optiland.iso10110._geometry import _surface_header_lines
         from optiland.iso10110.notation import SurfaceSpec
         from optiland.geometries.plane_grating import PlaneGrating
         from optiland.coordinate_system import CoordinateSystem
@@ -1407,7 +1407,7 @@ class TestSurfaceHeaderLines:
 
     def test_grating_groove_orientation_angle(self):
         """Non-zero groove orientation angle must appear as φ = …° in GRAT header."""
-        from optiland.iso10110.drawing import _surface_header_lines
+        from optiland.iso10110._geometry import _surface_header_lines
         from optiland.iso10110.notation import SurfaceSpec
         from optiland.geometries.plane_grating import PlaneGrating
         from optiland.coordinate_system import CoordinateSystem
@@ -1431,7 +1431,7 @@ class TestSurfaceHeaderLines:
 
     def test_standard_grating_curved_substrate(self):
         """StandardGratingGeometry with curved substrate shows R (and κ when non-zero)."""
-        from optiland.iso10110.drawing import _surface_header_lines
+        from optiland.iso10110._geometry import _surface_header_lines
         from optiland.iso10110.notation import SurfaceSpec
         from optiland.geometries.standard_grating import StandardGratingGeometry
         from optiland.coordinate_system import CoordinateSystem
@@ -1453,7 +1453,7 @@ class TestSurfaceHeaderLines:
 
     def test_forbes_q_radial_terms_shown(self):
         """Forbes Q ASPH header must list ρmax and non-zero a_m coefficients."""
-        from optiland.iso10110.drawing import _surface_header_lines
+        from optiland.iso10110._geometry import _surface_header_lines
         from optiland.iso10110.notation import SurfaceSpec
         from optiland.geometries.forbes.geometry import (
             ForbesQNormalSlopeGeometry, ForbesSurfaceConfig,
@@ -1477,7 +1477,7 @@ class TestSurfaceHeaderLines:
 
     def test_forbes_q_radial_terms_empty(self):
         """Forbes Q ASPH header with empty radial_terms must not list ρmax."""
-        from optiland.iso10110.drawing import _surface_header_lines
+        from optiland.iso10110._geometry import _surface_header_lines
         from optiland.iso10110.notation import SurfaceSpec
         from optiland.geometries.forbes.geometry import (
             ForbesQNormalSlopeGeometry, ForbesSurfaceConfig,
@@ -1499,7 +1499,7 @@ class TestSurfaceHeaderLines:
         coefficients[i] maps to power (i+1) → ISO label A_{i+1}.
         Zero-valued coefficients must be omitted.
         """
-        from optiland.iso10110.drawing import _surface_header_lines
+        from optiland.iso10110._geometry import _surface_header_lines
         from optiland.iso10110.notation import SurfaceSpec
         from optiland.geometries.odd_asphere import OddAsphere
         from optiland.coordinate_system import CoordinateSystem
@@ -1522,7 +1522,7 @@ class TestSurfaceHeaderLines:
 
     def test_odd_asphere_no_ρmax(self):
         """OddAsphere ASPH header must not contain ρmax (that is Forbes Q only)."""
-        from optiland.iso10110.drawing import _surface_header_lines
+        from optiland.iso10110._geometry import _surface_header_lines
         from optiland.iso10110.notation import SurfaceSpec
         from optiland.geometries.odd_asphere import OddAsphere
         from optiland.coordinate_system import CoordinateSystem
@@ -1917,7 +1917,7 @@ class TestSurfaceHeaderLinesPlainText:
 
     def test_r_tolerance_plain_text_no_mathtext(self):
         """With plain_text=True the R label must not contain ^ or {} characters."""
-        from optiland.iso10110.drawing import _surface_header_lines
+        from optiland.iso10110._geometry import _surface_header_lines
         from optiland.iso10110.notation import SurfaceSpec
         from optiland.geometries.standard import StandardGeometry
         from optiland.coordinate_system import CoordinateSystem
@@ -1935,7 +1935,7 @@ class TestSurfaceHeaderLinesPlainText:
 
     def test_r_tolerance_mathtext_contains_mathtext(self):
         """Default (plain_text=False) must produce $ … $ mathtext for matplotlib."""
-        from optiland.iso10110.drawing import _surface_header_lines
+        from optiland.iso10110._geometry import _surface_header_lines
         from optiland.iso10110.notation import SurfaceSpec
         from optiland.geometries.standard import StandardGeometry
         from optiland.coordinate_system import CoordinateSystem
@@ -2295,7 +2295,7 @@ class TestDxfArrowheads:
     def test_dxf_arrowhead_helper_geometry(self):
         """_dxf_arrowhead must place the tip at the correct coordinate."""
         import ezdxf
-        from optiland.iso10110.drawing import _dxf_arrowhead
+        from optiland.iso10110._dxf_renderer import _dxf_arrowhead
 
         doc = ezdxf.new("R2010")
         msp = doc.modelspace()
@@ -2464,13 +2464,13 @@ class TestTolHelpers:
 
     def test_tol_plain_none(self):
         """_tol_plain(None) must return empty string."""
-        from optiland.iso10110.drawing import _tol_plain
+        from optiland.iso10110._geometry import _tol_plain
 
         assert _tol_plain(None) == ""
 
     def test_tol_plain_symmetric(self):
         """±0.05 must produce ' +0.05/-0.05' in plain-text format."""
-        from optiland.iso10110.drawing import _tol_plain
+        from optiland.iso10110._geometry import _tol_plain
 
         result = _tol_plain("±0.05")
         assert "+0.05" in result
@@ -2480,7 +2480,7 @@ class TestTolHelpers:
 
     def test_tol_plain_hi_lo(self):
         """'+0.1/-0' asymmetric tolerance must be preserved."""
-        from optiland.iso10110.drawing import _tol_plain
+        from optiland.iso10110._geometry import _tol_plain
 
         result = _tol_plain("+0.1/-0")
         assert "+0.1" in result
@@ -2488,7 +2488,7 @@ class TestTolHelpers:
 
     def test_tol_plain_no_minus_sign_unicode(self):
         """Plain-text tolerance must use ASCII hyphen-minus, not U+2212."""
-        from optiland.iso10110.drawing import _tol_plain
+        from optiland.iso10110._geometry import _tol_plain
 
         result = _tol_plain("±0.05")
         assert "\u2212" not in result, (
@@ -2497,13 +2497,13 @@ class TestTolHelpers:
 
     def test_tol_math_none(self):
         """_tol_math(None) must return empty string."""
-        from optiland.iso10110.drawing import _tol_math
+        from optiland.iso10110._geometry import _tol_math
 
         assert _tol_math(None) == ""
 
     def test_tol_math_symmetric(self):
         """±0.05 must produce mathtext ^{+0.05}_{-0.05}."""
-        from optiland.iso10110.drawing import _tol_math
+        from optiland.iso10110._geometry import _tol_math
 
         result = _tol_math("±0.05")
         assert "^" in result and "{" in result
@@ -2542,7 +2542,7 @@ class TestIso1011Defaults:
 
     def test_default_code_format_includes_space(self):
         """ISO code strings in defaults must use 'code/ value' (space after /) format."""
-        from optiland.iso10110.drawing import _iso10110_11_defaults
+        from optiland.iso10110._geometry import _iso10110_11_defaults
 
         for size in (5, 20, 50, 200):
             d = _iso10110_11_defaults(size)
@@ -2555,7 +2555,7 @@ class TestIso1011Defaults:
 
     def test_category_boundaries(self):
         """ISO 10110-11 Table 1 boundary sizes must land in the correct category."""
-        from optiland.iso10110.drawing import _iso10110_11_defaults
+        from optiland.iso10110._geometry import _iso10110_11_defaults
 
         # Boundary at 10 mm: exactly 10 must be ≤10, 10.001 must be >10 to ≤30
         d10  = _iso10110_11_defaults(10.0)

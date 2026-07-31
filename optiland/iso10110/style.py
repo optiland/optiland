@@ -1,8 +1,8 @@
 """ISO 10110 Drawing Style
 
 Exposes the font sizes and border margin used by both renderers
-(:class:`~optiland.iso10110.drawing._MatplotlibRenderer` and
-:class:`~optiland.iso10110.drawing._DxfRenderer`) as a single, user-facing
+(:class:`~optiland.iso10110._mpl_renderer._MatplotlibRenderer` and
+:class:`~optiland.iso10110._dxf_renderer._DxfRenderer`) as a single, user-facing
 :class:`DrawingStyle` object, instead of leaving them hardcoded in the
 renderer source.
 

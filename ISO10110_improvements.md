@@ -682,3 +682,33 @@ real, not just theoretical.
   These are now documented inline at each `role`-specific branch in the
   primitive implementations, rather than living as silent, undocumented
   drift between two independently-hand-tuned code paths.
+
+### X4 · Split `drawing.py` into per-concern modules ✅
+- `drawing.py` was 2.6k lines bundling shared geometry/formatting helpers,
+  the shared renderer base class, both concrete renderers, and the public
+  `ElementDrawing`/`draw_element`/`dxf_to_png` API in one file — the
+  outlier in a package where every other concern already gets its own
+  module (`spec.py`, `style.py`, `elements.py`, `notation.py`, `report.py`).
+  Split it, matching that convention:
+  - `_geometry.py` — `_Geo`, tolerance parsing/formatting, ISO spec-table
+    row builders, symbol-transform math, paper sizes, and the shared
+    layout constants (`_SPEC_H`, `_TTL_H`, etc.).
+  - `_base_renderer.py` — `_BaseRenderer` (the primitive-driven shared
+    layout from §X3).
+  - `_mpl_renderer.py` — `_MatplotlibRenderer` plus its own
+    `_draw_glass_hatch()` helper.
+  - `_dxf_renderer.py` — `_DxfRenderer`, the DXF layer-name constants, and
+    its own `_dxf_arrowhead()` helper.
+  - `drawing.py` — now just 248 lines: the public `ElementDrawing`,
+    `draw_element()`, `dxf_to_png()`, importing renderers from the modules
+    above. The public API (`optiland.iso10110.__init__` only ever imported
+    `ElementDrawing`/`draw_element` from here) is unaffected.
+- `tests/test_iso10110.py` reached into several now-relocated private
+  helpers directly (`_mat_display_name`, `_surface_header_lines`,
+  `_tol_math`/`_tol_plain`, `_iso10110_11_defaults`, `_dxf_arrowhead`) via
+  `from optiland.iso10110.drawing import ...`; updated those ~38 import
+  lines to the new module paths, nothing else in the test file touched.
+- Verified with the same byte-exact harness as §X3 (pure file
+  reorganization, so this was mostly a formality, but confirmed no
+  import-order/circular-import side effect changed behavior) — zero diff
+  against the pre-refactor reference.
