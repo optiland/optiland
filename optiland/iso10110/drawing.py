@@ -102,6 +102,18 @@ _SYM_ARM = [
 _SYM_BAR = [(38.147170, 66.827652), (61.857127, 66.827652)]
 _SYM_SC = 0.115  # scale factor: SVG units → mm
 
+
+def _sym_transform(vx, vy, cos_t, sin_t, pts):
+    """Rotate + scale + translate SVG symbol points to sheet mm."""
+    return [
+        (
+            vx + _SYM_SC * (x * cos_t - y * sin_t),
+            vy + _SYM_SC * (x * sin_t + y * cos_t),
+        )
+        for x, y in pts
+    ]
+
+
 # Encircled-λ symbol for coating rows in spec table (ISO 10110-9)
 _LAMBDA_R = 1.5  # circle radius in sheet mm
 
@@ -677,8 +689,18 @@ class _Geo:
         return (self._ox + z * self.scale, self._oy + y * self.scale)
 
     def curve(self, surf_idx: int, n: int = 200) -> np.ndarray:
-        sa = self.sa[surf_idx]
-        raw = _sag_curve(self.element.surfaces[surf_idx], sa, n)
+        return self.curve_at(surf_idx, self.sa[surf_idx], n)
+
+    def rim(self, surf_idx: int, sign: float) -> tuple[float, float]:
+        return self.rim_at(surf_idx, sign, self.sa[surf_idx])
+
+    def curve_at(self, surf_idx: int, sa_val: float, n: int = 200) -> np.ndarray:
+        """Like :meth:`curve`, but for an explicit semi-aperture rather than
+        the surface's own fitted ``self.sa[surf_idx]`` — used by both
+        renderers to draw the shared outer envelope (``sa_max``) across all
+        surfaces of an element, and for individual cement interfaces.
+        """
+        raw = _sag_curve(self.element.surfaces[surf_idx], sa_val, n)
         return np.column_stack(
             [
                 self._ox + raw[:, 0] * self.scale,
@@ -686,11 +708,11 @@ class _Geo:
             ]
         )
 
-    def rim(self, surf_idx: int, sign: float) -> tuple[float, float]:
-        sa = self.sa[surf_idx]
+    def rim_at(self, surf_idx: int, sign: float, sa_val: float) -> tuple[float, float]:
+        """Like :meth:`rim`, for an explicit semi-aperture (see :meth:`curve_at`)."""
         surf = self.element.surfaces[surf_idx]
-        sag = _to_float(surf.geometry.sag(be.zeros(1), be.array([sa]))[0])
-        return self.pt(_surf_z(surf) + sag, sign * sa)
+        sag = _to_float(surf.geometry.sag(be.zeros(1), be.array([sa_val]))[0])
+        return self.pt(_surf_z(surf) + sag, sign * sa_val)
 
     def scale_label(self) -> str:
         sc = self.scale
@@ -746,11 +768,672 @@ def _iso10110_11_defaults(element_size: float) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# _BaseRenderer — shared layout logic, expressed via format-specific primitives
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class _BaseRenderer:
+    """Shared ISO 10110 layout logic for both output-format renderers.
+
+    :class:`_MatplotlibRenderer` and :class:`_DxfRenderer` both subclass this
+    and implement the small set of format-specific primitives below
+    (``_prim_*`` line/circle/text drawing, plus ``_tol_fmt``/``_fmt_line``
+    text-formatting hooks); layout expressed purely in terms of those
+    primitives — e.g. the ISO spec table — lives here once instead of being
+    duplicated per format. A future renderer (e.g. SVG) only needs to
+    implement the primitives, not re-derive the layout.
+
+    Concrete subclasses must set ``self._geo``, ``self.element``,
+    ``self.spec``, ``self.style``, ``self.pw``/``self.ph`` in ``__init__``
+    (as both already do), and must set the primitives' actual draw target
+    (``self._ax`` for matplotlib, ``self._msp`` for DXF) before calling any
+    shared layout method.
+    """
+
+    # ── primitives (implemented per format) ────────────────────────────────
+    #
+    # ``role`` selects the format-specific styling (matplotlib line
+    # weight/zorder/color, or DXF layer) for that element — it is not a
+    # layout decision, so it never affects position/content, only how a
+    # primitive draws itself.
+
+    def _prim_rect(self, x: float, y: float, w: float, h: float, *, role: str) -> None:
+        """Unfilled axis-aligned rectangle outline."""
+        raise NotImplementedError
+
+    def _prim_hline(self, x0: float, x1: float, y: float, *, role: str) -> None:
+        raise NotImplementedError
+
+    def _prim_vline(self, x: float, y0: float, y1: float, *, role: str) -> None:
+        raise NotImplementedError
+
+    def _prim_line(
+        self, p1: tuple[float, float], p2: tuple[float, float], *, role: str
+    ) -> None:
+        """Arbitrary two-point line (unlike ``_prim_hline``/``_prim_vline``,
+        may carry a non-solid linestyle depending on *role*)."""
+        raise NotImplementedError
+
+    def _prim_dim_arrow(
+        self, p1: tuple[float, float], p2: tuple[float, float], *, role: str
+    ) -> None:
+        """Double-headed dimension arrow from *p1* to *p2* (witness lines at
+        the endpoints are drawn separately, via ``_prim_vline``/``_prim_hline``)."""
+        raise NotImplementedError
+
+    def _prim_polygon(self, points: list[tuple[float, float]], *, role: str) -> None:
+        """Closed, unfilled polygon outline."""
+        raise NotImplementedError
+
+    def _prim_curve(self, points: list[tuple[float, float]], *, role: str) -> None:
+        """Open curve through *points* (start, ...control points..., end).
+
+        Matplotlib renders it as a cubic Bezier through all points; DXF (no
+        native Bezier TEXT/LINE primitive here) draws a straight line from
+        the first to the last point — a pre-existing per-format rendering
+        difference, not a shared layout decision.
+        """
+        raise NotImplementedError
+
+    def _prim_text(
+        self, pos: tuple[float, float], s: str, *, ha: str, va: str, role: str
+    ) -> None:
+        raise NotImplementedError
+
+    def _prim_circle(self, center: tuple[float, float], r: float, *, role: str) -> None:
+        raise NotImplementedError
+
+    def _tol_fmt(self, tol) -> str:
+        """Format a tolerance string in this renderer's text representation
+        (matplotlib mathtext vs. DXF plain text)."""
+        raise NotImplementedError
+
+    def _fmt_line(self, s: str) -> str:
+        """Format-specific post-processing of a spec-table text line.
+
+        Identity for matplotlib; DXF strips mathtext markers left over from
+        ``_surface_header_lines(..., plain_text=True)`` and replaces the
+        infinity symbol for broader DXF-viewer compatibility.
+        """
+        return s
+
+    # ── shared layout ───────────────────────────────────────────────────────
+
+    def _draw_borders(self) -> None:
+        pw, ph = self.pw, self.ph
+        self._prim_rect(0, 0, pw, ph, role="sheet_border_outer")
+        self._prim_rect(
+            self.style.border_margin,
+            self.style.border_margin,
+            pw - 2 * self.style.border_margin,
+            ph - 2 * self.style.border_margin,
+            role="sheet_border_inner",
+        )
+
+    def _draw_axes(self) -> None:
+        geo = self._geo
+        s = geo.scale
+        surfs = self.element.surfaces
+        n = len(surfs)
+
+        mg = self._axis_margin_mm() / s
+        ax_x0, ax_y0 = geo.pt(geo.opt_z_min - mg, 0)
+        ax_x1, _ = geo.pt(geo.opt_z_max + mg, 0)
+
+        # Optical axis — ISO 128 long-dash double-dot (PHANTOM line)
+        self._prim_line((ax_x0, ax_y0), (ax_x1, ax_y0), role="optical_axis")
+
+        if self.rotational_axis_y == 0.0:
+            # Axes coincide — label once as "opt./rot. axis"
+            self._prim_text(
+                (ax_x0 - 1.0, ax_y0),
+                "opt./rot. axis",
+                ha="right",
+                va="center",
+                role="axis_label",
+            )
+        else:
+            # Separate rotational axis — ISO 128 long-dash single-dot (DASHDOT)
+            self._prim_text(
+                (ax_x0 - 1.0, ax_y0),
+                "opt. axis",
+                ha="right",
+                va="center",
+                role="axis_label",
+            )
+            rot_x0, rot_y0 = geo.pt(geo.opt_z_min - mg, self.rotational_axis_y)
+            rot_x1, _ = geo.pt(geo.opt_z_max + mg, self.rotational_axis_y)
+            self._prim_line((rot_x0, rot_y0), (rot_x1, rot_y0), role="rotational_axis")
+            self._prim_text(
+                (rot_x0 - 1.0, rot_y0),
+                "rot. axis",
+                ha="right",
+                va="center",
+                role="axis_label",
+            )
+
+        # Surface labels for cement interfaces below the axis
+        # (front / rear labels are placed near their callout symbols below)
+        for si in range(1, n - 1):
+            lbl_x = geo.pt(_surf_z(surfs[si]), 0)[0]
+            self._prim_text(
+                (lbl_x, ax_y0 - 2.5),
+                f"S{si + 1}",
+                ha="center",
+                va="top",
+                role="axis_surface_label",
+            )
+
+    def _draw_sharp_edge_symbols(self) -> None:
+        # A "0" near the surface vertex (§5.9.5.2) signals that no protective
+        # chamfer is permitted; the edge must remain sharp.
+        geo = self._geo
+        surfs = self.element.surfaces
+        for si, surf in enumerate(surfs):
+            s_idx = self.element.surface_indices[si]
+            sspec = self.spec.get_surface_spec(s_idx)
+            if not sspec.sharp_edge:
+                continue
+            vx_ax, vy_ax = geo.pt(_surf_z(surf), 0)
+            self._prim_text(
+                (vx_ax, vy_ax - 3.5),
+                "0",
+                ha="center",
+                va="top",
+                role="sharp_edge_symbol",
+            )
+
+    def _draw_aperture_brackets(self) -> None:
+        # Effective aperture brackets (ISO 10110-11) — always shown.
+        geo = self._geo
+        surfs = self.element.surfaces
+        n = len(surfs)
+        for si, surf in enumerate(surfs):
+            if si not in (0, n - 1):
+                continue
+            s_idx = self.element.surface_indices[si]
+            sspec = self.spec.get_surface_spec(s_idx)
+            # Fall back to geometric semi-aperture when not explicitly set
+            ca_d = (
+                sspec.ca_diameter if sspec.ca_diameter is not None else 2.0 * geo.sa[si]
+            )
+            ca_r = ca_d / 2.0
+            sag_ca = _to_float(surf.geometry.sag(be.zeros(1), be.array([ca_r]))[0])
+            ca_x = geo.pt(_surf_z(surf) + sag_ca, 0)[0]
+            ca_y_top = geo.pt(0, ca_r)[1]
+            ca_y_bot = geo.pt(0, -ca_r)[1]
+            tick_len = 3.0
+            side = -1 if si == 0 else 1
+            # §5.6: test-zone boundary must be thin solid line (01.1)
+            tick_x1 = ca_x + side * tick_len
+            self._prim_hline(ca_x, tick_x1, ca_y_top, role="aperture_bracket")
+            self._prim_hline(ca_x, tick_x1, ca_y_bot, role="aperture_bracket")
+            self._prim_vline(tick_x1, ca_y_bot, ca_y_top, role="aperture_bracket")
+            label_x = tick_x1 + side * 1.0
+            label_ha = "right" if si == 0 else "left"
+            self._prim_text(
+                (label_x, (ca_y_top + ca_y_bot) / 2),
+                f"Øₑ {ca_d:.2f}",
+                ha=label_ha,
+                va="center",
+                role="aperture_bracket_label",
+            )
+
+    def _draw_surface_finish_callouts(self, sa_e: float) -> None:
+        geo = self._geo
+        surfs = self.element.surfaces
+        n = len(surfs)
+
+        sym_fracs = {0: 0.85, n - 1: 0.65}
+
+        for si, frac in sym_fracs.items():
+            surf = surfs[si]
+            y_pos = frac * sa_e
+            sag_v = _to_float(surf.geometry.sag(be.zeros(1), be.array([y_pos]))[0])
+            vx, vy = geo.pt(_surf_z(surf) + sag_v, y_pos)
+
+            r_val = _surf_r(surf)
+            if math.isinf(r_val):
+                nx, ny = (-1.0, 0.0) if si == 0 else (1.0, 0.0)
+            else:
+                abs_r = abs(r_val)
+                cos_a = math.sqrt(max(abs_r**2 - y_pos**2, 0.0)) / abs_r
+                sin_a = math.copysign(1.0, r_val) * y_pos / abs_r
+                nx, ny = (-cos_a, sin_a) if si == 0 else (cos_a, -sin_a)
+
+            theta = math.atan2(-nx, ny)
+            cos_t = math.cos(theta)
+            sin_t = math.sin(theta)
+
+            def _tp(pts, _vx=vx, _vy=vy, _ct=cos_t, _st=sin_t):
+                return _sym_transform(_vx, _vy, _ct, _st, pts)
+
+            # Triangle
+            self._prim_polygon(_tp(_SYM_TRI), role="surface_finish_symbol")
+
+            # Bezier arm (matplotlib) / straight-line approximation (DXF)
+            self._prim_curve(_tp(_SYM_ARM), role="surface_finish_symbol")
+
+            # Horizontal bar
+            bar_pts = _tp(_SYM_BAR)
+            self._prim_line(bar_pts[0], bar_pts[1], role="surface_finish_symbol")
+
+            # Surface label next to bar end
+            bx, by = bar_pts[1]
+            self._prim_text(
+                (bx + 1.5 * cos_t, by + 1.5 * sin_t),
+                f"S{si + 1}",
+                ha="center",
+                va="center",
+                role="surface_finish_label",
+            )
+
+    def _draw_spec_table(self) -> None:
+        pw = self.pw
+        geo = self._geo
+        surfs = self.element.surfaces
+        n = len(surfs)
+
+        n_comps = self.element.num_components
+        mats = self.element.glass_materials
+        n_cols = n + n_comps
+
+        tbl_y0 = self.style.border_margin + _TTL_H
+        tbl_y1 = tbl_y0 + _SPEC_H
+        tbl_x0 = self.style.border_margin
+        tbl_x1 = pw - self.style.border_margin
+        tbl_w = tbl_x1 - tbl_x0
+        col_w = tbl_w / n_cols
+        H_HDR = 7.0
+
+        self._prim_rect(tbl_x0, tbl_y0, tbl_w, _SPEC_H, role="table")
+        for ci in range(1, n_cols):
+            xd = tbl_x0 + ci * col_w
+            self._prim_vline(xd, tbl_y0, tbl_y1, role="table")
+        self._prim_hline(tbl_x0, tbl_x1, tbl_y1 - H_HDR, role="table")
+
+        def _col_hdr(ci: int, txt: str) -> None:
+            cx = tbl_x0 + (ci + 0.5) * col_w
+            self._prim_text(
+                (cx, tbl_y1 - H_HDR / 2),
+                txt,
+                ha="center",
+                va="center",
+                role="table_header",
+            )
+
+        def _col_body(ci: int, lines: list[str]) -> None:
+            x0 = tbl_x0 + ci * col_w + 2.0
+            body = _SPEC_H - H_HDR
+            sp = min(body / max(len(lines), 1), 6.5)
+            for j, txt in enumerate(lines):
+                self._prim_text(
+                    (x0, tbl_y1 - H_HDR - 2.0 - j * sp),
+                    txt,
+                    ha="left",
+                    va="top",
+                    role="table_body",
+                )
+
+        # Surface columns (even indices)
+        for si in range(n):
+            ci = si * 2
+            s_idx = self.element.surface_indices[si]
+            sspec = self.spec.get_surface_spec(s_idx)
+            if si == 0:
+                hdr = "SURFACE 1 (FRONT)"
+            elif si == n - 1:
+                hdr = f"SURFACE {n} (REAR)"
+            else:
+                hdr = f"SURFACE {si + 1} (CEMENT)"
+            _col_hdr(ci, hdr)
+
+            # ── Row 1: surface type + radius (ISO Table 1 order) ─────────
+            lines: list[str] = [
+                self._fmt_line(ln)
+                for ln in _surface_header_lines(
+                    surfs[si], sspec, is_rear=(si == n - 1), plain_text=self._plain_text
+                )
+            ]
+
+            # ── Row 2: Øe ────────────────────────────────────────────────
+            _ca_d = (
+                sspec.ca_diameter if sspec.ca_diameter is not None else 2.0 * geo.sa[si]
+            )
+            _ca_tol_m = (
+                self._tol_fmt(sspec.ca_tolerance)
+                if sspec.ca_diameter is not None
+                else ""
+            )
+            lines.append(
+                f"Øₑ ${_ca_d:.2f}{_ca_tol_m}$" if _ca_tol_m else f"Øₑ {_ca_d:.2f}"
+            )
+
+            # ── Row 3: Schutzfase (protective chamfer, §5.9.5.4) ────────
+            if sspec.chamfer is not None:
+                ang = sspec.chamfer_angle if sspec.chamfer_angle is not None else 45
+                lines.append(f"Schutzfase {sspec.chamfer} × {ang}°")
+
+            # ── Numbered codes in ISO Table 1 order: 3/, 4/, 5/, 6/, 7/, 8/ ──
+            _base_len = len(lines)
+            _code_lines, coating_str, _coat_idx = _numbered_code_rows(sspec, si, n)
+            lines += _code_lines
+            coat_row_idx = _base_len + _coat_idx
+
+            _col_body(ci, lines)
+
+            # Encircled-λ at the coating row (ISO 10110-9, §5.11.2)
+            if coating_str:
+                _sp_coat = min((_SPEC_H - H_HDR) / max(len(lines), 1), 6.5)
+                _coat_y = tbl_y1 - H_HDR - 2.0 - coat_row_idx * _sp_coat
+                _coat_x = tbl_x0 + ci * col_w + 2.0
+                self._prim_circle(
+                    (_coat_x + _LAMBDA_R, _coat_y - _LAMBDA_R),
+                    _LAMBDA_R,
+                    role="lambda_symbol",
+                )
+                self._prim_text(
+                    (_coat_x + _LAMBDA_R, _coat_y - _LAMBDA_R),
+                    "λ",
+                    ha="center",
+                    va="center",
+                    role="lambda_symbol",
+                )
+                self._prim_text(
+                    (_coat_x + 2 * _LAMBDA_R + 1.0, _coat_y),
+                    coating_str,
+                    ha="left",
+                    va="top",
+                    role="table_body_coating",
+                )
+
+        # Material columns (odd indices)
+        for mi in range(n_comps):
+            ci = mi * 2 + 1
+            mat = mats[mi]
+            display_name = _mat_display_name(mat)
+            try:
+                nd = float(np.asarray(be.to_numpy(be.array(mat.n(0.5876)))).flat[0])
+                vd = float(np.asarray(be.to_numpy(be.array(mat.abbe()))).flat[0])
+                # §5.10.1: n and ν must state the reference wavelength
+                lines = [
+                    display_name,
+                    f"$n_d$ = {nd:.4f}  (587.6 nm)"
+                    if not self._plain_text
+                    else f"nd = {nd:.4f}  (587.6 nm)",
+                    f"$\\nu_d$ = {vd:.2f}  (587.6 nm)"
+                    if not self._plain_text
+                    else f"νd = {vd:.2f}  (587.6 nm)",
+                ]
+            except Exception:
+                lines = [display_name]
+            # 0/, 1/, 2/ — per ISO 10110-1 Table 1; each glass column has its own
+            # quality spec (cemented doublets may specify different grades per glass).
+            comp_espec = self.spec.get_material_spec(self.element_index, mi)
+            lines += _material_code_rows(comp_espec)
+            _col_hdr(ci, "MATERIAL" if n_comps == 1 else f"GLASS {mi + 1}")
+            _col_body(ci, lines)
+
+    def _draw_title_block(self, phys_d: float) -> None:
+        pw = self.pw
+        geo = self._geo
+        espec = self.spec.get_element_spec(self.element_index)
+
+        ttl_x0 = self.style.border_margin
+        ttl_x1 = pw - self.style.border_margin
+        ttl_w = ttl_x1 - ttl_x0
+        r1_y0 = self.style.border_margin + _TTL_R2_H
+        r1_y1 = self.style.border_margin + _TTL_H
+        r2_y0 = self.style.border_margin
+        r2_y1 = r1_y0
+
+        self._prim_rect(ttl_x0, r2_y0, ttl_w, _TTL_H, role="title")
+        self._prim_hline(ttl_x0, ttl_x1, r1_y0, role="title")
+
+        fracs1 = [0.34, 0.14, 0.14, 0.14, 0.12, 0.06, 0.06]
+        xs1 = [ttl_x0]
+        for f in fracs1:
+            xs1.append(xs1[-1] + f * ttl_w)
+        for xi in xs1[1:-1]:
+            self._prim_vline(xi, r1_y0, r1_y1, role="title")
+
+        def _tc(x0: float, x1: float, lbl: str, val: str) -> None:
+            cx = (x0 + x1) / 2
+            self._prim_text(
+                (cx, r1_y0 + _TTL_R1_H * 0.25),
+                lbl,
+                ha="center",
+                va="center",
+                role="title_field_label",
+            )
+            self._prim_text(
+                (cx, r1_y0 + _TTL_R1_H * 0.70),
+                val,
+                ha="center",
+                va="center",
+                role="title_field_value",
+            )
+
+        proj = self.spec.project_name or "OPTICAL ELEMENT"
+        org = self.spec.organisation
+        pn = espec.part_number or f"ELEM-{self.element_index + 1:03d}"
+        proj_display = f"{org} / {proj}   {pn}" if org else f"{proj}   {pn}"
+        sheet_num = f"{self.element_index + 1} / {self.total_sheets}"
+
+        _tc(xs1[0], xs1[1], "ORGANISATION / PROJECT / PART NO.", proj_display)
+        _tc(xs1[1], xs1[2], "DRAWN BY", espec.drawn_by or "—")
+        _tc(xs1[2], xs1[3], "APPROVED", espec.approved_by or "—")
+        _tc(xs1[3], xs1[4], "DATE", str(date.today()))
+        _tc(xs1[4], xs1[5], "SCALE", geo.scale_label())
+        _tc(xs1[5], xs1[6], "SHEET", sheet_num)
+        _tc(xs1[6], xs1[7], "REV", espec.revision)
+
+        notes_split = ttl_x0 + 0.60 * ttl_w
+        self._prim_vline(notes_split, r2_y0, r2_y1, role="title")
+        cy_r2 = (r2_y0 + r2_y1) / 2
+        self._prim_text(
+            (ttl_x0 + 2.0, r2_y1 - 1.5),
+            "NOTES",
+            ha="left",
+            va="top",
+            role="title_label_muted",
+        )
+        if espec.notes:
+            self._prim_text(
+                (ttl_x0 + 2.0, cy_r2),
+                espec.notes,
+                ha="left",
+                va="center",
+                role="title_notes_value",
+            )
+
+        std_w = ttl_x1 - notes_split
+        sym_zone = notes_split + std_w * 0.60
+        std_text_cx = (notes_split + sym_zone) / 2
+        # ISO 10110-11 §4.1: defaults are based on the largest dimension of
+        # the element — for a lens that is its physical outer diameter.
+        defs = _iso10110_11_defaults(phys_d)
+        self._prim_text(
+            (std_text_cx, r2_y1 - 1.5),
+            "DIM. IN mm",
+            ha="center",
+            va="top",
+            role="title_label_muted",
+        )
+        self._prim_text(
+            (std_text_cx, cy_r2),
+            f"GENERAL TOL. PER ISO 10110-11\n"
+            f"Ø±{defs['diameter']:.2f}  CT±{defs['thickness']:.2f}  "
+            f"{defs['form_error']}  {defs['centration']}  {defs['imperfections']}",
+            ha="center",
+            va="center",
+            role="title_general_tol",
+        )
+
+        # First-angle projection symbol
+        sym_cy = cy_r2
+        sym_R = _TTL_R2_H * 0.28
+        sym_r = sym_R * 0.60
+        sym_h = sym_R * 1.8
+        sym_gap = sym_R * 0.5
+        total_sym_w = 2 * sym_R + sym_gap + sym_h
+        sym_cx_ref = (sym_zone + ttl_x1) / 2
+        x_circ_c = sym_cx_ref - total_sym_w / 2 + sym_R
+        x_cone_l = x_circ_c + sym_R + sym_gap
+        x_cone_r = x_cone_l + sym_h
+        self._prim_circle((x_circ_c, sym_cy), sym_R, role="projection_symbol")
+        self._prim_circle((x_circ_c, sym_cy), sym_r, role="projection_symbol")
+        self._prim_polygon(
+            [
+                (x_cone_l, sym_cy + sym_R),
+                (x_cone_r, sym_cy + sym_r),
+                (x_cone_r, sym_cy - sym_r),
+                (x_cone_l, sym_cy - sym_R),
+            ],
+            role="projection_symbol",
+        )
+        self._prim_line(
+            (x_circ_c - sym_R * 1.3, sym_cy),
+            (x_cone_r + sym_R * 0.5, sym_cy),
+            role="projection_axis",
+        )
+
+    def _draw_dimension_lines(self, sa_e: float, top_f, top_r, bot_r, bot_f) -> float:
+        geo = self._geo
+        s = geo.scale
+        espec = self.spec.get_element_spec(self.element_index)
+        surfs = self.element.surfaces
+
+        # Centre thickness (below lens)
+        z0 = _surf_z(surfs[0])
+        zN = _surf_z(surfs[-1])
+        ct = abs(zN - z0)
+        dy = geo.pt(0, -(sa_e + 8.0 / s))[1]
+        ey = geo.pt(0, -(sa_e + 1.5 / s))[1]
+        p0x = geo.pt(z0, 0)[0]
+        p1x = geo.pt(zN, 0)[0]
+        self._prim_vline(p0x, ey, dy, role="dims")
+        self._prim_vline(p1x, ey, dy, role="dims")
+        self._prim_dim_arrow((p0x, dy), (p1x, dy), role="dims")
+        ct_tol_m = self._tol_fmt(espec.ct_tolerance)
+        _ct_m_marker = " M" if getattr(espec, "matched_pair", False) else ""
+        ct_txt = self._fmt_dim_text(f"{ct:.2f}", ct_tol_m) + _ct_m_marker
+        self._prim_text(
+            ((p0x + p1x) / 2, dy - 1.5), ct_txt, ha="center", va="top", role="dim_ct"
+        )
+
+        # Physical outer diameter (right side)
+        phys_d = espec.diameter if espec.diameter is not None else 2.0 * sa_e
+        dz = geo.opt_z_max + 10.0 / s
+        dax = geo.pt(dz, 0)[0]
+        self._prim_hline(top_r[0], dax + 2, top_r[1], role="dims")
+        self._prim_hline(bot_r[0], dax + 2, bot_r[1], role="dims")
+        # The OD arrow's xy/xytext happen to be in the opposite order from
+        # the CT/ET/component arrows in the original matplotlib code (a
+        # pre-existing inconsistency, not a semantic difference) — preserved
+        # exactly via the distinct "dims_od" role.
+        self._prim_dim_arrow((dax, top_r[1]), (dax, bot_r[1]), role="dims_od")
+        d_tol_m = self._tol_fmt(espec.diameter_tolerance)
+        d_txt = "Ø " + self._fmt_dim_text(f"{phys_d:.2f}", d_tol_m)
+        self._prim_text(
+            (dax + 2.5, (top_r[1] + bot_r[1]) / 2),
+            d_txt,
+            ha="left",
+            va="center",
+            role="dim_od",
+        )
+
+        # Edge thickness (above lens, reference dimension in brackets)
+        z1r = _surf_z(surfs[0]) + _to_float(
+            surfs[0].geometry.sag(be.zeros(1), be.array([sa_e]))[0]
+        )
+        zNr = _surf_z(surfs[-1]) + _to_float(
+            surfs[-1].geometry.sag(be.zeros(1), be.array([sa_e]))[0]
+        )
+        et = abs(zNr - z1r)
+        et_dy = geo.pt(0, sa_e + 8.0 / s)[1]
+        et_ey = geo.pt(0, sa_e + 1.5 / s)[1]
+        et_x0 = top_f[0]
+        et_x1 = top_r[0]
+        self._prim_vline(et_x0, et_ey, et_dy, role="dims")
+        self._prim_vline(et_x1, et_ey, et_dy, role="dims")
+        self._prim_dim_arrow((et_x0, et_dy), (et_x1, et_dy), role="dims")
+        self._prim_text(
+            ((et_x0 + et_x1) / 2, et_dy + 1.5),
+            f"({et:.2f})",
+            ha="center",
+            va="bottom",
+            role="dim_et",
+        )
+
+        # Component thicknesses (cemented doublet)
+        if self.element.is_cemented:
+            th_y = geo.pt(0, sa_e + 8.0 / s)[1]
+            eth_y = geo.pt(0, sa_e + 1.5 / s)[1]
+            for ci, th in enumerate(
+                self.element.component_thicknesses(self.spec.optic)
+            ):
+                za = _surf_z(surfs[ci])
+                zb = _surf_z(surfs[ci + 1])
+                xa = geo.pt(za, 0)[0]
+                xb = geo.pt(zb, 0)[0]
+                self._prim_vline(xa, eth_y, th_y, role="dims")
+                self._prim_vline(xb, eth_y, th_y, role="dims")
+                self._prim_dim_arrow((xa, th_y), (xb, th_y), role="dims")
+                self._prim_text(
+                    ((xa + xb) / 2, th_y + 2),
+                    f"t{ci + 1} = {th:.2f}",
+                    ha="center",
+                    va="bottom",
+                    role="dim_component",
+                )
+
+        return phys_d
+
+    def _fmt_dim_text(self, value: str, tol_m: str) -> str:
+        """Wrap *value* + tolerance markup identically to how the matplotlib
+        mathtext / DXF plain-text tolerance strings are assembled elsewhere."""
+        raise NotImplementedError
+
+    def _axis_margin_mm(self) -> float:
+        """How far the optical/rotational axis line extends past the lens
+        outline, in optical mm — a pre-existing per-format tuning difference
+        (10mm matplotlib, 15mm DXF), not a shared layout decision."""
+        raise NotImplementedError
+
+    def _draw_reference_annotation(self) -> None:
+        # ISO 10110 reference + λ annotation (§4, mandatory since 2019),
+        # placed at bottom-left of the drawing field per Annex A examples.
+        ref_wl = getattr(self.spec, "reference_wavelength", 546.07)
+        self._prim_text(
+            (self.style.border_margin + 2.0, self.style.border_margin + _BOT_H + 3.0),
+            f"Ang. nach ISO 10110; λ = {ref_wl:.2f} nm",
+            ha="left",
+            va="bottom",
+            role="reference_note",
+        )
+
+    def _draw_efl_annotation(self) -> None:
+        # f' (EFL) annotation — shown in all ISO Annex A examples.
+        try:
+            efl = float(self.spec.optic.paraxial.f2())
+        except Exception:
+            return
+        self._prim_text(
+            (self.style.border_margin + 2.0, self.ph - self.style.border_margin - 5.0),
+            f"f′ = {efl:.2f} mm",
+            ha="left",
+            va="top",
+            role="efl_annotation",
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # _MatplotlibRenderer — isolated matplotlib / PDF / PNG rendering
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class _MatplotlibRenderer:
+class _MatplotlibRenderer(_BaseRenderer):
     """Renders a single element ISO 10110 drawing to a matplotlib Figure.
 
     Isolated from file-I/O and DXF logic per HarrisonKramer's architectural
@@ -799,36 +1482,216 @@ class _MatplotlibRenderer:
             cal_y=18.0,
             border_margin=self.style.border_margin,
         )
+        self._ax = None
 
-    # ── helpers ─────────────────────────────────────────────────────────────
+    # ── primitives (drawn onto self._ax, set at the top of render()) ────────
 
-    def _curve_sa(self, si: int, sa_val: float, n_pts: int = 200) -> np.ndarray:
-        geo = self._geo
-        s = geo.scale
-        surfs = self.element.surfaces
-        y = np.linspace(-sa_val, sa_val, n_pts)
-        sag = np.asarray(
-            be.to_numpy(surfs[si].geometry.sag(be.zeros(n_pts), be.array(y)))
-        )
-        z = _surf_z(surfs[si]) + sag
-        return np.column_stack([geo._ox + z * s, geo._oy + y * s])
+    _plain_text = False
 
-    def _rim_sa(self, si: int, sign: float, sa_val: float) -> np.ndarray:
-        geo = self._geo
-        surf = self.element.surfaces[si]
-        sag = _to_float(surf.geometry.sag(be.zeros(1), be.array([sa_val]))[0])
-        return np.array(geo.pt(_surf_z(surf) + sag, sign * sa_val))
+    # (pos, fontsize_base, style_scale_attr, zorder, kwargs)
+    _TEXT_ROLE_STYLE: dict[str, tuple] = {
+        "table_header": (6.5, "table_header_scale", 8, {"fontweight": "bold"}),
+        "table_body": (7.5, "table_body_scale", 8, {}),
+        "table_body_coating": (7.5, "table_body_scale", 9, {}),
+        "lambda_symbol": (5.0, "lambda_symbol_scale", 9, {"fontstyle": "italic"}),
+        "title_field_label": (5.5, "title_label_scale", 8, {}),
+        "title_field_value": (7.5, "title_value_scale", 8, {"fontweight": "bold"}),
+        "title_label_muted": (5.5, "title_label_scale", 8, {"color": "#555555"}),
+        "title_notes_value": (6.5, "title_notes_scale", 8, {}),
+        "title_general_tol": (5.0, "title_general_tol_scale", 8, {}),
+        # Dimension-line labels didn't specify an explicit zorder originally;
+        # 3 reproduces matplotlib's own default Text zorder exactly.
+        "dim_ct": (9, "dimension_scale", 8, {}),
+        "dim_od": (9, "dimension_scale", 8, {}),
+        "dim_et": (8, "dimension_scale", 8, {}),
+        "dim_component": (7, "component_dimension_scale", 3, {}),
+        "reference_note": (6.0, "reference_note_scale", 8, {"fontstyle": "italic"}),
+        "efl_annotation": (7.5, "efl_annotation_scale", 8, {"fontweight": "bold"}),
+        "axis_label": (5.5, "axis_label_scale", 2, {}),
+        "axis_surface_label": (6.0, "surface_label_scale", 5, {"fontweight": "bold"}),
+        "sharp_edge_symbol": (
+            8.0,
+            "symbol_annotation_scale",
+            7,
+            {"fontweight": "bold"},
+        ),
+        "aperture_bracket_label": (5.5, "axis_label_scale", 6, {}),
+        "surface_finish_label": (6.0, "surface_label_scale", 7, {"fontweight": "bold"}),
+    }
 
-    @staticmethod
-    def _sym_transform(vx, vy, cos_t, sin_t, pts):
-        """Rotate + scale + translate SVG symbol points to sheet mm."""
-        return [
-            (
-                vx + _SYM_SC * (x * cos_t - y * sin_t),
-                vy + _SYM_SC * (x * sin_t + y * cos_t),
+    # role -> (lw, zorder)
+    _PANEL_ROLE_STYLE = {
+        "table": (0.5, 6),
+        "title": (0.5, 6),
+        "sheet_border_outer": (0.4, 10),
+        "sheet_border_inner": (0.8, 10),
+    }
+    # "dims" didn't specify an explicit zorder originally; 2 reproduces
+    # matplotlib's own default Line2D zorder exactly.
+    _PANEL_LINE_ROLE_STYLE = {
+        "table": (0.4, 7),
+        "title": (0.4, 7),
+        "dims": (0.5, 2),
+        "aperture_bracket": (0.4, 6),
+    }
+    # role -> lw
+    _CIRCLE_ROLE_LW = {"lambda_symbol": 0.5, "projection_symbol": 0.7}
+
+    def _prim_rect(self, x: float, y: float, w: float, h: float, *, role: str) -> None:
+        import matplotlib.patches as mpatches
+
+        lw, zorder = self._PANEL_ROLE_STYLE[role]
+        self._ax.add_patch(
+            mpatches.Rectangle(
+                (x, y), w, h, lw=lw, ec="black", fc="none", zorder=zorder
             )
-            for x, y in pts
-        ]
+        )
+
+    def _prim_hline(self, x0: float, x1: float, y: float, *, role: str) -> None:
+        lw, zorder = self._PANEL_LINE_ROLE_STYLE[role]
+        self._ax.plot([x0, x1], [y, y], "k-", lw=lw, zorder=zorder)
+
+    def _prim_vline(self, x: float, y0: float, y1: float, *, role: str) -> None:
+        lw, zorder = self._PANEL_LINE_ROLE_STYLE[role]
+        self._ax.plot([x, x], [y0, y1], "k-", lw=lw, zorder=zorder)
+
+    # role -> (linestyle, zorder)
+    _LINE_ROLE_STYLE = {
+        "projection_axis": ((0, (4, 1.5, 1, 1.5)), 9),
+        "optical_axis": ((0, (8, 2, 1, 2, 1, 2)), 1),  # ISO 128 PHANTOM
+        "rotational_axis": ((0, (8, 2, 1, 2)), 1),  # ISO 128 DASHDOT
+    }
+
+    def _prim_line(
+        self, p1: tuple[float, float], p2: tuple[float, float], *, role: str
+    ) -> None:
+        if role == "surface_finish_symbol":
+            # Matches the original bar's own PathPatch/MPath construction
+            # (kept distinct from the plain ax.plot used for axis lines, to
+            # avoid changing its exact vector output).
+            import matplotlib.patches as mpatches
+            from matplotlib.path import Path as MPath
+
+            self._ax.add_patch(
+                mpatches.PathPatch(
+                    MPath([p1, p2], [MPath.MOVETO, MPath.LINETO]),
+                    fc="none",
+                    ec="black",
+                    lw=0.7,
+                    zorder=6,
+                )
+            )
+            return
+        linestyle, zorder = self._LINE_ROLE_STYLE[role]
+        self._ax.plot(
+            [p1[0], p2[0]],
+            [p1[1], p2[1]],
+            color="black",
+            lw=0.5,
+            linestyle=linestyle,
+            zorder=zorder,
+        )
+
+    # role -> (lw, zorder)
+    _POLYGON_ROLE_STYLE = {
+        "projection_symbol": (0.7, 9),
+        "surface_finish_symbol": (0.7, 6),
+    }
+
+    def _prim_polygon(self, points: list[tuple[float, float]], *, role: str) -> None:
+        import matplotlib.patches as mpatches
+
+        lw, zorder = self._POLYGON_ROLE_STYLE[role]
+        if role == "surface_finish_symbol":
+            # Matches the original triangle's own PathPatch/MPath construction
+            # (kept distinct from the plain mpatches.Polygon used for the
+            # projection symbol, to avoid changing its exact vector output).
+            from matplotlib.path import Path as MPath
+
+            self._ax.add_patch(
+                mpatches.PathPatch(
+                    MPath(
+                        [*points, points[0]],
+                        [MPath.MOVETO]
+                        + [MPath.LINETO] * (len(points) - 1)
+                        + [MPath.CLOSEPOLY],
+                    ),
+                    fc="none",
+                    ec="black",
+                    lw=lw,
+                    zorder=zorder,
+                )
+            )
+            return
+        self._ax.add_patch(
+            mpatches.Polygon(
+                points, closed=True, fill=False, ec="black", lw=lw, zorder=zorder
+            )
+        )
+
+    def _prim_curve(self, points: list[tuple[float, float]], *, role: str) -> None:
+        import matplotlib.patches as mpatches
+        from matplotlib.path import Path as MPath
+
+        lw, zorder = self._POLYGON_ROLE_STYLE[role]
+        self._ax.add_patch(
+            mpatches.PathPatch(
+                MPath(points, [MPath.MOVETO] + [MPath.CURVE4] * (len(points) - 1)),
+                fc="none",
+                ec="black",
+                lw=lw,
+                zorder=zorder,
+            )
+        )
+
+    def _prim_text(
+        self, pos: tuple[float, float], s: str, *, ha: str, va: str, role: str
+    ) -> None:
+        base, scale_attr, zorder, extra = self._TEXT_ROLE_STYLE[role]
+        self._ax.text(
+            pos[0],
+            pos[1],
+            s,
+            ha=ha,
+            va=va,
+            fontsize=base * getattr(self.style, scale_attr),
+            zorder=zorder,
+            **extra,
+        )
+
+    def _prim_circle(self, center: tuple[float, float], r: float, *, role: str) -> None:
+        import matplotlib.patches as mpatches
+
+        self._ax.add_patch(
+            mpatches.Circle(
+                center,
+                r,
+                fill=False,
+                ec="black",
+                lw=self._CIRCLE_ROLE_LW[role],
+                zorder=9,
+            )
+        )
+
+    def _tol_fmt(self, tol) -> str:
+        return _tol_math(tol)
+
+    def _fmt_dim_text(self, value: str, tol_m: str) -> str:
+        return f"${value}{tol_m}$" if tol_m else value
+
+    def _axis_margin_mm(self) -> float:
+        return 10.0
+
+    def _prim_dim_arrow(
+        self, p1: tuple[float, float], p2: tuple[float, float], *, role: str
+    ) -> None:
+        xy, xytext = (p1, p2) if role == "dims_od" else (p2, p1)
+        self._ax.annotate(
+            "",
+            xy=xy,
+            xytext=xytext,
+            arrowprops=dict(arrowstyle="<->", color="black", lw=0.6, mutation_scale=7),
+        )
 
     # ── main render ─────────────────────────────────────────────────────────
 
@@ -848,44 +1711,23 @@ class _MatplotlibRenderer:
         ax.set_aspect("equal")
         ax.axis("off")
         ax.set_facecolor("white")
+        self._ax = ax
 
-        self._draw_borders(ax)
+        self._draw_borders()
         sa_e, top_f, top_r, bot_r, bot_f = self._draw_lens_outline(ax)
-        self._draw_axes(ax)
-        self._draw_sharp_edge_symbols(ax)
-        self._draw_aperture_brackets(ax)
-        self._draw_surface_finish_callouts(ax, sa_e)
-        phys_d = self._draw_dimension_lines(ax, sa_e, top_f, top_r, bot_r, bot_f)
-        self._draw_spec_table(ax)
-        self._draw_reference_annotation(ax)
-        self._draw_efl_annotation(ax)
-        self._draw_title_block(ax, phys_d)
+        self._draw_axes()
+        self._draw_sharp_edge_symbols()
+        self._draw_aperture_brackets()
+        self._draw_surface_finish_callouts(sa_e)
+        phys_d = self._draw_dimension_lines(sa_e, top_f, top_r, bot_r, bot_f)
+        self._draw_spec_table()
+        self._draw_reference_annotation()
+        self._draw_efl_annotation()
+        self._draw_title_block(phys_d)
 
         return fig
 
     # ── render sections ────────────────────────────────────────────────────
-
-    def _draw_borders(self, ax) -> None:
-        import matplotlib.patches as mpatches
-
-        pw, ph = self.pw, self.ph
-
-        # ── Borders ──────────────────────────────────────────────────────
-        for x, y, w, h, lw in [
-            (0, 0, pw, ph, 0.4),
-            (
-                self.style.border_margin,
-                self.style.border_margin,
-                pw - 2 * self.style.border_margin,
-                ph - 2 * self.style.border_margin,
-                0.8,
-            ),
-        ]:
-            ax.add_patch(
-                mpatches.Rectangle(
-                    (x, y), w, h, lw=lw, ec="black", fc="none", zorder=10
-                )
-            )
 
     def _draw_lens_outline(
         self, ax
@@ -895,12 +1737,12 @@ class _MatplotlibRenderer:
 
         # ── Lens cross-section ────────────────────────────────────────────
         sa_e = geo.sa_max
-        front = self._curve_sa(0, sa_e)
-        rear = self._curve_sa(n - 1, sa_e)
-        top_f = self._rim_sa(0, +1, sa_e)
-        top_r = self._rim_sa(n - 1, +1, sa_e)
-        bot_r = self._rim_sa(n - 1, -1, sa_e)
-        bot_f = self._rim_sa(0, -1, sa_e)
+        front = geo.curve_at(0, sa_e)
+        rear = geo.curve_at(n - 1, sa_e)
+        top_f = geo.rim_at(0, +1, sa_e)
+        top_r = geo.rim_at(n - 1, +1, sa_e)
+        bot_r = geo.rim_at(n - 1, -1, sa_e)
+        bot_f = geo.rim_at(0, -1, sa_e)
 
         outline = np.vstack([front, [top_r], rear[::-1], [bot_f]])
 
@@ -922,10 +1764,10 @@ class _MatplotlibRenderer:
             _draw_glass_hatch(ax, outline, direction=+1)
         else:
             for _k in range(n_comps):
-                _cf = self._curve_sa(_k, sa_e)
-                _cr = self._curve_sa(_k + 1, sa_e)
-                _tr = self._rim_sa(_k + 1, +1, sa_e)
-                _bl = self._rim_sa(_k, -1, sa_e)
+                _cf = geo.curve_at(_k, sa_e)
+                _cr = geo.curve_at(_k + 1, sa_e)
+                _tr = geo.rim_at(_k + 1, +1, sa_e)
+                _bl = geo.rim_at(_k, -1, sa_e)
                 _comp_outline = np.vstack([_cf, [_tr], _cr[::-1], [_bl]])
                 ax.fill(
                     _comp_outline[:, 0],
@@ -943,724 +1785,10 @@ class _MatplotlibRenderer:
         ax.plot(closed[:, 0], closed[:, 1], "k-", lw=1.5, zorder=4)
 
         for i in range(1, n - 1):  # cement interfaces
-            cp = self._curve_sa(i, geo.sa[i])
+            cp = geo.curve(i)
             ax.plot(cp[:, 0], cp[:, 1], "k-", lw=0.8, zorder=5)
 
         return sa_e, top_f, top_r, bot_r, bot_f
-
-    def _draw_axes(self, ax) -> None:
-        geo = self._geo
-        s = geo.scale
-        surfs = self.element.surfaces
-        n = len(surfs)
-
-        # ── Axes ─────────────────────────────────────────────────────────
-        mg = 10.0 / s
-        ax_x0, ax_y0 = geo.pt(geo.opt_z_min - mg, 0)
-        ax_x1, _ = geo.pt(geo.opt_z_max + mg, 0)
-
-        # Optical axis — ISO 128 long-dash double-dot (PHANTOM line)
-        ax.plot(
-            [ax_x0, ax_x1],
-            [ax_y0, ax_y0],
-            color="black",
-            lw=0.5,
-            linestyle=(0, (8, 2, 1, 2, 1, 2)),
-            zorder=1,
-        )
-
-        if self.rotational_axis_y == 0.0:
-            # Axes coincide — label once as "opt./rot. axis"
-            ax.text(
-                ax_x0 - 1.0,
-                ax_y0,
-                "opt./rot. axis",
-                ha="right",
-                va="center",
-                fontsize=5.5 * self.style.axis_label_scale,
-                color="black",
-                zorder=2,
-            )
-        else:
-            # Separate rotational axis — ISO 128 long-dash single-dot (DASHDOT)
-            ax.text(
-                ax_x0 - 1.0,
-                ax_y0,
-                "opt. axis",
-                ha="right",
-                va="center",
-                fontsize=5.5 * self.style.axis_label_scale,
-                color="black",
-                zorder=2,
-            )
-            rot_x0, rot_y0 = geo.pt(geo.opt_z_min - mg, self.rotational_axis_y)
-            rot_x1, _ = geo.pt(geo.opt_z_max + mg, self.rotational_axis_y)
-            ax.plot(
-                [rot_x0, rot_x1],
-                [rot_y0, rot_y0],
-                color="black",
-                lw=0.5,
-                linestyle=(0, (8, 2, 1, 2)),
-                zorder=1,
-            )
-            ax.text(
-                rot_x0 - 1.0,
-                rot_y0,
-                "rot. axis",
-                ha="right",
-                va="center",
-                fontsize=5.5 * self.style.axis_label_scale,
-                color="black",
-                zorder=2,
-            )
-
-        # Surface labels for cement interfaces below the axis
-        # (front / rear labels are placed near their callout symbols below)
-        for si in range(1, n - 1):
-            lbl_x = geo.pt(_surf_z(surfs[si]), 0)[0]
-            ax.text(
-                lbl_x,
-                ax_y0 - 2.5,
-                f"S{si + 1}",
-                ha="center",
-                va="top",
-                fontsize=6.0 * self.style.surface_label_scale,
-                fontweight="bold",
-                color="black",
-                zorder=5,
-            )
-
-    def _draw_sharp_edge_symbols(self, ax) -> None:
-        geo = self._geo
-        surfs = self.element.surfaces
-
-        # ── Sharp-edge "0" symbols (§5.9.5.2) ────────────────────────────
-        # A "0" near the surface vertex signals that no protective chamfer
-        # is permitted; the edge must remain sharp.
-        for si, surf in enumerate(surfs):
-            s_idx = self.element.surface_indices[si]
-            sspec = self.spec.get_surface_spec(s_idx)
-            if not sspec.sharp_edge:
-                continue
-            vx_ax, vy_ax = geo.pt(_surf_z(surf), 0)
-            # Place the "0" just below the optical axis at the surface vertex
-            ax.text(
-                vx_ax,
-                vy_ax - 3.5,
-                "0",
-                ha="center",
-                va="top",
-                fontsize=8.0 * self.style.symbol_annotation_scale,
-                fontweight="bold",
-                color="black",
-                zorder=7,
-            )
-
-    def _draw_aperture_brackets(self, ax) -> None:
-        geo = self._geo
-        surfs = self.element.surfaces
-        n = len(surfs)
-
-        # ── Effective aperture brackets (ISO 10110-11) — always shown ─────
-        for si, surf in enumerate(surfs):
-            if si not in (0, n - 1):
-                continue
-            s_idx = self.element.surface_indices[si]
-            sspec = self.spec.get_surface_spec(s_idx)
-            # Fall back to geometric semi-aperture when not explicitly set
-            ca_d = (
-                sspec.ca_diameter if sspec.ca_diameter is not None else 2.0 * geo.sa[si]
-            )
-            ca_r = ca_d / 2.0
-            sag_ca = _to_float(surf.geometry.sag(be.zeros(1), be.array([ca_r]))[0])
-            ca_x = geo.pt(_surf_z(surf) + sag_ca, 0)[0]
-            ca_y_top = geo.pt(0, ca_r)[1]
-            ca_y_bot = geo.pt(0, -ca_r)[1]
-            tick_len = 3.0
-            side = -1 if si == 0 else 1
-            # §5.6: test-zone boundary must be thin solid line (01.1)
-            tick_x1 = ca_x + side * tick_len
-            ax.plot([ca_x, tick_x1], [ca_y_top, ca_y_top], "k-", lw=0.4, zorder=6)
-            ax.plot([ca_x, tick_x1], [ca_y_bot, ca_y_bot], "k-", lw=0.4, zorder=6)
-            # Vertical bracket line connecting top and bottom ticks
-            ax.plot([tick_x1, tick_x1], [ca_y_bot, ca_y_top], "k-", lw=0.4, zorder=6)
-            label_x = tick_x1 + side * 1.0
-            label_ha = "right" if si == 0 else "left"
-            ax.text(
-                label_x,
-                (ca_y_top + ca_y_bot) / 2,
-                f"Ø\u2091 {ca_d:.2f}",
-                ha=label_ha,
-                va="center",
-                fontsize=5.5 * self.style.axis_label_scale,
-                color="black",
-                zorder=6,
-            )
-
-    def _draw_surface_finish_callouts(self, ax, sa_e: float) -> None:
-        import matplotlib.patches as mpatches
-        from matplotlib.path import Path as MPath
-
-        geo = self._geo
-        surfs = self.element.surfaces
-        n = len(surfs)
-
-        # ── Surface finish callout symbols ────────────────────────────────
-        sym_fracs = {0: 0.85, n - 1: 0.65}
-
-        for si, frac in sym_fracs.items():
-            surf = surfs[si]
-            y_pos = frac * sa_e
-            sag_v = _to_float(surf.geometry.sag(be.zeros(1), be.array([y_pos]))[0])
-            vx, vy = geo.pt(_surf_z(surf) + sag_v, y_pos)
-
-            r_val = _surf_r(surf)
-            if math.isinf(r_val):
-                nx, ny = (-1.0, 0.0) if si == 0 else (1.0, 0.0)
-            else:
-                abs_r = abs(r_val)
-                cos_a = math.sqrt(max(abs_r**2 - y_pos**2, 0.0)) / abs_r
-                sin_a = math.copysign(1.0, r_val) * y_pos / abs_r
-                nx, ny = (-cos_a, sin_a) if si == 0 else (cos_a, -sin_a)
-
-            theta = math.atan2(-nx, ny)
-            cos_t = math.cos(theta)
-            sin_t = math.sin(theta)
-
-            def _tp(pts, _vx=vx, _vy=vy, _ct=cos_t, _st=sin_t):
-                return _MatplotlibRenderer._sym_transform(_vx, _vy, _ct, _st, pts)
-
-            # Triangle
-            tv = _tp(_SYM_TRI)
-            ax.add_patch(
-                mpatches.PathPatch(
-                    MPath(
-                        tv + [tv[0]],
-                        [MPath.MOVETO, MPath.LINETO, MPath.LINETO, MPath.CLOSEPOLY],
-                    ),
-                    fc="none",
-                    ec="black",
-                    lw=0.7,
-                    zorder=6,
-                )
-            )
-
-            # Bezier arm
-            ax.add_patch(
-                mpatches.PathPatch(
-                    MPath(
-                        _tp(_SYM_ARM),
-                        [MPath.MOVETO, MPath.CURVE4, MPath.CURVE4, MPath.CURVE4],
-                    ),
-                    fc="none",
-                    ec="black",
-                    lw=0.7,
-                    zorder=6,
-                )
-            )
-
-            # Horizontal bar
-            bar_pts = _tp(_SYM_BAR)
-            ax.add_patch(
-                mpatches.PathPatch(
-                    MPath(bar_pts, [MPath.MOVETO, MPath.LINETO]),
-                    fc="none",
-                    ec="black",
-                    lw=0.7,
-                    zorder=6,
-                )
-            )
-
-            # Surface label next to bar end (replaces below-axis position)
-            bx, by = bar_pts[1]
-            ax.text(
-                bx + 1.5 * cos_t,
-                by + 1.5 * sin_t,
-                f"S{si + 1}",
-                ha="center",
-                va="center",
-                fontsize=6.0 * self.style.surface_label_scale,
-                fontweight="bold",
-                color="black",
-                zorder=7,
-            )
-
-    def _draw_dimension_lines(
-        self, ax, sa_e: float, top_f, top_r, bot_r, bot_f
-    ) -> float:
-        geo = self._geo
-        s = geo.scale
-        espec = self.spec.get_element_spec(self.element_index)
-        surfs = self.element.surfaces
-
-        # ── Dimension lines ───────────────────────────────────────────────
-        aw_dim = dict(arrowstyle="<->", color="black", lw=0.6, mutation_scale=7)
-
-        # Centre thickness (below lens)
-        z0 = _surf_z(surfs[0])
-        zN = _surf_z(surfs[-1])
-        ct = abs(zN - z0)
-        dy = geo.pt(0, -(sa_e + 8.0 / s))[1]
-        ey = geo.pt(0, -(sa_e + 1.5 / s))[1]
-        p0x = geo.pt(z0, 0)[0]
-        p1x = geo.pt(zN, 0)[0]
-        ax.plot([p0x, p0x], [ey, dy], "k-", lw=0.5)
-        ax.plot([p1x, p1x], [ey, dy], "k-", lw=0.5)
-        ax.annotate("", xy=(p1x, dy), xytext=(p0x, dy), arrowprops=aw_dim)
-        ct_tol_m = _tol_math(espec.ct_tolerance)
-        _ct_m_marker = " M" if getattr(espec, "matched_pair", False) else ""
-        ct_txt = (
-            f"${ct:.2f}{ct_tol_m}$" + _ct_m_marker
-            if ct_tol_m
-            else f"{ct:.2f}" + _ct_m_marker
-        )
-        ax.text(
-            (p0x + p1x) / 2,
-            dy - 1.5,
-            ct_txt,
-            ha="center",
-            va="top",
-            fontsize=9 * self.style.dimension_scale,
-            zorder=8,
-        )
-
-        # Physical outer diameter (right side)
-        phys_d = espec.diameter if espec.diameter is not None else 2.0 * sa_e
-        dz = geo.opt_z_max + 10.0 / s
-        dax = geo.pt(dz, 0)[0]
-        ax.plot([top_r[0], dax + 2], [top_r[1], top_r[1]], "k-", lw=0.5)
-        ax.plot([bot_r[0], dax + 2], [bot_r[1], bot_r[1]], "k-", lw=0.5)
-        ax.annotate("", xy=(dax, top_r[1]), xytext=(dax, bot_r[1]), arrowprops=aw_dim)
-        d_tol_m = _tol_math(espec.diameter_tolerance)
-        d_txt = f"Ø ${phys_d:.2f}{d_tol_m}$" if d_tol_m else f"Ø {phys_d:.2f}"
-        ax.text(
-            dax + 2.5,
-            (top_r[1] + bot_r[1]) / 2,
-            d_txt,
-            ha="left",
-            va="center",
-            fontsize=9 * self.style.dimension_scale,
-            zorder=8,
-        )
-
-        # Edge thickness (above lens, reference dimension in brackets)
-        z1r = _surf_z(surfs[0]) + _to_float(
-            surfs[0].geometry.sag(be.zeros(1), be.array([sa_e]))[0]
-        )
-        zNr = _surf_z(surfs[-1]) + _to_float(
-            surfs[-1].geometry.sag(be.zeros(1), be.array([sa_e]))[0]
-        )
-        et = abs(zNr - z1r)
-        et_dy = geo.pt(0, sa_e + 8.0 / s)[1]
-        et_ey = geo.pt(0, sa_e + 1.5 / s)[1]
-        et_x0 = top_f[0]
-        et_x1 = top_r[0]
-        ax.plot([et_x0, et_x0], [et_ey, et_dy], "k-", lw=0.5)
-        ax.plot([et_x1, et_x1], [et_ey, et_dy], "k-", lw=0.5)
-        ax.annotate("", xy=(et_x1, et_dy), xytext=(et_x0, et_dy), arrowprops=aw_dim)
-        ax.text(
-            (et_x0 + et_x1) / 2,
-            et_dy + 1.5,
-            f"({et:.2f})",
-            ha="center",
-            va="bottom",
-            fontsize=8 * self.style.dimension_scale,
-            zorder=8,
-        )
-
-        # Component thicknesses (cemented doublet)
-        if self.element.is_cemented:
-            th_y = geo.pt(0, sa_e + 8.0 / s)[1]
-            eth_y = geo.pt(0, sa_e + 1.5 / s)[1]
-            for ci, th in enumerate(
-                self.element.component_thicknesses(self.spec.optic)
-            ):
-                za = _surf_z(surfs[ci])
-                zb = _surf_z(surfs[ci + 1])
-                xa = geo.pt(za, 0)[0]
-                xb = geo.pt(zb, 0)[0]
-                ax.plot([xa, xa], [eth_y, th_y], "k-", lw=0.5)
-                ax.plot([xb, xb], [eth_y, th_y], "k-", lw=0.5)
-                ax.annotate("", xy=(xb, th_y), xytext=(xa, th_y), arrowprops=aw_dim)
-                ax.text(
-                    (xa + xb) / 2,
-                    th_y + 2,
-                    f"t{ci + 1} = {th:.2f}",
-                    ha="center",
-                    va="bottom",
-                    fontsize=7 * self.style.component_dimension_scale,
-                )
-
-        return phys_d
-
-    def _draw_spec_table(self, ax) -> None:
-        import matplotlib.patches as mpatches
-
-        pw = self.pw
-        geo = self._geo
-        surfs = self.element.surfaces
-        n = len(surfs)
-
-        # ── ISO spec table ────────────────────────────────────────────────
-        n_comps = self.element.num_components
-        mats = self.element.glass_materials
-        n_cols = n + n_comps
-
-        tbl_y0 = self.style.border_margin + _TTL_H
-        tbl_y1 = tbl_y0 + _SPEC_H
-        tbl_x0 = self.style.border_margin
-        tbl_x1 = pw - self.style.border_margin
-        tbl_w = tbl_x1 - tbl_x0
-        col_w = tbl_w / n_cols
-        H_HDR = 7.0
-
-        ax.add_patch(
-            mpatches.Rectangle(
-                (tbl_x0, tbl_y0),
-                tbl_w,
-                _SPEC_H,
-                lw=0.5,
-                ec="black",
-                fc="none",
-                zorder=6,
-            )
-        )
-        for ci in range(1, n_cols):
-            xd = tbl_x0 + ci * col_w
-            ax.plot([xd, xd], [tbl_y0, tbl_y1], "k-", lw=0.4, zorder=7)
-        ax.plot(
-            [tbl_x0, tbl_x1], [tbl_y1 - H_HDR, tbl_y1 - H_HDR], "k-", lw=0.4, zorder=7
-        )
-
-        def _col_hdr(ci: int, txt: str) -> None:
-            cx = tbl_x0 + (ci + 0.5) * col_w
-            ax.text(
-                cx,
-                tbl_y1 - H_HDR / 2,
-                txt,
-                ha="center",
-                va="center",
-                fontsize=6.5 * self.style.table_header_scale,
-                fontweight="bold",
-                zorder=8,
-            )
-
-        def _col_body(ci: int, lines: list[str]) -> None:
-            x0 = tbl_x0 + ci * col_w + 2.0
-            body = _SPEC_H - H_HDR
-            sp = min(body / max(len(lines), 1), 6.5)
-            for j, txt in enumerate(lines):
-                ax.text(
-                    x0,
-                    tbl_y1 - H_HDR - 2.0 - j * sp,
-                    txt,
-                    ha="left",
-                    va="top",
-                    fontsize=7.5 * self.style.table_body_scale,
-                    zorder=8,
-                )
-
-        # Surface columns (even indices)
-        for si in range(n):
-            ci = si * 2
-            s_idx = self.element.surface_indices[si]
-            sspec = self.spec.get_surface_spec(s_idx)
-            if si == 0:
-                hdr = "SURFACE 1 (FRONT)"
-            elif si == n - 1:
-                hdr = f"SURFACE {n} (REAR)"
-            else:
-                hdr = f"SURFACE {si + 1} (CEMENT)"
-            _col_hdr(ci, hdr)
-
-            # ── Row 1: surface type + radius (ISO Table 1 order) ─────────
-            lines: list[str] = _surface_header_lines(
-                surfs[si], sspec, is_rear=(si == n - 1)
-            )
-
-            # ── Row 2: Øe ────────────────────────────────────────────────
-            _ca_d = (
-                sspec.ca_diameter if sspec.ca_diameter is not None else 2.0 * geo.sa[si]
-            )
-            _ca_tol_m = (
-                _tol_math(sspec.ca_tolerance) if sspec.ca_diameter is not None else ""
-            )
-            lines.append(
-                f"Ø\u2091 ${_ca_d:.2f}{_ca_tol_m}$"
-                if _ca_tol_m
-                else f"Ø\u2091 {_ca_d:.2f}"
-            )
-
-            # ── Row 3: Schutzfase (protective chamfer, §5.9.5.4) ────────
-            if sspec.chamfer is not None:
-                ang = sspec.chamfer_angle if sspec.chamfer_angle is not None else 45
-                lines.append(f"Schutzfase {sspec.chamfer} × {ang}°")
-
-            # ── Numbered codes in ISO Table 1 order: 3/, 4/, 5/, 6/, 7/, 8/ ──
-            _base_len = len(lines)
-            _code_lines, coating_str, _coat_idx = _numbered_code_rows(sspec, si, n)
-            lines += _code_lines
-            coat_row_idx = _base_len + _coat_idx
-
-            _col_body(ci, lines)
-
-            # Encircled-λ at the coating row (ISO 10110-9, §5.11.2)
-            if coating_str:
-                _sp_coat = min((_SPEC_H - H_HDR) / max(len(lines), 1), 6.5)
-                _coat_y = tbl_y1 - H_HDR - 2.0 - coat_row_idx * _sp_coat
-                _coat_x = tbl_x0 + ci * col_w + 2.0
-                ax.add_patch(
-                    mpatches.Circle(
-                        (_coat_x + _LAMBDA_R, _coat_y - _LAMBDA_R),
-                        _LAMBDA_R,
-                        fill=False,
-                        ec="black",
-                        lw=0.5,
-                        zorder=9,
-                    )
-                )
-                ax.text(
-                    _coat_x + _LAMBDA_R,
-                    _coat_y - _LAMBDA_R,
-                    "λ",
-                    ha="center",
-                    va="center",
-                    fontsize=5.0 * self.style.lambda_symbol_scale,
-                    color="black",
-                    fontstyle="italic",
-                    zorder=9,
-                )
-                ax.text(
-                    _coat_x + 2 * _LAMBDA_R + 1.0,
-                    _coat_y,
-                    coating_str,
-                    ha="left",
-                    va="top",
-                    fontsize=7.5 * self.style.table_body_scale,
-                    zorder=9,
-                )
-
-        # Material columns (odd indices)
-        for mi in range(n_comps):
-            ci = mi * 2 + 1
-            mat = mats[mi]
-            display_name = _mat_display_name(mat)
-            try:
-                nd = float(np.asarray(be.to_numpy(be.array(mat.n(0.5876)))).flat[0])
-                vd = float(np.asarray(be.to_numpy(be.array(mat.abbe()))).flat[0])
-                # §5.10.1: n and ν must state the reference wavelength
-                lines = [
-                    display_name,
-                    f"$n_d$ = {nd:.4f}  (587.6 nm)",
-                    f"$\\nu_d$ = {vd:.2f}  (587.6 nm)",
-                ]
-            except Exception:
-                lines = [display_name]
-            # 0/, 1/, 2/ — per ISO 10110-1 Table 1; each glass column has its own
-            # quality spec (cemented doublets may specify different grades per glass).
-            comp_espec = self.spec.get_material_spec(self.element_index, mi)
-            lines += _material_code_rows(comp_espec)
-            _col_hdr(ci, "MATERIAL" if n_comps == 1 else f"GLASS {mi + 1}")
-            _col_body(ci, lines)
-
-    def _draw_reference_annotation(self, ax) -> None:
-        # ── ISO 10110 reference + λ annotation (§4, mandatory since 2019) ─
-        # Placed at bottom-left of drawing field per Annex A examples.
-        ref_wl = getattr(self.spec, "reference_wavelength", 546.07)
-        ax.text(
-            self.style.border_margin + 2.0,
-            self.style.border_margin + _BOT_H + 3.0,
-            f"Ang. nach ISO\u00a010110;\u2002\u03bb = {ref_wl:.2f}\u00a0nm",
-            ha="left",
-            va="bottom",
-            fontsize=6.0 * self.style.reference_note_scale,
-            color="black",
-            fontstyle="italic",
-            zorder=8,
-        )
-
-    def _draw_efl_annotation(self, ax) -> None:
-        ph = self.ph
-
-        # ── f' (EFL) annotation — shown in all ISO Annex A examples ──────
-        try:
-            _efl = float(self.spec.optic.paraxial.f2())
-            ax.text(
-                self.style.border_margin + 2.0,
-                ph - self.style.border_margin - 5.0,
-                f"f\u2032 = {_efl:.2f} mm",
-                ha="left",
-                va="top",
-                fontsize=7.5 * self.style.efl_annotation_scale,
-                fontweight="bold",
-                color="black",
-                zorder=8,
-            )
-        except Exception:
-            pass
-
-    def _draw_title_block(self, ax, phys_d: float) -> None:
-        import matplotlib.patches as mpatches
-
-        pw = self.pw
-        geo = self._geo
-        espec = self.spec.get_element_spec(self.element_index)
-
-        # ── Title block ───────────────────────────────────────────────────
-        ttl_x0 = self.style.border_margin
-        ttl_x1 = pw - self.style.border_margin
-        ttl_w = ttl_x1 - ttl_x0
-        r1_y0 = self.style.border_margin + _TTL_R2_H
-        r1_y1 = self.style.border_margin + _TTL_H
-        r2_y0 = self.style.border_margin
-        r2_y1 = r1_y0
-
-        ax.add_patch(
-            mpatches.Rectangle(
-                (ttl_x0, r2_y0), ttl_w, _TTL_H, lw=0.5, ec="black", fc="none", zorder=6
-            )
-        )
-        ax.plot([ttl_x0, ttl_x1], [r1_y0, r1_y0], "k-", lw=0.4, zorder=7)
-
-        fracs1 = [0.34, 0.14, 0.14, 0.14, 0.12, 0.06, 0.06]
-        xs1 = [ttl_x0]
-        for f in fracs1:
-            xs1.append(xs1[-1] + f * ttl_w)
-        for xi in xs1[1:-1]:
-            ax.plot([xi, xi], [r1_y0, r1_y1], "k-", lw=0.4, zorder=7)
-
-        def _tc(x0: float, x1: float, lbl: str, val: str) -> None:
-            cx = (x0 + x1) / 2
-            ax.text(
-                cx,
-                r1_y0 + _TTL_R1_H * 0.25,
-                lbl,
-                ha="center",
-                va="center",
-                fontsize=5.5 * self.style.title_label_scale,
-                zorder=8,
-            )
-            ax.text(
-                cx,
-                r1_y0 + _TTL_R1_H * 0.70,
-                val,
-                ha="center",
-                va="center",
-                fontsize=7.5 * self.style.title_value_scale,
-                fontweight="bold",
-                zorder=8,
-            )
-
-        proj = self.spec.project_name or "OPTICAL ELEMENT"
-        org = self.spec.organisation
-        pn = espec.part_number or f"ELEM-{self.element_index + 1:03d}"
-        proj_display = f"{org} / {proj}   {pn}" if org else f"{proj}   {pn}"
-        sheet_num = f"{self.element_index + 1} / {self.total_sheets}"
-
-        _tc(xs1[0], xs1[1], "ORGANISATION / PROJECT / PART NO.", proj_display)
-        _tc(xs1[1], xs1[2], "DRAWN BY", espec.drawn_by or "—")
-        _tc(xs1[2], xs1[3], "APPROVED", espec.approved_by or "—")
-        _tc(xs1[3], xs1[4], "DATE", str(date.today()))
-        _tc(xs1[4], xs1[5], "SCALE", geo.scale_label())
-        _tc(xs1[5], xs1[6], "SHEET", sheet_num)
-        _tc(xs1[6], xs1[7], "REV", espec.revision)
-
-        notes_split = ttl_x0 + 0.60 * ttl_w
-        ax.plot([notes_split, notes_split], [r2_y0, r2_y1], "k-", lw=0.4, zorder=7)
-        cy_r2 = (r2_y0 + r2_y1) / 2
-        ax.text(
-            ttl_x0 + 2.0,
-            r2_y1 - 1.5,
-            "NOTES",
-            ha="left",
-            va="top",
-            fontsize=5.5 * self.style.title_label_scale,
-            color="#555555",
-            zorder=8,
-        )
-        if espec.notes:
-            ax.text(
-                ttl_x0 + 2.0,
-                cy_r2,
-                espec.notes,
-                ha="left",
-                va="center",
-                fontsize=6.5 * self.style.title_notes_scale,
-                zorder=8,
-            )
-
-        std_w = ttl_x1 - notes_split
-        sym_zone = notes_split + std_w * 0.60
-        std_text_cx = (notes_split + sym_zone) / 2
-        # ISO 10110-11 §4.1: defaults are based on the largest dimension of
-        # the element — for a lens that is its physical outer diameter.
-        defs = _iso10110_11_defaults(phys_d)
-        ax.text(
-            std_text_cx,
-            r2_y1 - 1.5,
-            "DIM. IN mm",
-            ha="center",
-            va="top",
-            fontsize=5.5 * self.style.title_label_scale,
-            color="#555555",
-            zorder=8,
-        )
-        ax.text(
-            std_text_cx,
-            cy_r2,
-            f"GENERAL TOL. PER ISO 10110-11\n"
-            f"Ø±{defs['diameter']:.2f}  CT±{defs['thickness']:.2f}  "
-            f"{defs['form_error']}  {defs['centration']}  {defs['imperfections']}",
-            ha="center",
-            va="center",
-            fontsize=5.0 * self.style.title_general_tol_scale,
-            zorder=8,
-        )
-
-        # First-angle projection symbol
-        sym_cy = cy_r2
-        sym_R = _TTL_R2_H * 0.28
-        sym_r = sym_R * 0.60
-        sym_h = sym_R * 1.8
-        sym_gap = sym_R * 0.5
-        total_sym_w = 2 * sym_R + sym_gap + sym_h
-        sym_cx_ref = (sym_zone + ttl_x1) / 2
-        x_circ_c = sym_cx_ref - total_sym_w / 2 + sym_R
-        x_cone_l = x_circ_c + sym_R + sym_gap
-        x_cone_r = x_cone_l + sym_h
-        ax.add_patch(
-            mpatches.Circle(
-                (x_circ_c, sym_cy), sym_R, fill=False, ec="black", lw=0.7, zorder=9
-            )
-        )
-        ax.add_patch(
-            mpatches.Circle(
-                (x_circ_c, sym_cy), sym_r, fill=False, ec="black", lw=0.7, zorder=9
-            )
-        )
-        ax.add_patch(
-            mpatches.Polygon(
-                [
-                    [x_cone_l, sym_cy + sym_R],
-                    [x_cone_r, sym_cy + sym_r],
-                    [x_cone_r, sym_cy - sym_r],
-                    [x_cone_l, sym_cy - sym_R],
-                ],
-                closed=True,
-                fill=False,
-                ec="black",
-                lw=0.7,
-                zorder=9,
-            )
-        )
-        ax.plot(
-            [x_circ_c - sym_R * 1.3, x_cone_r + sym_R * 0.5],
-            [sym_cy, sym_cy],
-            color="black",
-            lw=0.5,
-            linestyle=(0, (4, 1.5, 1, 1.5)),
-            zorder=9,
-        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1668,7 +1796,7 @@ class _MatplotlibRenderer:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class _DxfRenderer:
+class _DxfRenderer(_BaseRenderer):
     """Renders a single element ISO 10110 drawing into an ezdxf document.
 
     Isolated from matplotlib logic per HarrisonKramer's architectural feedback.
@@ -1707,18 +1835,224 @@ class _DxfRenderer:
             cal_y=18.0,
             border_margin=self.style.border_margin,
         )
+        self._msp = None
 
     def render(self, doc) -> None:
         """Populate *doc* (an ezdxf Drawing) with the element drawing."""
         self._setup_layers(doc)
         msp = doc.modelspace()
-        self._dxf_border(msp)
-        self._dxf_title_block(msp)
-        self._dxf_spec_table(msp)
-        self._dxf_axis(msp)
+        self._msp = msp
+        self._draw_borders()
+        self._draw_reference_annotation()
+        self._draw_efl_annotation()
+        espec = self.spec.get_element_spec(self.element_index)
+        phys_d = (
+            espec.diameter if espec.diameter is not None else 2.0 * self._geo.sa_max
+        )
+        self._draw_title_block(phys_d)
+        self._draw_spec_table()
+        self._draw_axes()
         self._dxf_lens(msp)
-        self._dxf_dimensions(msp)
-        self._dxf_callouts(msp)
+        n = len(self.element.surfaces)
+        sa_e = self._geo.sa_max
+        top_f = self._geo.rim_at(0, +1, sa_e)
+        top_r = self._geo.rim_at(n - 1, +1, sa_e)
+        # Pre-existing DXF-specific quirk (predates this refactor, preserved
+        # exactly): the OD dimension's bottom witness line is anchored to the
+        # *front* surface's rim here, unlike the matplotlib renderer which
+        # uses the rear surface for both top and bottom.
+        bot_r = self._geo.rim_at(0, -1, sa_e)
+        bot_f = self._geo.rim_at(0, -1, sa_e)
+        self._draw_dimension_lines(sa_e, top_f, top_r, bot_r, bot_f)
+        self._draw_aperture_brackets()
+        self._draw_surface_finish_callouts(sa_e)
+        self._draw_sharp_edge_symbols()
+
+    # ── primitives ──────────────────────────────────────────────────────────
+
+    _plain_text = True
+
+    # role -> DXF layer, for the panel (rect/line) and circle primitives
+    _PANEL_ROLE_LAYER = {
+        "table": L_TABLE,
+        "title": L_BORDER,
+        "dims": L_DIMS,
+        "sheet_border_outer": L_BORDER,
+        "sheet_border_inner": L_BORDER,
+        "aperture_bracket": L_DIMS,
+    }
+    # role -> explicit lineweight override (None = use the layer's own default)
+    _PANEL_ROLE_LINEWEIGHT = {"sheet_border_inner": 50}
+    _CIRCLE_ROLE_LAYER = {"lambda_symbol": L_TABLE, "projection_symbol": L_BORDER}
+
+    def _prim_rect(self, x: float, y: float, w: float, h: float, *, role: str) -> None:
+        dxfattribs = {"layer": self._PANEL_ROLE_LAYER[role]}
+        lw = self._PANEL_ROLE_LINEWEIGHT.get(role)
+        if lw is not None:
+            dxfattribs["lineweight"] = lw
+        self._msp.add_lwpolyline(
+            [(x, y), (x + w, y), (x + w, y + h), (x, y + h)],
+            close=True,
+            dxfattribs=dxfattribs,
+        )
+
+    def _prim_hline(self, x0: float, x1: float, y: float, *, role: str) -> None:
+        self._msp.add_line(
+            (x0, y), (x1, y), dxfattribs={"layer": self._PANEL_ROLE_LAYER[role]}
+        )
+
+    def _prim_vline(self, x: float, y0: float, y1: float, *, role: str) -> None:
+        self._msp.add_line(
+            (x, y0), (x, y1), dxfattribs={"layer": self._PANEL_ROLE_LAYER[role]}
+        )
+
+    def _prim_line(
+        self, p1: tuple[float, float], p2: tuple[float, float], *, role: str
+    ) -> None:
+        if role == "surface_finish_symbol":
+            self._msp.add_line(p1, p2, dxfattribs={"layer": L_CALLOUT})
+            return
+        if role == "rotational_axis":
+            # Visually distinct from the optical axis (dash-double-dot) so the
+            # two lines can be told apart when offset — ISO 128 §3.2 type 04.1.
+            lt_rot = "DASHDOT"
+            if lt_rot not in self._msp.doc.linetypes:
+                self._msp.doc.linetypes.add(lt_rot, pattern=[8.0, -2.0, 1.0, -2.0])
+            self._msp.add_line(p1, p2, dxfattribs={"layer": L_AXIS, "linetype": lt_rot})
+            return
+        # "projection_axis" / "optical_axis": rely on the AXIS layer's own
+        # "OPTICAL" dash-dot linetype rather than a per-entity dash pattern.
+        self._msp.add_line(p1, p2, dxfattribs={"layer": L_AXIS})
+
+    _POLYGON_ROLE_LAYER = {
+        "projection_symbol": L_BORDER,
+        "surface_finish_symbol": L_CALLOUT,
+    }
+
+    def _prim_polygon(self, points: list[tuple[float, float]], *, role: str) -> None:
+        self._msp.add_lwpolyline(
+            points, close=True, dxfattribs={"layer": self._POLYGON_ROLE_LAYER[role]}
+        )
+
+    def _prim_curve(self, points: list[tuple[float, float]], *, role: str) -> None:
+        # No native Bezier here: straight line from the first to the last
+        # point, matching the DXF renderer's original approximation.
+        self._msp.add_line(points[0], points[-1], dxfattribs={"layer": L_CALLOUT})
+
+    _HALIGN = {"left": 0, "center": 4, "right": 2}
+    _VALIGN = {"bottom": 1, "center": 2, "top": 3}
+
+    # role -> (height_base, style_scale_attr, layer)
+    _TEXT_ROLE_STYLE: dict[str, tuple] = {
+        "table_header": (2.0, "table_header_scale", L_TABLE),
+        "table_body": (2.0, "table_body_scale", L_TABLE),
+        "table_body_coating": (2.0, "table_body_scale", L_TABLE),
+        "lambda_symbol": (_LAMBDA_R * 1.4, "lambda_symbol_scale", L_TABLE),
+        "title_field_label": (1.8, "title_label_scale", L_BORDER),
+        "title_field_value": (2.5, "title_value_scale", L_BORDER),
+        "title_label_muted": (1.8, "title_label_scale", L_BORDER),
+        "title_notes_value": (2.0, "title_notes_scale", L_BORDER),
+        "title_general_tol": (1.8, "title_general_tol_scale", L_BORDER),
+        "dim_ct": (2.5, "dimension_scale", L_DIMS),
+        "dim_od": (2.5, "dimension_scale", L_DIMS),
+        "dim_et": (2.5, "dimension_scale", L_DIMS),
+        "dim_component": (2.0, "component_dimension_scale", L_DIMS),
+        "reference_note": (1.8, "reference_note_scale", L_BORDER),
+        "efl_annotation": (2.5, "efl_annotation_scale", L_BORDER),
+        "axis_label": (2.0, "axis_label_scale", L_AXIS),
+        "axis_surface_label": (2.0, "surface_label_scale", L_AXIS),
+        "sharp_edge_symbol": (3.0, "symbol_annotation_scale", L_CALLOUT),
+        "aperture_bracket_label": (2.0, "axis_label_scale", L_DIMS),
+        "surface_finish_label": (2.0, "surface_label_scale", L_CALLOUT),
+    }
+
+    def _prim_text(
+        self, pos: tuple[float, float], s: str, *, ha: str, va: str, role: str
+    ) -> None:
+        height_base, scale_attr, layer = self._TEXT_ROLE_STYLE[role]
+        height = height_base * getattr(self.style, scale_attr)
+
+        if role == "title_general_tol":
+            # DXF TEXT has no multi-line support: split on the shared "\n"
+            # into two single-line entities, offset ±1.2mm around the same
+            # anchor the matplotlib renderer centers its one multi-line
+            # text block on.
+            line1, line2 = s.split("\n")
+            for line, dy, line_va in ((line1, 1.2, "bottom"), (line2, -1.2, "top")):
+                p = (pos[0], pos[1] + dy)
+                self._msp.add_text(
+                    line,
+                    dxfattribs={
+                        "layer": layer,
+                        "height": height,
+                        "insert": p,
+                        "halign": 4,
+                        "valign": self._VALIGN[line_va],
+                        "align_point": p,
+                    },
+                )
+            return
+
+        # The coating text is DXF-vertically-centered on the lambda circle
+        # rather than top-aligned to the row like the matplotlib renderer —
+        # a deliberate per-format tuning difference, not shared layout.
+        if role == "table_body_coating":
+            pos = (pos[0], pos[1] - _LAMBDA_R)
+            va = "center"
+
+        # Dimension-line labels sit further from their dimension line in DXF
+        # than in matplotlib (larger absolute text height needs more
+        # clearance) — per-format offsets tuned independently, not shared
+        # layout, applied on top of the shared anchor position.
+        if role == "dim_ct":
+            pos = (pos[0], pos[1] - 2.5)
+        elif role == "dim_od":
+            pos = (pos[0] + 0.5, pos[1])
+        elif role == "dim_et":
+            pos = (pos[0], pos[1] + 0.5)
+
+        halign = self._HALIGN[ha]
+        valign = self._VALIGN[va]
+        dxfattribs = {
+            "layer": layer,
+            "height": height,
+            "insert": pos,
+            "halign": halign,
+            "valign": valign,
+        }
+        # ezdxf requires align_point for non-left alignment; the aperture
+        # bracket label always carries one in the original code even for its
+        # left-aligned case (a pre-existing inconsistency, preserved as-is).
+        if halign != 0 or role == "aperture_bracket_label":
+            dxfattribs["align_point"] = pos
+        self._msp.add_text(s, dxfattribs=dxfattribs)
+
+    def _prim_circle(self, center: tuple[float, float], r: float, *, role: str) -> None:
+        self._msp.add_circle(
+            center, r, dxfattribs={"layer": self._CIRCLE_ROLE_LAYER[role]}
+        )
+
+    def _tol_fmt(self, tol) -> str:
+        return _tol_plain(tol)
+
+    def _fmt_line(self, s: str) -> str:
+        # DXF R2010: strip mathtext markers and replace ∞ with "inf" for broad
+        # viewer compatibility. κ (U+03BA) and other BMP characters are left
+        # intact — ezdxf encodes them correctly in R2010 TEXT entities.
+        return s.replace("∞", "inf").replace("$", "")
+
+    def _fmt_dim_text(self, value: str, tol_m: str) -> str:
+        return f"{value}{tol_m}"
+
+    def _axis_margin_mm(self) -> float:
+        return 15.0
+
+    def _prim_dim_arrow(
+        self, p1: tuple[float, float], p2: tuple[float, float], *, role: str
+    ) -> None:
+        self._msp.add_line(p1, p2, dxfattribs={"layer": L_DIMS})
+        _dxf_arrowhead(self._msp, p1, p2, L_DIMS)
+        _dxf_arrowhead(self._msp, p2, p1, L_DIMS)
 
     # ── layers ──────────────────────────────────────────────────────────────
 
@@ -1745,473 +2079,7 @@ class _DxfRenderer:
             doc.linetypes.add(lt, pattern=[8.0, -2.0, 1.0, -2.0, 1.0, -2.0])
         lays.get(L_AXIS).dxf.linetype = lt
 
-    # ── border ──────────────────────────────────────────────────────────────
-
-    def _dxf_border(self, msp):
-        pw, ph = self.pw, self.ph
-        a = {"layer": L_BORDER}
-        msp.add_lwpolyline(
-            [(0, 0), (pw, 0), (pw, ph), (0, ph)], close=True, dxfattribs=a
-        )
-        msp.add_lwpolyline(
-            [
-                (self.style.border_margin, self.style.border_margin),
-                (pw - self.style.border_margin, self.style.border_margin),
-                (pw - self.style.border_margin, ph - self.style.border_margin),
-                (self.style.border_margin, ph - self.style.border_margin),
-            ],
-            close=True,
-            dxfattribs={**a, "lineweight": 50},
-        )
-
-        # ISO 10110 reference + λ annotation (§4, mandatory since 2019 rev.)
-        ref_wl = getattr(self.spec, "reference_wavelength", 546.07)
-        msp.add_text(
-            f"Ang. nach ISO\u00a010110;\u2002\u03bb = {ref_wl:.2f}\u00a0nm",
-            dxfattribs={
-                "layer": L_BORDER,
-                "height": 1.8 * self.style.reference_note_scale,
-                "insert": (
-                    self.style.border_margin + 2.0,
-                    self.style.border_margin + _BOT_H + 3.0,
-                ),
-                "halign": 0,
-                "valign": 1,
-            },
-        )
-
-        # f′ (EFL) annotation — U+2032 prime, matching the matplotlib renderer
-        try:
-            _efl = float(self.spec.optic.paraxial.f2())
-            msp.add_text(
-                f"f\u2032 = {_efl:.2f} mm",
-                dxfattribs={
-                    "layer": L_BORDER,
-                    "height": 2.5 * self.style.efl_annotation_scale,
-                    "insert": (
-                        self.style.border_margin + 2.0,
-                        ph - self.style.border_margin - 5.0,
-                    ),
-                    "halign": 0,
-                    "valign": 3,
-                },
-            )
-        except Exception:
-            pass
-
-    # ── title block ─────────────────────────────────────────────────────────
-
-    def _dxf_title_block(self, msp):
-        pw = self.pw
-        geo = self._geo
-        espec = self.spec.get_element_spec(self.element_index)
-        a = {"layer": L_BORDER}
-
-        ttl_x0 = self.style.border_margin
-        ttl_x1 = pw - self.style.border_margin
-        ttl_w = ttl_x1 - ttl_x0
-        r1_y0 = self.style.border_margin + _TTL_R2_H
-        r1_y1 = self.style.border_margin + _TTL_H
-        r2_y0 = self.style.border_margin
-        r2_y1 = r1_y0
-
-        msp.add_lwpolyline(
-            [(ttl_x0, r2_y0), (ttl_x1, r2_y0), (ttl_x1, r1_y1), (ttl_x0, r1_y1)],
-            close=True,
-            dxfattribs=a,
-        )
-        msp.add_line((ttl_x0, r1_y0), (ttl_x1, r1_y0), dxfattribs=a)
-
-        fracs1 = [0.34, 0.14, 0.14, 0.14, 0.12, 0.06, 0.06]
-        xs1 = [ttl_x0]
-        for f in fracs1:
-            xs1.append(xs1[-1] + f * ttl_w)
-        for xi in xs1[1:-1]:
-            msp.add_line((xi, r1_y0), (xi, r1_y1), dxfattribs=a)
-
-        proj = self.spec.project_name or "OPTICAL ELEMENT"
-        org = self.spec.organisation
-        pn = espec.part_number or f"ELEM-{self.element_index + 1:03d}"
-        proj_display = f"{org} / {proj}   {pn}" if org else f"{proj}   {pn}"
-        sheet_num = f"{self.element_index + 1} / {self.total_sheets}"
-
-        fields_r1 = [
-            ("ORGANISATION / PROJECT / PART NO.", proj_display),
-            ("DRAWN BY", espec.drawn_by or "\u2014"),
-            ("APPROVED", espec.approved_by or "\u2014"),
-            ("DATE", str(date.today())),
-            ("SCALE", geo.scale_label()),
-            ("SHEET", sheet_num),
-            ("REV", espec.revision),
-        ]
-        for i, (lbl, val) in enumerate(fields_r1):
-            cx = (xs1[i] + xs1[i + 1]) / 2
-            msp.add_text(
-                lbl,
-                dxfattribs={
-                    "layer": L_BORDER,
-                    "height": 1.8 * self.style.title_label_scale,
-                    "insert": (cx, r1_y0 + _TTL_R1_H * 0.25),
-                    "halign": 4,
-                    "valign": 2,
-                    "align_point": (cx, r1_y0 + _TTL_R1_H * 0.25),
-                },
-            )
-            msp.add_text(
-                val,
-                dxfattribs={
-                    "layer": L_BORDER,
-                    "height": 2.5 * self.style.title_value_scale,
-                    "insert": (cx, r1_y0 + _TTL_R1_H * 0.70),
-                    "halign": 4,
-                    "valign": 2,
-                    "align_point": (cx, r1_y0 + _TTL_R1_H * 0.70),
-                },
-            )
-
-        notes_x = ttl_x0 + 0.60 * ttl_w
-        msp.add_line((notes_x, r2_y0), (notes_x, r2_y1), dxfattribs=a)
-        cy_r2 = (r2_y0 + r2_y1) / 2
-
-        msp.add_text(
-            "NOTES",
-            dxfattribs={
-                "layer": L_BORDER,
-                "height": 1.8 * self.style.title_label_scale,
-                "insert": (ttl_x0 + 2, r2_y1 - 1.5),
-                "halign": 0,
-                "valign": 3,
-            },
-        )
-        if espec.notes:
-            msp.add_text(
-                espec.notes,
-                dxfattribs={
-                    "layer": L_BORDER,
-                    "height": 2.0 * self.style.title_notes_scale,
-                    "insert": (ttl_x0 + 2, cy_r2),
-                    "halign": 0,
-                    "valign": 2,
-                },
-            )
-
-        # Split the right section into: text area (60%) + projection symbol area (40%).
-        # This matches the matplotlib renderer geometry.
-        std_w = ttl_x1 - notes_x
-        sym_zone = notes_x + std_w * 0.60  # boundary between text and symbol
-        std_text_cx = (notes_x + sym_zone) / 2  # centre of text area
-        msp.add_text(
-            "DIM. IN mm",
-            dxfattribs={
-                "layer": L_BORDER,
-                "height": 1.8 * self.style.title_label_scale,
-                "insert": (std_text_cx, r2_y1 - 1.5),
-                "halign": 4,
-                "valign": 3,
-                "align_point": (std_text_cx, r2_y1 - 1.5),
-            },
-        )
-        # General tolerances per ISO 10110-11 (same as matplotlib renderer)
-
-        _phys_d_tb = espec.diameter if espec.diameter is not None else 2.0 * geo.sa_max
-        # ISO 10110-11 §4.1: defaults are based on the largest dimension of
-        # the element — for a lens that is its physical outer diameter.
-        _defs_tb = _iso10110_11_defaults(_phys_d_tb)
-        # Two-line general tolerance note matching the mpl renderer layout
-        msp.add_text(
-            "GENERAL TOL. PER ISO 10110-11",
-            dxfattribs={
-                "layer": L_BORDER,
-                "height": 1.8 * self.style.title_general_tol_scale,
-                "insert": (std_text_cx, cy_r2 + 1.2),
-                "halign": 4,
-                "valign": 1,
-                "align_point": (std_text_cx, cy_r2 + 1.2),
-            },
-        )
-        msp.add_text(
-            f"\u00d8\u00b1{_defs_tb['diameter']:.2f}  "
-            f"CT\u00b1{_defs_tb['thickness']:.2f}  "
-            f"{_defs_tb['form_error']}  {_defs_tb['centration']}  "
-            f"{_defs_tb['imperfections']}",
-            dxfattribs={
-                "layer": L_BORDER,
-                "height": 1.8 * self.style.title_general_tol_scale,
-                "insert": (std_text_cx, cy_r2 - 1.2),
-                "halign": 4,
-                "valign": 3,
-                "align_point": (std_text_cx, cy_r2 - 1.2),
-            },
-        )
-
-        # First-angle projection symbol (ISO 10110-1 §5.11.4) — circle + truncated cone
-        sym_cx_ref = (sym_zone + ttl_x1) / 2
-        sym_R = _TTL_R2_H * 0.28  # outer circle radius
-        sym_r = sym_R * 0.60  # inner circle radius
-        sym_h = sym_R * 1.8  # cone length
-        sym_gap = sym_R * 0.5  # gap between circle and cone
-        total_sym_w = 2 * sym_R + sym_gap + sym_h
-        x_circ_c = sym_cx_ref - total_sym_w / 2 + sym_R
-        x_cone_l = x_circ_c + sym_R + sym_gap
-        x_cone_r = x_cone_l + sym_h
-        ab = {"layer": L_BORDER}
-        msp.add_circle((x_circ_c, cy_r2), sym_R, dxfattribs=ab)
-        msp.add_circle((x_circ_c, cy_r2), sym_r, dxfattribs=ab)
-        msp.add_lwpolyline(
-            [
-                (x_cone_l, cy_r2 + sym_R),
-                (x_cone_r, cy_r2 + sym_r),
-                (x_cone_r, cy_r2 - sym_r),
-                (x_cone_l, cy_r2 - sym_R),
-            ],
-            close=True,
-            dxfattribs=ab,
-        )
-        # Centre line through both circle and cone (use AXIS layer for CENTER linetype)
-        msp.add_line(
-            (x_circ_c - sym_R * 1.3, cy_r2),
-            (x_cone_r + sym_R * 0.5, cy_r2),
-            dxfattribs={"layer": L_AXIS},
-        )
-
-    # ── spec table ──────────────────────────────────────────────────────────
-
-    def _dxf_spec_table(self, msp):
-
-        pw = self.pw
-        surfs = self.element.surfaces
-        n = len(surfs)
-        n_comps = self.element.num_components
-        mats = self.element.glass_materials
-        n_cols = n + n_comps
-        a = {"layer": L_TABLE}
-        H_HDR = 7.0
-
-        tbl_y0 = self.style.border_margin + _TTL_H
-        tbl_y1 = tbl_y0 + _SPEC_H
-        tbl_x0 = self.style.border_margin
-        tbl_x1 = pw - self.style.border_margin
-        tbl_w = tbl_x1 - tbl_x0
-        col_w = tbl_w / n_cols
-
-        msp.add_lwpolyline(
-            [(tbl_x0, tbl_y0), (tbl_x1, tbl_y0), (tbl_x1, tbl_y1), (tbl_x0, tbl_y1)],
-            close=True,
-            dxfattribs=a,
-        )
-        for ci in range(1, n_cols):
-            xd = tbl_x0 + ci * col_w
-            msp.add_line((xd, tbl_y0), (xd, tbl_y1), dxfattribs=a)
-        msp.add_line((tbl_x0, tbl_y1 - H_HDR), (tbl_x1, tbl_y1 - H_HDR), dxfattribs=a)
-
-        def _hdr(ci: int, txt: str) -> None:
-            cx = tbl_x0 + (ci + 0.5) * col_w
-            msp.add_text(
-                txt,
-                dxfattribs={
-                    "layer": L_TABLE,
-                    "height": 2.0 * self.style.table_header_scale,
-                    "insert": (cx, tbl_y1 - H_HDR / 2),
-                    "halign": 4,
-                    "valign": 2,
-                    "align_point": (cx, tbl_y1 - H_HDR / 2),
-                },
-            )
-
-        def _body(ci: int, lines: list) -> None:
-            x0 = tbl_x0 + ci * col_w + 2.0
-            body = _SPEC_H - H_HDR
-            sp = min(body / max(len(lines), 1), 6.5)
-            for j, txt in enumerate(lines):
-                msp.add_text(
-                    txt,
-                    dxfattribs={
-                        "layer": L_TABLE,
-                        "height": 2.0 * self.style.table_body_scale,
-                        "insert": (x0, tbl_y1 - H_HDR - 2.0 - j * sp),
-                        "halign": 0,
-                        "valign": 3,
-                    },
-                )
-
-        # Surface columns
-        for si in range(n):
-            ci = si * 2
-            s_idx = self.element.surface_indices[si]
-            sspec = self.spec.get_surface_spec(s_idx)
-            hdr = (
-                "SURFACE 1 (FRONT)"
-                if si == 0
-                else (
-                    f"SURFACE {n} (REAR)"
-                    if si == n - 1
-                    else f"SURFACE {si + 1} (CEMENT)"
-                )
-            )
-            _hdr(ci, hdr)
-
-            # Row 1: surface type + radius (plain_text=True avoids mathtext ^{}_{})
-            lines: list = _surface_header_lines(
-                surfs[si], sspec, is_rear=(si == n - 1), plain_text=True
-            )
-            # DXF R2010: strip mathtext markers and replace ∞ with "inf" for
-            # broad viewer compatibility.  κ (U+03BA) and other BMP characters
-            # are left intact — ezdxf encodes them correctly in R2010 TEXT entities.
-            lines = [ln.replace("∞", "inf").replace("$", "") for ln in lines]
-
-            # Row 2: Øe
-            _ca_d_dxf = (
-                sspec.ca_diameter
-                if sspec.ca_diameter is not None
-                else 2.0 * self._geo.sa[si]
-            )
-            _ca_tol_dxf = (
-                _tol_plain(sspec.ca_tolerance) if sspec.ca_diameter is not None else ""
-            )
-            lines.append(f"\u00d8\u2091 {_ca_d_dxf:.2f}{_ca_tol_dxf}")
-
-            # Row 3: protective chamfer
-            if sspec.chamfer is not None:
-                ang = sspec.chamfer_angle if sspec.chamfer_angle is not None else 45
-                lines.append(f"Schutzfase {sspec.chamfer} \u00d7 {ang}\u00b0")
-
-            # Numbered codes in ISO Table 1 order: 3/, 4/, 5/, 6/, 7/, 8/
-            _base_len = len(lines)
-            _code_lines, coating_str, _coat_idx = _numbered_code_rows(sspec, si, n)
-            lines += _code_lines
-            coat_row_idx = _base_len + _coat_idx
-
-            _body(ci, lines)
-
-            # Encircled-λ at the coating row position
-            if coating_str:
-                _sp_coat = min((_SPEC_H - H_HDR) / max(len(lines), 1), 6.5)
-                _coat_y = tbl_y1 - H_HDR - 2.0 - coat_row_idx * _sp_coat
-                _coat_x = tbl_x0 + ci * col_w + 2.0
-                msp.add_circle(
-                    (_coat_x + _LAMBDA_R, _coat_y - _LAMBDA_R),
-                    _LAMBDA_R,
-                    dxfattribs={"layer": L_TABLE},
-                )
-                msp.add_text(
-                    "\u03bb",
-                    dxfattribs={
-                        "layer": L_TABLE,
-                        "height": _LAMBDA_R * 1.4 * self.style.lambda_symbol_scale,
-                        "insert": (_coat_x + _LAMBDA_R, _coat_y - _LAMBDA_R),
-                        "halign": 4,
-                        "valign": 2,
-                        "align_point": (_coat_x + _LAMBDA_R, _coat_y - _LAMBDA_R),
-                    },
-                )
-                msp.add_text(
-                    coating_str,
-                    dxfattribs={
-                        "layer": L_TABLE,
-                        "height": 2.0 * self.style.table_body_scale,
-                        "insert": (_coat_x + 2 * _LAMBDA_R + 1.0, _coat_y - _LAMBDA_R),
-                        "halign": 0,
-                        "valign": 2,
-                    },
-                )
-
-        # Material columns
-        for mi in range(n_comps):
-            ci = mi * 2 + 1
-            mat = mats[mi]
-            display_name = _mat_display_name(mat)
-            try:
-                nd = float(np.asarray(be.to_numpy(be.array(mat.n(0.5876)))).flat[0])
-                vd = float(np.asarray(be.to_numpy(be.array(mat.abbe()))).flat[0])
-                lines = [
-                    display_name,
-                    f"nd = {nd:.4f}  (587.6 nm)",
-                    f"\u03bdd = {vd:.2f}  (587.6 nm)",
-                ]  # νd (Greek nu)
-            except Exception:
-                lines = [display_name]
-            # 0/, 1/, 2/ — per-component quality specs (cemented doublets)
-            comp_espec = self.spec.get_material_spec(self.element_index, mi)
-            lines += _material_code_rows(comp_espec)
-            _hdr(ci, "MATERIAL" if n_comps == 1 else f"GLASS {mi + 1}")
-            _body(ci, lines)
-
     # ── optical axis ────────────────────────────────────────────────────────
-
-    def _dxf_axis(self, msp):
-        geo = self._geo
-        surfs = self.element.surfaces
-        n = len(surfs)
-        mg = 15 / geo.scale
-        x0, y0 = geo.pt(geo.opt_z_min - mg, 0)
-        x1, _ = geo.pt(geo.opt_z_max + mg, 0)
-        msp.add_line((x0, y0), (x1, y0), dxfattribs={"layer": L_AXIS})
-
-        if self.rotational_axis_y == 0.0:
-            # Axes coincide — single label "opt./rot. axis"
-            msp.add_text(
-                "opt./rot. axis",
-                dxfattribs={
-                    "layer": L_AXIS,
-                    "height": 2.0 * self.style.axis_label_scale,
-                    "insert": (x0 - 1.0, y0),
-                    "halign": 2,
-                    "valign": 2,
-                    "align_point": (x0 - 1.0, y0),
-                },
-            )
-        else:
-            # Separate rotational axis — ISO 128 DASHDOT (long-dash single-dot)
-            msp.add_text(
-                "opt. axis",
-                dxfattribs={
-                    "layer": L_AXIS,
-                    "height": 2.0 * self.style.axis_label_scale,
-                    "insert": (x0 - 1.0, y0),
-                    "halign": 2,
-                    "valign": 2,
-                    "align_point": (x0 - 1.0, y0),
-                },
-            )
-            rot_x0, rot_y0 = geo.pt(geo.opt_z_min - mg, self.rotational_axis_y)
-            rot_x1, _ = geo.pt(geo.opt_z_max + mg, self.rotational_axis_y)
-            # Rotational axis: dash-single-dot (ISO 128 §3.2 type 04.1)
-            # Visually distinct from the optical axis (dash-double-dot) so that
-            # the two lines can be told apart when they are offset.
-            lt_rot = "DASHDOT"
-            if lt_rot not in msp.doc.linetypes:
-                msp.doc.linetypes.add(lt_rot, pattern=[8.0, -2.0, 1.0, -2.0])
-            msp.add_line(
-                (rot_x0, rot_y0),
-                (rot_x1, rot_y0),
-                dxfattribs={"layer": L_AXIS, "linetype": lt_rot},
-            )
-            msp.add_text(
-                "rot. axis",
-                dxfattribs={
-                    "layer": L_AXIS,
-                    "height": 2.0 * self.style.axis_label_scale,
-                    "insert": (rot_x0 - 1.0, rot_y0),
-                    "halign": 2,
-                    "valign": 2,
-                    "align_point": (rot_x0 - 1.0, rot_y0),
-                },
-            )
-
-        # Surface labels for cement interfaces below the axis
-        for si in range(1, n - 1):
-            lbl_x = geo.pt(_surf_z(surfs[si]), 0)[0]
-            msp.add_text(
-                f"S{si + 1}",
-                dxfattribs={
-                    "layer": L_AXIS,
-                    "height": 2.0 * self.style.surface_label_scale,
-                    "insert": (lbl_x, y0 - 2.5),
-                    "halign": 4,
-                    "valign": 3,
-                    "align_point": (lbl_x, y0 - 2.5),
-                },
-            )
 
     # ── lens outline ────────────────────────────────────────────────────────
 
@@ -2221,26 +2089,13 @@ class _DxfRenderer:
         n = len(surfs)
         sa_e = geo.sa_max
 
-        def _dxf_curve_sa(si, sa_val, n_pts=200):
-            y = np.linspace(-sa_val, sa_val, n_pts)
-            sag = np.asarray(
-                be.to_numpy(surfs[si].geometry.sag(be.zeros(n_pts), be.array(y)))
-            )
-            z = _surf_z(surfs[si]) + sag
-            return [
-                (float(geo._ox + z[k] * geo.scale), float(geo._oy + y[k] * geo.scale))
-                for k in range(n_pts)
-            ]
-
-        def _dxf_rim_sa(si, sign, sa_val):
-            surf = surfs[si]
-            sag = _to_float(surf.geometry.sag(be.zeros(1), be.array([sa_val]))[0])
-            return geo.pt(_surf_z(surf) + sag, sign * sa_val)
+        def _dxf_curve_sa(si, sa_val):
+            return geo.curve_at(si, sa_val).tolist()
 
         front = _dxf_curve_sa(0, sa_e)
         rear = _dxf_curve_sa(n - 1, sa_e)
-        top_r = _dxf_rim_sa(n - 1, +1, sa_e)
-        bot_f = _dxf_rim_sa(0, -1, sa_e)
+        top_r = geo.rim_at(n - 1, +1, sa_e)
+        bot_f = geo.rim_at(0, -1, sa_e)
         outline = front + [top_r] + list(reversed(rear)) + [bot_f]
         msp.add_lwpolyline(
             outline, close=True, dxfattribs={"layer": L_OUTLINE, "lineweight": 50}
@@ -2259,8 +2114,8 @@ class _DxfRenderer:
             for _k in range(n_comps):
                 _cf = _dxf_curve_sa(_k, sa_e)
                 _cr = _dxf_curve_sa(_k + 1, sa_e)
-                _tr = _dxf_rim_sa(_k + 1, +1, sa_e)
-                _bl = _dxf_rim_sa(_k, -1, sa_e)
+                _tr = geo.rim_at(_k + 1, +1, sa_e)
+                _bl = geo.rim_at(_k, -1, sa_e)
                 _comp_outline = _cf + [_tr] + list(reversed(_cr)) + [_bl]
                 _h = msp.add_hatch(color=150, dxfattribs={"layer": L_OUTLINE})
                 _angle = 0 if _k % 2 == 0 else 90  # 45° or 135° (ANSI31 base is 45°)
@@ -2268,255 +2123,6 @@ class _DxfRenderer:
                 _h.paths.add_polyline_path(_comp_outline, is_closed=True)
         except Exception:
             pass
-
-    # ── dimension lines ──────────────────────────────────────────────────────
-
-    def _dxf_dimensions(self, msp):
-
-        geo = self._geo
-        s = geo.scale
-        surfs = self.element.surfaces
-        n = len(surfs)
-        sa_e = geo.sa_max
-        a = {"layer": L_DIMS}
-
-        # Centre thickness
-        z0 = _surf_z(surfs[0])
-        zN = _surf_z(surfs[-1])
-        ct = abs(zN - z0)
-        dy = geo.pt(0, -(sa_e + 8.0 / s))[1]
-        ey = geo.pt(0, -(sa_e + 1.5 / s))[1]
-        p0x = geo.pt(z0, 0)[0]
-        p1x = geo.pt(zN, 0)[0]
-        msp.add_line((p0x, ey), (p0x, dy), dxfattribs=a)
-        msp.add_line((p1x, ey), (p1x, dy), dxfattribs=a)
-        msp.add_line((p0x, dy), (p1x, dy), dxfattribs=a)
-        _dxf_arrowhead(msp, (p0x, dy), (p1x, dy), L_DIMS)  # left arrow
-        _dxf_arrowhead(msp, (p1x, dy), (p0x, dy), L_DIMS)  # right arrow
-        espec_dxf = self.spec.get_element_spec(self.element_index)
-        _m_dxf = " M" if getattr(espec_dxf, "matched_pair", False) else ""
-        _ct_tol_p = _tol_plain(espec_dxf.ct_tolerance)
-        msp.add_text(
-            f"{ct:.2f}{_ct_tol_p}{_m_dxf}",
-            dxfattribs={
-                "layer": L_DIMS,
-                "height": 2.5 * self.style.dimension_scale,
-                "insert": ((p0x + p1x) / 2, dy - 4),
-                "halign": 4,
-                "valign": 3,
-                "align_point": ((p0x + p1x) / 2, dy - 4),
-            },
-        )
-
-        # Physical outer diameter (right side)
-        phys_d_dxf = (
-            espec_dxf.diameter if espec_dxf.diameter is not None else 2.0 * sa_e
-        )
-        dz_dxf = geo.opt_z_max + 10.0 / s
-        dax_dxf = geo.pt(dz_dxf, 0)[0]
-        # Rim coordinates: top of rear surface, bottom of front surface at sa_e
-        _sag_top = _to_float(surfs[-1].geometry.sag(be.zeros(1), be.array([sa_e]))[0])
-        _sag_bot = _to_float(surfs[0].geometry.sag(be.zeros(1), be.array([sa_e]))[0])
-        top_r_dxf = geo.pt(_surf_z(surfs[-1]) + _sag_top, +sa_e)
-        bot_r_dxf = geo.pt(_surf_z(surfs[0]) + _sag_bot, -sa_e)
-        msp.add_line(
-            (top_r_dxf[0], top_r_dxf[1]), (dax_dxf + 2, top_r_dxf[1]), dxfattribs=a
-        )
-        msp.add_line(
-            (bot_r_dxf[0], bot_r_dxf[1]), (dax_dxf + 2, bot_r_dxf[1]), dxfattribs=a
-        )
-        msp.add_line((dax_dxf, top_r_dxf[1]), (dax_dxf, bot_r_dxf[1]), dxfattribs=a)
-        _dxf_arrowhead(
-            msp, (dax_dxf, top_r_dxf[1]), (dax_dxf, bot_r_dxf[1]), L_DIMS
-        )  # top arrow (up)
-        _dxf_arrowhead(
-            msp, (dax_dxf, bot_r_dxf[1]), (dax_dxf, top_r_dxf[1]), L_DIMS
-        )  # bottom arrow (down)
-        _d_tol_p = _tol_plain(espec_dxf.diameter_tolerance)
-        msp.add_text(
-            f"\u00d8 {phys_d_dxf:.2f}{_d_tol_p}",
-            dxfattribs={
-                "layer": L_DIMS,
-                "height": 2.5 * self.style.dimension_scale,
-                "insert": (dax_dxf + 3, (top_r_dxf[1] + bot_r_dxf[1]) / 2),
-                "halign": 0,
-                "valign": 2,
-            },
-        )
-
-        # Edge thickness
-        sag_f = _to_float(surfs[0].geometry.sag(be.zeros(1), be.array([sa_e]))[0])
-        sag_b = _to_float(surfs[-1].geometry.sag(be.zeros(1), be.array([sa_e]))[0])
-        et_x0 = geo.pt(_surf_z(surfs[0]) + sag_f, sa_e)[0]
-        et_x1 = geo.pt(_surf_z(surfs[-1]) + sag_b, sa_e)[0]
-        et = abs((_surf_z(surfs[-1]) + sag_b) - (_surf_z(surfs[0]) + sag_f))
-        et_ey = geo.pt(0, sa_e + 1.5 / s)[1]
-        et_dy = geo.pt(0, sa_e + 8.0 / s)[1]
-        msp.add_line((et_x0, et_ey), (et_x0, et_dy), dxfattribs=a)
-        msp.add_line((et_x1, et_ey), (et_x1, et_dy), dxfattribs=a)
-        msp.add_line((et_x0, et_dy), (et_x1, et_dy), dxfattribs=a)
-        _dxf_arrowhead(msp, (et_x0, et_dy), (et_x1, et_dy), L_DIMS)  # left
-        _dxf_arrowhead(msp, (et_x1, et_dy), (et_x0, et_dy), L_DIMS)  # right
-        msp.add_text(
-            f"({et:.2f})",
-            dxfattribs={
-                "layer": L_DIMS,
-                "height": 2.5 * self.style.dimension_scale,
-                "insert": ((et_x0 + et_x1) / 2, et_dy + 2),
-                "halign": 4,
-                "valign": 1,
-                "align_point": ((et_x0 + et_x1) / 2, et_dy + 2),
-            },
-        )
-
-        # Component thicknesses for cemented lenses
-        if self.element.is_cemented:
-            th_y = geo.pt(0, sa_e + 8.0 / s)[1]
-            eth_y = geo.pt(0, sa_e + 1.5 / s)[1]
-            for ci, th in enumerate(
-                self.element.component_thicknesses(self.spec.optic)
-            ):
-                za = _surf_z(surfs[ci])
-                zb = _surf_z(surfs[ci + 1])
-                xa = geo.pt(za, 0)[0]
-                xb = geo.pt(zb, 0)[0]
-                msp.add_line((xa, eth_y), (xa, th_y), dxfattribs=a)
-                msp.add_line((xb, eth_y), (xb, th_y), dxfattribs=a)
-                msp.add_line((xa, th_y), (xb, th_y), dxfattribs=a)
-                _dxf_arrowhead(msp, (xa, th_y), (xb, th_y), L_DIMS)  # left
-                _dxf_arrowhead(msp, (xb, th_y), (xa, th_y), L_DIMS)  # right
-                msp.add_text(
-                    f"t{ci + 1} = {th:.2f}",
-                    dxfattribs={
-                        "layer": L_DIMS,
-                        "height": 2.0 * self.style.component_dimension_scale,
-                        "insert": ((xa + xb) / 2, th_y + 2),
-                        "halign": 4,
-                        "valign": 1,
-                        "align_point": ((xa + xb) / 2, th_y + 2),
-                    },
-                )
-
-        # Effective aperture (Øe) brackets on front and rear surfaces
-        for si in (0, n - 1):
-            surf = surfs[si]
-            s_idx = self.element.surface_indices[si]
-            sspec_e = self.spec.get_surface_spec(s_idx)
-            ca_d_e = (
-                sspec_e.ca_diameter
-                if sspec_e.ca_diameter is not None
-                else 2.0 * geo.sa[si]
-            )
-            ca_r_e = ca_d_e / 2.0
-            sag_e = _to_float(surf.geometry.sag(be.zeros(1), be.array([ca_r_e]))[0])
-            ca_x_e = geo.pt(_surf_z(surf) + sag_e, 0)[0]
-            ca_yt_e = geo.pt(0, +ca_r_e)[1]
-            ca_yb_e = geo.pt(0, -ca_r_e)[1]
-            tick_l = 3.0
-            side_e = -1 if si == 0 else 1
-            tx1_e = ca_x_e + side_e * tick_l
-            msp.add_line((ca_x_e, ca_yt_e), (tx1_e, ca_yt_e), dxfattribs=a)
-            msp.add_line((ca_x_e, ca_yb_e), (tx1_e, ca_yb_e), dxfattribs=a)
-            msp.add_line((tx1_e, ca_yb_e), (tx1_e, ca_yt_e), dxfattribs=a)
-            lbl_x_e = tx1_e + side_e * 1.0
-            lbl_ha = 2 if si == 0 else 0  # 2=right, 0=left in ezdxf
-            msp.add_text(
-                f"\u00d8\u2091 {ca_d_e:.2f}",
-                dxfattribs={
-                    "layer": L_DIMS,
-                    "height": 2.0 * self.style.axis_label_scale,
-                    "insert": (lbl_x_e, (ca_yt_e + ca_yb_e) / 2),
-                    "halign": lbl_ha,
-                    "valign": 2,
-                    "align_point": (lbl_x_e, (ca_yt_e + ca_yb_e) / 2),
-                },
-            )
-
-        # Radius values belong in the spec table (§5.9.2), not as dimension
-        # lines above the cross-section view. Removed per ISO 10110-1 §5.9.2.
-
-    # ── callout symbols ──────────────────────────────────────────────────────
-
-    def _dxf_callouts(self, msp):
-        """Surface finish callout symbols (triangle + arm + bar)."""
-        import math as _math
-
-        geo = self._geo
-        surfs = self.element.surfaces
-        n = len(surfs)
-        sa_e = geo.sa_max
-
-        sym_fracs = {0: 0.85, n - 1: 0.65}
-
-        for si, frac in sym_fracs.items():
-            surf = surfs[si]
-            y_pos = frac * sa_e
-            sag_v = _to_float(surf.geometry.sag(be.zeros(1), be.array([y_pos]))[0])
-            vx, vy = geo.pt(_surf_z(surf) + sag_v, y_pos)
-
-            r_val = _surf_r(surf)
-            if _math.isinf(r_val):
-                theta = _math.pi / 2 if si == 0 else -_math.pi / 2
-            else:
-                abs_r = abs(r_val)
-                cos_a = _math.sqrt(max(abs_r**2 - y_pos**2, 0.0)) / abs_r
-                sin_a = _math.copysign(1.0, r_val) * y_pos / abs_r
-                nx, ny = (-cos_a, sin_a) if si == 0 else (cos_a, -sin_a)
-                theta = _math.atan2(-nx, ny)
-
-            cos_t = _math.cos(theta)
-            sin_t = _math.sin(theta)
-
-            def _rp(x, y, _vx=vx, _vy=vy, _ct=cos_t, _st=sin_t):
-                return (
-                    _vx + _SYM_SC * (x * _ct - y * _st),
-                    _vy + _SYM_SC * (x * _st + y * _ct),
-                )
-
-            # Triangle
-            tri = [_rp(x, y) for x, y in _SYM_TRI]
-            msp.add_lwpolyline(tri, close=True, dxfattribs={"layer": L_CALLOUT})
-            # Arm
-            arm_end = _rp(*_SYM_ARM[3])
-            msp.add_line((vx, vy), arm_end, dxfattribs={"layer": L_CALLOUT})
-            # Bar
-            bar_start = _rp(*_SYM_BAR[0])
-            bar_end = _rp(*_SYM_BAR[1])
-            msp.add_line(bar_start, bar_end, dxfattribs={"layer": L_CALLOUT})
-
-            # Surface label next to bar end
-            lbl_x = bar_end[0] + 1.5 * cos_t
-            lbl_y = bar_end[1] + 1.5 * sin_t
-            msp.add_text(
-                f"S{si + 1}",
-                dxfattribs={
-                    "layer": L_CALLOUT,
-                    "height": 2.0 * self.style.surface_label_scale,
-                    "insert": (lbl_x, lbl_y),
-                    "halign": 4,
-                    "valign": 2,
-                    "align_point": (lbl_x, lbl_y),
-                },
-            )
-
-        # Sharp-edge "0" symbols (§5.9.5.2)
-        for si, surf in enumerate(surfs):
-            s_idx_se = self.element.surface_indices[si]
-            sspec_se = self.spec.get_surface_spec(s_idx_se)
-            if not sspec_se.sharp_edge:
-                continue
-            vx_se, vy_se = geo.pt(_surf_z(surf), 0)
-            msp.add_text(
-                "0",
-                dxfattribs={
-                    "layer": L_CALLOUT,
-                    "height": 3.0 * self.style.symbol_annotation_scale,
-                    "insert": (vx_se, vy_se - 3.5),
-                    "halign": 4,
-                    "valign": 3,
-                    "align_point": (vx_se, vy_se - 3.5),
-                },
-            )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

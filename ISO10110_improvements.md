@@ -618,3 +618,67 @@ real, not just theoretical.
   to get fresh copies of these files.
 - Added a `.gitignore` entry for `docs/examples/iso10110_output/` so
   re-running the notebook locally doesn't dirty the tree.
+
+### X2 · Split `_MatplotlibRenderer.render()` into per-section methods ✅
+- `render()` was ~760 lines doing borders, lens outline, hatching, dimension
+  lines, spec table, title block, and callouts all in one method, with
+  comment dividers already marking each section. Extracted each into its
+  own private method (`_draw_borders`, `_draw_lens_outline`, `_draw_axes`,
+  `_draw_sharp_edge_symbols`, `_draw_aperture_brackets`,
+  `_draw_surface_finish_callouts`, `_draw_dimension_lines`,
+  `_draw_spec_table`, `_draw_reference_annotation`, `_draw_efl_annotation`,
+  `_draw_title_block`); `render()` is now a thin orchestrator. Pure code
+  motion — the handful of values computed in one section and needed by a
+  later one (`sa_e`/rim points from the lens outline, `phys_d` from the
+  dimension lines) are threaded through as explicit parameters/return
+  values instead of being stashed on `self`.
+
+### X3 · Shared renderer interface — `_BaseRenderer` with format-specific primitives ✅
+- Added `_BaseRenderer`, subclassed by both `_MatplotlibRenderer` and
+  `_DxfRenderer`. It declares a small set of drawing primitives
+  (`_prim_rect`, `_prim_hline`/`_prim_vline`, `_prim_line`, `_prim_curve`,
+  `_prim_polygon`, `_prim_circle`, `_prim_text`, `_prim_dim_arrow`) plus a
+  few text-formatting hooks (`_tol_fmt`, `_fmt_line`, `_fmt_dim_text`,
+  `_axis_margin_mm`); each concrete renderer implements only these,
+  translating an abstract `role` string into its own format's styling
+  (matplotlib line weight/zorder/color; DXF layer/height). Every layout
+  section *except* the lens outline/glass-hatch fill (an irreducible
+  rendering-mechanism difference — matplotlib draws a solid fill plus a
+  custom clipped-line hatch overlay, DXF uses an `ezdxf` `HATCH` entity with
+  a named `ANSI31` pattern; unifying either would change that renderer's
+  visual output) now lives once in `_BaseRenderer`, driven by those
+  primitives, instead of being duplicated per format.
+- Also resolved the curve/rim geometry triplication flagged by the
+  maintainer: `_Geo` gained `curve_at()`/`rim_at()` (sa-parameterized
+  variants of the existing `curve()`/`rim()`), and both renderers' own
+  `_curve_sa`/`_rim_sa`-style closures were deleted in favor of calling
+  `_Geo` directly.
+- Verification: rather than trust visual inspection, built a byte-exact
+  regression harness — generate the full PDF/PNG/DXF output set from a
+  fixed spec with `PYTHONHASHSEED=0` (needed because ezdxf's internal
+  `CLASSES` table ordering is otherwise sensitive to Python's per-process
+  hash-randomization, an unrelated pre-existing nondeterminism unmasked by
+  running the generator repeatedly), normalize the small set of genuinely
+  nondeterministic fields (PDF `/CreationDate`, DXF Julian-date/GUID/version
+  stamps), and diff against a reference captured before this refactor
+  started. Ran after every migrated section, not just once at the end.
+- That process surfaced several **pre-existing divergences between the two
+  renderers that predate this refactor** and had to be preserved exactly
+  rather than "fixed" while unifying the layout code around them:
+  - The physical-outer-diameter (OD) dimension's bottom witness line was
+    anchored to the *front* surface's rim in DXF but the *rear* surface's
+    rim in matplotlib (both use the rear surface for the top witness line).
+  - The OD dimension arrow's `xy`/`xytext` were in the opposite order from
+    the center-thickness/edge-thickness/component-thickness arrows in the
+    original matplotlib code — an inconsistency in the original authoring,
+    not a semantic difference, but one that changes the rendered PDF bytes.
+  - The optical/rotational axis line extends 15mm past the lens outline in
+    DXF vs. 10mm in matplotlib.
+  - Several dimension-line labels sit at different absolute offsets from
+    their dimension line per format (DXF needs more clearance for its
+    larger absolute text height).
+  - The DXF spec-table coating-row text is vertically centered on the
+    encircled-λ symbol, while matplotlib top-aligns it to the row.
+  These are now documented inline at each `role`-specific branch in the
+  primitive implementations, rather than living as silent, undocumented
+  drift between two independently-hand-tuned code paths.
