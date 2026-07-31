@@ -23,6 +23,17 @@ def test_zero_distance_is_identity(set_test_backend, shape):
     assert_allclose(propagated.data, field.data, rtol=1e-12, atol=1e-12)
 
 
+def test_zero_distance_preserves_evanescent_content(set_test_backend):
+    indices = be.arange_indices(32)
+    checkerboard = 1 - 2 * (indices % 2)
+    data = checkerboard[:, None] * checkerboard[None, :]
+    field = ScalarField(data, dx=0.1, wavelength=1.0)
+
+    propagated = field.propagate(0.0, evanescent="discard")
+
+    assert_allclose(propagated.data, field.data, rtol=1e-12, atol=1e-12)
+
+
 def test_plane_wave_accumulates_expected_phase(set_test_backend):
     wavelength = 0.5
     refractive_index = 1.4
@@ -36,9 +47,7 @@ def test_plane_wave_accumulates_expected_phase(set_test_backend):
     )
 
     propagated = field.propagate(distance)
-    expected_phase = np.exp(
-        1j * 2 * np.pi * refractive_index * distance / wavelength
-    )
+    expected_phase = np.exp(1j * 2 * np.pi * refractive_index * distance / wavelength)
 
     assert_allclose(propagated.data, field.data * expected_phase, atol=1e-12)
 
@@ -72,9 +81,7 @@ def test_gaussian_beam_radius_matches_paraxial_solution(set_test_backend):
     x_grid, y_grid = be.meshgrid(x, y)
     radius_squared = x_grid * x_grid + y_grid * y_grid
     measured_radius = be.sqrt(
-        2
-        * be.sum(propagated.intensity * radius_squared)
-        / be.sum(propagated.intensity)
+        2 * be.sum(propagated.intensity * radius_squared) / be.sum(propagated.intensity)
     )
     rayleigh_range = np.pi * waist_radius**2 / wavelength
     expected_radius = waist_radius * np.sqrt(1 + (distance / rayleigh_range) ** 2)
@@ -119,8 +126,28 @@ def test_invalid_propagation_arguments(set_test_backend):
         field.propagate(be.array(float("inf")))
     with pytest.raises(TypeError, match="distance"):
         field.propagate(be.ones((2,)))
+    with pytest.raises(TypeError, match="distance must be real"):
+        field.propagate(field.data[0, 0] + 1j)
     with pytest.raises(ValueError, match="evanescent"):
         field.propagate(1.0, evanescent="invalid")
+
+
+def test_propagation_preserves_field_precision(set_test_backend):
+    try:
+        be.set_precision("float32")
+        field = ScalarField(be.ones((8, 8)), dx=1.0, wavelength=0.5)
+        field_dtype = field.data.dtype
+        real_dtype = field.data.real.dtype
+
+        be.set_precision("float64")
+        propagated = field.propagate(be.array(0.1))
+        x, y = field.coordinates()
+
+        assert propagated.data.dtype == field_dtype
+        assert x.dtype == real_dtype
+        assert y.dtype == real_dtype
+    finally:
+        be.set_precision("float64")
 
 
 def test_numpy_and_torch_results_match():

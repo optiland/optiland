@@ -51,6 +51,31 @@ def test_gaussian_field_uses_waist_radius_definition(set_test_backend):
     assert_allclose(measured_radius, waist_radius, rtol=1e-5, atol=1e-7)
 
 
+def test_gaussian_field_accepts_backend_scalar_amplitude(set_test_backend):
+    amplitude = be.ones(()) * (1.0 + 2.0j)
+
+    field = gaussian_field(
+        shape=(3, 3),
+        dx=0.1,
+        wavelength=0.5,
+        waist_radius=0.25,
+        amplitude=amplitude,
+    )
+
+    assert_allclose(field.data[1, 1], amplitude)
+
+
+def test_gaussian_field_rejects_nonscalar_amplitude(set_test_backend):
+    with pytest.raises(ValueError, match="amplitude must be scalar"):
+        gaussian_field(
+            shape=(3, 4),
+            dx=0.1,
+            wavelength=0.5,
+            waist_radius=0.25,
+            amplitude=be.ones((4,)),
+        )
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [

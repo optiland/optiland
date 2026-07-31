@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from numbers import Real
+from numbers import Complex, Real
 from typing import Generic, Literal
 
 import optiland.backend as be
@@ -20,9 +20,29 @@ def _positive_float(value: float, name: str) -> float:
     return value
 
 
-def _centered_axis(size: int, spacing: float):
-    indices = be.cast(be.arange_indices(size))
+def _cast_real_like(values: BEArrayT, like: BEArrayT) -> BEArrayT:
+    if is_torch_tensor(like):
+        return values.to(device=like.device, dtype=like.real.dtype)
+    return values.astype(like.real.dtype, copy=False)
+
+
+def _centered_axis(size: int, spacing: float, like: BEArrayT | None = None):
+    indices = be.arange_indices(size)
+    indices = be.cast(indices) if like is None else _cast_real_like(indices, like)
     return (indices - (size - 1) / 2) * spacing
+
+
+def _validate_amplitude(amplitude: complex | ScalarOrArrayT) -> None:
+    if isinstance(amplitude, Complex):
+        return
+    if not isinstance(amplitude, be.ndarray):
+        raise TypeError("amplitude must be a complex scalar or scalar backend array.")
+
+    backend = be.get_backend()
+    if (backend == "torch") != is_torch_tensor(amplitude):
+        raise TypeError(f"amplitude must belong to the active {backend!r} backend.")
+    if amplitude.ndim != 0:
+        raise ValueError("amplitude must be scalar.")
 
 
 class ScalarField(Generic[BEArrayT]):
@@ -92,7 +112,10 @@ class ScalarField(Generic[BEArrayT]):
         """Return centered one-dimensional x and y coordinate arrays."""
         self._ensure_active_backend()
         ny, nx = self.shape
-        return _centered_axis(nx, self.dx), _centered_axis(ny, self.dy)
+        return (
+            _centered_axis(nx, self.dx, like=self.data),
+            _centered_axis(ny, self.dy, like=self.data),
+        )
 
     def propagate(
         self,
@@ -163,9 +186,11 @@ def gaussian_field(
     dx = _positive_float(dx, "dx")
     dy = dx if dy is None else _positive_float(dy, "dy")
     waist_radius = _positive_float(waist_radius, "waist_radius")
+    _validate_amplitude(amplitude)
     ny, nx = shape
-    x = _centered_axis(nx, dx)
-    y = _centered_axis(ny, dy)
+    like = amplitude if isinstance(amplitude, be.ndarray) else None
+    x = _centered_axis(nx, dx, like=like)
+    y = _centered_axis(ny, dy, like=like)
     x_grid, y_grid = be.meshgrid(x, y)
     data = amplitude * be.exp(-(x_grid * x_grid + y_grid * y_grid) / waist_radius**2)
     return ScalarField(

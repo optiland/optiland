@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import math
-from numbers import Real
+from numbers import Complex, Real
 from typing import TYPE_CHECKING, Literal
 
 import optiland.backend as be
-from optiland.physical_optics.field import ScalarField
+from optiland.backend.utils import is_torch_tensor
+from optiland.physical_optics.field import ScalarField, _cast_real_like
 
 if TYPE_CHECKING:
     from optiland._types import BEArrayT, ScalarOrArrayT
@@ -15,8 +16,8 @@ if TYPE_CHECKING:
 EvanescentPolicy = Literal["discard", "decay"]
 
 
-def _frequency_axis(size: int, spacing: float):
-    indices = be.cast(be.arange_indices(size))
+def _frequency_axis(size: int, spacing: float, like: BEArrayT):
+    indices = _cast_real_like(be.arange_indices(size), like)
     positive_limit = (size - 1) // 2
     ordered_indices = be.where(indices <= positive_limit, indices, indices - size)
     return ordered_indices / (size * spacing)
@@ -27,8 +28,23 @@ def _validate_distance(distance: float | ScalarOrArrayT) -> None:
         if not math.isfinite(float(distance)):
             raise ValueError("distance must be finite.")
         return
-    if getattr(distance, "ndim", None) != 0:
+    if isinstance(distance, Complex):
+        raise TypeError("distance must be real.")
+
+    if not isinstance(distance, be.ndarray):
         raise TypeError("distance must be a real scalar or scalar backend array.")
+    backend = be.get_backend()
+    if (backend == "torch") != is_torch_tensor(distance):
+        raise TypeError(f"distance must belong to the active {backend!r} backend.")
+    if distance.ndim != 0:
+        raise TypeError("distance must be a real scalar or scalar backend array.")
+    is_complex = (
+        distance.is_complex()
+        if is_torch_tensor(distance)
+        else distance.dtype.kind == "c"
+    )
+    if is_complex:
+        raise TypeError("distance must be real.")
     if not bool(be.all(be.isfinite(distance))):
         raise ValueError("distance must be finite.")
 
@@ -67,10 +83,12 @@ def angular_spectrum(
     _validate_distance(distance)
     if evanescent not in ("discard", "decay"):
         raise ValueError("evanescent must be either 'discard' or 'decay'.")
+    if not isinstance(distance, Real):
+        distance = _cast_real_like(distance, field.data)
 
     ny, nx = field.shape
-    fx = _frequency_axis(nx, field.dx)
-    fy = _frequency_axis(ny, field.dy)
+    fx = _frequency_axis(nx, field.dx, field.data)
+    fy = _frequency_axis(ny, field.dy, field.data)
     kx, ky = be.meshgrid(2 * be.pi * fx, 2 * be.pi * fy)
 
     wavenumber = 2 * be.pi * field.refractive_index / field.wavelength
@@ -80,7 +98,7 @@ def angular_spectrum(
 
     transfer = be.exp(1j * distance * kz)
     if evanescent == "discard":
-        transfer = be.where(propagating, transfer, 0.0)
+        transfer = be.where(propagating | (distance == 0), transfer, 0.0)
     else:
         decay_rate = be.sqrt(be.clip(-kz_squared, 0.0, be.inf))
         transfer = transfer * be.exp(-abs(distance) * decay_rate)
