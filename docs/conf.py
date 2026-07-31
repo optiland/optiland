@@ -27,7 +27,13 @@ autosummary_generate = True  # Automatically generate summaries
 
 templates_path = ["_templates"]
 modindex_common_prefix = ["optiland."]
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+exclude_patterns = [
+    "_build",
+    "Thumbs.db",
+    ".DS_Store",
+    "auto_examples/*.ipynb",
+    "auto_examples/**/*.ipynb",
+]
 
 html_theme = "sphinx_rtd_theme"
 html_static_path = ["_static"]
