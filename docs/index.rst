@@ -178,6 +178,7 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
    api/api_optimization
    api/api_paraxial
    api/api_phase
+   api/api_physical_optics
    api/api_physical_apertures
    api/api_rays
    api/api_raytrace
