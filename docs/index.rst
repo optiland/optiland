@@ -144,6 +144,7 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
    developers_guide/optimization_framework
    developers_guide/tolerancing_framework
    developers_guide/multiconfig_framework
+   developers_guide/sequences_framework
    developers_guide/visualization_framework
    developers_guide/optiland_file_format
    developers_guide/gui
@@ -181,6 +182,7 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
    api/api_physical_apertures
    api/api_rays
    api/api_raytrace
+   api/api_sequences
    api/api_solves
    api/api_sources
    api/api_surfaces

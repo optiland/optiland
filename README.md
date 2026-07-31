@@ -89,6 +89,7 @@ For more details, see the [installation guide](https://optiland.readthedocs.io/e
 | **🛠️ Design & Modeling** | Configure fields, wavelengths, apertures. Build systems using spherical, aspheric, conic, and freeform surfaces.  |
 | **🧮 Differentiable Core** | Switch between NumPy (CPU) and PyTorch (GPU/autograd) seamlessly for hybrid physics-ML workflows. |
 | **🔬 Ray Tracing** | Trace paraxial and real rays through sequential systems with support for polarization, birefringence, and coatings. |
+| **👻 Multi-Sequence Tracing (beta)** | Trace ghost paths, reverse traces, and sub-component views as ordered sub-sequences over the same surfaces. Geometry and materials stay linked to the base system. |
 | **📊 Optical Analysis** | Generate spot diagrams, wavefront error maps, ray fans, PSF/MTF plots, Zernike decompositions, distortion plots, etc. |
 | **🧠 Optimization** | Local & global optimizers, autograd support, operand-based merit functions, and GlassExpert for categorical variable search. |
 | **📈 Tolerancing** | Monte Carlo and parametric sensitivity analysis to evaluate robustness and manufacturability. |
@@ -111,9 +112,10 @@ For a full breakdown of Optiland’s functionalities, see the [complete feature 
 Optiland is continually evolving to provide new functionalities for optical design and analysis. Below are some of the planned features and enhancements we aim to implement in future versions. We welcome contributions in any of these areas:
 
 ### Physics & Core Engine
+- [x] **Multi-Sequence Ray Tracing** (beta) - ghost paths, reverse traces, and sub-component views as alternate traversal orders over the same surfaces. Per-sequence first-order analysis, a visualization overlay, and a ghost-enumeration helper are follow-ups.
 - [ ] **Non-sequential Ray Tracing** (Ghost analysis, stray light, etc.)
 - [ ] **Physical Optics Propagation** (Diffraction, beam clipping, Gaussian beam evolution)
-- [ ] **Multi-Path Sequential Ray Tracing**
+- [ ] **Multi-Path Sequential Ray Tracing** (branching arms / beamsplitters)
 - [ ] **Additional Freeforms** (Superconic, etc.)
 
 ### Optimization & Algorithms

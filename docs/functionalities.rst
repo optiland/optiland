@@ -12,6 +12,8 @@ Design Tools
   Optiland supports both NumPy and PyTorch backends for all core computations. This flexibility enables easy integration with scientific computing pipelines and deep learning frameworks.
 - **Sequential Ray Tracing**:
   Trace rays through traditional or advanced systems, including asymmetric and freeform designs.
+- **Multi-Sequence Tracing**:
+  Define sub-sequences that trace the same surfaces in a different order (ghost paths, reverse traces, sub-component views) via ``Optic.add_sequence``. Geometry and materials stay linked by reference to the base system, so edits and optimization on the base system are reflected in every sequence.
 - **Lens System Modeling**:
   Built-in support for spherical, conic, aspheric, and fully freeform surfaces.
 - **Aperture, Field, and Wavelength Configuration**:
