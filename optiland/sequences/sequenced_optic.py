@@ -85,7 +85,28 @@ class SequencedOptic:
     def primary_wavelength(self) -> float:
         return self.base_optic.primary_wavelength
 
+    @property
+    def object_surface(self):
+        """The base optic's object surface (conjugates are never per-sequence)."""
+        return self.base_optic.object_surface
+
+    @property
+    def surface_group(self):
+        """Alias for ``surfaces``, matching internal use of ``Optic.surface_group``."""
+        return self.surfaces
+
     # -- Owned ---------------------------------------------------------------
+
+    @property
+    def image_surface(self):
+        """The last step's view: wherever this sequence terminates.
+
+        Unlike the base optic, a sub-sequence does not necessarily end at
+        the system's physical image plane (e.g. a ghost path that folds
+        back on itself), so "image surface" here means the sequence's own
+        terminal step.
+        """
+        return self.surfaces[-1]
 
     def n(self, wavelength: float | str = "primary"):
         """Get the exit-medium refractive indices at each step of this sequence.
@@ -152,6 +173,35 @@ class SequencedOptic:
             rays.update_intensity(self.polarization_state)
 
         return rays
+
+    def trace_generic(self, Hx, Hy, Px, Py, wavelength: float) -> RealRays:
+        """Trace a single generic ray (given field and pupil coordinates).
+
+        As with :meth:`trace`, the ray is generated exactly as it would be
+        for the base optic; only the traversal through the surfaces differs.
+
+        Args:
+            Hx: The normalized x field coordinate(s).
+            Hy: The normalized y field coordinate(s).
+            Px: The normalized x pupil coordinate(s).
+            Py: The normalized y pupil coordinate(s).
+            wavelength: The wavelength of the rays in microns.
+
+        Returns:
+            RealRays: The traced rays.
+        """
+        tracer = self.base_optic.ray_tracer
+        tracer._validate_normalized_coordinates(Hx, Hy, "field")
+        tracer._validate_normalized_coordinates(Px, Py, "pupil")
+
+        vx, vy = self.fields.get_vig_factor(Hx, Hy)
+        Px = Px * (1 - vx)
+        Py = Py * (1 - vy)
+
+        Hx, Hy, Px, Py = tracer._validate_array_size(Hx, Hy, Px, Py)
+
+        rays = tracer.ray_generator.generate_rays(Hx, Hy, Px, Py, wavelength)
+        return self.surfaces.trace(rays)
 
     def __repr__(self) -> str:
         return (

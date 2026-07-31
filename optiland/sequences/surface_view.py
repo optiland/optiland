@@ -18,8 +18,6 @@ import copy
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
-import optiland.backend as be
-
 if TYPE_CHECKING:
     from optiland.materials import BaseMaterial
     from optiland.physical_apertures import BaseAperture
@@ -158,26 +156,28 @@ class SurfaceView:
         """
         return SimpleNamespace(material_post=self.material_pre)
 
-    # -- Tracing pipeline (mirrors optiland.surfaces.standard_surface.Surface)
+    # -- Tracing pipeline ----------------------------------------------------
+    #
+    # Every kernel below dispatches to the *base surface's class*, bound to
+    # ``self`` (the view). This is deliberate, not cosmetic: some Surface
+    # subclasses override these kernels — ObjectSurface.trace() skips
+    # localize/globalize entirely (the object is often at z=-inf, where that
+    # transform is undefined), and ImageSurface/ObjectSurface override the
+    # paraxial and/or real-ray kernels to no-ops. Reimplementing the generic
+    # Surface physics inline here would silently diverge from those
+    # overrides for object/image steps. Dispatching through
+    # ``type(self.base_surface)`` reuses whatever kernel actually applies,
+    # bound to the view so it reads/writes the view's own state (geometry,
+    # material_pre/post, aperture, interaction_model, and record buffers all
+    # resolve through the view's own attributes) — the same "ride the
+    # existing coordinator" approach the base tracing pipeline itself uses.
 
     def reset(self) -> None:
         """Resets the recorded information owned by this view."""
-        self.x = be.empty(0)
-        self.y = be.empty(0)
-        self.z = be.empty(0)
-
-        self.L = be.empty(0)
-        self.M = be.empty(0)
-        self.N = be.empty(0)
-
-        self.u = be.empty(0)
-
-        self.intensity = be.empty(0)
-        self.aoi = be.empty(0)
-        self.opd = be.empty(0)
+        type(self.base_surface).reset(self)
 
     def trace(self, rays):
-        return self._coordinator.trace(rays, self)
+        return type(self.base_surface).trace(self, rays)
 
     @property
     def _coordinator(self):
@@ -190,33 +190,16 @@ class SurfaceView:
             return self.__coordinator
 
     def _trace_paraxial(self, rays: ParaxialRays) -> ParaxialRays:
-        t = -rays.z
-        rays.propagate(t)
-        rays = self.interaction_model.interact_paraxial_rays(rays)
-        return rays
+        return type(self.base_surface)._trace_paraxial(self, rays)
 
     def _trace_real(self, rays: RealRays) -> RealRays:
-        t = self.geometry.distance(rays)
-        self.material_pre.propagation_model.propagate(rays, t)
-        rays.opd = rays.opd + be.abs(t * self.material_pre.n(rays.w))
-        if self.aperture:
-            self.aperture.clip(rays)
-        rays = self.interaction_model.interact_real_rays(rays)
-        return rays
+        return type(self.base_surface)._trace_real(self, rays)
 
     def _record_paraxial(self, rays: ParaxialRays) -> None:
-        self.y = be.copy(be.atleast_1d(rays.y))
-        self.u = be.copy(be.atleast_1d(rays.u))
+        type(self.base_surface)._record_paraxial(self, rays)
 
     def _record_real(self, rays: RealRays) -> None:
-        self.x = be.copy(be.atleast_1d(rays.x))
-        self.y = be.copy(be.atleast_1d(rays.y))
-        self.z = be.copy(be.atleast_1d(rays.z))
-        self.L = be.copy(be.atleast_1d(rays.L))
-        self.M = be.copy(be.atleast_1d(rays.M))
-        self.N = be.copy(be.atleast_1d(rays.N))
-        self.intensity = be.copy(be.atleast_1d(rays.i))
-        self.opd = be.copy(be.atleast_1d(rays.opd))
+        type(self.base_surface)._record_real(self, rays)
 
     def __repr__(self) -> str:
         direction = "reverse" if self.reverse else "forward"
