@@ -10,12 +10,14 @@ Kramer Harrison, 2026
 from __future__ import annotations
 
 from optiland.sequences.resolver import SequenceValidationError, resolve_sequence
+from optiland.sequences.sequenced_surface_group import SequencedSurfaceGroup
 from optiland.sequences.steps import SequenceStep, parse_steps
 from optiland.sequences.surface_view import SurfaceView
 
 __all__ = [
     "SequenceStep",
     "SequenceValidationError",
+    "SequencedSurfaceGroup",
     "SurfaceView",
     "parse_steps",
     "resolve_sequence",
