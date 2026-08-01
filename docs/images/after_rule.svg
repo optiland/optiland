@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 260" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#555" />
+    </marker>
+  </defs>
+
+  <style>
+    .axis { stroke: #999; stroke-width: 1; }
+    .surf { stroke: #2b6cb0; stroke-width: 2.5; }
+    .label { fill: #1a202c; font-size: 13px; }
+    .sub { fill: #4a5568; font-size: 11px; }
+    .space { fill: #ebf4ff; }
+    .thickness { stroke: #d69e2e; stroke-width: 1.5; fill: none; }
+    .thickness-label { fill: #975a16; font-size: 11px; }
+  </style>
+
+  <!-- optical axis -->
+  <line x1="30" y1="140" x2="730" y2="140" class="axis" marker-end="url(#arrow)" />
+  <text x="700" y="132" class="sub">+z (propagation)</text>
+
+  <!-- space after surface 0 (object space), shaded to show it belongs to surface 0 -->
+  <rect x="120" y="60" width="180" height="160" class="space" />
+  <!-- space after surface 1 -->
+  <rect x="300" y="60" width="220" height="160" class="space" opacity="0.5" />
+
+  <!-- surface 0: object -->
+  <line x1="120" y1="70" x2="120" y2="210" class="surf" />
+  <text x="90" y="230" class="label">Surface 0</text>
+  <text x="90" y="245" class="sub">(object)</text>
+
+  <!-- surface 1: lens front -->
+  <path d="M300,70 Q285,140 300,210" class="surf" fill="none" />
+  <text x="270" y="230" class="label">Surface 1</text>
+
+  <!-- surface 2: lens back / stop -->
+  <path d="M520,70 Q535,140 520,210" class="surf" fill="none" />
+  <text x="495" y="230" class="label">Surface 2</text>
+
+  <!-- surface 3: image -->
+  <line x1="700" y1="70" x2="700" y2="210" class="surf" />
+  <text x="670" y="230" class="label">Surface 3</text>
+  <text x="670" y="245" class="sub">(image)</text>
+
+  <!-- thickness braces -->
+  <path d="M120,45 L300,45" class="thickness" marker-end="url(#arrow)" />
+  <text x="150" y="38" class="thickness-label">surface 0 thickness</text>
+  <text x="130" y="25" class="sub">(the space AFTER surface 0)</text>
+
+  <path d="M300,255 L520,255" class="thickness" marker-end="url(#arrow)" />
+  <text x="345" y="250" class="thickness-label">surface 1 thickness</text>
+
+  <text x="10" y="15" class="label" font-weight="bold">
+    thickness and material describe the space following the surface
+  </text>
+</svg>

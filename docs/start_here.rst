@@ -7,6 +7,12 @@ Start Here
 from basic paraxial layouts to GPU-accelerated differentiable ray tracing. Whether you are tracing your
 first ray or training a differentiable lens model, this page will route you to the right starting point.
 
+.. note::
+
+   Before anything else, read :doc:`conventions` — one page covering the surface-sequential model,
+   the "after" rule for thickness and material, sign conventions, and units. It removes the most
+   common source of newcomer confusion in a few minutes.
+
 .. rubric:: Choose Your Path
 
 ----

@@ -54,6 +54,11 @@ Print the surface table (similar to a Lens Data Editor):
 3. Build from Scratch
 ---------------------
 
+.. tip::
+
+   The surface parameters below follow a specific model — see :doc:`conventions` for why
+   ``thickness`` and ``material`` describe the space *after* a surface, not the surface itself.
+
 Create a simple biconvex singlet in 8 lines:
 
 .. code-block:: python
