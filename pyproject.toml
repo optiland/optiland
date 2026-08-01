@@ -60,6 +60,8 @@ packages = ["optiland", "optiland_gui"]
 
 [tool.hatch.metadata.files]
 "optiland/database" = ["*.csv", "*.yml", "**/*.yml", "*.npy"]
+"optiland" = ["py.typed"]
+"optiland_gui" = ["py.typed"]
 
 [tool.hatch.version]
 source = "versioningit"
@@ -122,5 +124,13 @@ warn_unused_ignores = true
 exclude = ["^tests/", "^docs/", "^optiland_gui/"]
 
 [[tool.mypy.overrides]]
-module = "optiland.wavelength"
+# Modules graduate into this strict allowlist as their annotations are
+# cleaned up; the global baseline above stays permissive so CI never goes
+# red while the rest of the package is ratcheted up module by module.
+module = [
+    "optiland.wavelength",
+    "optiland.diagnostics.*",
+    "optiland._types",
+    "optiland._deprecation",
+]
 strict = true

@@ -192,9 +192,15 @@ class WavelengthGroup:
         """The index of the primary wavelength
 
         raises:
-            StopIteration: If no primary wavelength is found
+            ValueError: If no primary wavelength is found
         """
-        return next(i for i, w in enumerate(self.wavelengths) if w.is_primary)
+        try:
+            return next(i for i, w in enumerate(self.wavelengths) if w.is_primary)
+        except StopIteration:
+            raise ValueError(
+                "No primary wavelength is defined. Add one with:\n"
+                "    lens.wavelengths.add(value=0.55, is_primary=True)"
+            ) from None
 
     @primary_index.setter
     def primary_index(self, index: int) -> None:
