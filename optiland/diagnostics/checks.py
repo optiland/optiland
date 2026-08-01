@@ -234,24 +234,44 @@ def check_wavelength_outside_material_range(lens: Optic) -> list[Diagnostic]:
 
 
 def check_non_positive_thickness(lens: Optic) -> list[Diagnostic]:
-    """OPT010: zero or negative thickness between physical surfaces."""
+    """OPT010: a thickness has an unexpected sign, or is exactly zero.
+
+    A reflective surface (a mirror) flips the sign of every thickness that
+    follows it, since propagation now runs the other way along z — see the
+    "Sign Conventions" section of the conventions doc. The expected sign is
+    therefore tracked by the parity of the number of reflective surfaces
+    seen so far (including the current one), not assumed to always be
+    positive; a two-mirror system like a Cassegrain returns to positive
+    thicknesses after its second mirror.
+    """
     surfaces = lens.surfaces.surfaces
     n = len(surfaces)
     findings: list[Diagnostic] = []
 
+    reflections = 0
     for index in range(n - 1):
+        interaction_model = getattr(surfaces[index], "interaction_model", None)
+        if getattr(interaction_model, "is_reflective", False):
+            reflections += 1
+
         thickness = surfaces[index].thickness
         if not be.isfinite(be.array(thickness)).all():
             continue
-        if thickness <= 0:
+
+        expect_negative = reflections % 2 == 1
+        is_bad = thickness >= 0 if expect_negative else thickness <= 0
+        if is_bad:
+            expected = "negative" if expect_negative else "positive"
             findings.append(
                 Diagnostic(
                     severity=Severity.WARNING,
                     code="OPT010",
                     message=(
-                        f"Surface {index} has a non-positive thickness ({thickness})."
+                        f"Surface {index} has thickness {thickness}, but "
+                        f"{reflections} reflection(s) precede it (inclusive), "
+                        f"so a {expected} value was expected."
                     ),
-                    fix=f"Set a positive thickness on surface {index}.",
+                    fix=f"Set a {expected} thickness on surface {index}.",
                     where=index,
                     doc_url=_doc_url("OPT010"),
                 )

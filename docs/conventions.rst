@@ -55,6 +55,9 @@ next one) is normally left at the default ``"air"``.
 
 ----
 
+.. _opt005:
+.. _opt007:
+
 Index 0 Is the Object; the Last Index Is the Image
 -----------------------------------------------------
 
@@ -67,6 +70,9 @@ Index 0 Is the Object; the Last Index Is the Image
 
 ----
 
+.. _opt008:
+.. _opt010:
+
 Sign Conventions
 ------------------
 
@@ -76,12 +82,21 @@ Sign Conventions
   positive radius. Negative means the center of curvature lies to the left. A flat surface has an
   infinite radius (``float("inf")``).
 - **Thickness**: positive means the next surface lies further along +z (the normal case).
-  Negative thicknesses appear after a reflection, where the beam direction has effectively
-  reversed.
+  Each ``is_stop=False``-style reflective surface (a mirror, ``material="mirror"``) flips the
+  sign of every thickness that follows it, since propagation now runs the other way along z. A
+  system with one mirror has negative thicknesses after it; a system with two mirrors (e.g. a
+  Cassegrain) returns to positive thicknesses after the second one. This is why
+  :func:`optiland.diagnostics.check_system` tracks the number of reflective surfaces seen so far
+  before flagging a thickness sign as unexpected, rather than simply requiring every thickness to
+  be positive.
 - **Tilts and decenters**: rotations are applied in the order ``R = Rz @ Ry @ Rx`` about the
   surface's local coordinate system, applied *before* translation.
 
 ----
+
+.. _opt001:
+.. _opt002:
+.. _opt009:
 
 Units
 ------
@@ -96,7 +111,18 @@ Wavelengths                microns (µm)
 Angles                     degrees
 ======================  ==================
 
+A system needs at least one wavelength, and exactly one of them must be marked
+``is_primary=True`` — it is the one used for paraxial calculations and single-wavelength
+analyses. Catalog materials (loaded from `refractiveindex.info <https://refractiveindex.info>`_)
+carry a finite dispersion data range in microns; a wavelength that falls outside a material's
+range produces unreliable index data, which is why
+:func:`optiland.diagnostics.check_system` warns about it rather than staying silent.
+
 ----
+
+.. _opt003:
+.. _opt004:
+.. _opt011:
 
 Stop, Aperture, and Pupil
 ----------------------------
@@ -104,7 +130,8 @@ Stop, Aperture, and Pupil
 These three terms are related but distinct, and newcomers routinely merge them:
 
 - **Stop**: a physical surface in your system, marked with ``is_stop=True``. It is the surface
-  that limits the cone of rays passing through the system for an on-axis field point.
+  that limits the cone of rays passing through the system for an on-axis field point. Marking the
+  object or image surface as the stop is almost always a mistake.
 - **Aperture**: the *system-level* specification of how large that cone is —
   ``lens.set_aperture(aperture_type="EPD", value=25)`` sets it via entrance pupil diameter, but it
   can also be specified via image-space f-number (``"imageFNO"``) or object-space numerical
@@ -116,6 +143,9 @@ These three terms are related but distinct, and newcomers routinely merge them:
   stop and the aperture that determines its size.
 
 ----
+
+.. _opt006:
+.. _opt012:
 
 Field Specification
 ----------------------

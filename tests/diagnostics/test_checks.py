@@ -180,6 +180,47 @@ class TestOPT010NonPositiveThickness:
         report = check_system(_build_valid_system())
         assert "OPT010" not in _codes(report)
 
+    def test_silent_after_single_mirror(self, set_test_backend):
+        # A reflective surface reverses the propagation direction, so the
+        # thickness that follows it is expected to be negative, not
+        # positive. This must not be flagged.
+        optic = Optic()
+        optic.surfaces.add(index=0, thickness=100)
+        optic.surfaces.add(
+            index=1, radius=50, thickness=-50, material="mirror", is_stop=True
+        )
+        optic.surfaces.add(index=2, thickness=30)
+        optic.fields.set_type("angle")
+        optic.fields.add(y=0)
+        optic.set_aperture("EPD", 10.0)
+        optic.wavelengths.add(0.55)
+        report = check_system(optic)
+        assert "OPT010" not in _codes(report)
+
+    def test_fires_on_wrong_sign_after_single_mirror(self, set_test_backend):
+        # After one mirror, a *positive* thickness is the anomaly.
+        optic = Optic()
+        optic.surfaces.add(index=0, thickness=100)
+        optic.surfaces.add(
+            index=1, radius=50, thickness=50, material="mirror", is_stop=True
+        )
+        optic.surfaces.add(index=2, thickness=30)
+        optic.fields.set_type("angle")
+        optic.fields.add(y=0)
+        optic.set_aperture("EPD", 10.0)
+        optic.wavelengths.add(0.55)
+        report = check_system(optic)
+        assert "OPT010" in _codes(report)
+
+    def test_silent_on_hubble_telescope_two_mirror_system(self, set_test_backend):
+        # Real two-mirror system: negative thickness after the primary,
+        # positive again after the secondary. Regression test for a false
+        # positive found against this exact sample.
+        from optiland.samples.telescopes import HubbleTelescope
+
+        report = check_system(HubbleTelescope())
+        assert "OPT010" not in _codes(report)
+
 
 class TestOPT011StopAtObjectOrImage:
     def test_fires_when_stop_is_image_surface(self, set_test_backend):
