@@ -396,7 +396,7 @@ class MaterialRegistry:
             )
         else:
             self._apply_match_policy_without_catalog(
-                filtered_df, name, match_policy, best_score
+                filtered_df, name, match_policy, best_score, ambiguous_exact
             )
 
     def _apply_match_policy_with_catalog(
@@ -428,22 +428,49 @@ class MaterialRegistry:
         name: str,
         match_policy: MatchPolicy,
         best_score: float,
+        ambiguous_exact: bool = False,
     ) -> None:
         """Apply ``match_policy`` when resolution spans all catalogs."""
         if match_policy == MatchPolicy.STRICT:
+            if ambiguous_exact:
+                catalogs = sorted(
+                    filtered_df.loc[
+                        filtered_df["similarity_score"] == 0, "catalog_dir"
+                    ].unique()
+                )
+                raise ValueError(
+                    f"Material '{name}' matches exactly in multiple catalogs: "
+                    f"{catalogs}. Pass catalog=<name> to disambiguate."
+                )
             top = filtered_df.head(5)["name"].tolist()
             raise ValueError(
                 f"No exact match for material '{name}'. "
                 f"Top candidates: {top}. "
                 "Use match_policy='warn' or 'best' for fuzzy matching."
             )
-        if match_policy == MatchPolicy.WARN and best_score > 0:
-            resolved = filtered_df.iloc[0]["name"]
-            warnings.warn(
-                f"Material '{name}' resolved to '{resolved}' via fuzzy match.",
-                OptilandMaterialWarning,
-                stacklevel=6,
-            )
+        if match_policy == MatchPolicy.WARN:
+            if best_score > 0:
+                resolved = filtered_df.iloc[0]["name"]
+                warnings.warn(
+                    f"Material '{name}' resolved to '{resolved}' via fuzzy match.",
+                    OptilandMaterialWarning,
+                    stacklevel=6,
+                )
+            elif ambiguous_exact:
+                catalogs = sorted(
+                    filtered_df.loc[
+                        filtered_df["similarity_score"] == 0, "catalog_dir"
+                    ].unique()
+                )
+                resolved_catalog = filtered_df.iloc[0]["catalog_dir"]
+                warnings.warn(
+                    f"Material '{name}' matches exactly in multiple catalogs "
+                    f"{catalogs}; resolved to catalog '{resolved_catalog}'. "
+                    "Pass catalog=<name> to disambiguate and silence this "
+                    "warning.",
+                    OptilandMaterialWarning,
+                    stacklevel=6,
+                )
 
     def _row_to_path(self, row: dict) -> str:
         """Resolve a matched row's ``filename`` to an absolute path."""
