@@ -100,11 +100,11 @@ is missing or inconsistent about a system, each finding with a runnable fix.
 
     ```bash
     pip install optiland
-    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
     ```
 
 ⚠️ Important Notes on GPU Installation
-- This command installs PyTorch with CUDA 11.8. Ensure that your NVIDIA drivers and toolkit are compatible.
+- This command installs PyTorch with CUDA 12.6. Ensure that your NVIDIA drivers and toolkit are compatible.
 - You can find the correct PyTorch + CUDA combo for your system using the [official PyTorch installation selector](https://pytorch.org/get-started/locally/).
 - If you're using a non-NVIDIA GPU or running on Apple Silicon, use the CPU-only installation instead.
 
