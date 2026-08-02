@@ -286,9 +286,12 @@ class OpticToZemaxConverter:
         if surface.aperture is not None:
             raw["CLAP"] = surface.aperture
 
-        # Glass
+        # Glass — check the reflective flag first (mirror)
+        is_reflective = getattr(
+            getattr(surface, "interaction_model", None), "is_reflective", False
+        )
         glass_entry = self._format_glass(
-            surface.material_post, output_idx, glass_catalogs
+            surface.material_post, output_idx, glass_catalogs, is_reflective
         )
         if glass_entry is not None:
             raw["GLAS"] = glass_entry
@@ -300,6 +303,7 @@ class OpticToZemaxConverter:
         mat: Any,
         surf_idx: int,
         glass_catalogs: list[str],
+        is_reflective: bool = False,
     ) -> dict[str, Any] | None:
         """Build a GLAS operand dict for a material.
 
@@ -307,15 +311,22 @@ class OpticToZemaxConverter:
             mat: The surface material (post).
             surf_idx: Output surface index (used in warnings).
             glass_catalogs: Mutable list to accumulate catalog names.
+            is_reflective: True if the surface is a reflective (mirror) surface.
 
         Returns:
             A dict with keys ``name`` and optionally ``catalog``,
             or None for air.
         """
+        # Mirror surface — detected via interaction_model.is_reflective. This must
+        # precede the air check: the material following a mirror is the ambient
+        # medium, so is_air() is True for a mirror in air.
+        if is_reflective:
+            return {"name": "MIRROR"}
+
         if is_air(mat):
             return None
 
-        # Mirror
+        # Mirror material string fallback
         if isinstance(mat, str) and mat.lower() == "mirror":
             return {"name": "MIRROR"}
 

@@ -159,6 +159,51 @@ class TestRoundTripFloaAperture:
 
 
 # ---------------------------------------------------------------------------
+# Round-trip: reflective (mirror) surfaces
+# ---------------------------------------------------------------------------
+
+
+class TestRoundTripMirror:
+    """Reflective surfaces must be written as ``GLAS MIRROR``.
+
+    Regression: mirrors were previously detected only by comparing the material
+    against the string ``"mirror"``, which never matched because the material has
+    already been resolved to an object by then. The mirrors were silently dropped
+    and the reloaded system was not an imaging system at all.
+    """
+
+    def test_mirror_surfaces_written(self, set_test_backend):
+        from optiland.samples.telescopes import HubbleTelescope
+
+        model = OpticToZemaxConverter(HubbleTelescope()).convert()
+        mirrors = [
+            s
+            for s in model.surfaces.values()
+            if s.get("GLAS", {}).get("name") == "MIRROR"
+        ]
+        assert len(mirrors) == 2
+
+    def test_roundtrip_preserves_focal_length(self, tmp_path, set_test_backend):
+        from optiland.samples.telescopes import HubbleTelescope
+
+        original = HubbleTelescope()
+        out = tmp_path / "hubble.zmx"
+        save_zemax_file(original, str(out))
+        reloaded = load_zemax_file(str(out))
+
+        assert_allclose(original.paraxial.f2(), reloaded.paraxial.f2(), rtol=1e-6)
+
+    def test_roundtrip_preserves_surfaces(self, tmp_path, set_test_backend):
+        from optiland.samples.telescopes import HubbleTelescope
+
+        original = HubbleTelescope()
+        out = tmp_path / "hubble.zmx"
+        save_zemax_file(original, str(out))
+        reloaded = load_zemax_file(str(out))
+        _surfaces_match(original, reloaded)
+
+
+# ---------------------------------------------------------------------------
 # Warning: MODEL glass
 # ---------------------------------------------------------------------------
 
@@ -315,6 +360,7 @@ class TestOpticToZemaxConverterExtended:
 # GLAS encoding
 # ---------------------------------------------------------------------------
 
+
 class TestGlasEncoding:
     def test_encode_catalog_glass(self):
         from optiland.fileio.zemax.writer.encoder import ZemaxFileEncoder
@@ -342,4 +388,6 @@ class TestGlasEncoding:
         glas = {"name": "MODEL", "n": 1.5, "V": 50.0}
         res = encoder._encode_glas(glas)
         # Use startswith to allow for exact scientific notation format
-        assert res.startswith("  GLAS MODEL 1 0 1.50000000E+00 5.00000000E+01 0 0 0 0 0 0")
+        assert res.startswith(
+            "  GLAS MODEL 1 0 1.50000000E+00 5.00000000E+01 0 0 0 0 0 0"
+        )
