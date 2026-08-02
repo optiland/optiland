@@ -122,8 +122,7 @@ class SurfaceFactory:
             raise IndexError(
                 f"Cannot add surface at index {index}: the system currently has "
                 f"{num_surfaces} surface{'s' if num_surfaces != 1 else ''}, so the "
-                f"highest valid index is {num_surfaces}. Surfaces must be added in "
-                "order, starting with the object surface at index 0."
+                f"highest valid index is {num_surfaces}."
             )
 
         # Build coordinate system
