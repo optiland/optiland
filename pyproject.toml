@@ -69,7 +69,7 @@ default-version = "0.0.0+unknown"
 
 [tool.ruff]
 line-length = 88
-exclude = ["tests", "docs", "optiland_gui/resources/resources_rc.py"]
+exclude = ["tests", "docs", "optiland_gui/resources/resources_rc.py", "README.md"]
 
 [tool.ruff.lint]
 select = [
