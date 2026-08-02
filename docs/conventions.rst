@@ -120,6 +120,7 @@ range produces unreliable index data, which is why
 
 ----
 
+.. _conventions_stop_aperture_pupil:
 .. _opt003:
 .. _opt004:
 .. _opt011:
@@ -144,6 +145,7 @@ These three terms are related but distinct, and newcomers routinely merge them:
 
 ----
 
+.. _conventions_fields:
 .. _opt006:
 .. _opt012:
 

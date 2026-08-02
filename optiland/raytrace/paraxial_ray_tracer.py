@@ -46,9 +46,7 @@ class ParaxialRayTracer(BaseRayTracer):
 
         y1 = Py * EPD / 2
 
-        if self.optic.fields.field_definition is None:
-            raise ValueError()
-        y0, z0 = self.optic.fields.field_definition.get_paraxial_object_position(
+        y0, z0 = self.optic.fields.require_definition().get_paraxial_object_position(
             self.optic, Hy, y1, EPL
         )
         # z0 is a global z (object frame); use the global entrance-pupil z so

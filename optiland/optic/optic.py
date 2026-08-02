@@ -212,8 +212,9 @@ class Optic:
             return self.polarization
         else:
             raise ValueError(
-                "Invalid polarization state. Must be either "
-                'PolarizationState or "ignore".',
+                f"Invalid polarization state, got {self.polarization!r}. Set "
+                "it with lens.set_polarization(state), passing either a "
+                "PolarizationState instance or the string 'ignore'.",
             )
 
     def reset(self):

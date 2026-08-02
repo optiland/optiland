@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from optiland._suggest import did_you_mean
 from optiland.optimization.operand.aberration import AberrationOperand
 from optiland.optimization.operand.lens import LensOperand
 from optiland.optimization.operand.paraxial import ParaxialOperand
@@ -145,6 +146,10 @@ class OperandRegistry:
         """
         return name in self._registry
 
+    def __iter__(self):
+        """Iterate over the registered operand names."""
+        return iter(self._registry)
+
     def __repr__(self):
         return f"OperandRegistry({list(self._registry.keys())})"
 
@@ -214,7 +219,12 @@ class Operand:
         metric_function = operand_registry.get(self.operand_type)
         if metric_function:
             return metric_function(**self.input_data)
-        raise ValueError(f"Unknown operand type: {self.operand_type}")
+        raise ValueError(
+            f"Unknown operand type {self.operand_type!r}."
+            f"{did_you_mean(str(self.operand_type), operand_registry)} "
+            "List the registered operands with "
+            "list(optiland.optimization.operand_registry)."
+        )
 
     def delta_target(self):
         """Calculate the difference between the value and target"""

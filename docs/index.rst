@@ -82,6 +82,7 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
    installation
    quickstart
    conventions
+   how_do_i
    cheat_sheet
    glossary
    gui_quickstart

@@ -21,6 +21,7 @@ import pandas as pd
 import yaml
 
 import optiland.plugins as plugins
+from optiland._suggest import did_you_mean
 from optiland.materials.material_spec import MatchPolicy
 from optiland.materials.warnings import OptilandMaterialWarning
 
@@ -314,7 +315,7 @@ class MaterialRegistry:
         filtered_df = self._find_matches(
             df, name, reference, min_wavelength, max_wavelength
         )
-        self._raise_if_no_matches(filtered_df, name, catalog, reference)
+        self._raise_if_no_matches(filtered_df, name, catalog, reference, df)
 
         self._apply_match_policy(filtered_df, name, catalog, match_policy)
 
@@ -330,7 +331,13 @@ class MaterialRegistry:
         catalog_lower = catalog.lower()
         filtered = df[df["catalog_dir"].str.lower() == catalog_lower].copy()
         if filtered.empty:
-            raise ValueError(f"No catalog '{catalog}' found in material database.")
+            known = sorted(df["catalog_dir"].dropna().unique())
+            raise ValueError(
+                f"No catalog '{catalog}' found in the material database."
+                f"{did_you_mean(catalog, known)} "
+                "List the available catalogs with "
+                "MaterialRegistry.instance().list_catalogs()."
+            )
         return filtered
 
     def _raise_if_no_matches(
@@ -339,15 +346,29 @@ class MaterialRegistry:
         name: str,
         catalog: str | None,
         reference: str | None,
+        candidates: pd.DataFrame | None = None,
     ) -> None:
-        """Raise ``ValueError`` if no candidate rows survived filtering."""
-        if filtered_df.empty:
-            msg = f"No matches found for material '{name}'"
-            if catalog:
-                msg += f" in catalog '{catalog}'"
-            if reference:
-                msg += f" with reference '{reference}'"
-            raise ValueError(msg)
+        """Raise ``ValueError`` if no candidate rows survived filtering.
+
+        Args:
+            filtered_df: The rows that survived name/reference filtering.
+            name: The requested material name.
+            catalog: The catalog the search was scoped to, if any.
+            reference: The reference the search was scoped to, if any.
+            candidates: The rows searched, used to build a "did you mean"
+                suggestion from their ``name`` column.
+        """
+        if not filtered_df.empty:
+            return
+        msg = f"No matches found for material '{name}'"
+        if catalog:
+            msg += f" in catalog '{catalog}'"
+        if reference:
+            msg += f" with reference '{reference}'"
+        msg += "."
+        if candidates is not None and "name" in candidates:
+            msg += did_you_mean(name, candidates["name"].dropna().unique())
+        raise ValueError(msg)
 
     def _apply_match_policy(
         self,

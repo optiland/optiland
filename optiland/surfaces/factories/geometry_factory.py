@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
 import optiland.plugins as plugins
+from optiland._suggest import options_hint
 from optiland.geometries import (
     BiconicGeometry,
     ChebyshevPolynomialGeometry,
@@ -443,7 +444,8 @@ class GeometryFactory:
                 create_fn = geometry_mapper[surface_type]
             except KeyError:
                 raise ValueError(
-                    f"Surface type '{surface_type}' not recognized."
+                    f"Unknown surface type, got {surface_type!r}."
+                    f"{options_hint(str(surface_type), geometry_mapper)}"
                 ) from err
 
         # Filter kwargs to only include those relevant to the specific config class

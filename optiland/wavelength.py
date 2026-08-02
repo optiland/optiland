@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
+from optiland._suggest import options_hint
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -102,7 +103,10 @@ class Wavelength:
         if self._unit in unit_conversion:
             conversion_factor = unit_conversion[self._unit]
             return float(self._value * conversion_factor)
-        raise ValueError("Unsupported unit for conversion to microns.")
+        raise ValueError(
+            f"Unsupported wavelength unit, got {self._unit!r}."
+            f"{options_hint(str(self._unit), unit_conversion)}"
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Get a dictionary representation of the wavelength.
@@ -206,7 +210,11 @@ class WavelengthGroup:
     def primary_index(self, index: int) -> None:
         """set the wavelength indexed by `index` as primary"""
         if not 0 <= index < len(self.wavelengths):
-            raise ValueError("Index out of range")
+            raise ValueError(
+                f"Invalid primary wavelength index, got {index}. The system "
+                f"has {len(self.wavelengths)} wavelength(s), so the index "
+                f"must be between 0 and {len(self.wavelengths) - 1}."
+            )
         for idx, wavelength in enumerate(self.wavelengths):
             wavelength.is_primary = idx == index
 
@@ -307,10 +315,17 @@ def _validate_wavelength_range(
         or num_wavelengths % 2 == 0
         or num_wavelengths <= 0
     ):
-        raise ValueError("num_wavelengths must be an odd positive integer")
+        raise ValueError(
+            f"num_wavelengths must be an odd positive integer, got "
+            f"{num_wavelengths!r}. An odd count keeps one wavelength at the "
+            "centre of the band, which becomes the primary wavelength."
+        )
 
     if min_value <= 0 or max_value <= 0:
-        raise ValueError("min_value and max_value must be positive")
+        raise ValueError(
+            f"min_value and max_value must be positive wavelengths in "
+            f"microns, got min_value={min_value!r}, max_value={max_value!r}."
+        )
 
 
 def _normalize_wavelength_scale(scale: str) -> str:
@@ -322,7 +337,10 @@ def _normalize_wavelength_scale(scale: str) -> str:
         return "wavelength"
     if scale in {"log", "logarithmic"}:
         return "log"
-    raise ValueError(f"Unknown scale: {scale!r}")
+    raise ValueError(
+        f"Unknown wavelength scale, got {scale!r}."
+        f"{options_hint(scale, ['wavelength', 'frequency', 'log'])}"
+    )
 
 
 def _sample_wavelength_nodes(num_wavelengths: int, sampling: str) -> BEArray:

@@ -163,6 +163,7 @@ design — all in under 5 minutes.
 
 Choose where to go next based on your goals:
 
+- :doc:`how_do_i` — a task-shaped index: find your question, get the notebook that answers it
 - :ref:`start_here` — persona-based routing for students, engineers, researchers, and contributors
 - :doc:`cheat_sheet` — 20 copy-paste snippets for the most common tasks
 - :doc:`learning_guide` — 60+ tutorials covering every feature in depth

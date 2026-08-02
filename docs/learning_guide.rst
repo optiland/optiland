@@ -14,6 +14,7 @@ New to Optiland? Start with :ref:`start_here` to find the path that fits your go
    Tutorial 1b: Lens Properties and Prescription <examples/Tutorial_1b_Lens_Properties_and_Prescription>
    Tutorial 1c: Material Database and Catalogs <examples/Tutorial_1c_Material_Database_and_Catalogs>
    Tutorial 1d: Saving and Loading <examples/Tutorial_1d_Saving_and_Loading>
+   Tutorial 1e: Design a Doublet, End to End <examples/Tutorial_1e_Design_a_Doublet_End_to_End>
 
 
 2. Real Raytracing & Analysis
