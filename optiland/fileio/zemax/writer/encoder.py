@@ -35,8 +35,16 @@ _FIELD_TYPE_TO_FTYP: dict[str, int] = {
 
 
 def _fmt(value: float) -> str:
-    """Format a float in Zemax scientific notation."""
-    return f"{value:.8E}"
+    """Format a float in Zemax scientific notation.
+
+    Uses 17 significant digits, the IEEE-754 binary64 round-trip guarantee, so
+    that ``save_zemax_file`` followed by ``load_zemax_file`` reproduces the
+    original system bit-for-bit. The previous ``%.8E`` (9 significant digits)
+    was lossy enough to matter: on ``HubbleTelescope`` (EFL ~5.76e4) a single
+    save/load shifted real-ray image-surface intercepts by 1.8e-06 mm, which
+    exceeds the 1e-06 mm agreement threshold used for cross-tool validation.
+    """
+    return f"{value:.16E}"
 
 
 def _fmt_vals(values: list[float]) -> str:
