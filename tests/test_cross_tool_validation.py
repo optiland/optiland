@@ -44,16 +44,41 @@ first-order quantities, 1e-6 mm on real ray intercepts, 1% on spot radii, 1% or
 
 Not covered: RMS wavefront error
 --------------------------------
-Deliberately absent. The quantity is sampling-dependent and has not
-converged at the ring counts in use: on the Hubble at full field it reads
-0.319 / 0.303 / 0.299 / 0.296 waves at 12 / 32 / 64 / 128 rings, against
-0.294 from OpticStudio. The central obscuration is not the cause — a Double
-Gauss with a clear circular pupil drifts by the same proportion. A 32-ring
-value does land inside the 0.01-wave criterion, so an assertion here would
-pass today while resting on a number that is still moving; #710 has the
-convergence data and the reference values are being regenerated. Worth
-adding once the reduction is converged, ideally as a convergence assertion
-(successive ring counts must agree to X%) rather than a single value.
+Deliberately absent, because the quantity is dominated by quadrature error
+rather than by anything the two tools disagree about.
+
+The hexapolar average converges as O(1/N) in the ring count. On the Hubble
+at full field it reads 0.319178 / 0.303402 / 0.298539 / 0.296086 / 0.294854
+waves at 12 / 32 / 64 / 128 / 256 rings; on a Double Gauss with a clear
+circular pupil it reads 0.250448 / 0.243480 / 0.239942 / 0.238160 at
+32 / 64 / 128 / 256. Successive differences halve as the count doubles in
+both cases, so the central obscuration is not the cause.
+
+Richardson-extrapolating the Double Gauss lands on the OpticStudio value to
+every printed digit, on axis (0.236378 against 0.2364) and at full field
+(1.218146 against 1.2182). So for a clear pupil the entire gap is the
+reduction, not the wavefront.
+
+The Hubble is the exception and is why this stays out of the suite: its
+extrapolation converges to a stable 0.29362 against OpticStudio's 0.294380,
+leaving 7.6e-04 waves, 0.26%, unexplained. That is inside the 0.01-wave
+criterion, so an assertion would pass — but it would pass while sitting on
+top of both an unconverged reduction and a residual nobody has localised
+yet. It is the second Hubble-specific anomaly, alongside the tangential
+focus shift in ``test_hubble_field_curvature_tangential`` below.
+
+The rim is where the O(1/N) comes from: a hexapolar set with N rings puts
+the outermost ring exactly at r = 1, but that ring covers half an annulus
+and so wants half weight as a composite trapezoid endpoint. Giving it that
+takes the on-axis Double Gauss error at 32 rings from 5.9% to 0.5% for the
+same number of traced rays. It helps much less off axis, so the endpoint is
+the dominant term only for a rotationally symmetric wavefront and a proper
+Gauss-Legendre radial rule would be the real fix.
+
+Worth adding here once the reduction is converged, and then as a convergence
+assertion (successive ring counts must agree to X%) rather than a single
+value, since a single value silently encodes whatever sampling produced it.
+#710 has the full data.
 
 Adding a system
 ---------------
