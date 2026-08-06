@@ -140,13 +140,35 @@ class ThirdOrderAberrations:
         terms = [term_func(k) for k in range(1, self._N - 1)]
         return be.array(terms)
 
+    def _dispersion_wavelengths(self) -> tuple[float, float]:
+        """Return the (short, long) wavelengths used for the chromatic terms.
+
+        The chromatic aberration coefficients differentiate the system between
+        two wavelengths. Those have to be wavelengths the system is actually
+        specified over: an infrared design differenced across the visible F and
+        C lines produces a meaningless number, and for many infrared glasses
+        there is no refractive index data at 0.4861 µm to evaluate in the first
+        place.
+
+        Uses the extremes of the system's own wavelength set, falling back to
+        the primary wavelength when only one is defined — in which case the
+        chromatic terms are identically zero, which is the correct answer for a
+        monochromatic system.
+        """
+        values = [float(be.to_numpy(w.value)) for w in self._optic.wavelengths]
+        if not values:  # pragma: no cover - an Optic always carries one
+            primary = float(self._optic.primary_wavelength)
+            return primary, primary
+        return min(values), max(values)
+
     def _precalculations(self) -> None:
         self._inv: float = self._optic.paraxial.invariant()
         self._on_axis = be.isclose(self._inv, be.array(0.0))
         self._n = self._signed_refractive_indices(self._optic.primary_wavelength)
-        n_F = self._signed_refractive_indices(0.4861)
-        n_C = self._signed_refractive_indices(0.6563)
-        self._dn = n_F - n_C
+        short, long = self._dispersion_wavelengths()
+        self._dn = self._signed_refractive_indices(
+            short
+        ) - self._signed_refractive_indices(long)
 
         self._N: int = self._optic.surfaces.num_surfaces
         self._C = 1 / self._optic.surfaces.radii

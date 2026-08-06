@@ -173,8 +173,8 @@ class TestEdmundSinglet:
         assert_allclose(be.sum(TPC), -0.2211799550187673)
         assert_allclose(be.sum(PC), -0.4423180410800838)
         assert_allclose(be.sum(DC), -0.020852935715656093)
-        assert_allclose(be.sum(TAchC), -0.4947549112756089)
-        assert_allclose(be.sum(LchC), -0.9894161663592405)
+        assert_allclose(be.sum(TAchC), -0.4945483282964331)
+        assert_allclose(be.sum(LchC), -0.9890030395066657)
         assert_allclose(be.sum(TchC), 0.0)
         assert_allclose(S[0], -1.730769175588275)
         assert_allclose(S[1], 0.14253720449059704)
@@ -205,8 +205,8 @@ class TestEdmundSinglet:
         assert_allclose(be.sum(TPC), -0.2211799550187673)
         assert_allclose(be.sum(PC), -0.4423180410800838)
         assert_allclose(be.sum(DC), -0.020852935715656093)
-        assert_allclose(be.sum(TAchC), -0.4947549112756089)
-        assert_allclose(be.sum(LchC), -0.9894161663592405)
+        assert_allclose(be.sum(TAchC), -0.4945483282964331)
+        assert_allclose(be.sum(LchC), -0.9890030395066657)
         assert_allclose(be.sum(TchC), 0.0)
 
 
@@ -235,9 +235,9 @@ class TestSingletStopTwo:
         assert_allclose(be.sum(TPC), -0.028095789481046744)
         assert_allclose(be.sum(PC), -0.22814191470407064)
         assert_allclose(be.sum(DC), 0.006717305986964978)
-        assert_allclose(be.sum(TAchC), -0.2286190741226864)
-        assert_allclose(be.sum(LchC), -1.8564202776151473)
-        assert_allclose(be.sum(TchC), 0.011126795737552403)
+        assert_allclose(be.sum(TAchC), -0.2285273536218734)
+        assert_allclose(be.sum(LchC), -1.85567549375039)
+        assert_allclose(be.sum(TchC), 0.01112233173873076)
         assert_allclose(S[0], -0.0326050034268675)
         assert_allclose(S[1], -0.0004386784359568394)
         assert_allclose(S[2], -0.01142479550599207)
@@ -267,9 +267,9 @@ class TestSingletStopTwo:
         assert_allclose(be.sum(TPC), -0.028095789481046744)
         assert_allclose(be.sum(PC), -0.22814191470407064)
         assert_allclose(be.sum(DC), 0.006717305986964978)
-        assert_allclose(be.sum(TAchC), -0.2286190741226864)
-        assert_allclose(be.sum(LchC), -1.8564202776151473)
-        assert_allclose(be.sum(TchC), 0.011126795737552403)
+        assert_allclose(be.sum(TAchC), -0.2285273536218734)
+        assert_allclose(be.sum(LchC), -1.85567549375039)
+        assert_allclose(be.sum(TchC), 0.01112233173873076)
 
 
 class TestSimpleSinglet:
@@ -339,3 +339,78 @@ class TestReflectiveSystemSeidels:
                 7.59541065e-04,
             ],
         )
+
+
+class TestChromaticDispersionWavelengths:
+    """The chromatic terms must differentiate over the system's own wavelengths.
+
+    Regression: ``_precalculations`` evaluated the dispersion as
+    ``n(0.4861) - n(0.6563)`` regardless of what the system defined. That is
+    silently wrong for anything not specified on the visible F and C lines, and
+    for an infrared design it is worse than wrong — most infrared glasses carry
+    no refractive index data at 0.4861 µm to evaluate at all.
+
+    ``CookeTriplet`` is specified at 0.48 / 0.55 / 0.65, close enough to the
+    hardcoded lines to look plausible and far enough to matter: its ``LchC``
+    moved by 7.9% when the hardcoding was removed.
+    """
+
+    def _sum(self, value):
+        return float(be.to_numpy(value).reshape(-1).sum())
+
+    def test_uses_defined_wavelengths_not_fc_lines(self, set_test_backend):
+        """Shifting the wavelength set must move the chromatic terms."""
+        from optiland.samples.objectives import CookeTriplet
+
+        wide = CookeTriplet()
+        narrow = CookeTriplet()
+        narrow.wavelengths.wavelengths = []
+        for value, primary in ((0.53, False), (0.55, True), (0.57, False)):
+            narrow.add_wavelength(value=value, is_primary=primary)
+
+        wide_lchc = self._sum(wide.aberrations.LchC())
+        narrow_lchc = self._sum(narrow.aberrations.LchC())
+
+        # A quarter of the spectral interval must not give the same answer.
+        assert abs(narrow_lchc) < abs(wide_lchc) / 2, (
+            f"LchC barely moved when the wavelength range shrank from "
+            f"0.48-0.65 to 0.53-0.57: {wide_lchc} vs {narrow_lchc}. The "
+            f"dispersion is probably being evaluated at fixed wavelengths "
+            f"again."
+        )
+
+    def test_monochromatic_system_has_no_chromatic_aberration(self, set_test_backend):
+        """One wavelength means no dispersion to difference across."""
+        from optiland.samples.telescopes import HubbleTelescope
+
+        hubble = HubbleTelescope()  # single wavelength, 0.55 µm
+        assert self._sum(hubble.aberrations.LchC()) == pytest.approx(0.0, abs=1e-12)
+        assert self._sum(hubble.aberrations.TchC()) == pytest.approx(0.0, abs=1e-12)
+
+    def test_infrared_system_is_not_evaluated_on_visible_lines(self, set_test_backend):
+        """A long-wave infrared system must use its own wavelengths.
+
+        Germanium is essentially non-dispersive over 8-12 um in the shipped
+        data, so the correct axial colour for this lens is zero. Evaluating the
+        dispersion on the visible F and C lines instead borrows a refractive
+        index swing the system never sees and reports 5.76 mm of axial colour
+        -- with no error and no warning, which is the dangerous part.
+        """
+        from optiland.optic import Optic
+
+        lens = Optic()
+        lens.add_surface(index=0, thickness=be.inf)
+        lens.add_surface(
+            index=1, radius=100.0, thickness=6.0, material="germanium", is_stop=True
+        )
+        lens.add_surface(index=2, radius=-300.0, thickness=95.0)
+        lens.add_surface(index=3)
+        lens.set_aperture(aperture_type="EPD", value=20)
+        lens.set_field_type(field_type="angle")
+        lens.add_field(y=0)
+        lens.add_field(y=2)
+        lens.add_wavelength(value=8.0)
+        lens.add_wavelength(value=10.0, is_primary=True)
+        lens.add_wavelength(value=12.0)
+
+        assert self._sum(lens.aberrations.LchC()) == pytest.approx(0.0, abs=1e-9)
