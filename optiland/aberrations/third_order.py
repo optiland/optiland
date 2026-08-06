@@ -231,21 +231,27 @@ class ThirdOrderAberrations:
         )
         return spherical + self._get_conic_term(k, p_ya=1, p_yb=3)
 
-    def _TAchC_term(self, k: int) -> BEArray:
+    def _chromatic_prefactor(self, k: int) -> BEArray:
+        """Shared factor of the two chromatic terms at surface ``k``.
+
+        Note the two different index bases in play. ``_ya`` is the full
+        marginal-ray array returned by ``paraxial.marginal_ray()``, indexed by
+        surface with ``_ya[0]`` at the object, so the height *at* surface ``k``
+        is ``_ya[k]``. ``_i`` and ``_ip`` are lists built over
+        ``range(1, N - 1)``, so the value for surface ``k`` is ``_i[k - 1]``.
+        Mixing the two up costs a one-surface shift in the ray height.
+        """
         return (
-            -self._ya[k - 1]
-            * self._i[k - 1]
+            -self._ya[k]
             / (self._n[-1] * self._ua[-1])
             * (self._dn[k - 1] - self._n[k - 1] / self._n[k] * self._dn[k])
         )
 
+    def _TAchC_term(self, k: int) -> BEArray:
+        return self._chromatic_prefactor(k) * self._i[k - 1]
+
     def _TchC_term(self, k: int) -> BEArray:
-        return (
-            -self._ya[k - 1]
-            * self._ip[k - 1]
-            / (self._n[-1] * self._ua[-1])
-            * (self._dn[k - 1] - self._n[k - 1] / self._n[k] * self._dn[k])
-        )
+        return self._chromatic_prefactor(k) * self._ip[k - 1]
 
     def _sum_seidels(
         self,
