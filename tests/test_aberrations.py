@@ -369,7 +369,7 @@ class TestChromaticRayHeightIndex:
     def _at_wavelength(self, factory, wavelength):
         optic = factory()
         optic.wavelengths.wavelengths = []
-        optic.add_wavelength(value=wavelength, is_primary=True)
+        optic.wavelengths.add(value=wavelength, is_primary=True)
         return optic
 
     def test_axial_colour_matches_the_focus_shift(self, set_test_backend):
