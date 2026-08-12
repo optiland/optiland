@@ -33,6 +33,11 @@ import optiland.backend as be
 from optiland.coordinate_system import CoordinateSystem
 from optiland.geometries.newton_raphson import NewtonRaphsonGeometry
 
+try:
+    import torch
+except (ImportError, ModuleNotFoundError):
+    torch = None
+
 from .qpoly import (
     _q2d_cartesian_eval,
     _trim_trailing_zeros,
@@ -185,9 +190,23 @@ class ForbesGeometryBase(NewtonRaphsonGeometry):
         self._coeffs_dirty = True
 
     def _ensure_coeffs(self) -> None:
-        """Rebuild cached coefficient containers only when invalidated."""
+        """Rebuild cached coefficient containers only when invalidated.
+
+        The Newton-Raphson ``distance()`` solve may trigger the *first*
+        (cache-building) call from inside a ``torch.no_grad()`` block (the
+        primal solve is intentionally untracked). Coefficient tensors
+        stacked while grad recording is disabled become permanently
+        detached -- ``requires_grad_(True)`` called on the originals
+        afterwards cannot reconnect them. Force grad recording on while
+        (re)building the cache so it stays differentiable regardless of the
+        ambient grad context of the caller.
+        """
         if self._coeffs_dirty:
-            self._prepare_coeffs()
+            if torch is not None and be.get_backend() == "torch":
+                with torch.enable_grad():
+                    self._prepare_coeffs()
+            else:
+                self._prepare_coeffs()
 
     def _base_sag(self, r2):
         """Calculates the sag of the base conic surface.
