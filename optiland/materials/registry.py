@@ -21,6 +21,7 @@ import pandas as pd
 import yaml
 
 import optiland.plugins as plugins
+from optiland._suggest import did_you_mean
 from optiland.materials.material_spec import MatchPolicy
 from optiland.materials.warnings import OptilandMaterialWarning
 
@@ -314,7 +315,7 @@ class MaterialRegistry:
         filtered_df = self._find_matches(
             df, name, reference, min_wavelength, max_wavelength
         )
-        self._raise_if_no_matches(filtered_df, name, catalog, reference)
+        self._raise_if_no_matches(filtered_df, name, catalog, reference, df)
 
         self._apply_match_policy(filtered_df, name, catalog, match_policy)
 
@@ -330,7 +331,13 @@ class MaterialRegistry:
         catalog_lower = catalog.lower()
         filtered = df[df["catalog_dir"].str.lower() == catalog_lower].copy()
         if filtered.empty:
-            raise ValueError(f"No catalog '{catalog}' found in material database.")
+            known = sorted(df["catalog_dir"].dropna().unique())
+            raise ValueError(
+                f"No catalog '{catalog}' found in the material database."
+                f"{did_you_mean(catalog, known)} "
+                "List the available catalogs with "
+                "MaterialRegistry.instance().list_catalogs()."
+            )
         return filtered
 
     def _raise_if_no_matches(
@@ -339,15 +346,29 @@ class MaterialRegistry:
         name: str,
         catalog: str | None,
         reference: str | None,
+        candidates: pd.DataFrame | None = None,
     ) -> None:
-        """Raise ``ValueError`` if no candidate rows survived filtering."""
-        if filtered_df.empty:
-            msg = f"No matches found for material '{name}'"
-            if catalog:
-                msg += f" in catalog '{catalog}'"
-            if reference:
-                msg += f" with reference '{reference}'"
-            raise ValueError(msg)
+        """Raise ``ValueError`` if no candidate rows survived filtering.
+
+        Args:
+            filtered_df: The rows that survived name/reference filtering.
+            name: The requested material name.
+            catalog: The catalog the search was scoped to, if any.
+            reference: The reference the search was scoped to, if any.
+            candidates: The rows searched, used to build a "did you mean"
+                suggestion from their ``name`` column.
+        """
+        if not filtered_df.empty:
+            return
+        msg = f"No matches found for material '{name}'"
+        if catalog:
+            msg += f" in catalog '{catalog}'"
+        if reference:
+            msg += f" with reference '{reference}'"
+        msg += "."
+        if candidates is not None and "name" in candidates:
+            msg += did_you_mean(name, candidates["name"].dropna().unique())
+        raise ValueError(msg)
 
     def _apply_match_policy(
         self,
@@ -375,7 +396,7 @@ class MaterialRegistry:
             )
         else:
             self._apply_match_policy_without_catalog(
-                filtered_df, name, match_policy, best_score
+                filtered_df, name, match_policy, best_score, ambiguous_exact
             )
 
     def _apply_match_policy_with_catalog(
@@ -407,22 +428,49 @@ class MaterialRegistry:
         name: str,
         match_policy: MatchPolicy,
         best_score: float,
+        ambiguous_exact: bool = False,
     ) -> None:
         """Apply ``match_policy`` when resolution spans all catalogs."""
         if match_policy == MatchPolicy.STRICT:
+            if ambiguous_exact:
+                catalogs = sorted(
+                    filtered_df.loc[
+                        filtered_df["similarity_score"] == 0, "catalog_dir"
+                    ].unique()
+                )
+                raise ValueError(
+                    f"Material '{name}' matches exactly in multiple catalogs: "
+                    f"{catalogs}. Pass catalog=<name> to disambiguate."
+                )
             top = filtered_df.head(5)["name"].tolist()
             raise ValueError(
                 f"No exact match for material '{name}'. "
                 f"Top candidates: {top}. "
                 "Use match_policy='warn' or 'best' for fuzzy matching."
             )
-        if match_policy == MatchPolicy.WARN and best_score > 0:
-            resolved = filtered_df.iloc[0]["name"]
-            warnings.warn(
-                f"Material '{name}' resolved to '{resolved}' via fuzzy match.",
-                OptilandMaterialWarning,
-                stacklevel=6,
-            )
+        if match_policy == MatchPolicy.WARN:
+            if best_score > 0:
+                resolved = filtered_df.iloc[0]["name"]
+                warnings.warn(
+                    f"Material '{name}' resolved to '{resolved}' via fuzzy match.",
+                    OptilandMaterialWarning,
+                    stacklevel=6,
+                )
+            elif ambiguous_exact:
+                catalogs = sorted(
+                    filtered_df.loc[
+                        filtered_df["similarity_score"] == 0, "catalog_dir"
+                    ].unique()
+                )
+                resolved_catalog = filtered_df.iloc[0]["catalog_dir"]
+                warnings.warn(
+                    f"Material '{name}' matches exactly in multiple catalogs "
+                    f"{catalogs}; resolved to catalog '{resolved_catalog}'. "
+                    "Pass catalog=<name> to disambiguate and silence this "
+                    "warning.",
+                    OptilandMaterialWarning,
+                    stacklevel=6,
+                )
 
     def _row_to_path(self, row: dict) -> str:
         """Resolve a matched row's ``filename`` to an absolute path."""

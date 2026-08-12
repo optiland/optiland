@@ -17,6 +17,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 
 import optiland.backend as be
+from optiland._suggest import options_hint
 from optiland.propagation.base import BasePropagationModel
 from optiland.propagation.homogeneous import HomogeneousPropagation
 
@@ -308,7 +309,10 @@ class BaseMaterial(ABC):
         """
         material_type = data.get("type")
         if material_type not in cls._registry:
-            raise ValueError(f"Unknown material type: {material_type}")
+            raise ValueError(
+                f"Unknown material type {material_type!r} in the material data."
+                f"{options_hint(str(material_type), cls._registry)}"
+            )
 
         # Delegate to the correct subclass to create the instance.
         material_subclass = cls._registry[material_type]

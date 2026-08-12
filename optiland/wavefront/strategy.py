@@ -200,6 +200,21 @@ class ChiefRayStrategy(ReferenceStrategy):
         pupil_y = rays.y - t * rays.M
         pupil_z = rays.z - t * rays.N
 
+        valid_mask = (
+            be.isfinite(opd_wv)
+            & be.isfinite(pupil_x)
+            & be.isfinite(pupil_y)
+            & be.isfinite(pupil_z)
+            & be.isfinite(intensity)
+        )
+        if not be.any(valid_mask):
+            raise ValueError("No valid ray samples found for chief-ray wavefront.")
+        opd_wv = be.where(valid_mask, opd_wv, be.zeros_like(opd_wv))
+        pupil_x = be.where(valid_mask, pupil_x, be.zeros_like(pupil_x))
+        pupil_y = be.where(valid_mask, pupil_y, be.zeros_like(pupil_y))
+        pupil_z = be.where(valid_mask, pupil_z, be.zeros_like(pupil_z))
+        intensity = be.where(valid_mask, intensity, be.zeros_like(intensity))
+
         # 6. Handle polarization data if available
         kwargs = {}
         prt_matrix = getattr(rays, "p", None)

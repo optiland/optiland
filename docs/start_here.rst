@@ -7,6 +7,16 @@ Start Here
 from basic paraxial layouts to GPU-accelerated differentiable ray tracing. Whether you are tracing your
 first ray or training a differentiable lens model, this page will route you to the right starting point.
 
+.. note::
+
+   Before anything else, read :doc:`conventions` — one page covering the surface-sequential model,
+   the "after" rule for thickness and material, sign conventions, and units. It removes the most
+   common source of newcomer confusion in a few minutes.
+
+   Already know the optics question you want answered? Skip the paths below and go straight to
+   :doc:`how_do_i` — a task-shaped index mapping concrete questions to the notebook that answers
+   each one.
+
 .. rubric:: Choose Your Path
 
 ----
@@ -24,7 +34,8 @@ programmatic optical design. Start here to build your first lens in Python.
 1. :doc:`installation` — install Optiland with ``pip install optiland``
 2. :doc:`Tutorial 1a — Optiland for Beginners <examples/Tutorial_1a_Optiland_for_Beginners>` — build and visualize your first lens
 3. :doc:`Tutorial 1b — Lens Properties & Prescription <examples/Tutorial_1b_Lens_Properties_and_Prescription>` — paraxial properties and surface data
-4. :doc:`Tutorial 2c — Aberration Analyses <examples/Tutorial_2c_Aberration_Analyses>` — spot diagrams, ray fans, and wavefront errors
+4. :doc:`Tutorial 1e — Design a Doublet End to End <examples/Tutorial_1e_Design_a_Doublet_End_to_End>` — one design from requirements to prescription
+5. :doc:`Tutorial 2c — Aberration Analyses <examples/Tutorial_2c_Aberration_Analyses>` — spot diagrams, ray fans, and wavefront errors
 
 **→** :doc:`Start with Tutorial 1a <examples/Tutorial_1a_Optiland_for_Beginners>`
 

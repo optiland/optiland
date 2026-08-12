@@ -10,6 +10,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, ClassVar
 
+from optiland._suggest import options_hint
+
 if TYPE_CHECKING:
     from optiland import Optic
     from optiland._types import BEArray, ScalarOrArray
@@ -53,7 +55,11 @@ class BaseFieldDefinition(ABC):
 
         """
         if field_type not in cls._registry:
-            raise ValueError(f"Invalid field type: {field_type}.")
+            raise ValueError(
+                f"Unknown field type, got {field_type!r}."
+                f"{options_hint(str(field_type), cls._registry)} "
+                "Set it with lens.fields.set_type('angle')."
+            )
         return cls._registry[field_type]()
 
     @abstractmethod
@@ -170,4 +176,8 @@ class BaseFieldDefinition(ABC):
         for _key, klass in cls._registry.items():
             if klass.__name__ == class_name:
                 return klass()
-        raise ValueError(f"Unknown field definition: {class_name}")
+        known = [klass.__name__ for klass in cls._registry.values()]
+        raise ValueError(
+            f"Unknown field definition {class_name!r} in the field data."
+            f"{options_hint(str(class_name), known)}"
+        )

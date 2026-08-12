@@ -116,7 +116,7 @@ class TestWavelengthGroups:
         wg = WavelengthGroup()
         wg.add(500, unit="nm")
         wg.add(600, is_primary=True, unit="nm")
-        with pytest.raises(ValueError, match="Index out of range"):
+        with pytest.raises(ValueError, match="Invalid primary wavelength index"):
             wg.primary_index = index
 
     def test_multiple_wavelengths(self, set_test_backend):

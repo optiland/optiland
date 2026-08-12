@@ -267,7 +267,16 @@ def _extract_rms_spot(surface_group, input_data):
     This replicates the calculation from ``RayOperand.rms_spot_size`` but
     reads from the already-traced surface_group data, preserving autograd.
     """
-    surface_number = input_data["surface_number"]
+    try:
+        surface_number = input_data["surface_number"]
+    except KeyError:
+        raise KeyError(
+            "The 'rms_spot_size' operand requires 'surface_number' in its "
+            "input_data, naming the surface the spot is measured on. Use -1 "
+            "for the image surface, e.g. input_data={'optic': lens, 'Hx': 0, "
+            "'Hy': 0, 'num_rings': 6, 'wavelength': 0.55, "
+            "'surface_number': -1}."
+        ) from None
     x = surface_group.x[surface_number, :].flatten()
     y = surface_group.y[surface_number, :].flatten()
     r2 = (x - be.mean(x)) ** 2 + (y - be.mean(y)) ** 2

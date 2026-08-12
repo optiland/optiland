@@ -263,7 +263,11 @@ class Paraxial:
 
         """
         if self.optic.aperture is None:
-            raise ValueError("No aperture is defined on the optical system.")
+            raise ValueError(
+                "No aperture is defined on the optical system, so the pupil "
+                "size is unknown. Set one with "
+                'lens.set_aperture(aperture_type="EPD", value=25).'
+            )
 
         wavelength = self.optic.primary_wavelength
         return self.optic.aperture.compute_epd(self, wavelength)
@@ -309,7 +313,11 @@ class Paraxial:
 
         """
         if self.optic.aperture is None:
-            raise ValueError("No aperture is defined on the optical system.")
+            raise ValueError(
+                "No aperture is defined on the optical system, so the pupil "
+                "size is unknown. Set one with "
+                'lens.set_aperture(aperture_type="EPD", value=25).'
+            )
         fno = self.optic.aperture.direct_fno()
         if fno is not None:
             return fno

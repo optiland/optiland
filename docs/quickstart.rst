@@ -54,6 +54,11 @@ Print the surface table (similar to a Lens Data Editor):
 3. Build from Scratch
 ---------------------
 
+.. tip::
+
+   The surface parameters below follow a specific model — see :doc:`conventions` for why
+   ``thickness`` and ``material`` describe the space *after* a surface, not the surface itself.
+
 Create a simple biconvex singlet in 8 lines:
 
 .. code-block:: python
@@ -158,6 +163,7 @@ design — all in under 5 minutes.
 
 Choose where to go next based on your goals:
 
+- :doc:`how_do_i` — a task-shaped index: find your question, get the notebook that answers it
 - :ref:`start_here` — persona-based routing for students, engineers, researchers, and contributors
 - :doc:`cheat_sheet` — 20 copy-paste snippets for the most common tasks
 - :doc:`learning_guide` — 60+ tutorials covering every feature in depth

@@ -18,6 +18,7 @@ Public API
 
 from __future__ import annotations
 
+from optiland._suggest import options_hint
 from optiland.aperture.base import BaseSystemAperture
 from optiland.aperture.epd import EPDAperture
 from optiland.aperture.float_by_stop import FloatByStopAperture
@@ -53,8 +54,9 @@ def make_system_aperture(aperture_type: str, value: float) -> BaseSystemAperture
     aperture_type = _ALIASES.get(aperture_type, aperture_type)
     if aperture_type not in BaseSystemAperture._registry:
         raise ValueError(
-            f"Aperture type must be one of "
-            f"{list(BaseSystemAperture._registry)}; got '{aperture_type}'."
+            f"Unknown aperture type, got '{aperture_type}'."
+            f"{options_hint(aperture_type, BaseSystemAperture._registry)} "
+            "For example: lens.set_aperture(aperture_type='EPD', value=25)."
         )
     return BaseSystemAperture._registry[aperture_type](value)
 

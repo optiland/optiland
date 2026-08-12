@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 import optiland.backend as be
+from optiland._suggest import options_hint
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -399,6 +400,9 @@ def create_distribution(distribution_type: DistributionType) -> BaseDistribution
     }
 
     if distribution_type not in distribution_classes:
-        raise ValueError("Invalid distribution type.")
+        raise ValueError(
+            f"Unknown pupil distribution, got {distribution_type!r}."
+            f"{options_hint(str(distribution_type), distribution_classes)}"
+        )
 
     return distribution_classes[distribution_type]()

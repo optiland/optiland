@@ -51,13 +51,17 @@ class CookeTriplet(optic.Optic):
         super().__init__()
 
         self.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
-        self.surfaces.add(index=1, radius=22.01359, thickness=3.25896, material="SK16")
+        self.surfaces.add(
+            index=1, radius=22.01359, thickness=3.25896, material=("SK16", "hikari")
+        )
         self.surfaces.add(index=2, radius=-435.76044, thickness=6.00755)
         self.surfaces.add(
             index=3, radius=-22.21328, thickness=0.99997, material=("F2", "schott")
         )
         self.surfaces.add(index=4, radius=20.29192, thickness=4.75041, is_stop=True)
-        self.surfaces.add(index=5, radius=79.68360, thickness=2.95208, material="SK16")
+        self.surfaces.add(
+            index=5, radius=79.68360, thickness=2.95208, material=("SK16", "hikari")
+        )
         self.surfaces.add(index=6, radius=-18.39533, thickness=42.20778)
         self.surfaces.add(index=7)
 

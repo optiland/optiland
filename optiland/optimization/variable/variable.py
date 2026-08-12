@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from optiland._suggest import options_hint
 from optiland.optimization.variable.asphere_coeff import AsphereCoeffVariable
 from optiland.optimization.variable.chebyshev_coeff import ChebyshevCoeffVariable
 from optiland.optimization.variable.conic import ConicVariable
@@ -148,7 +149,10 @@ class Variable:
         # Instantiate the class if it exists
         if variable_class:
             return variable_class(**behavior_kwargs)
-        raise ValueError(f'Invalid variable type "{self.type}"')
+        raise ValueError(
+            f"Unknown variable type {self.type!r}."
+            f"{options_hint(str(self.type), variable_types, max_listed=20)}"
+        )
 
     @property
     def value(self):
