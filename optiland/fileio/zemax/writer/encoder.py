@@ -229,8 +229,12 @@ class ZemaxFileEncoder:
         name = glas.get("name", "")
         if name == "MIRROR":
             return "  GLAS MIRROR 0 0 0 0 0 0 0 0 0 0"
-        if "n" in glas and "V" in glas:
+        if "catalog" not in glas and "n" in glas and "V" in glas:
             # MODEL glass
             return f"  GLAS MODEL 1 0 {_fmt(glas['n'])} {_fmt(glas['V'])} 0 0 0 0 0 0"
-        # Catalog glass
+        if "n" in glas and "V" in glas:
+            # Catalog glass: record Nd/Vd so an ambiguous name (present in
+            # multiple GCAT catalogs) can be disambiguated on reload.
+            return f"  GLAS {name} 0 0 {_fmt(glas['n'])} {_fmt(glas['V'])} 0 0 0 0 0 0"
+        # Catalog glass without index data (e.g. round-tripped from another format)
         return f"  GLAS {name} 0 0 0 0 0 0 0 0 0 0"

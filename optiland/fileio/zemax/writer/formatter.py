@@ -13,7 +13,7 @@ import warnings
 from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
-from optiland.fileio.common import compute_abbe_number, field_type_string, is_air
+from optiland.fileio.common import WL_D, compute_abbe_number, field_type_string, is_air
 from optiland.fileio.zemax.model import ZemaxDataModel
 from optiland.fileio.zemax.surfaces import (
     CoordinateBreakSurfaceHandler,
@@ -334,7 +334,8 @@ class OpticToZemaxConverter:
         if isinstance(mat, Material) and mat.reference:
             catalog = mat.reference.upper()
             glass_catalogs.append(catalog)
-            return {"name": mat.name.upper(), "catalog": catalog}
+            n_d, v_d = compute_abbe_number(mat, WL_D)
+            return {"name": mat.name.upper(), "catalog": catalog, "n": n_d, "V": v_d}
 
         # Named glass without explicit reference — try to use name only
         if isinstance(mat, Material):

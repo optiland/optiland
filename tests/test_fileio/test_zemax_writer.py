@@ -397,6 +397,46 @@ class TestGlasEncoding:
 
 
 # ---------------------------------------------------------------------------
+# Glass catalog disambiguation (#713)
+# ---------------------------------------------------------------------------
+
+
+class TestGlassCatalogDisambiguation:
+    """A name present in several declared catalogs must round-trip to the
+    catalog it was originally declared in, not whichever one a bare,
+    catalog-unaware lookup happens to prefer.
+
+    Regression: the writer recorded catalogs only at file level (``GCAT``),
+    so on reload a name like "F2" (present in ``cdgm``, ``hikari`` and
+    ``schott``) resolved to whichever catalog a global fuzzy-match landed on,
+    silently swapping the glass and shifting EFL by ~1.2e-05 relative on
+    ``CookeTriplet``.
+    """
+
+    def test_cooke_triplet_preserves_per_surface_catalog(
+        self, tmp_path, set_test_backend
+    ):
+        from optiland.samples.objectives import CookeTriplet
+
+        original = CookeTriplet()
+        out = tmp_path / "cooke.zmx"
+        save_zemax_file(original, str(out))
+        reloaded = load_zemax_file(str(out))
+
+        for i in range(original.surfaces.num_surfaces):
+            mat = original.surfaces[i].material_post
+            catalog = getattr(mat, "reference", None)
+            if not catalog:
+                continue
+            reloaded_mat = reloaded.surfaces[i].material_post
+            assert getattr(reloaded_mat, "reference", None) == catalog, (
+                f"Surface {i}: catalog {catalog!r} did not survive round trip"
+            )
+
+        assert_allclose(original.paraxial.f2(), reloaded.paraxial.f2(), rtol=1e-12)
+
+
+# ---------------------------------------------------------------------------
 # Writer precision
 # ---------------------------------------------------------------------------
 
@@ -424,13 +464,7 @@ def _image_intercept(optic: Optic, Hx, Hy, Px, Py, wavelength):
     )
 
 
-# CookeTriplet is deliberately absent: its glasses are declared with explicit
-# catalogs (``("SK16", "hikari")``, ``("F2", "schott")``) but ``GLAS`` is written
-# without a catalog tag, so the reader re-resolves them ambiguously and the
-# reloaded system uses different dispersion data. That shifts EFL by ~1.2e-05
-# relative, three orders above anything the float formatter can cause, and is a
-# separate defect from the precision this class covers.
-_PRECISION_SAMPLES = ["hubble", "double_gauss"]
+_PRECISION_SAMPLES = ["hubble", "double_gauss", "cooke"]
 
 # (Hx, Hy, Px, Py) — on-axis marginal, full-field chief, and a skew ray.
 _PRECISION_RAYS = [(0.0, 0.0, 0.0, 0.7), (0.0, 1.0, 0.0, 0.0), (0.0, 0.7, 0.7, 0.0)]
