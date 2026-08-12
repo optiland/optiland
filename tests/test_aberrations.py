@@ -111,9 +111,9 @@ class TestDoubleGaussAberrations:
         assert_allclose(be.sum(TPC), -0.08132376867613199)
         assert_allclose(be.sum(PC), -0.8132376867613212)
         assert_allclose(be.sum(DC), -0.2324205373837797)
-        assert_allclose(be.sum(TAchC), 0.0295705512988189)
-        assert_allclose(be.sum(LchC), 0.2957055129881888)
-        assert_allclose(be.sum(TchC), -0.01804376318260833)
+        assert_allclose(be.sum(TAchC), -0.01400173301485554)
+        assert_allclose(be.sum(LchC), -0.1400173301485556)
+        assert_allclose(be.sum(TchC), 0.01227340687764573)
         assert_allclose(S[0], -0.003929457875534847)
         assert_allclose(S[1], 0.0003954597633218682)
         assert_allclose(S[2], 0.0034239055031729947)
@@ -143,9 +143,9 @@ class TestDoubleGaussAberrations:
         assert_allclose(be.sum(TPC), -0.08132376867613199)
         assert_allclose(be.sum(PC), -0.8132376867613212)
         assert_allclose(be.sum(DC), -0.2324205373837797)
-        assert_allclose(be.sum(TAchC), 0.0295705512988189)
-        assert_allclose(be.sum(LchC), 0.2957055129881888)
-        assert_allclose(be.sum(TchC), -0.01804376318260833)
+        assert_allclose(be.sum(TAchC), -0.01400173301485554)
+        assert_allclose(be.sum(LchC), -0.1400173301485556)
+        assert_allclose(be.sum(TchC), 0.01227340687764573)
 
 
 class TestEdmundSinglet:
@@ -173,9 +173,9 @@ class TestEdmundSinglet:
         assert_allclose(be.sum(TPC), -0.2211799550187673)
         assert_allclose(be.sum(PC), -0.4423180410800838)
         assert_allclose(be.sum(DC), -0.020852935715656093)
-        assert_allclose(be.sum(TAchC), -0.4945483282964331)
-        assert_allclose(be.sum(LchC), -0.9890030395066657)
-        assert_allclose(be.sum(TchC), 0.0)
+        assert_allclose(be.sum(TAchC), -0.4609677086420541)
+        assert_allclose(be.sum(LchC), -0.9218481569472585)
+        assert_allclose(be.sum(TchC), -0.01674359274970534)
         assert_allclose(S[0], -1.730769175588275)
         assert_allclose(S[1], 0.14253720449059704)
         assert_allclose(S[2], -0.352955446544233)
@@ -205,9 +205,9 @@ class TestEdmundSinglet:
         assert_allclose(be.sum(TPC), -0.2211799550187673)
         assert_allclose(be.sum(PC), -0.4423180410800838)
         assert_allclose(be.sum(DC), -0.020852935715656093)
-        assert_allclose(be.sum(TAchC), -0.4945483282964331)
-        assert_allclose(be.sum(LchC), -0.9890030395066657)
-        assert_allclose(be.sum(TchC), 0.0)
+        assert_allclose(be.sum(TAchC), -0.4609677086420541)
+        assert_allclose(be.sum(LchC), -0.9218481569472585)
+        assert_allclose(be.sum(TchC), -0.01674359274970534)
 
 
 class TestSingletStopTwo:
@@ -235,9 +235,9 @@ class TestSingletStopTwo:
         assert_allclose(be.sum(TPC), -0.028095789481046744)
         assert_allclose(be.sum(PC), -0.22814191470407064)
         assert_allclose(be.sum(DC), 0.006717305986964978)
-        assert_allclose(be.sum(TAchC), -0.2285273536218734)
-        assert_allclose(be.sum(LchC), -1.85567549375039)
-        assert_allclose(be.sum(TchC), 0.01112233173873076)
+        assert_allclose(be.sum(TAchC), -0.2234106023457104)
+        assert_allclose(be.sum(LchC), -1.8141267259538556)
+        assert_allclose(be.sum(TchC), 0.006577385169475487)
         assert_allclose(S[0], -0.0326050034268675)
         assert_allclose(S[1], -0.0004386784359568394)
         assert_allclose(S[2], -0.01142479550599207)
@@ -267,9 +267,9 @@ class TestSingletStopTwo:
         assert_allclose(be.sum(TPC), -0.028095789481046744)
         assert_allclose(be.sum(PC), -0.22814191470407064)
         assert_allclose(be.sum(DC), 0.006717305986964978)
-        assert_allclose(be.sum(TAchC), -0.2285273536218734)
-        assert_allclose(be.sum(LchC), -1.85567549375039)
-        assert_allclose(be.sum(TchC), 0.01112233173873076)
+        assert_allclose(be.sum(TAchC), -0.2234106023457104)
+        assert_allclose(be.sum(LchC), -1.8141267259538556)
+        assert_allclose(be.sum(TchC), 0.006577385169475487)
 
 
 class TestSimpleSinglet:
@@ -414,3 +414,80 @@ class TestChromaticDispersionWavelengths:
         lens.add_wavelength(value=12.0)
 
         assert self._sum(lens.aberrations.LchC()) == pytest.approx(0.0, abs=1e-9)
+
+
+class TestChromaticRayHeightIndex:
+    """The chromatic terms must use the ray height *at* the surface.
+
+    Regression: ``_TAchC_term`` and ``_TchC_term`` indexed the marginal ray as
+    ``_ya[k - 1]`` while indexing the angles of incidence as ``_i[k - 1]``.
+    Those two have different bases — ``_ya`` is the full per-surface array with
+    ``_ya[0]`` at the object, while ``_i`` is a list built over
+    ``range(1, N - 1)`` — so every surface was weighted by the ray height at the
+    *previous* surface.
+
+    Surface 1 came out right by accident whenever the object is at infinity,
+    since the marginal ray is then parallel and ``_ya[0] == _ya[1]``, which is
+    why the totals looked plausible rather than obviously broken.
+
+    Rather than pin another golden value, these check the coefficients against
+    what the aberrations physically are: the shift in focus and in chief-ray
+    image height between the extreme wavelengths. Third-order theory is an
+    approximation, so a few percent is expected; the pre-fix values were out by
+    a factor of two, and in one case reported exactly zero for an aberration
+    the system genuinely has.
+    """
+
+    def _sum(self, value):
+        return float(be.to_numpy(value).reshape(-1).sum())
+
+    def _at_wavelength(self, factory, wavelength):
+        optic = factory()
+        optic.wavelengths.wavelengths = []
+        optic.wavelengths.add(value=wavelength, is_primary=True)
+        return optic
+
+    def test_axial_colour_matches_the_focus_shift(self, set_test_backend):
+        """``LchC`` is the longitudinal shift of focus between F and C."""
+        from optiland.samples.objectives import DoubleGauss
+
+        short, long = 0.4861, 0.6563
+        focus_short = float(
+            be.to_numpy(self._at_wavelength(DoubleGauss, short).paraxial.F2()).reshape(
+                -1
+            )[-1]
+        )
+        focus_long = float(
+            be.to_numpy(self._at_wavelength(DoubleGauss, long).paraxial.F2()).reshape(
+                -1
+            )[-1]
+        )
+        measured = focus_long - focus_short
+
+        predicted = self._sum(DoubleGauss().aberrations.LchC())
+        assert abs(predicted) == pytest.approx(abs(measured), rel=0.05), (
+            f"LchC is {predicted} but the focus moves {measured} between "
+            f"{short} and {long} um. Before the ray-height fix this ratio was "
+            f"2.03."
+        )
+
+    def test_lateral_colour_matches_the_chief_ray_shift(self, set_test_backend):
+        """``TchC`` is the transverse shift of the chief ray between F and C."""
+        from optiland.samples.simple import Edmund_49_847
+
+        short, long = 0.4861327, 0.6562725
+        heights = []
+        for wavelength in (short, long):
+            _, _ = None, None
+            chief_y, _ = self._at_wavelength(
+                Edmund_49_847, wavelength
+            ).paraxial.chief_ray()
+            heights.append(float(be.to_numpy(chief_y).reshape(-1)[-1]))
+        measured = heights[1] - heights[0]
+
+        predicted = self._sum(Edmund_49_847().aberrations.TchC())
+        assert abs(predicted) == pytest.approx(abs(measured), rel=0.05), (
+            f"TchC is {predicted} but the chief ray moves {measured} between "
+            f"{short} and {long} um. Before the ray-height fix this was "
+            f"reported as exactly zero."
+        )
