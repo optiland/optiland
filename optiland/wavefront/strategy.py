@@ -206,7 +206,6 @@ class ChiefRayStrategy(ReferenceStrategy):
             & be.isfinite(pupil_y)
             & be.isfinite(pupil_z)
             & be.isfinite(intensity)
-            & (intensity > 0)
         )
         if not be.any(valid_mask):
             raise ValueError("No valid ray samples found for chief-ray wavefront.")
