@@ -432,9 +432,7 @@ class BasePSF(Wavefront):
         if self.psf is None:
             raise RuntimeError("PSF has not been computed.")
 
-        center_x = self.psf.shape[0] // 2
-        center_y = self.psf.shape[1] // 2
-        strehl = self.psf[center_x, center_y] / 100
+        strehl = be.max(self.psf) / 100
         return float(be.to_numpy(strehl).item())
 
     def _get_working_FNO(self):
