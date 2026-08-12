@@ -242,7 +242,7 @@ class ForbesGeometryBase(NewtonRaphsonGeometry):
             return 1.0, 0.0
 
         c2 = (1.0 / self.radius) ** 2
-        rho = be.sqrt(r2 + _EPSILON**2)
+        rho = be.sqrt(r2)
         num_arg = 1 - self.k * c2 * r2
         den_arg = 1 - (self.k + 1) * c2 * r2
 
@@ -694,7 +694,7 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
         rho = be.sqrt(r2 + _EPSILON)
 
         u = rho / self.norm_radius
-        safe_x = be.where(r2 < _EPSILON, x + 1e-12, x)
+        safe_x = be.where(rho < _EPSILON, x + 1e-12, x)
         theta = be.arctan2(y, safe_x)
 
         poly_sum_m0, poly_sum_m_gt0 = compute_z_q2d(
@@ -836,13 +836,12 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
         df_dx_vertex, df_dy_vertex = self._surface_normal_analytical_vertex()
 
         r2 = x_in**2 + y_in**2
-        is_vertex = r2 < _EPSILON**2
-        rho = be.sqrt(r2 + _EPSILON**2)
+        rho = be.sqrt(r2)
+        is_vertex = rho < _EPSILON
 
         rho_safe = be.where(is_vertex, _EPSILON, rho)
         u = rho / self.norm_radius
-        safe_x = be.where(is_vertex, x_in + _EPSILON, x_in)
-        theta = be.arctan2(y_in, safe_x)
+        theta = be.arctan2(y_in, x_in)
 
         vals = compute_z_zprime_q2d(
             self._prepared_cm0_coeffs,
