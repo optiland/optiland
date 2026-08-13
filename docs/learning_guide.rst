@@ -114,3 +114,16 @@ These examples demonstrate how Optiland can be used in conjunction with machine 
    Tutorial 9d: Optimizing Aspheric Singlet Lenses using Reinforcement Learning <examples/Tutorial_9d_Optimizing_Aspheric_Singlets_via_Reinforcement_Learning>
    Tutorial 9e: Wavefront Map Super-Resolution Using Generative Adversarial Networks (SR-GAN) <examples/Tutorial_9e_Wavefront_Super_Resolution_via_Generative_Adversarial_Networks>
    Tutorial 9f: Predicting Physical Lens Misalignments from Optical Spot Diagrams <examples/Tutorial_9f_Predicting_Physical_Lens_Misalignments_from_Spot_Diagrams>
+
+
+Community Resources
+--------------------
+
+`Computational Optics <https://inspiration-overflow.github.io/computational-optics/>`_ is a free,
+open-source (MIT-licensed) textbook by community contributor `goldengrape <https://github.com/goldengrape>`_
+that builds up computational optics from first principles (ray representation, refraction, paraxial
+theory, OPD/wavefront error, PSF/OTF/MTF, and a complete Cooke Triplet worked example) using Optiland
+for validation and worked examples throughout. It is available in English and Chinese. Note that its
+companion code pins a specific Optiland version, so API details may drift slightly from the latest
+release; see its `Companion Code <https://inspiration-overflow.github.io/computational-optics/companion-code.html>`_
+page for details.
