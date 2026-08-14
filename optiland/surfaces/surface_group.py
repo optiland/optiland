@@ -320,6 +320,78 @@ class SurfaceGroup:
                 return True
         return False
 
+    def _entry_frame(self):
+        """Object-space frame of a folded beam path, or ``None`` on the z axis.
+
+        ``None`` is the common case -- every leg on ±z -- and keeps z-based
+        callers (the paraxial ray aimer, the angle-field launch seeds) on
+        their existing code path bit-for-bit. For a folded or
+        off-axis-entered system it returns ``(anchor, axial, direction, u,
+        v)``: the first physical surface's vertex and its axial coordinate,
+        the unit entry direction, and the transverse basis completing it.
+
+        Object-space constructs live on the entry line. The entrance pupil
+        is the stop imaged into object space, so a launch ray aims at its
+        apparent, unfolded position ``anchor + (axial_pupil - axial) *
+        direction``, never at a refolded downstream point; the fold mirrors
+        then carry the ray onto the physical stop.
+        """
+        frames = [surf.geometry.cs.frame_in_gcs for surf in self.surfaces]
+        if len(frames) < 2:
+            return None
+        mirrors = [
+            bool(getattr(surf.interaction_model, "is_reflective", False))
+            for surf in self.surfaces
+        ]
+        entry = self._entry_direction(frames)
+        if not self._is_folded(frames, mirrors, entry):
+            return None
+        anchor = frames[1][0]
+        axial = self.positions[1, 0]
+        u, v = self._transverse_basis(entry)
+        return anchor, axial, entry, u, v
+
+    @staticmethod
+    def _transverse_basis(direction):
+        """Deterministic transverse pair ``(u, v)`` completing ``direction``.
+
+        ``v`` is global +y projected off the axis -- the sagittal direction
+        of a fold in the x-z plane -- falling back to +x when the beam runs
+        along ±y. ``(u, v, direction)`` is right-handed, and for a +z entry
+        the pair reduces to the classic +x/+y axes, so field semantics
+        continue the on-axis meaning. Deliberately independent of the object
+        surface's orientation: a tilted object plane must not roll the field
+        axes.
+        """
+        d = direction
+        y_proj = (
+            be.array(0.0) - d[1] * d[0],
+            be.array(1.0) - d[1] * d[1],
+            be.array(0.0) - d[1] * d[2],
+        )
+        norm = be.sqrt(sum(c * c for c in y_proj))
+        if bool(be.all(norm > _AXIS_TOL)):
+            v = tuple(c / norm for c in y_proj)
+            u = (
+                v[1] * d[2] - v[2] * d[1],
+                v[2] * d[0] - v[0] * d[2],
+                v[0] * d[1] - v[1] * d[0],
+            )
+            return u, v
+        x_proj = (
+            be.array(1.0) - d[0] * d[0],
+            be.array(0.0) - d[0] * d[1],
+            be.array(0.0) - d[0] * d[2],
+        )
+        norm = be.sqrt(sum(c * c for c in x_proj))
+        u = tuple(c / norm for c in x_proj)
+        v = (
+            d[1] * u[2] - d[2] * u[1],
+            d[2] * u[0] - d[0] * u[2],
+            d[0] * u[1] - d[1] * u[0],
+        )
+        return u, v
+
     @staticmethod
     def _unfolded_positions(frames, mirrors, direction):
         """Axial positions along the unfolded optical axis.

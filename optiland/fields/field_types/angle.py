@@ -50,13 +50,37 @@ class AngleField(BaseFieldDefinition):
             theta_total = be.sqrt(field_x**2 + field_y**2)
             s = be.where(be.cos(be.radians(theta_total)) < 0, -1.0, 1.0)
 
-            z_pupil = optic.paraxial.entrance_pupil_z()
-            x = -s * be.tan(be.radians(field_x)) * d
-            y = -s * be.tan(be.radians(field_y)) * d
-            z = z_pupil - s * d
-            x0 = be.array(Px) * EPD / 2 * be.array(vx) + x
-            y0 = be.array(Py) * EPD / 2 * be.array(vy) + y
-            z0 = be.zeros_like(Px) + z
+            frame = optic.surfaces._entry_frame()
+            if frame is None:
+                z_pupil = optic.paraxial.entrance_pupil_z()
+                x = -s * be.tan(be.radians(field_x)) * d
+                y = -s * be.tan(be.radians(field_y)) * d
+                z = z_pupil - s * d
+                x0 = be.array(Px) * EPD / 2 * be.array(vx) + x
+                y0 = be.array(Py) * EPD / 2 * be.array(vy) + y
+                z0 = be.zeros_like(Px) + z
+            else:
+                # The beam path is folded off the z axis: launch on the
+                # entry line, a distance d behind the entrance pupil's
+                # apparent (unfolded) position, with the pupil and field
+                # offsets laid out on the entry frame's transverse basis.
+                # Field angles measure against the entry axis, which is the
+                # same thing the z-based branch means wherever both are
+                # defined. See SurfaceGroup._entry_frame.
+                anchor, axial, d0, u0, v0 = frame
+                ep = optic.paraxial.entrance_pupil_z()
+                back = ep - axial - s * d
+                tu = (
+                    be.array(Px) * EPD / 2 * be.array(vx)
+                    - s * be.tan(be.radians(field_x)) * d
+                )
+                tv = (
+                    be.array(Py) * EPD / 2 * be.array(vy)
+                    - s * be.tan(be.radians(field_y)) * d
+                )
+                x0 = anchor[0] + back * d0[0] + tu * u0[0] + tv * v0[0]
+                y0 = anchor[1] + back * d0[1] + tu * u0[1] + tv * v0[1]
+                z0 = anchor[2] + back * d0[2] + tu * u0[2] + tv * v0[2]
         else:
             dist_to_ep = optic.paraxial.entrance_pupil_z() - optic.surfaces.positions[0]
             x_local = be.atleast_1d(be.array(-be.tan(be.radians(field_x)) * dist_to_ep))

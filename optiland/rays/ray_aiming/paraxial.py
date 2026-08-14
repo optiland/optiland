@@ -87,11 +87,29 @@ class ParaxialRayAimer(BaseRayAimer):
             y1 = Py * vy + y0
         else:
             EPD = self.optic.paraxial.EPD()
-            epl_global = self.optic.paraxial.entrance_pupil_z()
+            frame = self.optic.surfaces._entry_frame()
 
-            x1 = Px * EPD * vx / 2
-            y1 = Py * EPD * vy / 2
-            z1 = be.full_like(Px, epl_global)
+            if frame is None:
+                epl_global = self.optic.paraxial.entrance_pupil_z()
+
+                x1 = Px * EPD * vx / 2
+                y1 = Py * EPD * vy / 2
+                z1 = be.full_like(Px, epl_global)
+            else:
+                # The beam path is folded off the z axis, so the pupil disc
+                # cannot live in a z-perpendicular plane. Rays aim at the
+                # entrance pupil's apparent position in object space: on the
+                # entry line at the pupil's axial coordinate, with the pupil
+                # offsets laid out on the entry frame's transverse basis.
+                # See SurfaceGroup._entry_frame for why the position is
+                # never refolded onto a downstream leg.
+                anchor, axial, d0, u0, v0 = frame
+                ep = self.optic.paraxial.entrance_pupil_z()
+                a = Px * EPD * vx / 2
+                b = Py * EPD * vy / 2
+                x1 = anchor[0] + (ep - axial) * d0[0] + a * u0[0] + b * v0[0]
+                y1 = anchor[1] + (ep - axial) * d0[1] + a * u0[1] + b * v0[1]
+                z1 = anchor[2] + (ep - axial) * d0[2] + a * u0[2] + b * v0[2]
 
         mag = be.sqrt((x1 - x0) ** 2 + (y1 - y0) ** 2 + (z1 - z0) ** 2)
 

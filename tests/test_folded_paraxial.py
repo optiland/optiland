@@ -297,3 +297,69 @@ class TestTiltedObjectIsNotAFold:
         optic = straight()
         optic.surfaces.surfaces[0].geometry.cs.rx = be.array(math.pi / 8)
         assert_array_equal(optic.surfaces.positions, optic.surfaces.global_z_positions)
+
+
+class TestPublicTraceThroughFolds:
+    """optic.trace() aims in the entry frame, so folded systems trace (#728)."""
+
+    def test_entered_along_x_matches_an_explicit_ray(self, set_test_backend):
+        optic = entered_along_x()
+        traced = optic.trace(
+            Hx=0, Hy=0, wavelength=0.55, num_rays=3, distribution="line_y"
+        )
+        assert bool(be.all(be.isfinite(traced.y)))
+        # The trace's marginal ray, built by hand: parallel to the entry
+        # axis at the pupil edge, offset in y, the sagittal direction of
+        # this fold.
+        rays = RealRays(
+            be.array([-10.0]),
+            be.array([5.0]),
+            be.array([0.0]),
+            be.array([1.0]),
+            be.array([0.0]),
+            be.array([0.0]),
+            be.array([1.0]),
+            be.array([0.55]),
+        )
+        optic.surfaces.trace(rays)
+        assert_allclose(be.ravel(traced.y)[-1], be.ravel(rays.y)[0])
+
+    def test_folded_matches_straight_through_the_public_api(self, set_test_backend):
+        """The fold turns z into y, so the in-plane image coordinate is z - 24."""
+        t_fold = folded().trace(
+            Hx=0, Hy=0, wavelength=0.55, num_rays=5, distribution="line_y"
+        )
+        t_ref = straight().trace(
+            Hx=0, Hy=0, wavelength=0.55, num_rays=5, distribution="line_y"
+        )
+        assert_allclose(be.ravel(t_fold.z) - 24.0, be.ravel(t_ref.y))
+
+    def test_periscope_matches_straight_through_the_public_api(self, set_test_backend):
+        """After two folds the beam runs along +z again, offset 13 mm in y."""
+        t_scope = periscope().trace(
+            Hx=0, Hy=0, wavelength=0.55, num_rays=5, distribution="line_y"
+        )
+        t_ref = straight().trace(
+            Hx=0, Hy=0, wavelength=0.55, num_rays=5, distribution="line_y"
+        )
+        assert_allclose(be.ravel(t_scope.y) - 13.0, be.ravel(t_ref.y))
+
+    def test_field_angle_entered_along_x_matches_straight(self, set_test_backend):
+        """A sagittal field angle lands where the straight reference puts it.
+
+        Field angles measure against the entry axis; y is untouched by the
+        x-z fold, so the y field of the entered-along-x system must
+        reproduce the straight system's y behaviour exactly.
+        """
+        entered = entered_along_x()
+        reference = straight()
+        for optic in (entered, reference):
+            optic.fields.add(y=2.0)
+        t_entered = entered.trace(
+            Hx=0, Hy=1, wavelength=0.55, num_rays=3, distribution="line_y"
+        )
+        t_ref = reference.trace(
+            Hx=0, Hy=1, wavelength=0.55, num_rays=3, distribution="line_y"
+        )
+        assert bool(be.all(be.isfinite(t_entered.y)))
+        assert_allclose(be.ravel(t_entered.y), be.ravel(t_ref.y))

@@ -252,6 +252,11 @@ class Paraxial:
         place. Issue #613 was caused by call sites silently assuming EPL was
         global; routing them through this helper makes the convention
         explicit at the boundary.
+
+        For a beam path folded off the z axis the value is the pupil's
+        axial coordinate along the unfolded axis (see
+        ``SurfaceGroup.positions``); its position in space is a point on
+        the entry line, not a z plane.
         """
         return self.EPL() + self.surfaces.positions[1, 0]
 
