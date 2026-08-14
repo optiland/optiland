@@ -157,7 +157,9 @@ class ChiefRayStrategy(ReferenceStrategy):
 
     def __init__(self, optic: Optic, distribution: BaseDistribution, **kwargs) -> None:
         super().__init__(optic, distribution, **kwargs)
-        self.pupil_z = optic.paraxial.XPL() + optic.surfaces.positions[-1]
+        # Reference sphere centre lives in the global frame, so anchor the
+        # exit pupil on global z (identical to ``positions`` unless folded).
+        self.pupil_z = optic.paraxial.XPL() + optic.surfaces.global_z_positions[-1]
         self._chief_ray = None  # Cache for single field calculation usage
 
     def compute_wavefront_data(

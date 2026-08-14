@@ -209,7 +209,9 @@ class OpticViewer(BaseViewer):
             # A single cross-section at one z -- no object-segment issue.
             return None, None
 
-        positions = be.to_numpy(self.optic.surfaces.positions).reshape(-1)
+        # Axis limits are drawn in the global frame, so use global z rather
+        # than the unfolded axial coordinate ``positions`` reports.
+        positions = be.to_numpy(self.optic.surfaces.global_z_positions).reshape(-1)
         start_idx = 1 if self.optic.object_surface.is_infinite else 0
         if start_idx >= len(positions) - 1:
             return None, None

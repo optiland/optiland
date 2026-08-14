@@ -161,6 +161,24 @@ class CoordinateSystem:
             self.reference_cs.globalize(rays)
 
     @property
+    def frame_in_gcs(
+        self,
+    ) -> tuple[tuple[BEArray, BEArray, BEArray], tuple[BEArray, BEArray, BEArray]]:
+        """Returns the origin and the local +z axis of the coordinate system,
+            both expressed in the global coordinate system.
+
+        A single globalized probe carries both: its position becomes the
+        origin and its direction cosines become the local +z axis, which is
+        the surface normal at the vertex.
+
+        Returns:
+            A tuple ``(origin, axis)``, each a tuple of x, y and z components.
+        """
+        vector = RealRays(0, 0, 0, 0, 0, 1, 1, 1)
+        self.globalize(vector)
+        return (vector.x, vector.y, vector.z), (vector.L, vector.M, vector.N)
+
+    @property
     def position_in_gcs(self) -> tuple[BEArray, BEArray, BEArray]:
         """Returns the position of the coordinate system in the global coordinate
             system.
@@ -168,9 +186,7 @@ class CoordinateSystem:
         Returns:
             A tuple containing the x, y, and z coordinates of the position.
         """
-        vector = RealRays(0, 0, 0, 0, 0, 1, 1, 1)
-        self.globalize(vector)
-        return vector.x, vector.y, vector.z
+        return self.frame_in_gcs[0]
 
     def get_rotation_matrix(self) -> BEArray:
         """Get the rotation matrix of the coordinate system

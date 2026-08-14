@@ -25,6 +25,11 @@ if TYPE_CHECKING:
     from optiland._types import SurfaceType
     from optiland.materials import BaseMaterial
 
+# A mirror normal this close to ±z leaves the beam on the z axis, so the
+# system is still described by global z. Sized to admit round-off in the
+# rotation matrices while rejecting any fold a user meant to author.
+_AXIS_TOL = 1e-10
+
 
 class SurfaceGroup:
     """Represents a group of surfaces in an optical system.
@@ -214,11 +219,165 @@ class SurfaceGroup:
 
     @property
     def positions(self):
-        """np.array: z positions of surface vertices"""
+        """np.array: axial positions of surface vertices.
+
+        The axial coordinate is the one the paraxial model is written in: a
+        1-D coordinate along the unfolded optical axis, with each reflection
+        reversing the direction of travel (so spacings after an odd number of
+        mirrors are negative). While every leg of the beam path runs along
+        ±z -- straight systems and mirrors at normal incidence -- that is
+        exactly the global z of each vertex, and this property returns it
+        unchanged.
+
+        A mirror that folds the beam off the z axis breaks that equivalence:
+        two vertices on opposite sides of a 90° fold can share a z, so their
+        spacing would read as zero. For those systems the coordinate is
+        continued as signed cumulative vertex-to-vertex path length along the
+        beam, which is what the surrounding first-order machinery -- pupil
+        locations, paraxial ray heights, solves -- needs to stay correct
+        through a fold. Use ``global_z_positions`` for real-space z.
+        """
+        frames = [surf.geometry.cs.frame_in_gcs for surf in self.surfaces]
+        mirrors = [
+            bool(getattr(surf.interaction_model, "is_reflective", False))
+            for surf in self.surfaces
+        ]
+        entry = self._entry_direction(frames)
+        if self._is_folded(frames, mirrors, entry):
+            positions = self._unfolded_positions(frames, mirrors, entry)
+        else:
+            positions = be.array([origin[2] for origin, _ in frames])
+        return positions.reshape(-1, 1)
+
+    @property
+    def global_z_positions(self):
+        """np.array: global z coordinates of the surface vertices.
+
+        Unlike :attr:`positions` this is a real-space coordinate, never an
+        unfolded one. Use it for anything that has to place something in the
+        global frame (drawing limits, reference spheres); use ``positions``
+        for first-order calculations.
+        """
         positions = be.array(
             [surf.geometry.cs.position_in_gcs[2] for surf in self.surfaces]
         )
         return positions.reshape(-1, 1)
+
+    @staticmethod
+    def _off_axis(vector):
+        """Whether a unit vector points anywhere but along ±z.
+
+        ``positions`` is hot, so this compares on the arrays' own operators
+        rather than paying backend dispatch for a two-element test.
+        """
+        return bool(abs(vector[0]) > _AXIS_TOL) or bool(abs(vector[1]) > _AXIS_TOL)
+
+    @staticmethod
+    def _entry_direction(frames):
+        """Unit vector of the first leg, object vertex to first surface vertex.
+
+        Read off the two vertices rather than off the object surface's own
+        orientation: a tilted object plane does not steer the beam, so its
+        normal is not the axis. An object at infinity leaves an infinite
+        component in whichever axes the beam runs along, which carries the
+        direction on its own once the finite components are dropped.
+
+        Falls back to +z when there is nothing to read -- a lone surface, or
+        an object sitting on top of the first surface.
+        """
+        default = (be.array(0.0), be.array(0.0), be.array(1.0))
+        if len(frames) < 2:
+            return default
+        first, second = frames[0][0], frames[1][0]
+        step = [second[k] - first[k] for k in range(3)]
+        diverging = [bool(be.any(be.isinf(be.array(s)))) for s in step]
+        if any(diverging):
+            step = [
+                be.sign(s) if is_inf else be.array(0.0)
+                for s, is_inf in zip(step, diverging, strict=True)
+            ]
+        norm = be.sqrt(sum(s * s for s in step))
+        if not bool(be.all(norm > _AXIS_TOL)):
+            return default
+        return tuple(s / norm for s in step)
+
+    @classmethod
+    def _is_folded(cls, frames, mirrors, entry):
+        """Whether the beam path leaves the global z axis anywhere.
+
+        False -- the common case -- lets ``positions`` hand back global z
+        untouched, and bit-for-bit unchanged. Two things can take it off that
+        axis. The system may simply not be entered along z, which the first
+        leg reports. Or a mirror may fold it, which happens exactly when the
+        mirror normal is not parallel to the incoming beam direction; every
+        leg up to the first fold runs along ±z, so testing each mirror normal
+        against z is enough to decide the rest.
+        """
+        if cls._off_axis(entry):
+            return True
+        for (_, normal), is_mirror in zip(frames, mirrors, strict=True):
+            if is_mirror and cls._off_axis(normal):
+                return True
+        return False
+
+    @staticmethod
+    def _unfolded_positions(frames, mirrors, direction):
+        """Axial positions along the unfolded optical axis.
+
+        Walks the surface chain carrying the beam direction ``d`` (turned by
+        each mirror through ``d - 2(d·n)n``) and the reflection parity, and
+        accumulates ``parity * (Δvertex · d)`` per leg. Projecting onto ``d``
+        rather than taking the raw distance keeps the sign of legs authored
+        with a negative thickness; the parity keeps the sign convention of the
+        classic authoring, where spacings run backwards after a mirror.
+
+        The walk starts along the entry direction rather than along global +z:
+        a system can be entered off the z axis (a source posed to fire along
+        +x into a fold) and then no leg of it, not even the first, is a z
+        interval. For everything authored the classic way that direction is
+        +z and the walk is unchanged.
+
+        Args:
+            frames: Per-surface ``(origin, normal)`` in global coordinates.
+            mirrors: Per-surface reflectivity flags.
+            direction: Unit vector the beam travels along on entry.
+        """
+        if not frames:
+            return be.array([])
+
+        # The first vertex anchors the axis: nothing folds ahead of it.
+        previous = frames[0][0]
+        # An object at infinity has no z to anchor on when the entry axis is
+        # not z -- its infinity sits in x or y instead -- so read the anchor
+        # off the axis itself, which carries the sign the classic spelling
+        # (cs.z = -inf) would have given.
+        axial = [
+            previous[2]
+            if bool(be.all(be.isfinite(be.array([previous[k] for k in range(3)]))))
+            else sum(previous[k] * direction[k] for k in range(3))
+        ]
+        parity = 1.0
+
+        for (origin, normal), is_mirror in zip(frames[1:], mirrors[1:], strict=True):
+            step = sum((origin[k] - previous[k]) * direction[k] for k in range(3))
+            if be.all(be.isfinite(axial[-1])) and be.all(be.isfinite(step)):
+                axial.append(axial[-1] + parity * step)
+            else:
+                # A leg to or from infinity carries no fold, so re-anchor on
+                # global z instead of accumulating an inf that would go on to
+                # cancel into a nan.
+                axial.append(origin[2])
+
+            if is_mirror:
+                projection = sum(direction[k] * normal[k] for k in range(3))
+                direction = tuple(
+                    direction[k] - 2 * projection * normal[k] for k in range(3)
+                )
+                parity = -parity
+
+            previous = origin
+
+        return be.array(axial)
 
     @property
     def radii(self):
