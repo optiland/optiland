@@ -47,6 +47,10 @@ except (ImportError, ModuleNotFoundError):
 # well-conditioned intersection is never regularized.
 _DENOM_EPS_MULTIPLIER = 32.0
 
+# Multiplier for the round-off floor under the user-supplied convergence
+# tolerance. See :func:`_effective_tolerance`.
+_CONV_EPS_MULTIPLIER = 8.0
+
 
 # -- utility functions --
 def _is_radius_infinite(radius):
@@ -115,6 +119,23 @@ def _regularize_signed(value, scale=None):
         value,
     )
     return floored, near_singular
+
+
+def _effective_tolerance(tol, t):
+    """Raise ``tol`` to the round-off floor of the working dtype.
+
+    A residual can only ever be driven down to about ``eps * |t|``. The
+    default ``tol=1e-10`` is comfortably reachable in float64 but sits *below*
+    float32 round-off, so in float32 every ray would be classified
+    non-converged -- suppressing its implicit gradient and emitting a warning
+    on every call -- despite the root being as good as that dtype allows.
+
+    In float64 the user-supplied tolerance dominates, so behavior there is
+    unchanged.
+    """
+    scale = float(be.to_numpy(be.max(be.abs(t))))
+    floor = _CONV_EPS_MULTIPLIER * machine_eps(t) * max(1.0, scale)
+    return max(float(tol), floor)
 
 
 @dataclass
@@ -269,9 +290,11 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
         # Better initial guess via base conic intersection
         t = super().distance(rays)
 
+        tol = _effective_tolerance(self.tol, t)
+
         iterations = 0
         f_t = self._surface_residual(t, rays)
-        converged = be.abs(f_t) < self.tol
+        converged = be.abs(f_t) < tol
 
         for i in range(self.max_iter):
             # 1-3. Convergence is checked before any normal evaluation.
@@ -289,7 +312,7 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
             iterations = i + 1
 
             f_t = self._surface_residual(t, rays)
-            converged = be.abs(f_t) < self.tol
+            converged = be.abs(f_t) < tol
 
         return _DistanceSolveResult(
             t=t, residual=f_t, converged=converged, iterations=iterations

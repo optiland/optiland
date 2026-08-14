@@ -6,6 +6,8 @@ These tests target the primitive that was changed:
 
 from __future__ import annotations
 
+import warnings
+
 import pytest
 
 import optiland.backend as be
@@ -187,6 +189,43 @@ class TestForwardConsistency:
         assert primal.iterations >= 1
         assert float(primal.residual.abs().max()) < geometry.tol
 
+    @pytest.mark.parametrize("precision", ["float64", "float32"])
+    def test_converges_in_both_precisions(self, precision):
+        """The default tol=1e-10 sits below float32 round-off.
+
+        Without a dtype-aware floor under the tolerance, every ray would be
+        classified non-converged in float32 -- suppressing its implicit
+        gradient and warning on every call -- even though the root is as good
+        as float32 allows.
+        """
+        with backend_state("torch", precision):
+            geometry = build_reference_even_asphere()
+            rays = build_reference_rays(off_axis=True)
+
+            with torch.no_grad():
+                primal = geometry._solve_distance_primal(rays)
+
+            assert bool(primal.converged.all()), (
+                f"{precision} solve reported non-convergence at residual "
+                f"{float(primal.residual.abs().max()):.3e}"
+            )
+            assert bool(torch.isfinite(primal.t).all())
+
+    def test_float32_does_not_warn_about_convergence(self):
+        with backend_state("torch", "float32"):
+            radius_param = torch.nn.Parameter(
+                torch.tensor(20.0, dtype=torch.float32)
+            )
+            geometry = build_reference_even_asphere()
+            geometry.radius = radius_param
+            rays = build_reference_rays(off_axis=True)
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", RuntimeWarning)
+                t = geometry.distance(rays)
+
+            assert bool(torch.isfinite(t).all())
+
 
 class TestHigherOrderContract:
     """The implicit correction contract is first-order gradient accuracy only.
@@ -220,7 +259,7 @@ class TestHigherOrderContract:
         (d1,) = torch.autograd.grad(t, radius_param, create_graph=True)
 
         assert torch.isfinite(d1)
-        assert float(d1.abs()) > 0.0
+        assert float(d1.detach().abs()) > 0.0
 
         def distance_at(radius_value: float) -> float:
             with torch.no_grad():
