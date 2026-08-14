@@ -167,52 +167,83 @@ class TestForwardConsistency:
         rays = build_reference_rays(off_axis=off_axis)
 
         with torch.no_grad():
-            t_primal = geometry._solve_distance_primal(rays)
+            primal = geometry._solve_distance_primal(rays)
 
         t_diff = geometry.distance(rays)
         assert t_diff.requires_grad
-        assert_allclose(t_diff.detach(), t_primal, rtol=0.0, atol=1e-12)
+        # The implicit path preserves the converged primal solution within
+        # solver tolerance and applies one final Newton correction -- it is
+        # not bitwise identical to the primal root.
+        assert_allclose(t_diff.detach(), primal.t, rtol=0.0, atol=1e-12)
+
+    def test_primal_result_reports_convergence_state(self):
+        geometry = build_reference_even_asphere()
+        rays = build_reference_rays(off_axis=True)
+
+        with torch.no_grad():
+            primal = geometry._solve_distance_primal(rays)
+
+        assert bool(primal.converged.all())
+        assert primal.iterations >= 1
+        assert float(primal.residual.abs().max()) < geometry.tol
 
 
 class TestHigherOrderContract:
-    """The implicit correction contract is first-order gradient accuracy only."""
+    """The implicit correction contract is first-order gradient accuracy only.
 
-    def test_second_derivative_not_contractually_matched(self):
-        # This oblique configuration accentuates the difference between
-        # double-backward through the implicit-correction graph and a finite-
-        # difference estimate of d/dR(dt/dR). We keep this as an explicit
-        # first-order-only contract test.
+    The supported contract is: ``distance()`` returns a value whose *first*
+    derivative matches the implicit-function-theorem result. Double backward
+    is permitted to run (so composing the geometry into a larger graph does
+    not raise), but its value is not part of the contract because the
+    denominator ``dF/dt`` is intentionally detached.
 
-        def distance_from_radius(radius_value):
-            geometry = build_reference_even_asphere()
-            geometry.radius = radius_value
-            rays = build_reference_rays(
-                off_axis=True,
-                x_override=1.0,
-                y_override=-0.8,
-                L_override=0.28,
-                M_override=-0.18,
-            )
-            return geometry.distance(rays)[0]
+    This deliberately does **not** assert that the second derivative is
+    *wrong*: encoding "must stay inaccurate" would force the implementation to
+    remain limited if higher-order support is added later.
+    """
 
+    def _distance_from_radius(self, radius_value):
+        geometry = build_reference_even_asphere()
+        geometry.radius = radius_value
+        rays = build_reference_rays(
+            off_axis=True,
+            x_override=1.0,
+            y_override=-0.8,
+            L_override=0.28,
+            M_override=-0.18,
+        )
+        return geometry.distance(rays)[0]
+
+    def test_first_derivative_is_the_supported_contract(self):
         radius_param = torch.nn.Parameter(torch.tensor(20.0, dtype=torch.float64))
-        t = distance_from_radius(radius_param)
-        d1 = torch.autograd.grad(t, radius_param, create_graph=True)[0]
-        d2_autograd = float(torch.autograd.grad(d1, radius_param)[0].detach().item())
+        t = self._distance_from_radius(radius_param)
+        (d1,) = torch.autograd.grad(t, radius_param, create_graph=True)
 
-        def first_derivative_at(radius_value: float) -> float:
-            p = torch.nn.Parameter(torch.tensor(radius_value, dtype=torch.float64))
-            t_local = distance_from_radius(p)
-            d1_local = torch.autograd.grad(t_local, p)[0]
-            return float(d1_local.detach().item())
+        assert torch.isfinite(d1)
+        assert float(d1.abs()) > 0.0
 
-        d2_fd = (first_derivative_at(20.0 + 5e-5) - first_derivative_at(20.0 - 5e-5)) / (
-            2.0 * 5e-5
+        def distance_at(radius_value: float) -> float:
+            with torch.no_grad():
+                return float(
+                    self._distance_from_radius(
+                        torch.tensor(radius_value, dtype=torch.float64)
+                    )
+                )
+
+        # First order is validated against central differences of the *value* --
+        # this is the part of the contract the implementation guarantees.
+        h = 5e-6
+        fd = (distance_at(20.0 + h) - distance_at(20.0 - h)) / (2.0 * h)
+        ad = float(d1.detach())
+        assert abs(ad - fd) <= max(1e-8, 1e-2 * abs(fd)), (
+            f"first-order AD/FD mismatch: AD={ad:.12e}, FD={fd:.12e}"
         )
 
-        rel_err = abs(d2_autograd - d2_fd) / (abs(d2_fd) + 1e-15)
-        assert rel_err > 2e-2, (
-            "Second-order behavior appears too close to finite differences for a "
-            "first-order-only contract. If higher-order support was intentionally "
-            "added, update this test and the Newton-Raphson distance contract."
-        )
+    def test_double_backward_runs_and_stays_finite(self):
+        # Higher-order derivatives are not guaranteed to match the unrolled
+        # Newton system, but they must not raise or produce NaN/Inf.
+        radius_param = torch.nn.Parameter(torch.tensor(20.0, dtype=torch.float64))
+        t = self._distance_from_radius(radius_param)
+        (d1,) = torch.autograd.grad(t, radius_param, create_graph=True)
+        (d2,) = torch.autograd.grad(d1, radius_param)
+        assert torch.isfinite(d2)
