@@ -24,6 +24,7 @@ from typing import Any
 import optiland.backend as be
 from optiland.coordinate_system import CoordinateSystem
 from optiland.geometries.standard import StandardGeometry
+from optiland.utils import machine_eps
 
 try:
     import torch
@@ -61,21 +62,6 @@ def _is_radius_infinite(radius):
     )
 
 
-def _dtype_eps(value) -> float:
-    """Machine epsilon of ``value``'s floating dtype.
-
-    Backend-agnostic: uses ``torch.finfo`` for torch tensors and numpy's
-    ``finfo`` otherwise, so a float32 solve gets a float32-sized threshold
-    instead of a numerically meaningless float64 one.
-    """
-    dtype = getattr(value, "dtype", None)
-    if dtype is None:
-        return float(be.finfo(float).eps)
-    if torch is not None and isinstance(dtype, torch.dtype):
-        return float(torch.finfo(dtype).eps)
-    return float(be.finfo(dtype).eps)
-
-
 def _sign_preserving_floor(value, eps=1e-14):
     """Clamp values to a minimum absolute magnitude while preserving sign.
 
@@ -98,7 +84,7 @@ def _denominator_threshold(value, scale=None, multiplier=_DENOM_EPS_MULTIPLIER):
     which is the point -- a fixed ``1e-14`` is below float32 round-off and so
     never triggers.
     """
-    tau = multiplier * _dtype_eps(value)
+    tau = multiplier * machine_eps(value)
     if scale is None:
         return tau
     return tau * be.maximum(scale, be.ones_like(scale))
