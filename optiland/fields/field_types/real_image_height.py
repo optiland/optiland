@@ -687,8 +687,12 @@ class RealImageHeightField(BaseFieldDefinition):
             # and ``be.full_like`` reads it out as a scalar. Either would sever
             # the residual's dependence on the field parameters, silently
             # zeroing every finite-conjugate field gradient.
-            x_local = be.atleast_1d(val_x if hasattr(val_x, "shape") else be.array(val_x))
-            y_local = be.atleast_1d(val_y if hasattr(val_y, "shape") else be.array(val_y))
+            x_local = be.atleast_1d(
+                val_x if hasattr(val_x, "shape") else be.array(val_x)
+            )
+            y_local = be.atleast_1d(
+                val_y if hasattr(val_y, "shape") else be.array(val_y)
+            )
 
             # Broadcast field parameters against the pupil sampling.
             ones = be.ones_like(be.atleast_1d(Px))
