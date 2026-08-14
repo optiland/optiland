@@ -47,6 +47,7 @@ We sincerely appreciate the contributions of the following individuals, whose ef
 - **Sanjay Santhanam** (`GitHub <https://github.com/Sanjays2402>`_)
 - **Ashish Verma** (`GitHub <https://github.com/ashishv-git>`_)
 - **Anthony Beaucamp** (`GitHub <https://github.com/8bit-Dude>`_)
+- **Kushagra Kartik** (`GitHub <https://github.com/Kushagra1480>`_)
 
 
 Your contributions, whether in the form of code, documentation, feedback, or discussions, are what make **Optiland** better for everyone.

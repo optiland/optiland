@@ -10,6 +10,15 @@ to compute correct first-order gradients through the converged intersection
 point without unrolling the Newton-Raphson iterations through the autograd
 graph.
 
+The two-stage structure used here -- a graph-free primal Newton solve
+followed by a single differentiable correction -- was contributed to Optiland
+by Kushagra Kartik (https://github.com/Kushagra1480) in PR #550, addressing
+the memory growth reported in issue #335.
+
+See ``docs/developers_guide/implicit_differentiation.rst`` for the derivation,
+the first-order-only contract, and the assumptions under which the derivative
+is exact.
+
 Kramer Harrison, 2024
 """
 
