@@ -15,9 +15,9 @@ The `BasePropagationModel` is an abstract base class that defines the interface 
 Homogeneous
 -----------
 
-The `Homogeneous` model is used for materials with a uniform refractive index. It's the most common propagation model.
+The `HomogeneousPropagation` model is used for materials with a uniform refractive index. It's the most common propagation model.
 
 GRIN - gradient-index
 ---------------------
 
-The `GRIN` model is used for gradient-index materials, where the refractive index varies with position.
+The `GRINPropagation` model is used for gradient-index materials, where the refractive index varies with position.

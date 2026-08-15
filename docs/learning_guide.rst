@@ -1,3 +1,8 @@
+.. _learning_guide_page:
+
+Learning Guide
+==============
+
 This guide is Optiland's primary learning path. Tutorials are grouped thematically and follow a
 progressive arc where concepts from earlier sections inform later ones. Each notebook is
 self-contained and runnable; you do not need to execute prior notebooks to run any given one.

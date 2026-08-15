@@ -8,10 +8,11 @@ Interaction models define how rays interact with a surface. Each `Surface` objec
 BaseInteractionModel
 --------------------
 
-The `BaseInteractionModel` is an abstract base class that defines the interface for all interaction models. It has two main methods:
+The `BaseInteractionModel` is an abstract base class that defines the interface for all interaction models. Its main abstract methods are:
 
 - `interact_real_rays(rays)`: Interacts with real rays.
 - `interact_paraxial_rays(rays)`: Interacts with paraxial rays.
+- `flip()`: Flips the interaction model (used when a surface's orientation is reversed).
 
 RefractiveReflectiveModel
 -------------------------
@@ -47,8 +48,9 @@ How to Extend This
 **Scenario:** Add a new surface interaction model to Optiland.
 
 **Step 1:** Create a new file in ``optiland/interactions/my_interaction.py``.
-**Step 2:** Subclass ``BaseInteractionModel`` and implement ``interact_real_rays(rays, surface)``
-and ``interact_paraxial_rays(rays, surface)``.
+**Step 2:** Subclass ``BaseInteractionModel`` and implement ``interact_real_rays(rays)``,
+``interact_paraxial_rays(rays)``, and ``flip()``. The owning surface is available via
+``self.parent_surface`` (set in the base constructor), so it does not need to be passed in.
 **Step 3:** Register in ``optiland/interactions/__init__.py``.
 **Step 4:** Add tests in ``tests/test_interactions/test_my_interaction.py``.
 

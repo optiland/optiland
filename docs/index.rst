@@ -72,7 +72,7 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
 
    3D plotting does not work in the interactive shell, but you can run the code in your local Python environment to try the 3D visualizations.
 
-.. _getting_started:
+.. _getting_started_toc:
 
 .. toctree::
    :maxdepth: 1
@@ -109,6 +109,7 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
    gallery/tolerancing
    gallery/freeforms
    gallery/diffractive_and_phase
+   gallery/coatings_and_polarization
    gallery/differentiable_ray_tracing
    gallery/real_world_projects
    gallery/external_tools
@@ -169,7 +170,10 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
    api/api_prescription
    api/api_backend
    api/api_coatings
+   api/api_colorimetry
    api/api_core
+   api/api_diagnostics
+   api/api_environment
    api/api_fields
    api/api_fileio
    api/api_geometries

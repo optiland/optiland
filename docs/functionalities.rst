@@ -52,7 +52,7 @@ Optimization and Tolerancing
   Add new optimization variables, constraints, or algorithms with minimal overhead.
 
 Extended Source Modeling
------------------------
+-------------------------
 
 - **Extended Source Ray Tracing**:
   Model spatially and angularly extended light sources and trace them through optical systems using the ``ExtendedSourceOptic`` wrapper.

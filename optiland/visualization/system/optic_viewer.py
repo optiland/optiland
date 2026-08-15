@@ -35,9 +35,8 @@ class OpticViewer(BaseViewer):
         system: An instance of OpticalSystem for system representation.
 
     Methods:
-        view(fields='all', wavelengths='primary', num_rays=3,
-             distribution='line_y', figsize=(10, 4), xlim=None, ylim=None):
-            Visualizes the optical system with specified parameters.
+        See :meth:`view` for visualizing the optical system with specified
+        parameters.
 
     """
 
