@@ -7,6 +7,8 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+import warnings
+
 import matplotlib.pyplot as plt
 import numpy as np
 import vtk
@@ -32,8 +34,110 @@ class Lens2D:
     """
 
     def __init__(self, surfaces):
-        # TODO: raise warning when lens surfaces overlap
         self.surfaces = surfaces
+        self._check_surface_overlap()
+
+    def _check_surface_overlap(self):
+        """Check if any neighboring surfaces in the lens physically overlap."""
+        if not self.surfaces or len(self.surfaces) < 2:
+            return
+
+        for k in range(len(self.surfaces) - 1):
+            surf1 = self.surfaces[k]
+            surf2 = self.surfaces[k + 1]
+
+            if not hasattr(surf1, "surf") or not hasattr(surf2, "surf"):
+                continue
+            if not hasattr(surf1.surf, "geometry") or not hasattr(
+                surf2.surf, "geometry"
+            ):
+                continue
+
+            if self._surfaces_overlap(surf1, surf2):
+                warnings.warn(
+                    "Lens surfaces overlap.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                break
+
+    def _surfaces_overlap(self, surf1, surf2):
+        """Determine if two neighboring surfaces of a lens physically overlap."""
+        try:
+            t = (
+                float(be.to_numpy(surf1.surf.thickness).item())
+                if hasattr(be.to_numpy(surf1.surf.thickness), "item")
+                else float(surf1.surf.thickness)
+            )
+        except Exception:
+            t = 0.0
+
+        try:
+            e1 = (
+                float(be.to_numpy(surf1.extent).item())
+                if hasattr(be.to_numpy(surf1.extent), "item")
+                else float(surf1.extent)
+            )
+        except Exception:
+            e1 = 0.0
+
+        try:
+            e2 = (
+                float(be.to_numpy(surf2.extent).item())
+                if hasattr(be.to_numpy(surf2.extent), "item")
+                else float(surf2.extent)
+            )
+        except Exception:
+            e2 = 0.0
+
+        e_max = max(e1, e2)
+        if not np.isfinite(e_max) or e_max <= 0:
+            grid = np.array([0.0])
+        else:
+            grid = np.linspace(-e_max, e_max, 128)
+
+        # Cross-sectional sampling along Y (x=0) and along X (y=0)
+        pts = [(0.0, float(y)) for y in grid]
+        if e_max > 0:
+            pts.extend([(float(x), 0.0) for x in grid])
+
+        xs = be.array([p[0] for p in pts])
+        ys = be.array([p[1] for p in pts])
+        r = be.sqrt(xs**2 + ys**2)
+
+        # Surface 1 clamped sag
+        if e1 > 0:
+            scale1 = be.where(r > e1, e1 / be.where(r == 0, 1.0, r), 1.0)
+            x1_c, y1_c = xs * scale1, ys * scale1
+        else:
+            x1_c, y1_c = xs, ys
+        z1_loc = surf1.surf.geometry.sag(x1_c, y1_c)
+
+        # Surface 2 clamped sag
+        if e2 > 0:
+            scale2 = be.where(r > e2, e2 / be.where(r == 0, 1.0, r), 1.0)
+            x2_c, y2_c = xs * scale2, ys * scale2
+        else:
+            x2_c, y2_c = xs, ys
+        z2_loc = surf2.surf.geometry.sag(x2_c, y2_c)
+
+        # Transform surface 2 points into global coordinates, then into surface 1 CS
+        x2_g, y2_g, z2_g = transform(xs, ys, z2_loc, surf2.surf, is_global=False)
+        _, _, z2_in_1 = transform(x2_g, y2_g, z2_g, surf1.surf, is_global=True)
+
+        z1_np = be.to_numpy(z1_loc)
+        z2_np = be.to_numpy(z2_in_1)
+
+        finite_mask = np.isfinite(z1_np) & np.isfinite(z2_np)
+        if not np.any(finite_mask):
+            return t <= 0
+
+        z1_np = z1_np[finite_mask]
+        z2_np = z2_np[finite_mask]
+
+        separation = z2_np - z1_np if t >= 0 else z1_np - z2_np
+
+        return bool(np.any(separation <= 0))
 
     def plot(self, ax, theme=None, projection="YZ"):
         """Plots the lens on the given matplotlib axis.
