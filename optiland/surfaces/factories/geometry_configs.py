@@ -29,6 +29,8 @@ class GeometryConfig:
 
 @dataclass
 class StandardConfig(GeometryConfig):
+    """Configuration for a standard geometry."""
+
     surface_type: ClassVar[str] = "standard"
     radius: float = be.inf
     conic: float = 0.0
@@ -36,11 +38,15 @@ class StandardConfig(GeometryConfig):
 
 @dataclass
 class PlaneConfig(GeometryConfig):
+    """Configuration for a plane geometry."""
+
     surface_type: ClassVar[str] = "plane"
 
 
 @dataclass
 class EvenAsphereConfig(GeometryConfig):
+    """Configuration for a even_asphere geometry."""
+
     surface_type: ClassVar[str] = "even_asphere"
     radius: float = be.inf
     conic: float = 0.0
@@ -51,6 +57,8 @@ class EvenAsphereConfig(GeometryConfig):
 
 @dataclass
 class OddAsphereConfig(GeometryConfig):
+    """Configuration for a odd_asphere geometry."""
+
     surface_type: ClassVar[str] = "odd_asphere"
     radius: float = be.inf
     conic: float = 0.0
@@ -61,6 +69,8 @@ class OddAsphereConfig(GeometryConfig):
 
 @dataclass
 class PolynomialConfig(GeometryConfig):
+    """Configuration for a polynomial geometry."""
+
     surface_type: ClassVar[str] = "polynomial"
     radius: float = be.inf
     conic: float = 0.0
@@ -71,6 +81,8 @@ class PolynomialConfig(GeometryConfig):
 
 @dataclass
 class GratingConfig(GeometryConfig):
+    """Configuration for a grating geometry."""
+
     surface_type: ClassVar[str] = "grating"
     radius: float = be.inf
     conic: float = 0.0
@@ -81,6 +93,8 @@ class GratingConfig(GeometryConfig):
 
 @dataclass
 class ChebyshevConfig(GeometryConfig):
+    """Configuration for a chebyshev geometry."""
+
     surface_type: ClassVar[str] = "chebyshev"
     radius: float = be.inf
     conic: float = 0.0
@@ -93,6 +107,8 @@ class ChebyshevConfig(GeometryConfig):
 
 @dataclass
 class ZernikeConfig(GeometryConfig):
+    """Configuration for a zernike geometry."""
+
     surface_type: ClassVar[str] = "zernike"
     radius: float = be.inf
     conic: float = 0.0
@@ -105,6 +121,8 @@ class ZernikeConfig(GeometryConfig):
 
 @dataclass
 class BiconicConfig(GeometryConfig):
+    """Configuration for a biconic geometry."""
+
     surface_type: ClassVar[str] = "biconic"
     radius_x: float = be.inf
     radius_y: float = be.inf
@@ -116,6 +134,8 @@ class BiconicConfig(GeometryConfig):
 
 @dataclass
 class ToroidalConfig(GeometryConfig):
+    """Configuration for a toroidal geometry."""
+
     surface_type: ClassVar[str] = "toroidal"
     radius_x: float = be.inf
     radius_y: float = be.inf
@@ -127,6 +147,8 @@ class ToroidalConfig(GeometryConfig):
 
 @dataclass
 class ForbesQbfsConfig(GeometryConfig):
+    """Configuration for a forbes_qbfs geometry."""
+
     surface_type: ClassVar[str] = "forbes_qbfs"
     radius: float = be.inf
     conic: float = 0.0
@@ -138,6 +160,8 @@ class ForbesQbfsConfig(GeometryConfig):
 
 @dataclass
 class ForbesQ2dConfig(GeometryConfig):
+    """Configuration for a forbes_q2d geometry."""
+
     surface_type: ClassVar[str] = "forbes_q2d"
     radius: float = be.inf
     conic: float = 0.0
@@ -149,6 +173,8 @@ class ForbesQ2dConfig(GeometryConfig):
 
 @dataclass
 class NurbsConfig(GeometryConfig):
+    """Configuration for a nurbs geometry."""
+
     surface_type: ClassVar[str] = "nurbs"
     radius: float = be.inf
     conic: float = 0.0
@@ -170,6 +196,8 @@ class NurbsConfig(GeometryConfig):
 
 @dataclass
 class GridSagConfig(GeometryConfig):
+    """Configuration for a grid_sag geometry."""
+
     surface_type: ClassVar[str] = "grid_sag"
     x_coordinates: list[float] = field(default_factory=list)
     y_coordinates: list[float] = field(default_factory=list)
@@ -180,4 +208,6 @@ class GridSagConfig(GeometryConfig):
 
 @dataclass
 class ParaxialConfig(GeometryConfig):
+    """Configuration for a paraxial geometry."""
+
     surface_type: ClassVar[str] = "paraxial"

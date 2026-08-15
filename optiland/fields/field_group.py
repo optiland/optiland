@@ -39,6 +39,28 @@ class FieldGroup:
         self.field_definition: BaseFieldDefinition | None = None
         self.telecentric = False
 
+    def require_definition(self) -> BaseFieldDefinition:
+        """Return the field definition, or raise if none has been set.
+
+        Field coordinates cannot be interpreted without a field type, so
+        ray tracing fails with an opaque ``AttributeError`` if this is
+        skipped. This turns that into an actionable message.
+
+        Returns:
+            The active field definition.
+
+        Raises:
+            ValueError: If no field type has been set on the system.
+        """
+        if self.field_definition is None:
+            raise ValueError(
+                "No field type is defined on the optical system, so field "
+                "coordinates cannot be interpreted. Set one with "
+                "lens.fields.set_type('angle') for an object at infinity, or "
+                "lens.fields.set_type('object_height') for a finite object."
+            )
+        return self.field_definition
+
     @property
     def x_fields(self):
         """be.ndarray: x field values."""

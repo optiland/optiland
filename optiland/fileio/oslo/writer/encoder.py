@@ -12,6 +12,7 @@ import math
 from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
+from optiland.fileio.common import FIELD_CLASS_TO_TYPE
 from optiland.fileio.oslo.model import OsloDataModel
 from optiland.fileio.oslo.surfaces import get_handler_for_optiland_type
 from optiland.materials import AbbeMaterial, IdealMaterial, Material
@@ -19,15 +20,6 @@ from optiland.physical_apertures import RadialAperture
 
 if TYPE_CHECKING:
     from optiland.optic import Optic
-
-
-# Map from field definition class name to Optiland field type string
-_FIELD_CLASS_TO_TYPE: dict[str, str] = {
-    "AngleField": "angle",
-    "ObjectHeightField": "object_height",
-    "ParaxialImageHeightField": "paraxial_image_height",
-    "RealImageHeightField": "real_image_height",
-}
 
 
 class OpticToOsloEncoder:
@@ -84,7 +76,7 @@ class OpticToOsloEncoder:
         if self.optic.fields:
             fd = self.optic.fields.field_definition
             f_type = (
-                _FIELD_CLASS_TO_TYPE.get(type(fd).__name__, "angle") if fd else "angle"
+                FIELD_CLASS_TO_TYPE.get(type(fd).__name__, "angle") if fd else "angle"
             )
             self.data_model.fields["type"] = f_type
             # OSLO convention: store only the maximum absolute field value.
@@ -136,6 +128,7 @@ class OpticToOsloEncoder:
             # Material — detect mirror via interaction_model.is_reflective
             im = getattr(surface, "interaction_model", None)
             is_mirror = bool(getattr(im, "is_reflective", False))
+            is_paraxial = bool(im.interaction_type == "thin_lens")
             material_to_encode = "mirror" if is_mirror else surface.material_post
             surf_data["material"] = self._encode_material(material_to_encode)
 
@@ -159,6 +152,10 @@ class OpticToOsloEncoder:
                 with contextlib.suppress(Exception):
                     surf_data["AP"] = float(self.optic.paraxial.EPD()) / 2.0
 
+            # Paraxial case
+            if is_paraxial:
+                surf_data["PFL"] = float(surface.interaction_model.f)
+
             # Decenter/Tilt
             for k in ["DCX", "DCY", "DCZ", "TLA", "TLB", "TLC"]:
                 val = getattr(surface, k.lower(), 0.0)
@@ -169,20 +166,20 @@ class OpticToOsloEncoder:
 
     def _encode_material(self, material: Any) -> str:
         if material == "air" or material is None:
-            return "AIR"
+            return "  AIR"
         if material == "mirror":
-            return "RFL"
+            return "  RFL"
 
         if isinstance(material, Material):
-            return f"GLA {material.name}"
+            return f"  GLA {material.name}"
 
         if isinstance(material, IdealMaterial):
             n = float(material.index.item())
             # IdealMaterial with n≈1.0 is air - write AIR, not GLA 1.0 1.0 1.0
             if abs(n - 1.0) < 1e-6:
-                return "AIR"
+                return "  AIR"
             ns = f"{n:.7g}"
-            return f"GLA {ns} {ns} {ns}"
+            return f"  GLA {ns} {ns} {ns}"
 
         if isinstance(material, AbbeMaterial):
             nd = float(material.index.item())
@@ -192,14 +189,14 @@ class OpticToOsloEncoder:
                 n_d = f"{float(material.n(w_d).item()):.7g}"
                 n_F = f"{float(material.n(w_F).item()):.7g}"
                 n_C = f"{float(material.n(w_C).item()):.7g}"
-                return f"GLA {n_d} {n_F} {n_C}"
+                return f"  GLA {n_d} {n_F} {n_C}"
             except Exception:
                 ns = f"{nd:.7g}"
-                return f"GLA {ns} {ns} {ns}"
+                return f"  GLA {ns} {ns} {ns}"
 
         # Fallback
         try:
             name = getattr(material, "name", str(material))
-            return f"GLA {name}"
+            return f"  GLA {name}"
         except Exception:
-            return "AIR"
+            return "  AIR"

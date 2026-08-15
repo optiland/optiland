@@ -35,8 +35,16 @@ _FIELD_TYPE_TO_FTYP: dict[str, int] = {
 
 
 def _fmt(value: float) -> str:
-    """Format a float in Zemax scientific notation."""
-    return f"{value:.8E}"
+    """Format a float in Zemax scientific notation.
+
+    Uses 17 significant digits, the IEEE-754 binary64 round-trip guarantee, so
+    that ``save_zemax_file`` followed by ``load_zemax_file`` reproduces the
+    original system bit-for-bit. The previous ``%.8E`` (9 significant digits)
+    was lossy enough to matter: on ``HubbleTelescope`` (EFL ~5.76e4) a single
+    save/load shifted real-ray image-surface intercepts by 1.8e-06 mm, which
+    exceeds the 1e-06 mm agreement threshold used for cross-tool validation.
+    """
+    return f"{value:.16E}"
 
 
 def _fmt_vals(values: list[float]) -> str:
@@ -171,39 +179,45 @@ class ZemaxFileEncoder:
         lines.append("  MIRR 2 1")
         lines.append("  SLAB 0")
 
-        # Thickness
+        self._encode_thickness(lines, raw)
+        self._encode_conic(lines, raw)
+        self._encode_glass_line(lines, raw)
+        self._encode_diameter(lines, raw)
+        self._encode_physical_aperture(lines, raw)
+        self._encode_parameters(lines, raw)
+
+    def _encode_thickness(self, lines: list[str], raw: dict[str, Any]) -> None:
         disz = raw.get("DISZ", 0.0)
         if disz == "INFINITY" or (isinstance(disz, float) and math.isinf(disz)):
             lines.append("  DISZ INFINITY")
         else:
             lines.append(f"  DISZ {_fmt(float(disz))}")
 
-        # Conic (omit if 0)
+    def _encode_conic(self, lines: list[str], raw: dict[str, Any]) -> None:
         coni = raw.get("CONI", 0.0)
         if coni is not None and abs(float(coni)) > 1e-16:
             lines.append(f"  CONI {_fmt(float(coni))}")
 
-        # Glass
+    def _encode_glass_line(self, lines: list[str], raw: dict[str, Any]) -> None:
         glas = raw.get("GLAS")
         if glas is not None:
             lines.append(self._encode_glas(glas))
 
-        # Diameter
+    def _encode_diameter(self, lines: list[str], raw: dict[str, Any]) -> None:
         diam = raw.get("DIAM")
         if diam is not None:
             lines.append(f"  DIAM {_fmt(float(diam))}")
 
-        # Physical aperture (CLAP)
+    def _encode_physical_aperture(self, lines: list[str], raw: dict[str, Any]) -> None:
         clap = raw.get("CLAP")
-        if clap is not None:
-            try:
-                lines.append(
-                    f"  CLAP {_fmt(float(clap.r_min))} {_fmt(float(clap.r_max))}"
-                )
-            except AttributeError:
-                lines.append("  CLAP 0")
+        if clap is None:
+            return
+        if hasattr(clap, "r_min"):
+            lines.append(f"  CLAP {_fmt(float(clap.r_min))} {_fmt(float(clap.r_max))}")
+        elif hasattr(clap, "x_min"):
+            lines.append(f"  CLAP {_fmt(0.0)} {_fmt(float(clap.x_max))}")
 
-        # Parameters (PARM) — skip zeros
+    def _encode_parameters(self, lines: list[str], raw: dict[str, Any]) -> None:
         for i in range(1, 17):
             key = f"PARM_{i}"
             if key in raw:
@@ -215,8 +229,12 @@ class ZemaxFileEncoder:
         name = glas.get("name", "")
         if name == "MIRROR":
             return "  GLAS MIRROR 0 0 0 0 0 0 0 0 0 0"
-        if "n" in glas and "V" in glas:
+        if "catalog" not in glas and "n" in glas and "V" in glas:
             # MODEL glass
             return f"  GLAS MODEL 1 0 {_fmt(glas['n'])} {_fmt(glas['V'])} 0 0 0 0 0 0"
-        # Catalog glass
+        if "n" in glas and "V" in glas:
+            # Catalog glass: record Nd/Vd so an ambiguous name (present in
+            # multiple GCAT catalogs) can be disambiguated on reload.
+            return f"  GLAS {name} 0 0 {_fmt(glas['n'])} {_fmt(glas['V'])} 0 0 0 0 0 0"
+        # Catalog glass without index data (e.g. round-tripped from another format)
         return f"  GLAS {name} 0 0 0 0 0 0 0 0 0 0"

@@ -17,6 +17,7 @@ from tqdm import tqdm
 
 
 def generate_database(output_file):
+    """Scrape catalog-nk.yml and write the resulting glass data to a CSV file."""
     # load the catalog
     filename = "catalog-nk.yml"
 

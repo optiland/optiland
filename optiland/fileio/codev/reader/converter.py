@@ -188,6 +188,11 @@ class CodeVToOpticConverter(BaseOpticReader):
             "material": material,
         }
 
+        # Is paraxial?
+        if "mfl" in surf:
+            params["surface_type"] = "paraxial"
+            params["f"] = surf["mfl"]
+
         coefficients = surf.get("coefficients")
         if coefficients:
             params["coefficients"] = coefficients

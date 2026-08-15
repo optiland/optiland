@@ -1,6 +1,0 @@
-﻿mtf
-===
-
-.. automodule:: mtf
-
-   

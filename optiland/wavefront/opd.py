@@ -29,6 +29,8 @@ if TYPE_CHECKING:
 
 
 class OPDData(TypedDict):
+    """Per-field OPD sample grid: pupil coordinates and wavefront error."""
+
     x: NDArray
     y: NDArray
     z: NDArray

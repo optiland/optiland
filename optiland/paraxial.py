@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import optiland.backend as be
-from optiland.fields import ParaxialImageHeightField
+from optiland.fields import ObjectHeightField, ParaxialImageHeightField
 from optiland.raytrace.paraxial_ray_tracer import ParaxialRayTracer
 
 if TYPE_CHECKING:
@@ -263,7 +263,11 @@ class Paraxial:
 
         """
         if self.optic.aperture is None:
-            raise ValueError("No aperture is defined on the optical system.")
+            raise ValueError(
+                "No aperture is defined on the optical system, so the pupil "
+                "size is unknown. Set one with "
+                'lens.set_aperture(aperture_type="EPD", value=25).'
+            )
 
         wavelength = self.optic.primary_wavelength
         return self.optic.aperture.compute_epd(self, wavelength)
@@ -309,7 +313,11 @@ class Paraxial:
 
         """
         if self.optic.aperture is None:
-            raise ValueError("No aperture is defined on the optical system.")
+            raise ValueError(
+                "No aperture is defined on the optical system, so the pupil "
+                "size is unknown. Set one with "
+                'lens.set_aperture(aperture_type="EPD", value=25).'
+            )
         fno = self.optic.aperture.direct_fno()
         if fno is not None:
             return fno
@@ -356,8 +364,11 @@ class Paraxial:
         obj_z = self.surfaces.positions[1] - 10  # 10 mm before first surface
 
         if self.optic.object_surface is None:
-            # TODO: make some nice error message
-            raise ValueError()
+            raise ValueError(
+                "No object surface is defined on the optical system. The marginal "
+                "ray starts at the object, so an object surface is required. Add "
+                "one with `optic.add_surface(index=0, ...)`."
+            )
 
         if self.optic.object_surface.is_infinite:
             ya = EPD / 2
@@ -405,12 +416,23 @@ class Paraxial:
         y_obj_unit = y_rev_unit[-1]
         u_obj_unit = u_rev_unit[-1]
 
-        # Scale based on field definition
-        if self.optic.fields.field_definition is None:
-            # TODO: make some nice error message
-            raise ValueError()
+        field_definition = self.optic.fields.field_definition
+        if not self.optic.object_surface.is_infinite and isinstance(
+            field_definition, ObjectHeightField
+        ):
+            first_surface_z = self.surfaces.positions[1, 0]
+            object_z = self.optic.object_surface.geometry.cs.z
+            y_obj_unit = y_obj_unit + (first_surface_z - object_z) * u_obj_unit
 
-        scaling_factor = self.optic.fields.field_definition.scale_chief_ray_for_field(
+        # Scale based on field definition
+        if field_definition is None:
+            raise ValueError(
+                "No field definition is set on the optical system. The chief ray "
+                "is scaled by the field, so a field type is required. Set one with "
+                '`optic.fields.set_type(...)`, e.g. "angle" or "object_height".'
+            )
+
+        scaling_factor = field_definition.scale_chief_ray_for_field(
             self.optic, y_obj_unit, u_obj_unit, y_img_unit
         )
 

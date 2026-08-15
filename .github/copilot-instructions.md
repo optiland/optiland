@@ -5,7 +5,7 @@
 **Optiland** is an open-source optical design library in Python for designing, analyzing, and optimizing optical systems. It provides comprehensive tools for ray tracing, optical system definition, aberration analysis, optimization, and visualization.
 
 ### Key Facts
-- **Version**: 0.6.0
+- **Version**: 0.6.1
 - **Languages**: Python 3.11-3.14
 - **Size**: ~25 core modules, 1700+ tests, comprehensive documentation
 - **Dependencies**: numpy, scipy, matplotlib, vtk, pandas, pyyaml, tabulate, numba, requests, seaborn
@@ -186,11 +186,11 @@ from optiland import optic
 
 system = optic.Optic()
 system.surfaces.add(index=0, thickness=np.inf)
-system.surfaces.add(index=1, thickness=7, radius=20.0, is_stop=True, material='N-SF11')
+system.surfaces.add(index=1, thickness=7, radius=20.0, is_stop=True, material="N-SF11")
 system.surfaces.add(index=2, thickness=23.0)
 system.surfaces.add(index=3)
-system.set_aperture(aperture_type='EPD', value=20)
-system.fields.set_type(field_type='angle')
+system.set_aperture(aperture_type="EPD", value=20)
+system.fields.set_type(field_type="angle")
 system.fields.add(y=0)
 system.wavelengths.add(value=0.587, is_primary=True)
 

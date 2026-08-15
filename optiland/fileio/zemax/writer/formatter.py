@@ -13,21 +13,16 @@ import warnings
 from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
+from optiland.fileio.common import WL_D, compute_abbe_number, field_type_string, is_air
 from optiland.fileio.zemax.model import ZemaxDataModel
 from optiland.fileio.zemax.surfaces import (
     CoordinateBreakSurfaceHandler,
     get_handler_for_optiland_type,
 )
-from optiland.materials.ideal import IdealMaterial
 from optiland.materials.material import Material
 
 if TYPE_CHECKING:
     from optiland.optic import Optic
-
-# CIE standard wavelengths for Abbe number calculation (um)
-_WL_d = 0.5876  # helium d-line
-_WL_F = 0.4861  # hydrogen F-line
-_WL_C = 0.6563  # hydrogen C-line
 
 # Map from Optiland aperture type to Zemax operand string
 _AP_TYPE_TO_OPERAND: dict[str, str] = {
@@ -46,14 +41,6 @@ _FIELD_TYPE_TO_FTYP: dict[str, int] = {
     "real_image_height": 3,
 }
 
-# Map from field definition class name to field type string
-_FIELD_CLASS_TO_TYPE: dict[str, str] = {
-    "AngleField": "angle",
-    "ObjectHeightField": "object_height",
-    "ParaxialImageHeightField": "paraxial_image_height",
-    "RealImageHeightField": "real_image_height",
-}
-
 # Map from Optiland geometry str() to Optiland surface type string.
 # "Planar" (flat surface) maps to "standard" since Zemax encodes it as
 # TYPE STANDARD with CURV 0.
@@ -64,27 +51,6 @@ _GEOM_STR_TO_TYPE: dict[str, str] = {
     "Odd Asphere": "odd_asphere",
     "Toroidal": "toroidal",
 }
-
-
-def _is_air(material: Any) -> bool:
-    """Return True if *material* represents air (n ≈ 1.0, non-absorbing)."""
-    if material is None:
-        return True
-    if isinstance(material, str) and material.lower() in ("air", ""):
-        return True
-    if isinstance(material, IdealMaterial):
-        n_val = float(be.atleast_1d(material.index)[0])
-        return abs(n_val - 1.0) < 1e-6
-    return False
-
-
-def _field_type_string(optic: Optic) -> str:
-    """Derive the Optiland field type string from the optic's field definition."""
-    fd = optic.fields.field_definition
-    if fd is None:
-        return "angle"
-    class_name = type(fd).__name__
-    return _FIELD_CLASS_TO_TYPE.get(class_name, "angle")
 
 
 class OpticToZemaxConverter:
@@ -138,7 +104,7 @@ class OpticToZemaxConverter:
     # ------------------------------------------------------------------
 
     def _convert_fields(self, model: ZemaxDataModel) -> None:
-        field_type = _field_type_string(self._optic)
+        field_type = field_type_string(self._optic)
         ftyp_int = _FIELD_TYPE_TO_FTYP.get(field_type, 0)
 
         fields = self._optic.fields
@@ -225,89 +191,35 @@ class OpticToZemaxConverter:
         cb_handler = CoordinateBreakSurfaceHandler()
 
         for surface in self._optic.surfaces:
-            geom = surface.geometry
-            geom_str = str(geom)
-            optiland_type = _GEOM_STR_TO_TYPE.get(geom_str)
+            optiland_type = self._resolve_geometry_type(surface, output_idx)
+            cs_angles = self._coordinate_break_angles(surface.geometry.cs)
 
-            if optiland_type is None:
-                raise NotImplementedError(
-                    f"Surface {output_idx}: geometry type '{geom_str}' "
-                    "is not supported by the Zemax writer."
-                )
-
-            # Detect non-trivial coordinate system
-            cs = geom.cs
-            has_tilt = any(
-                abs(float(getattr(cs, attr, 0.0))) > 1e-12
-                for attr in ("rx", "ry", "rz")
-            )
-            has_decenter = any(
-                abs(float(getattr(cs, attr, 0.0))) > 1e-12 for attr in ("x", "y")
-            )
-            has_cs = has_tilt or has_decenter
-
-            if has_cs:
-                # Pre-surface COORDBRK
-                rx_deg = math.degrees(float(cs.rx))
-                ry_deg = math.degrees(float(cs.ry))
-                rz_deg = math.degrees(float(cs.rz))
+            if cs_angles is not None:
                 model.surfaces[output_idx] = cb_handler.format_cs(
-                    dx=float(cs.x),
-                    dy=float(cs.y),
+                    dx=float(surface.geometry.cs.x),
+                    dy=float(surface.geometry.cs.y),
                     dz=0.0,
-                    rx_deg=rx_deg,
-                    ry_deg=ry_deg,
-                    rz_deg=rz_deg,
+                    rx_deg=cs_angles[0],
+                    ry_deg=cs_angles[1],
+                    rz_deg=cs_angles[2],
                 )
                 output_idx += 1
 
-            # The actual surface
-            handler = get_handler_for_optiland_type(optiland_type)
-            raw = handler.format(surface)
-
-            thickness = float(be.atleast_1d(be.array(surface.thickness)).ravel()[0])
-            if be.isinf(thickness):
-                raw["DISZ"] = "INFINITY"
-            else:
-                raw["DISZ"] = thickness
-
-            if surface.is_stop:
-                raw["STOP"] = True
-
-            # Semi-aperture (DIAM)
-            # For float_by_stop_size aperture, the stop surface must carry DIAM
-            ap = self._optic.aperture
-            if (
-                surface.is_stop
-                and ap is not None
-                and ap.ap_type == "float_by_stop_size"
-            ):
-                raw["DIAM"] = float(ap.value)
-            elif surface.semi_aperture is not None:
-                raw["DIAM"] = float(surface.semi_aperture)
-
-            # Physical aperture (CLAP)
-            if surface.aperture is not None:
-                raw["CLAP"] = surface.aperture
-
-            # Glass
-            mat = surface.material_post
-            glass_entry = self._format_glass(mat, output_idx, glass_catalogs)
-            if glass_entry is not None:
-                raw["GLAS"] = glass_entry
-
+            raw = self._encode_surface_body(
+                surface, optiland_type, output_idx, glass_catalogs
+            )
             model.surfaces[output_idx] = raw
             output_idx += 1
 
-            if has_cs:
-                # Return COORDBRK (inverse transform)
+            if cs_angles is not None:
+                cs = surface.geometry.cs
                 model.surfaces[output_idx] = cb_handler.format_cs(
                     dx=-float(cs.x),
                     dy=-float(cs.y),
                     dz=0.0,
-                    rx_deg=-rx_deg,
-                    ry_deg=-ry_deg,
-                    rz_deg=-rz_deg,
+                    rx_deg=-cs_angles[0],
+                    ry_deg=-cs_angles[1],
+                    rz_deg=-cs_angles[2],
                 )
                 output_idx += 1
 
@@ -315,11 +227,83 @@ class OpticToZemaxConverter:
             # Unique catalog names, preserving order
             model.glass_catalogs = list(dict.fromkeys(glass_catalogs))
 
+    def _resolve_geometry_type(self, surface: Any, output_idx: int) -> str:
+        """Map a surface's geometry to a Zemax-supported Optiland type string."""
+        geom_str = str(surface.geometry)
+        if surface.interaction_model.interaction_type == "thin_lens":
+            optiland_type = "paraxial"
+        else:
+            optiland_type = _GEOM_STR_TO_TYPE.get(geom_str)
+        if optiland_type is None:
+            raise NotImplementedError(
+                f"Surface {output_idx}: geometry type '{geom_str}' "
+                "is not supported by the Zemax writer."
+            )
+        return optiland_type
+
+    def _coordinate_break_angles(self, cs: Any) -> tuple[float, float, float] | None:
+        """Return (rx, ry, rz) in degrees if *cs* has a non-trivial transform."""
+        has_tilt = any(
+            abs(float(getattr(cs, attr, 0.0))) > 1e-12 for attr in ("rx", "ry", "rz")
+        )
+        has_decenter = any(
+            abs(float(getattr(cs, attr, 0.0))) > 1e-12 for attr in ("x", "y")
+        )
+        if not (has_tilt or has_decenter):
+            return None
+        return (
+            math.degrees(float(cs.rx)),
+            math.degrees(float(cs.ry)),
+            math.degrees(float(cs.rz)),
+        )
+
+    def _encode_surface_body(
+        self,
+        surface: Any,
+        optiland_type: str,
+        output_idx: int,
+        glass_catalogs: list[str],
+    ) -> dict[str, Any]:
+        """Build the raw Zemax surface dict for a single optic surface."""
+        handler = get_handler_for_optiland_type(optiland_type)
+        raw = handler.format(surface)
+
+        thickness = float(be.atleast_1d(be.array(surface.thickness)).ravel()[0])
+        raw["DISZ"] = "INFINITY" if be.isinf(thickness) else thickness
+
+        if surface.is_stop:
+            raw["STOP"] = True
+
+        # Semi-aperture (DIAM)
+        # For float_by_stop_size aperture, the stop surface must carry DIAM
+        ap = self._optic.aperture
+        if surface.is_stop and ap is not None and ap.ap_type == "float_by_stop_size":
+            raw["DIAM"] = float(ap.value)
+        elif surface.semi_aperture is not None:
+            raw["DIAM"] = float(surface.semi_aperture)
+
+        # Physical aperture (CLAP)
+        if surface.aperture is not None:
+            raw["CLAP"] = surface.aperture
+
+        # Glass — check the reflective flag first (mirror)
+        is_reflective = getattr(
+            getattr(surface, "interaction_model", None), "is_reflective", False
+        )
+        glass_entry = self._format_glass(
+            surface.material_post, output_idx, glass_catalogs, is_reflective
+        )
+        if glass_entry is not None:
+            raw["GLAS"] = glass_entry
+
+        return raw
+
     def _format_glass(
         self,
         mat: Any,
         surf_idx: int,
         glass_catalogs: list[str],
+        is_reflective: bool = False,
     ) -> dict[str, Any] | None:
         """Build a GLAS operand dict for a material.
 
@@ -327,15 +311,22 @@ class OpticToZemaxConverter:
             mat: The surface material (post).
             surf_idx: Output surface index (used in warnings).
             glass_catalogs: Mutable list to accumulate catalog names.
+            is_reflective: True if the surface is a reflective (mirror) surface.
 
         Returns:
             A dict with keys ``name`` and optionally ``catalog``,
             or None for air.
         """
-        if _is_air(mat):
+        # Mirror surface — detected via interaction_model.is_reflective. This must
+        # precede the air check: the material following a mirror is the ambient
+        # medium, so is_air() is True for a mirror in air.
+        if is_reflective:
+            return {"name": "MIRROR"}
+
+        if is_air(mat):
             return None
 
-        # Mirror
+        # Mirror material string fallback
         if isinstance(mat, str) and mat.lower() == "mirror":
             return {"name": "MIRROR"}
 
@@ -343,27 +334,15 @@ class OpticToZemaxConverter:
         if isinstance(mat, Material) and mat.reference:
             catalog = mat.reference.upper()
             glass_catalogs.append(catalog)
-            return {"name": mat.name.upper(), "catalog": catalog}
+            n_d, v_d = compute_abbe_number(mat, WL_D)
+            return {"name": mat.name.upper(), "catalog": catalog, "n": n_d, "V": v_d}
 
         # Named glass without explicit reference — try to use name only
         if isinstance(mat, Material):
             return {"name": mat.name.upper()}
 
         # AbbeMaterial or any other material -> MODEL glass
-        try:
-            primary_wl = float(self._optic.primary_wavelength)
-            n_d = float(be.atleast_1d(be.array(mat.n(primary_wl))).ravel()[0])
-        except Exception:
-            n_d = 1.5
-
-        try:
-            n_F = float(be.atleast_1d(be.array(mat.n(_WL_F))).ravel()[0])
-            n_C = float(be.atleast_1d(be.array(mat.n(_WL_C))).ravel()[0])
-            n_d_cie = float(be.atleast_1d(be.array(mat.n(_WL_d))).ravel()[0])
-            denom = n_F - n_C
-            v_num = 99.99 if abs(denom) < 1e-12 else (n_d_cie - 1.0) / denom
-        except Exception:
-            v_num = 64.17  # approximate Abbe number for BK7
+        n_d, v_num = compute_abbe_number(mat, float(self._optic.primary_wavelength))
 
         mat_name = getattr(mat, "name", type(mat).__name__)
         warnings.warn(

@@ -11,9 +11,9 @@ from __future__ import annotations
 import functools
 import warnings
 from collections.abc import Callable
-from typing import TypeVar
+from typing import Any, TypeVar
 
-F = TypeVar("F", bound=Callable)
+F = TypeVar("F", bound=Callable[..., Any])
 
 
 def deprecated(replacement: str, removal: str = "v0.7.0") -> Callable[[F], F]:
@@ -46,7 +46,7 @@ def deprecated(replacement: str, removal: str = "v0.7.0") -> Callable[[F], F]:
         )
 
         @functools.wraps(func)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             warnings.warn(msg, DeprecationWarning, stacklevel=2)
             return func(*args, **kwargs)
 

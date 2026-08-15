@@ -258,7 +258,7 @@ class TestSurfaceGroupUpdatesRealObjects:
     def test_add_surface_by_creation_error_no_index(self, set_test_backend):
         sg = self._setup_surface_group(use_absolute_cs=False)
         with pytest.raises(
-            ValueError, match="Must define index when defining surface."
+            ValueError, match="No index was given for the new surface"
         ):
             sg.add(surface_type="standard", comment="no_index_surf")
 
@@ -326,7 +326,7 @@ class TestSurfaceGroupUpdatesRealObjects:
     # --- Error condition tests from SurfaceGroup code directly ---
     def test_add_surface_new_object_error_negative_index(self, set_test_backend):
         sg = self._setup_surface_group(num_initial_surfaces=1)
-        with pytest.raises(IndexError, match="Index -1 cannot be negative."):
+        with pytest.raises(IndexError, match="Cannot add a surface at index -1"):
             sg.add(new_surface=create_real_surface(), index=-1)
 
     def test_add_surface_new_object_error_index_out_of_bounds(self, set_test_backend):
@@ -336,7 +336,7 @@ class TestSurfaceGroupUpdatesRealObjects:
         # index=2 is out of bounds.
         with pytest.raises(
             IndexError,
-            match=r"Index 2 is out of bounds for insertion. Max index for insertion is 1 \(to append\)\.",
+            match=r"Cannot add a surface at index 2: the system currently has 1",
         ):
             sg.add(new_surface=create_real_surface(), index=2)
 
@@ -566,9 +566,9 @@ class TestSurfaceGroupUpdatesRealObjects:
         lens.surfaces.add(index=3, radius=be.inf, thickness=5)
         lens.surfaces.stop_index = 2
         assert lens.surfaces.surfaces[2].is_stop == True
-        with pytest.raises(ValueError, match="Index out of range"):
+        with pytest.raises(ValueError, match="Invalid stop index, got 0"):
             lens.surfaces.stop_index = 0
-        with pytest.raises(ValueError, match="Index out of range"):
+        with pytest.raises(ValueError, match="Invalid stop index, got 3"):
             lens.surfaces.stop_index = 3
 
     @pytest.mark.skipif(
@@ -580,7 +580,7 @@ class TestSurfaceGroupUpdatesRealObjects:
         lens1.surfaces.add(index=0, thickness=be.inf, material="Air")
         with pytest.raises(
             ValueError,
-            match=("Surface index cannot be zero after first surface is created."),
+            match="Cannot add a surface at index 0",
         ):
             lens1.surfaces.add(index=0, thickness=be.inf, material="Air")
 

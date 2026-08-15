@@ -12,12 +12,15 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
+from optiland._suggest import options_hint
 
 if TYPE_CHECKING:
-    from optiland._types import ScalarOrArray
+    from collections.abc import Iterator
+
+    from optiland._types import BEArray, ScalarOrArray
 
 
 class Wavelength:
@@ -73,7 +76,7 @@ class Wavelength:
         return "um"
 
     @unit.setter
-    def unit(self, new_unit: str):
+    def unit(self, new_unit: str) -> None:
         """Sets the unit of the wavelength.
 
         Args:
@@ -99,10 +102,13 @@ class Wavelength:
 
         if self._unit in unit_conversion:
             conversion_factor = unit_conversion[self._unit]
-            return self._value * conversion_factor
-        raise ValueError("Unsupported unit for conversion to microns.")
+            return float(self._value * conversion_factor)
+        raise ValueError(
+            f"Unsupported wavelength unit, got {self._unit!r}."
+            f"{options_hint(str(self._unit), unit_conversion)}"
+        )
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Get a dictionary representation of the wavelength.
 
         Returns:
@@ -117,7 +123,7 @@ class Wavelength:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> Wavelength:
+    def from_dict(cls, data: dict[str, Any]) -> Wavelength:
         """Create a Wavelength instance from a dictionary representation.
 
         Args:
@@ -159,7 +165,8 @@ class WavelengthGroup:
 
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Initialize an empty WavelengthGroup."""
         self.wavelengths: list[Wavelength] = []
 
     @property
@@ -172,13 +179,16 @@ class WavelengthGroup:
         """The number of wavelengths"""
         return len(self.wavelengths)
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: int) -> Wavelength:
+        """Return the wavelength at *index*."""
         return self.wavelengths[index]
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[Wavelength]:
+        """Iterate over the wavelengths in the group."""
         return iter(self.wavelengths)
 
-    def __len__(self):
+    def __len__(self) -> int:
+        """Return the number of wavelengths in the group."""
         return len(self.wavelengths)
 
     @property
@@ -186,15 +196,25 @@ class WavelengthGroup:
         """The index of the primary wavelength
 
         raises:
-            StopIteration: If no primary wavelength is found
+            ValueError: If no primary wavelength is found
         """
-        return next(i for i, w in enumerate(self.wavelengths) if w.is_primary)
+        try:
+            return next(i for i, w in enumerate(self.wavelengths) if w.is_primary)
+        except StopIteration:
+            raise ValueError(
+                "No primary wavelength is defined. Add one with:\n"
+                "    lens.wavelengths.add(value=0.55, is_primary=True)"
+            ) from None
 
     @primary_index.setter
-    def primary_index(self, index: int):
+    def primary_index(self, index: int) -> None:
         """set the wavelength indexed by `index` as primary"""
         if not 0 <= index < len(self.wavelengths):
-            raise ValueError("Index out of range")
+            raise ValueError(
+                f"Invalid primary wavelength index, got {index}. The system "
+                f"has {len(self.wavelengths)} wavelength(s), so the index "
+                f"must be between 0 and {len(self.wavelengths) - 1}."
+            )
         for idx, wavelength in enumerate(self.wavelengths):
             wavelength.is_primary = idx == index
 
@@ -209,7 +229,7 @@ class WavelengthGroup:
         is_primary: bool = False,
         unit: str = "um",
         weight: float = 1.0,
-    ):
+    ) -> None:
         """Adds a new wavelength to the list of wavelengths.
 
         Args:
@@ -255,7 +275,7 @@ class WavelengthGroup:
         """
         return [wave.value for wave in self.wavelengths]
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Get a dictionary representation of the wavelength group.
 
         Returns:
@@ -265,7 +285,7 @@ class WavelengthGroup:
         return {"wavelengths": [wave.to_dict() for wave in self.wavelengths]}
 
     @classmethod
-    def from_dict(cls, data) -> WavelengthGroup:
+    def from_dict(cls, data: dict[str, Any]) -> WavelengthGroup:
         """Create a WavelengthGroup instance from a dictionary representation.
 
         Args:
@@ -286,6 +306,68 @@ class WavelengthGroup:
         return new_group
 
 
+def _validate_wavelength_range(
+    min_value: float, max_value: float, num_wavelengths: int
+) -> None:
+    """Validates the inputs to `add_wavelengths`."""
+    if (
+        not isinstance(num_wavelengths, int)
+        or num_wavelengths % 2 == 0
+        or num_wavelengths <= 0
+    ):
+        raise ValueError(
+            f"num_wavelengths must be an odd positive integer, got "
+            f"{num_wavelengths!r}. An odd count keeps one wavelength at the "
+            "centre of the band, which becomes the primary wavelength."
+        )
+
+    if min_value <= 0 or max_value <= 0:
+        raise ValueError(
+            f"min_value and max_value must be positive wavelengths in "
+            f"microns, got min_value={min_value!r}, max_value={max_value!r}."
+        )
+
+
+def _normalize_wavelength_scale(scale: str) -> str:
+    """Normalizes a `scale` argument to one of 'log', 'frequency', 'wavelength'."""
+    scale = scale.lower()
+    if scale in {"freq", "frequency"}:
+        return "frequency"
+    if scale == "wavelength":
+        return "wavelength"
+    if scale in {"log", "logarithmic"}:
+        return "log"
+    raise ValueError(
+        f"Unknown wavelength scale, got {scale!r}."
+        f"{options_hint(scale, ['wavelength', 'frequency', 'log'])}"
+    )
+
+
+def _sample_wavelength_nodes(num_wavelengths: int, sampling: str) -> BEArray:
+    """Samples `num_wavelengths` nodes in [0, 1] using the given algorithm."""
+    nodes = be.arange(1.0, num_wavelengths + 1.0)
+    if sampling == "chebyshev":
+        return 0.5 * (1.0 - be.cos((2 * nodes - 1) * be.pi / (2 * num_wavelengths)))
+    if sampling == "uniform":
+        return (nodes - 0.5) / num_wavelengths
+    return nodes
+
+
+def _wavelength_values_from_nodes(
+    nodes: BEArray, min_value: float, max_value: float, scale: str
+) -> list[float]:
+    """Maps sampled nodes in [0, 1] to wavelength values under the given scale."""
+    if scale == "log":
+        span = float(be.log2(be.array(max_value / min_value)))
+        return [min_value * 2 ** (span * node) for node in nodes]
+
+    power = -1.0 if scale == "frequency" else 1.0
+    min_p = min_value**power
+    max_p = max_value**power
+    span = max_p - min_p
+    return [(min_p + span * node) ** (1.0 / power) for node in nodes]
+
+
 def add_wavelengths(
     wavelength_group: WavelengthGroup,
     min_value: float,
@@ -295,7 +377,7 @@ def add_wavelengths(
     *,
     sampling: str = "chebyshev",
     scale: str = "log",
-):
+) -> None:
     """Add new wavelengths corresponding to the geometrically-spaced Chebyshev nodes
 
     Args:
@@ -314,54 +396,11 @@ def add_wavelengths(
                 'frequency' - nodes sampled in the frequency domain.
                 'wavelength' - nodes sampled in the frequency domain. Not recommended.
     """
-    if (
-        not isinstance(num_wavelengths, int)
-        or num_wavelengths % 2 == 0
-        or num_wavelengths <= 0
-    ):
-        raise ValueError("num_wavelengths must be an odd positive integer")
+    _validate_wavelength_range(min_value, max_value, num_wavelengths)
+    scale = _normalize_wavelength_scale(scale)
+    nodes = _sample_wavelength_nodes(num_wavelengths, sampling)
+    values = _wavelength_values_from_nodes(nodes, min_value, max_value, scale)
 
-    if min_value <= 0 or max_value <= 0:
-        raise ValueError("min_value and max_value must be positive")
-
-    scale = scale.lower()
-    if scale in {"freq", "frequency"}:
-        scale = "frequency"
-    elif scale in {"wavelength"}:
-        scale = "wavelength"
-    elif scale in {"log", "logarithmic"}:
-        scale = "log"
-    else:
-        raise ValueError(f"Unknown scale: {scale!r}")
-
-    if scale == "frequency":
-        power = -1.0
-    elif scale == "wavelength":
-        power = 1.0
-
-    nodes = be.arange(1.0, num_wavelengths + 1.0)
-
-    if sampling == "chebyshev":
-        nodes = 0.5 * (1.0 - be.cos((2 * nodes - 1) * be.pi / (2 * num_wavelengths)))
-
-    elif sampling == "uniform":
-        nodes = (nodes - 0.5) / num_wavelengths
-
-    if scale == "log":
-        span = be.log2(max_value / min_value)
-        for i, node in enumerate(nodes):
-            is_primary = i == num_wavelengths // 2
-            value = min_value * 2 ** (span * node)
-            wavelength_group.wavelengths.append(
-                Wavelength(value, is_primary, unit, 1.0)
-            )
-    else:
-        min_value = min_value**power
-        max_value = max_value**power
-        span = max_value - min_value
-        for i, node in enumerate(nodes):
-            is_primary = i == num_wavelengths // 2
-            value = min_value + (span * node)
-            wavelength_group.wavelengths.append(
-                Wavelength(value ** (1.0 / power), is_primary, unit, 1.0)
-            )
+    for i, value in enumerate(values):
+        is_primary = i == num_wavelengths // 2
+        wavelength_group.wavelengths.append(Wavelength(value, is_primary, unit, 1.0))

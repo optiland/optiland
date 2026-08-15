@@ -19,6 +19,10 @@ from optiland.rays.ray_aiming.registry import register_aimer
 if TYPE_CHECKING:
     from optiland.optic import Optic
 
+# Maximum number of step halvings in the per-ray backtracking line search
+# used by the Newton/Broyden core (see ``_solve_core``).
+_MAX_BACKTRACK = 8
+
 
 @register_aimer("iterative")
 class IterativeRayAimer(BaseRayAimer):
@@ -196,21 +200,6 @@ class IterativeRayAimer(BaseRayAimer):
         num_rays = len(x)
         full_indices = be.arange_indices(num_rays)
 
-        # Precompute Paraxial Jacobian Factor
-        wl_mean = (
-            be.mean(wavelengths) if hasattr(wavelengths, "__len__") else wavelengths
-        )
-        J_factor = self._get_paraxial_jacobian(float(wl_mean), stop_idx, is_inf)
-        if abs(J_factor) < 1e-12:
-            J_factor = 1e-12
-
-        # Initialize Jacobian Estimate (J)
-        # J = [[j11, j12], [j21, j22]]
-        J11 = be.full(num_rays, J_factor)
-        J12 = be.zeros(num_rays)
-        J21 = be.zeros(num_rays)
-        J22 = be.full(num_rays, J_factor)
-
         # Ensure we are not modifying leaf variables in-place
         x = be.copy(x)
         y = be.copy(y)
@@ -218,6 +207,17 @@ class IterativeRayAimer(BaseRayAimer):
         L = be.copy(L)
         M = be.copy(M)
         N = be.copy(N)
+
+        # Initialize the per-ray 2x2 Jacobian by finite differences. A paraxial
+        # estimate is only a scalar magnitude (equal on both axes, off-diagonal
+        # zero) and cannot represent the sign flip or x-y cross-coupling a
+        # tilted/decentered stop induces -- e.g. a 90 deg fold makes
+        # d(ey)/d(p2) negative, so an assumed-positive diagonal Jacobian steps
+        # the wrong way and Broyden then diverges to NaN (issue #654). Two
+        # extra traces capture the true local response.
+        J11, J12, J21, J22 = self._finite_difference_jacobian(
+            x, y, z, L, M, N, wavelengths, stop_idx, is_inf, lx, ly
+        )
 
         converged = ex**2 + ey**2 < tol_sq
         self.last_iterations = 0
@@ -262,35 +262,76 @@ class IterativeRayAimer(BaseRayAimer):
             dp1 = -(J11_inv * ex_curr + J12_inv * ey_curr) / det
             dp2 = -(J21_inv * ex_curr + J22_inv * ey_curr) / det
 
-            # Update parameters
+            # --- Damped update with per-ray backtracking line search ---
+            # A full Newton/Broyden step can overshoot into a region where a
+            # ray misses a surface (NaN error) or the error simply grows.
+            # Halving the step per ray until the error strictly decreases keeps
+            # a single bad step from poisoning a ray into permanent NaN -- the
+            # divergence/NaN failure mode in issue #654. A ray that cannot
+            # improve holds its last finite state (accepted step 0) and is
+            # reported as non-converged rather than as NaN.
             if is_inf:
-                x[idx] += dp1
-                y[idx] += dp2
+                p1_base = be.copy(x[idx])
+                p2_base = be.copy(y[idx])
             else:
-                L[idx] += dp1
-                M[idx] += dp2
+                p1_base = be.copy(L[idx])
+                p2_base = be.copy(M[idx])
 
-            # Recalculate errors with new parameters
-            rays = self._trace_subset(x, y, z, L, M, N, wavelengths, stop_idx, is_inf)
-            lx, ly = self._get_local_stop_coords(rays, stop_idx)
-            ex_new = lx - tx
-            ey_new = ly - ty
+            old_err_sq = ex_curr**2 + ey_curr**2
+            alpha = be.ones_like(ex_curr)
+            acc_dp1 = be.zeros_like(ex_curr)
+            acc_dp2 = be.zeros_like(ey_curr)
+            acc_ex = be.copy(ex_curr)
+            acc_ey = be.copy(ey_curr)
+            searching = be.ones_like(ex_curr) > 0.0
 
-            # Extract new errors for active set
-            ex_next = ex_new[idx]
-            ey_next = ey_new[idx]
+            for _bt in range(_MAX_BACKTRACK):
+                if is_inf:
+                    x[idx] = p1_base + alpha * dp1
+                    y[idx] = p2_base + alpha * dp2
+                else:
+                    L[idx] = p1_base + alpha * dp1
+                    M[idx] = p2_base + alpha * dp2
 
-            # --- Broyden Update ---
-            # y_k = ex_next - ex_curr
-            # s_k = dp1, dp2
-            dEx = ex_next - ex_curr
-            dEy = ey_next - ey_curr
+                rays = self._trace_subset(
+                    x, y, z, L, M, N, wavelengths, stop_idx, is_inf
+                )
+                lx, ly = self._get_local_stop_coords(rays, stop_idx)
+                ex_try = lx[idx] - tx[idx]
+                ey_try = ly[idx] - ty[idx]
+                new_err_sq = ex_try**2 + ey_try**2
 
-            dx = dp1
-            dy = dp2
+                improved = be.logical_and(
+                    searching,
+                    be.logical_and(
+                        be.logical_not(be.isnan(new_err_sq)),
+                        new_err_sq < old_err_sq,
+                    ),
+                )
+                acc_dp1 = be.where(improved, alpha * dp1, acc_dp1)
+                acc_dp2 = be.where(improved, alpha * dp2, acc_dp2)
+                acc_ex = be.where(improved, ex_try, acc_ex)
+                acc_ey = be.where(improved, ey_try, acc_ey)
+                searching = be.logical_and(searching, be.logical_not(improved))
+                if not be.any(searching):
+                    break
+                alpha = alpha * 0.5
 
-            # Update J
+            # Commit the accepted (possibly zero) step for each active ray.
+            if is_inf:
+                x[idx] = p1_base + acc_dp1
+                y[idx] = p2_base + acc_dp2
+            else:
+                L[idx] = p1_base + acc_dp1
+                M[idx] = p2_base + acc_dp2
+
+            # --- Broyden Update (using the accepted step) ---
             # J += (y - J*s) * s^T / (s^T * s)
+            dEx = acc_ex - ex_curr
+            dEy = acc_ey - ey_curr
+
+            dx = acc_dp1
+            dy = acc_dp2
 
             # Calculate J*s (using OLD J)
             Js_x = J11[idx] * dx + J12[idx] * dy
@@ -314,12 +355,101 @@ class IterativeRayAimer(BaseRayAimer):
             J21[idx] += Ry * dx / norm_sq
             J22[idx] += Ry * dy / norm_sq
 
-            # Update 'ex' and 'ey' arrays for next iter
-            ex = ex_new
-            ey = ey_new
+            # Write the accepted errors back for the next iteration.
+            ex = be.copy(ex)
+            ey = be.copy(ey)
+            ex[idx] = acc_ex
+            ey[idx] = acc_ey
 
         converged = ex**2 + ey**2 < tol_sq
         return x, y, z, L, M, N, converged, had_initial_nan
+
+    def _finite_difference_jacobian(
+        self,
+        x: Any,
+        y: Any,
+        z: Any,
+        L: Any,
+        M: Any,
+        N: Any,
+        wavelengths: Any,
+        stop_idx: int,
+        is_inf: bool,
+        lx: Any,
+        ly: Any,
+        eps: float = 1e-6,
+    ) -> tuple:
+        """Per-ray 2x2 Jacobian ``d(local stop x, y)/d(free dof)`` by finite
+        differences.
+
+        The free degrees of freedom are ``(x, y)`` for infinite conjugates and
+        ``(L, M)`` for finite ones. Unlike the paraxial magnitude estimate,
+        this captures the sign and x-y cross-coupling of tilted or decentered
+        stops, which is required for the Newton step to be a descent direction
+        on such systems (issue #654). Rays whose perturbed trace is degenerate
+        (NaN, or a collapsed determinant) fall back to the paraxial diagonal so
+        the solve still has a usable seed.
+
+        Args:
+            x, y, z, L, M, N: Current ray launch state.
+            wavelengths: Ray wavelengths.
+            stop_idx: Index of the stop surface.
+            is_inf: Whether the object is at infinity.
+            lx, ly: Unperturbed local-stop coordinates of the current state.
+            eps: Finite-difference step size.
+
+        Returns:
+            tuple: ``(J11, J12, J21, J22)`` per-ray Jacobian entries, with
+            ``J = [[d lx/d p1, d lx/d p2], [d ly/d p1, d ly/d p2]]``.
+        """
+        if is_inf:
+            r1 = self._trace_subset(
+                x + eps, y, z, L, M, N, wavelengths, stop_idx, is_inf
+            )
+            lx1, ly1 = self._get_local_stop_coords(r1, stop_idx)
+            r2 = self._trace_subset(
+                x, y + eps, z, L, M, N, wavelengths, stop_idx, is_inf
+            )
+            lx2, ly2 = self._get_local_stop_coords(r2, stop_idx)
+        else:
+            r1 = self._trace_subset(
+                x, y, z, L + eps, M, N, wavelengths, stop_idx, is_inf
+            )
+            lx1, ly1 = self._get_local_stop_coords(r1, stop_idx)
+            r2 = self._trace_subset(
+                x, y, z, L, M + eps, N, wavelengths, stop_idx, is_inf
+            )
+            lx2, ly2 = self._get_local_stop_coords(r2, stop_idx)
+
+        J11 = (lx1 - lx) / eps
+        J21 = (ly1 - ly) / eps
+        J12 = (lx2 - lx) / eps
+        J22 = (ly2 - ly) / eps
+
+        # Paraxial diagonal fallback for rays where the finite difference is
+        # unusable (a perturbed ray missed a surface -> NaN, or the local
+        # sensitivity collapsed to a near-singular Jacobian).
+        num_rays = len(x)
+        wl_mean = (
+            be.mean(wavelengths) if hasattr(wavelengths, "__len__") else wavelengths
+        )
+        j_par = float(
+            be.to_numpy(
+                self._get_paraxial_jacobian(float(wl_mean), stop_idx, is_inf)
+            ).ravel()[0]
+        )
+        if abs(j_par) < 1e-12:
+            j_par = 1e-12
+        j_par_arr = be.full(num_rays, j_par)
+        zeros = be.zeros(num_rays)
+
+        det = J11 * J22 - J12 * J21
+        bad = be.logical_or(be.isnan(det), be.abs(det) < 1e-12)
+        J11 = be.where(bad, j_par_arr, J11)
+        J22 = be.where(bad, j_par_arr, J22)
+        J12 = be.where(bad, zeros, J12)
+        J21 = be.where(bad, zeros, J21)
+        return J11, J12, J21, J22
 
     def _get_paraxial_jacobian(
         self, wavelength: float, stop_idx: int, is_inf: bool
@@ -339,9 +469,16 @@ class IterativeRayAimer(BaseRayAimer):
         """
         para = self.optic.paraxial
         if is_inf:
+            # skip=1 drops the object surface, so the returned array is indexed
+            # by (surface_index - skip): surface k lives at heights[k - 1].
+            # Indexing with the bare stop_idx reads the surface *after* the
+            # stop, which collapses to ~0 whenever that surface sits near a
+            # focus (stop on/near the last surface) -- yielding a near-zero
+            # Jacobian and a Newton step that overshoots to NaN (issue #654).
+            skip = 1
             z_start = para.surfaces.positions[1]
-            y, _ = para.trace_generic(1.0, 0.0, z_start, wavelength, skip=1)
-            return y[stop_idx]
+            y, _ = para.trace_generic(1.0, 0.0, z_start, wavelength, skip=skip)
+            return y[stop_idx - skip]
         else:
             obj_z = self.optic.object_surface.geometry.cs.z
             y, _ = para.trace_generic(0.0, 1.0, obj_z, wavelength)

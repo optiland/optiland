@@ -36,11 +36,13 @@ def test_orthogonal_descent_simple_quadratic():
     var_x.value = np.array(0.0)  # Initial value
     var_x.min_val = -5.0
     var_x.max_val = 5.0
+    var_x.bounds = (-5.0, 5.0)
 
     var_y = MagicMock()
     var_y.value = np.array(0.0)
     var_y.min_val = -5.0
     var_y.max_val = 5.0
+    var_y.bounds = (-5.0, 5.0)
 
     def update_x(val):
         var_x.value = np.array(val)
@@ -69,6 +71,29 @@ def test_orthogonal_descent_simple_quadratic():
 
     assert np.isclose(final_x, 1.0, atol=1e-4)
     assert np.isclose(final_y, -2.0, atol=1e-4)
+
+
+def test_orthogonal_descent_uses_scaled_variable_bounds():
+    """Search in the same scaled coordinate system used by Variable.update."""
+    problem = MagicMock(spec=OptimizationProblem)
+    variable = MagicMock()
+    variable.value = np.array(-0.5)
+    variable.min_val = 1.0
+    variable.max_val = 10.0
+    variable.bounds = (-0.9, 0.0)
+
+    def update(value):
+        variable.value = np.array(value)
+
+    variable.update.side_effect = update
+    problem.rss.side_effect = lambda: MagicMock(
+        item=lambda: (variable.value.item() + 0.7) ** 2
+    )
+
+    optimizer = OrthogonalDescent(problem)
+    optimizer._optimize_variable(variable)
+
+    assert np.isclose(variable.value.item(), -0.7, atol=1e-4)
 
 
 class SideEffect:

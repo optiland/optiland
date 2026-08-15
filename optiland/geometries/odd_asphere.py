@@ -141,3 +141,12 @@ class OddAsphere(EvenAsphere):
         nz = -1 / mag
 
         return nx, ny, nz
+
+    def flip(self):
+        """Flip the geometry.
+
+        Changes the sign of the radius of curvature and the signs of coefficients.
+        The conic constant remains unchanged.
+        """
+        self.radius = -self.radius
+        self.coefficients = [-c for c in self.coefficients]

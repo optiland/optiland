@@ -8,7 +8,7 @@ from torch import Generator as TorchGenerator
 from torch import Tensor
 
 from optiland._types import BEArrayT, ScalarOrArrayT
-from optiland.backend.torch_backend import GradMode
+from optiland.backend.torch_backend.config import GradMode
 from optiland.backend import linalg  # noqa: F401
 from optiland.backend.base import BackendCapabilityError  # noqa: F401
 
@@ -119,6 +119,9 @@ def concatenate(arrays: Sequence[BEArrayT], axis: int = 0) -> BEArrayT: ...
 def vstack(xs: Sequence[BEArrayT]) -> BEArrayT: ...
 def column_stack(xs: Sequence[BEArrayT]) -> BEArrayT: ...
 def meshgrid(*arrays: BEArrayT) -> tuple[BEArrayT, ...]: ...
+def index_add(
+    target: BEArrayT, dim: int, index: BEArrayT, source: BEArrayT
+) -> BEArrayT: ...
 
 # ---------------------------------------------------------------------------
 # Element-wise math — preserve the input array type

@@ -1,4 +1,5 @@
-# Defines sample eyepiece optical systems.
+"""Defines sample eyepiece optical systems."""
+
 from __future__ import annotations
 
 import optiland.backend as be

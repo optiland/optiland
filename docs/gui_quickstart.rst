@@ -91,7 +91,7 @@ When you first open the Optiland GUI, you'll see a main window containing severa
 *   **Python Terminal** (View > Python Terminal): An embedded IPython terminal for advanced users who want to interact with the optical system programmatically using Optiland's Python API.
 
 Command Palette (Ctrl+K)
-~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~
 
 Optiland features a VS Code-style **Command Palette** that provides quick access to various tools, analyses, and layout actions.
 
@@ -127,7 +127,7 @@ Optiland supports loading and saving its native JSON format (`.json`). Several s
 
 .. note::
 
-   YOu can also load Optiland files that were saved using the Optiland Python API.
+   You can also load Optiland files that were saved using the Optiland Python API.
 
 2. Viewing a Raytrace
 ~~~~~~~~~~~~~~~~~~~~~

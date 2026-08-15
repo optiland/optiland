@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 import optiland.backend as be
+from optiland.optic import Optic
 from optiland.samples.objectives import CookeTriplet
 from optiland.solves import (
     BaseSolve,
@@ -169,6 +170,28 @@ class TestMarginalRayAngleCurvatureSolve:
 
         if surface_idx < len(u_new):
             assert_allclose(u_new[surface_idx], target_angle, atol=1e-4)
+
+    def test_apply_converts_plane_surface(self, set_test_backend):
+        lens = Optic()
+        lens.surfaces.add(index=0, thickness=np.inf)
+        lens.surfaces.add(
+            index=1, thickness=7, radius=20.0, is_stop=True, material="N-SF11"
+        )
+        lens.surfaces.add(index=2, thickness=23.0, radius=np.inf)
+        lens.surfaces.add(index=3)
+        lens.set_aperture(aperture_type="EPD", value=20)
+        lens.fields.set_type(field_type="angle")
+        lens.fields.add(y=0)
+        lens.wavelengths.add(value=0.55, is_primary=True)
+
+        lens.solves.add("marginal_ray_angle", surface_idx=2, angle=-0.1)
+
+        surface = lens.surfaces[2]
+        assert surface.geometry.__class__.__name__ == "StandardGeometry"
+        assert be.isfinite(be.array(surface.geometry.radius))
+
+        _, u = lens.paraxial.marginal_ray()
+        assert_allclose(u[2], -0.1, atol=1e-4)
 
 
 class TestChiefRayAngleCurvatureSolve:

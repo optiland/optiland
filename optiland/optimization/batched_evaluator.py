@@ -267,7 +267,16 @@ def _extract_rms_spot(surface_group, input_data):
     This replicates the calculation from ``RayOperand.rms_spot_size`` but
     reads from the already-traced surface_group data, preserving autograd.
     """
-    surface_number = input_data["surface_number"]
+    try:
+        surface_number = input_data["surface_number"]
+    except KeyError:
+        raise KeyError(
+            "The 'rms_spot_size' operand requires 'surface_number' in its "
+            "input_data, naming the surface the spot is measured on. Use -1 "
+            "for the image surface, e.g. input_data={'optic': lens, 'Hx': 0, "
+            "'Hy': 0, 'num_rings': 6, 'wavelength': 0.55, "
+            "'surface_number': -1}."
+        ) from None
     x = surface_group.x[surface_number, :].flatten()
     y = surface_group.y[surface_number, :].flatten()
     r2 = (x - be.mean(x)) ** 2 + (y - be.mean(y)) ** 2
@@ -493,7 +502,7 @@ class BatchedRayEvaluator:
                     f"Operand {i} ({operand.operand_type}) was not evaluated"
                 )
             delta = self._compute_delta(operand, value)
-            terms.append(ew * delta**2)
+            terms.append((ew * delta) ** 2)
         return terms
 
     # ------------------------------------------------------------------
@@ -595,7 +604,10 @@ class BatchedRayEvaluator:
                     [self.problem.operands[i].target for i in matching_op_indices]
                 )
                 weights = be.array(
-                    [self.problem.operands[i].weight for i in matching_op_indices]
+                    [
+                        self.problem.operands[i].effective_weight()
+                        for i in matching_op_indices
+                    ]
                 )
 
                 # Compute all deltas for this group simultaneously
@@ -616,7 +628,11 @@ class BatchedRayEvaluator:
                     operand.operand_type, sg, operand.input_data, local_idx
                 )
                 delta = self._compute_delta(operand, val)
-                computed_residuals[global_op_idx] = operand.weight * delta
+                ew = operand.effective_weight()
+                if ew == 0.0:
+                    computed_residuals[global_op_idx] = be.array(0.0)
+                else:
+                    computed_residuals[global_op_idx] = ew * delta
 
         # --- 2. Process Distribution Jobs ---
         for job_idx, job in enumerate(self._distribution_jobs):
@@ -632,7 +648,11 @@ class BatchedRayEvaluator:
                         val = metric_fn(**operand.input_data)
 
                     delta = self._compute_delta(operand, val)
-                    computed_residuals[i] = operand.weight * delta
+                    ew = operand.effective_weight()
+                    if ew == 0.0:
+                        computed_residuals[i] = be.array(0.0)
+                    else:
+                        computed_residuals[i] = ew * delta
 
         # --- 3. Process Direct Jobs ---
         for i in range(num_operands):
@@ -641,11 +661,15 @@ class BatchedRayEvaluator:
             plan_type, _, _ = self._operand_plan[i]
             if plan_type == "direct":
                 operand = self.problem.operands[i]
+                ew = operand.effective_weight()
+                if ew == 0.0:
+                    computed_residuals[i] = be.array(0.0)
+                    continue
                 metric_fn = operand_registry.get(operand.operand_type)
                 val = metric_fn(**operand.input_data)
 
                 delta = self._compute_delta(operand, val)
-                computed_residuals[i] = operand.weight * delta
+                computed_residuals[i] = ew * delta
 
         # --- Final Graph Assembly ---
         for i, res in enumerate(computed_residuals):

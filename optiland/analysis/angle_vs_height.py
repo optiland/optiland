@@ -430,11 +430,9 @@ class FieldIncidentAngleVsHeight(BaseAngleVsHeightAnalysis):
         axis (int): Axis for measurement (0 for x, 1 for y).
         pupil (tuple): The pupil field point (fixed for tracing).
         num_points (int): The number of points generated for the analysis.
-        data (dict): The generated data for the analysis, structured as:
-            {
-                (Px_fixed, Py_fixed, wavelength_value):
-                {'height': np.ndarray, 'angle': np.ndarray}
-            }
+        data (dict): The generated data for the analysis, structured as
+            ``{(Px_fixed, Py_fixed, wavelength_value): {'height': np.ndarray,
+            'angle': np.ndarray}}``.
     """
 
     def __init__(

@@ -1,3 +1,5 @@
+"""SciPy basin-hopping optimizer wrapper."""
+
 from __future__ import annotations
 
 import warnings

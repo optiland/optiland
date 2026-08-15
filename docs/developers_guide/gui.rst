@@ -78,8 +78,11 @@ These are the primary QDockWidget or QWidget instances that provide specific fun
 
 *   **Optimization Panel (`optimization_panel.py`)**:
 
-    *   Currently a placeholder for future optimization functionalities.
-    *   Intended to allow users to define optimization variables, objectives (merit functions), and run optimization routines from the Optiland backend.
+    *   Provides Variables, Operands, and Optimizer tabs for building an `OptimizationProblem`
+        against the current `Optic` instance.
+    *   Lets users add/edit variables and operands (with dialogs for adding and auto-generating
+        operands), choose an optimizer and its settings, and run/stop the optimization with a
+        persistent live-updating merit-function view.
 
 *   **System Properties Panel (`system_properties_panel.py`)**:
 

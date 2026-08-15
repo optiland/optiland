@@ -608,6 +608,124 @@ def _harmonic_powers(X, Y, m_max):
     return H_c, H_s
 
 
+def _q2d_m0_envelope(X, Y, usq, cm0, _no_trim: bool = False):
+    """Evaluate the m==0 envelope term and its Cartesian derivatives.
+
+    Computes ``P_m0 = u**2 * (1 - u**2) * S_cm0(u**2)`` (the Qbfs-style
+    radial envelope) via a single derivative-Clenshaw sweep, applying the
+    chain rule from ``u**2`` back to ``X``/``Y``.
+
+    Returns:
+        tuple: ``(P_m0, dP_m0_dX, dP_m0_dY)``.
+    """
+    if not _no_trim:
+        cm0 = _trim_trailing_zeros(cm0)
+    if not cm0:
+        zeros = be.zeros_like(usq)
+        return zeros, zeros, zeros
+
+    # Reuse derivative Clenshaw to get S and dS/du^2 in one sweep.
+    alphas_m0 = clenshaw_qbfs_der(cm0, usq, j=1, _no_trim=True)
+    if len(cm0) > 1:
+        s_cm0 = 2 * (alphas_m0[0, 0] + alphas_m0[0, 1])
+        dsdu2_cm0 = 2 * (alphas_m0[1, 0] + alphas_m0[1, 1])
+    else:
+        s_cm0 = 2 * alphas_m0[0, 0]
+        dsdu2_cm0 = 2 * alphas_m0[1, 0]
+    env = usq * (1 - usq)
+    P_m0 = env * s_cm0
+    # d/dX [ u^2(1-u^2) * S ] = 2X * [ (1 - 2u^2) S + u^2(1-u^2) dS/du^2 ]
+    radial_chain = (1 - 2 * usq) * s_cm0 + env * dsdu2_cm0
+    dP_m0_dX = 2 * X * radial_chain
+    dP_m0_dY = 2 * Y * radial_chain
+
+    return P_m0, dP_m0_dX, dP_m0_dY
+
+
+def _q2d_mth_term(X, Y, usq, m, a_coef, b_coef, H_c, H_s):
+    """Evaluate one m>=1 harmonic term and its Cartesian derivatives.
+
+    Combines the per-m radial Clenshaw sums (``S_a``, ``S_b`` and their
+    ``du**2`` derivatives) with the harmonic powers ``H_c[m]``/``H_s[m]``
+    via the product/chain rule.
+
+    Returns:
+        tuple: ``(P_term, dPx_term, dPy_term)``.
+    """
+    s_a = s_b = dsdu2_a = dsdu2_b = 0.0
+    if a_coef:
+        alphas_a = clenshaw_q2d_der(a_coef, m, usq, j=1, _no_trim=True)
+        s_a = q2d_sum_from_alphas(alphas_a[0], m, len(a_coef))
+        dsdu2_a = q2d_sum_from_alphas(alphas_a[1], m, len(a_coef))
+    if b_coef:
+        alphas_b = clenshaw_q2d_der(b_coef, m, usq, j=1, _no_trim=True)
+        s_b = q2d_sum_from_alphas(alphas_b[0], m, len(b_coef))
+        dsdu2_b = q2d_sum_from_alphas(alphas_b[1], m, len(b_coef))
+
+    Hc_m = H_c[m]
+    Hs_m = H_s[m]
+    Hc_mm1 = H_c[m - 1]
+    Hs_mm1 = H_s[m - 1]
+
+    P_term = Hc_m * s_a + Hs_m * s_b
+    # d/dX [ H_c[m] S_a + H_s[m] S_b ]
+    #   = m*H_c[m-1]*S_a + H_c[m]*2X*dS_a + m*H_s[m-1]*S_b + H_s[m]*2X*dS_b
+    dPx_term = m * (Hc_mm1 * s_a + Hs_mm1 * s_b) + 2 * X * (
+        Hc_m * dsdu2_a + Hs_m * dsdu2_b
+    )
+    # d/dY [ H_c[m] S_a + H_s[m] S_b ]
+    #   = -m*H_s[m-1]*S_a + H_c[m]*2Y*dS_a + m*H_c[m-1]*S_b + H_s[m]*2Y*dS_b
+    dPy_term = m * (-Hs_mm1 * s_a + Hc_mm1 * s_b) + 2 * Y * (
+        Hc_m * dsdu2_a + Hs_m * dsdu2_b
+    )
+
+    return P_term, dPx_term, dPy_term
+
+
+def _q2d_mgt0_sum(X, Y, usq, ams, bms, _no_trim: bool = False):
+    """Sum the m>=1 harmonic terms and their Cartesian derivatives.
+
+    Accumulates each m's contribution incrementally to avoid building
+    three term lists and the corresponding ``be.stack``/``be.sum``
+    intermediates (heavy allocation on CUDA float32 for dense freeforms).
+    Out-of-place adds keep the autograd graph intact.
+
+    Returns:
+        tuple: ``(P_mgt0, dPx_mgt0, dPy_mgt0)``.
+    """
+    m_max = max(len(ams), len(bms))
+    if m_max == 0:
+        zeros = be.zeros_like(usq)
+        return zeros, zeros, zeros
+
+    H_c, H_s = _harmonic_powers(X, Y, m_max)
+
+    P_mgt0 = dPx_mgt0 = dPy_mgt0 = None
+    for m_idx in range(m_max):
+        m = m_idx + 1
+        a_coef = ams[m_idx] if m_idx < len(ams) else []
+        b_coef = bms[m_idx] if m_idx < len(bms) else []
+        if not _no_trim:
+            a_coef = _trim_trailing_zeros(a_coef)
+            b_coef = _trim_trailing_zeros(b_coef)
+        if not a_coef and not b_coef:
+            continue
+
+        P_term, dPx_term, dPy_term = _q2d_mth_term(
+            X, Y, usq, m, a_coef, b_coef, H_c, H_s
+        )
+
+        P_mgt0 = P_term if P_mgt0 is None else P_mgt0 + P_term
+        dPx_mgt0 = dPx_term if dPx_mgt0 is None else dPx_mgt0 + dPx_term
+        dPy_mgt0 = dPy_term if dPy_mgt0 is None else dPy_mgt0 + dPy_term
+
+    if P_mgt0 is None:
+        zeros = be.zeros_like(usq)
+        return zeros, zeros, zeros
+
+    return P_mgt0, dPx_mgt0, dPy_mgt0
+
+
 def _q2d_cartesian_eval(X, Y, cm0, ams, bms, _no_trim: bool = False):
     """Evaluate the Q2D polynomial sum P(X, Y) and its Cartesian derivatives.
 
@@ -637,87 +755,13 @@ def _q2d_cartesian_eval(X, Y, cm0, ams, bms, _no_trim: bool = False):
     """
     usq = X * X + Y * Y
 
-    # m == 0 envelope: P_m0 = u^2 (1 - u^2) * S_cm0(u^2)
-    if not _no_trim:
-        cm0 = _trim_trailing_zeros(cm0)
-    if cm0:
-        # Reuse derivative Clenshaw to get S and dS/du^2 in one sweep.
-        alphas_m0 = clenshaw_qbfs_der(cm0, usq, j=1, _no_trim=True)
-        if len(cm0) > 1:
-            s_cm0 = 2 * (alphas_m0[0, 0] + alphas_m0[0, 1])
-            dsdu2_cm0 = 2 * (alphas_m0[1, 0] + alphas_m0[1, 1])
-        else:
-            s_cm0 = 2 * alphas_m0[0, 0]
-            dsdu2_cm0 = 2 * alphas_m0[1, 0]
-        env = usq * (1 - usq)
-        P_m0 = env * s_cm0
-        # d/dX [ u^2(1-u^2) * S ] = 2X * [ (1 - 2u^2) S + u^2(1-u^2) dS/du^2 ]
-        radial_chain = (1 - 2 * usq) * s_cm0 + env * dsdu2_cm0
-        dP_m0_dX = 2 * X * radial_chain
-        dP_m0_dY = 2 * Y * radial_chain
-    else:
-        zeros = be.zeros_like(usq)
-        P_m0 = zeros
-        dP_m0_dX = zeros
-        dP_m0_dY = zeros
+    P_m0, dP_m0_dX, dP_m0_dY = _q2d_m0_envelope(X, Y, usq, cm0, _no_trim=_no_trim)
 
-    # m >= 1: harmonic powers + per-m radial Clenshaw.
     m_max = max(len(ams), len(bms))
     if m_max == 0:
         return P_m0, dP_m0_dX, dP_m0_dY
 
-    H_c, H_s = _harmonic_powers(X, Y, m_max)
-
-    # Accumulate the m>0 contributions incrementally to avoid building three
-    # term lists and the corresponding ``be.stack`` / ``be.sum`` intermediates
-    # (heavy allocation on CUDA float32 for dense freeforms). Out-of-place adds
-    # keep the autograd graph intact.
-    P_mgt0 = dPx_mgt0 = dPy_mgt0 = None
-    for m_idx in range(m_max):
-        m = m_idx + 1
-        a_coef = ams[m_idx] if m_idx < len(ams) else []
-        b_coef = bms[m_idx] if m_idx < len(bms) else []
-        if not _no_trim:
-            a_coef = _trim_trailing_zeros(a_coef)
-            b_coef = _trim_trailing_zeros(b_coef)
-        if not a_coef and not b_coef:
-            continue
-
-        s_a = s_b = dsdu2_a = dsdu2_b = 0.0
-        if a_coef:
-            alphas_a = clenshaw_q2d_der(a_coef, m, usq, j=1, _no_trim=True)
-            s_a = q2d_sum_from_alphas(alphas_a[0], m, len(a_coef))
-            dsdu2_a = q2d_sum_from_alphas(alphas_a[1], m, len(a_coef))
-        if b_coef:
-            alphas_b = clenshaw_q2d_der(b_coef, m, usq, j=1, _no_trim=True)
-            s_b = q2d_sum_from_alphas(alphas_b[0], m, len(b_coef))
-            dsdu2_b = q2d_sum_from_alphas(alphas_b[1], m, len(b_coef))
-
-        Hc_m = H_c[m]
-        Hs_m = H_s[m]
-        Hc_mm1 = H_c[m - 1]
-        Hs_mm1 = H_s[m - 1]
-
-        P_term = Hc_m * s_a + Hs_m * s_b
-        # d/dX [ H_c[m] S_a + H_s[m] S_b ]
-        #   = m*H_c[m-1]*S_a + H_c[m]*2X*dS_a + m*H_s[m-1]*S_b + H_s[m]*2X*dS_b
-        dPx_term = m * (Hc_mm1 * s_a + Hs_mm1 * s_b) + 2 * X * (
-            Hc_m * dsdu2_a + Hs_m * dsdu2_b
-        )
-        # d/dY [ H_c[m] S_a + H_s[m] S_b ]
-        #   = -m*H_s[m-1]*S_a + H_c[m]*2Y*dS_a + m*H_c[m-1]*S_b + H_s[m]*2Y*dS_b
-        dPy_term = m * (-Hs_mm1 * s_a + Hc_mm1 * s_b) + 2 * Y * (
-            Hc_m * dsdu2_a + Hs_m * dsdu2_b
-        )
-
-        P_mgt0 = P_term if P_mgt0 is None else P_mgt0 + P_term
-        dPx_mgt0 = dPx_term if dPx_mgt0 is None else dPx_mgt0 + dPx_term
-        dPy_mgt0 = dPy_term if dPy_mgt0 is None else dPy_mgt0 + dPy_term
-
-    if P_mgt0 is None:
-        P_mgt0 = be.zeros_like(usq)
-        dPx_mgt0 = be.zeros_like(usq)
-        dPy_mgt0 = be.zeros_like(usq)
+    P_mgt0, dPx_mgt0, dPy_mgt0 = _q2d_mgt0_sum(X, Y, usq, ams, bms, _no_trim=_no_trim)
 
     return P_m0 + P_mgt0, dP_m0_dX + dPx_mgt0, dP_m0_dY + dPy_mgt0
 

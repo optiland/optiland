@@ -1,3 +1,5 @@
+"""Defines miscellaneous sample optical systems."""
+
 from __future__ import annotations
 
 import optiland.backend as be

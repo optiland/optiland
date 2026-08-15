@@ -84,8 +84,8 @@ class RmsSpotSizeVsField(SpotDiagram):
 
         Notes
         -----
-        - Each wavelength's RMS spot size is plotted as a separate line for clarity
-        and legend handling.
+        - Each wavelength's RMS spot size is plotted as a separate line for
+          clarity and legend handling.
         - The legend is placed outside the plot area for better readability.
         - The method is suitable for both standalone plotting and GUI embedding.
         """

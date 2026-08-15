@@ -1,3 +1,5 @@
+"""Distortion warping for image simulation."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

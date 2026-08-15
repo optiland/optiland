@@ -65,6 +65,7 @@ class OsloDataParser:
             "FNO": self._read_fno,
             "NAO": self._read_nao,
             "DES": self._read_des,
+            "PFL": self._read_paraxial,
         }
 
     def parse(self) -> OsloDataModel:
@@ -170,6 +171,9 @@ class OsloDataParser:
         # GLA 1.573 1.573 1.573
         # GLA MOD G1 1.6489 1.662...
         self._current_surf_data["material"] = "GLA " + " ".join(tokens[1:])
+
+    def _read_paraxial(self, tokens: list[str]) -> None:
+        self._current_surf_data["PFL"] = float(tokens[1])
 
     def _read_rd(self, tokens: list[str]) -> None:
         self._current_surf_data["RD"] = float(tokens[1])

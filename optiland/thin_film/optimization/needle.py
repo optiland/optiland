@@ -358,6 +358,73 @@ class NeedleSynthesis:
             else:
                 i += 1
 
+    def _propose_needle(
+        self,
+        current_merit: float,
+        rejected: set[tuple[int, float, int]],
+        iteration: int,
+        verbose: bool,
+    ) -> tuple[_NeedleCandidate, float] | None:
+        """Find the best needle and its optimal thickness for this iteration.
+
+        Returns None (signaling convergence) if no improving needle exists or
+        the best needle's optimal thickness is below `min_thickness_nm`.
+        """
+        candidate = self._find_best_needle(self.stack, current_merit, rejected)
+        if candidate is None:
+            if verbose:
+                print(f"Iteration {iteration}: no improving needle found — converged.")
+            return None
+
+        optimal_delta = self._optimize_needle_thickness(
+            self.stack,
+            candidate.layer_index,
+            candidate.position_fraction,
+            candidate.material,
+        )
+
+        if optimal_delta < self.min_thickness_nm:
+            if verbose:
+                print(
+                    f"Iteration {iteration}: optimal needle thickness "
+                    f"{optimal_delta:.3f} nm < min — converged."
+                )
+            return None
+
+        return candidate, optimal_delta
+
+    def _insert_reoptimize_cleanup(
+        self, candidate: _NeedleCandidate, optimal_delta: float
+    ) -> float:
+        """Insert the needle, re-optimize thicknesses, then clean up the stack.
+
+        Returns the merit after cleanup and a final re-optimization pass.
+        """
+        self._insert_needle_at(
+            self.stack,
+            candidate.layer_index,
+            candidate.position_fraction,
+            candidate.material,
+            optimal_delta,
+        )
+        self._reoptimize(self.stack)
+
+        self._cleanup_stack(self.stack)
+        if len(self.stack.layers) > 0:
+            return self._reoptimize(self.stack)
+        return self._compute_merit(self.stack)
+
+    def _reject_insertion(
+        self,
+        snapshot: ThinFilmStack,
+        candidate: _NeedleCandidate,
+        rejected: set[tuple[int, float, int]],
+    ) -> None:
+        """Roll back the stack and record the candidate as rejected."""
+        self.stack.layers[:] = snapshot.layers
+        mat_idx = self.candidate_materials.index(candidate.material)
+        rejected.add((candidate.layer_index, candidate.position_fraction, mat_idx))
+
     def run(self, verbose: bool = False) -> NeedleSynthesisResult:
         """Execute the needle synthesis algorithm.
 
@@ -385,64 +452,20 @@ class NeedleSynthesis:
         rejected: set[tuple[int, float, int]] = set()
 
         for iteration in range(self.max_iterations):
-            # Step 3a: find best needle
-            candidate = self._find_best_needle(self.stack, current_merit, rejected)
-
-            if candidate is None:
-                if verbose:
-                    print(
-                        f"Iteration {iteration}: no improving needle found — converged."
-                    )
+            proposal = self._propose_needle(current_merit, rejected, iteration, verbose)
+            if proposal is None:
                 break
-
-            # Step 3c: optimize needle thickness
-            optimal_delta = self._optimize_needle_thickness(
-                self.stack,
-                candidate.layer_index,
-                candidate.position_fraction,
-                candidate.material,
-            )
-
-            if optimal_delta < self.min_thickness_nm:
-                if verbose:
-                    print(
-                        f"Iteration {iteration}: optimal needle thickness "
-                        f"{optimal_delta:.3f} nm < min — converged."
-                    )
-                break
+            candidate, optimal_delta = proposal
 
             # Save a snapshot so we can roll back if merit worsens
             snapshot = self.stack.deep_copy()
             merit_before_insert = current_merit
 
-            # Step 3d: insert needle at optimal position with optimal thickness
-            self._insert_needle_at(
-                self.stack,
-                candidate.layer_index,
-                candidate.position_fraction,
-                candidate.material,
-                optimal_delta,
-            )
-
-            # Step 3e: re-optimize all thicknesses
-            new_merit = self._reoptimize(self.stack)
-
-            # Step 3f: cleanup then re-optimize
-            self._cleanup_stack(self.stack)
-            if len(self.stack.layers) > 0:
-                new_merit = self._reoptimize(self.stack)
-            else:
-                new_merit = self._compute_merit(self.stack)
+            new_merit = self._insert_reoptimize_cleanup(candidate, optimal_delta)
 
             # Reject insertion if merit worsened after full re-optimization
             if new_merit >= merit_before_insert:
-                # Roll back
-                self.stack.layers[:] = snapshot.layers
-                # Record this candidate so we don't retry it
-                mat_idx = self.candidate_materials.index(candidate.material)
-                rejected.add(
-                    (candidate.layer_index, candidate.position_fraction, mat_idx)
-                )
+                self._reject_insertion(snapshot, candidate, rejected)
                 if verbose:
                     print(
                         f"Iteration {iteration}: {candidate.material_name} "

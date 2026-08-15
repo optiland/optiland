@@ -131,6 +131,50 @@ class MTFvsField(BaseAnalysis):
 
         return results
 
+    def _field_axis_label(self) -> str:
+        """Return the X-axis label matching the optic's field definition."""
+        field_def = self.optic.fields.field_definition
+        if field_def is not None:
+            field_name = field_def.__class__.__name__
+            if "Angle" in field_name:
+                return "Angle (deg)"
+            elif "Height" in field_name:
+                return "Height (mm)"
+        return "Field Coordinate"
+
+    def _plot_mtf_curves(self, ax: Axes, x_plot) -> None:
+        """Plot the tangential/sagittal MTF curve for each wavelength/frequency."""
+        axes_color_cycle = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+
+        for i_wl, wp in enumerate(self.wavelengths):
+            for i_freq, freq in enumerate(self.frequencies):
+                color_idx = (i_wl * len(self.frequencies) + i_freq) % len(
+                    axes_color_cycle
+                )
+                color = axes_color_cycle[color_idx]
+
+                tan_data = be.to_numpy(self.data[i_wl][i_freq]["tangential"])
+                sag_data = be.to_numpy(self.data[i_wl][i_freq]["sagittal"])
+
+                label_prefix = f"{freq} cyc/mm"
+                if len(self.wavelengths) > 1:
+                    label_prefix += f", {wp.value:.4f} µm"
+
+                ax.plot(
+                    x_plot,
+                    tan_data,
+                    linestyle="-",
+                    color=color,
+                    label=f"{label_prefix} (Tan)",
+                )
+                ax.plot(
+                    x_plot,
+                    sag_data,
+                    linestyle="--",
+                    color=color,
+                    label=f"{label_prefix} (Sag)",
+                )
+
     def view(
         self,
         fig_to_plot_on: Figure | None = None,
@@ -167,49 +211,8 @@ class MTFvsField(BaseAnalysis):
         y_coords_normalized = be.to_numpy(self._field_coords[:, 1])
         x_plot = y_coords_normalized * max_field
 
-        # Determine X-axis label
-        field_def = self.optic.fields.field_definition
-        x_label = "Field Coordinate"
-        if field_def is not None:
-            field_name = field_def.__class__.__name__
-            if "Angle" in field_name:
-                x_label = "Angle (deg)"
-            elif "Height" in field_name:
-                x_label = "Height (mm)"
-        else:
-            # Fallback if no specific type is set but fields exist
-            x_label = "Field Coordinate"
-
-        axes_color_cycle = plt.rcParams["axes.prop_cycle"].by_key()["color"]
-
-        for i_wl, wp in enumerate(self.wavelengths):
-            for i_freq, freq in enumerate(self.frequencies):
-                color_idx = (i_wl * len(self.frequencies) + i_freq) % len(
-                    axes_color_cycle
-                )
-                color = axes_color_cycle[color_idx]
-
-                tan_data = be.to_numpy(self.data[i_wl][i_freq]["tangential"])
-                sag_data = be.to_numpy(self.data[i_wl][i_freq]["sagittal"])
-
-                label_prefix = f"{freq} cyc/mm"
-                if len(self.wavelengths) > 1:
-                    label_prefix += f", {wp.value:.4f} µm"
-
-                ax.plot(
-                    x_plot,
-                    tan_data,
-                    linestyle="-",
-                    color=color,
-                    label=f"{label_prefix} (Tan)",
-                )
-                ax.plot(
-                    x_plot,
-                    sag_data,
-                    linestyle="--",
-                    color=color,
-                    label=f"{label_prefix} (Sag)",
-                )
+        x_label = self._field_axis_label()
+        self._plot_mtf_curves(ax, x_plot)
 
         ax.set_xlabel(x_label)
         ax.set_ylabel("Modulus of the OTF")

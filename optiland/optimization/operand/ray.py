@@ -305,6 +305,7 @@ class RayOperand:
         num_rays,
         wavelength,
         distribution="hexapolar",
+        nan_policy="propagate",
     ):
         """Calculates the root mean square (RMS) spot size on a specific surface.
 
@@ -316,11 +317,37 @@ class RayOperand:
             num_rays: The number of rays to trace.
             wavelength: The wavelength of the rays.
             distribution: The distribution of the rays. Default is 'hexapolar'.
+            nan_policy: How to handle NaN ray intersections, which typically
+                arise from total internal reflection or vignetted rays. One
+                of "propagate" (default, return NaN if any intersection is
+                NaN), "omit" (ignore NaN intersections and compute the RMS
+                from the remaining valid rays), or "raise" (raise a
+                ValueError if any intersection is NaN).
 
         Returns:
             The RMS spot size on the specified surface.
 
+        Raises:
+            ValueError: If nan_policy is "raise" and a NaN ray intersection
+                is encountered, or if nan_policy is not a recognized value.
+
         """
+        valid_nan_policies = ("propagate", "omit", "raise")
+        if nan_policy not in valid_nan_policies:
+            raise ValueError(
+                f"Invalid nan_policy '{nan_policy}'. Must be one of "
+                f"{valid_nan_policies}."
+            )
+
+        def _has_nan(*arrays):
+            return any(be.any(be.isnan(a)) for a in arrays)
+
+        # Note: reductions always use the NaN-omitting `be.nanmean`, rather
+        # than `be.mean`, because `be.mean` is not NaN-consistent across
+        # backends (the torch backend's `mean` already silently ignores
+        # NaNs, while numpy's propagates them). Using `nanmean` everywhere
+        # and handling `nan_policy` explicitly via `_has_nan` keeps behavior
+        # identical on both backends.
         if wavelength == "all":
             x = []
             y = []
@@ -328,16 +355,33 @@ class RayOperand:
                 optic.trace(Hx, Hy, wave, num_rays, distribution)
                 x.append(optic.surfaces.x[surface_number, :].flatten())
                 y.append(optic.surfaces.y[surface_number, :].flatten())
+            has_nan = _has_nan(*x, *y)
             wave_idx = optic.wavelengths.primary_index
-            mean_x = be.mean(x[wave_idx])
-            mean_y = be.mean(y[wave_idx])
+            mean_x = be.nanmean(x[wave_idx])
+            mean_y = be.nanmean(y[wave_idx])
             r2 = [(x[i] - mean_x) ** 2 + (y[i] - mean_y) ** 2 for i in range(len(x))]
-            return be.sqrt(be.mean(be.concatenate(r2)))
-        optic.trace(Hx, Hy, wavelength, num_rays, distribution)
-        x = optic.surfaces.x[surface_number, :].flatten()
-        y = optic.surfaces.y[surface_number, :].flatten()
-        r2 = (x - be.mean(x)) ** 2 + (y - be.mean(y)) ** 2
-        return be.sqrt(be.mean(r2))
+            rms = be.sqrt(be.nanmean(be.concatenate(r2)))
+        else:
+            optic.trace(Hx, Hy, wavelength, num_rays, distribution)
+            x = optic.surfaces.x[surface_number, :].flatten()
+            y = optic.surfaces.y[surface_number, :].flatten()
+            has_nan = _has_nan(x, y)
+            r2 = (x - be.nanmean(x)) ** 2 + (y - be.nanmean(y)) ** 2
+            rms = be.sqrt(be.nanmean(r2))
+
+        if has_nan:
+            if nan_policy == "raise":
+                raise ValueError(
+                    "rms_spot_size encountered a NaN ray intersection on "
+                    f"surface {surface_number}. This typically indicates "
+                    "total internal reflection or a vignetted ray. Use "
+                    "nan_policy='omit' to compute the RMS from valid rays "
+                    "only, or leave nan_policy='propagate' (default) to "
+                    "return NaN."
+                )
+            if nan_policy == "propagate":
+                return rms * be.nan
+        return rms
 
     @staticmethod
     def OPD_difference(
@@ -407,10 +451,13 @@ class RayOperand:
         This operand is useful for creating clearance or interference constraints,
         particularly in off-axis reflective systems.
 
-        The sign convention is such that for Line A propagating generally in the
-        +Z direction (N direction cosine > 0), the signed distance is positive
-        if Point B is on the +Y side of Line A. If Line A propagates generally
-        in the -Z direction (N direction cosine < 0), this sign is flipped.
+        The sign convention follows the direction of propagation of Line A: for
+        Line A propagating generally in the +Z direction (N direction cosine >
+        0), the signed distance is positive if Point B is on the +Y side of
+        Line A. For Line A propagating generally in the -Z direction (N
+        direction cosine < 0), the sign convention naturally flips (positive
+        indicates Point B is on the -Y side) -- no separate correction should
+        be applied for this case.
 
         Args:
             optic: The optical system model.
@@ -456,6 +503,4 @@ class RayOperand:
         else:
             numerator = nA * (yB - yA) - mA * (zB - zA)
             d = numerator / denominator
-            if nA < 0:
-                d = -d
         return d

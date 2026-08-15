@@ -1,3 +1,5 @@
+"""Manages the collection of operands used during optimization."""
+
 from __future__ import annotations
 
 from optiland.optimization.operand import Operand
