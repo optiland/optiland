@@ -68,7 +68,9 @@ def angular_spectrum(
             PyTorch can differentiate with respect to distance.
         evanescent: Handling of spatial frequencies above the propagating
             cutoff. ``"discard"`` removes them. ``"decay"`` attenuates them
-            exponentially away from the input plane.
+            exponentially away from the input plane. A zero propagation
+            distance is always treated as a no-op before either policy is
+            applied.
 
     Returns:
         ScalarField: Propagated field on the original sampling grid.
@@ -83,6 +85,8 @@ def angular_spectrum(
     _validate_distance(distance)
     if evanescent not in ("discard", "decay"):
         raise ValueError("evanescent must be either 'discard' or 'decay'.")
+    if bool(distance == 0):
+        return field
     if not isinstance(distance, Real):
         distance = _cast_real_like(distance, field.data)
 
@@ -98,7 +102,7 @@ def angular_spectrum(
 
     transfer = be.exp(1j * distance * kz)
     if evanescent == "discard":
-        transfer = be.where(propagating | (distance == 0), transfer, 0.0)
+        transfer = be.where(propagating, transfer, 0.0)
     else:
         decay_rate = be.sqrt(be.clip(-kz_squared, 0.0, be.inf))
         transfer = transfer * be.exp(-abs(distance) * decay_rate)

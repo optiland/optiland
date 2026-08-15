@@ -31,7 +31,19 @@ def test_zero_distance_preserves_evanescent_content(set_test_backend):
 
     propagated = field.propagate(0.0, evanescent="discard")
 
+    assert propagated is field
     assert_allclose(propagated.data, field.data, rtol=1e-12, atol=1e-12)
+
+
+def test_evanescent_discard_applies_at_nonzero_distance(set_test_backend):
+    indices = be.arange_indices(32)
+    checkerboard = 1 - 2 * (indices % 2)
+    data = checkerboard[:, None] * checkerboard[None, :]
+    field = ScalarField(data, dx=0.1, wavelength=1.0)
+
+    propagated = field.propagate(1e-9, evanescent="discard")
+
+    assert_allclose(propagated.power, 0.0, atol=1e-12)
 
 
 def test_plane_wave_accumulates_expected_phase(set_test_backend):
