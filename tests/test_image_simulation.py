@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+from scipy.ndimage import zoom
 
 import optiland.backend as be
 from optiland.analysis.image_simulation import (
@@ -10,6 +11,7 @@ from optiland.analysis.image_simulation import (
     SpatiallyVariableSimulator,
 )
 from optiland.samples.objectives import ReverseTelephoto, Telephoto
+from tests.utils import assert_allclose
 
 
 def create_grid_image(size=128, step=20, thickness=2):
@@ -135,3 +137,63 @@ def test_image_simulation_engine_run_batch(set_test_backend):
 
     assert result.shape == (2, 3, 64, 64)
     assert not be.any(be.isnan(result))
+
+
+def test_image_simulation_engine_resampling_preserves_backend_contract(
+    set_test_backend,
+):
+    """Oversampling preserves values and the active backend contract."""
+    engine = ImageSimulationEngine(
+        optic=None,
+        config={"oversample": 2, "padding": 1},
+    )
+    source_np = np.arange(20, dtype=np.float64).reshape(1, 1, 4, 5)
+
+    if be.get_backend() == "torch":
+        import torch
+
+        image = torch.tensor(
+            source_np,
+            device=be.get_device(),
+            requires_grad=True,
+        )
+    else:
+        image = source_np
+
+    engine.source_image = image
+    upsampled, pad_info = engine._preprocess(image)
+    result = engine._postprocess(upsampled, pad_info)
+
+    assert upsampled.shape == (1, 1, 12, 14)
+    assert result.shape == image.shape
+    assert upsampled.dtype == image.dtype
+    assert result.dtype == image.dtype
+
+    padded = np.pad(
+        source_np,
+        ((0, 0), (0, 0), (1, 1), (1, 1)),
+        mode="reflect",
+    )
+    expected_upsampled = zoom(padded, (1, 1, 2, 2), order=1)
+    assert_allclose(upsampled, expected_upsampled)
+
+    expected = zoom(expected_upsampled, (1, 1, 0.5, 0.5), order=1)
+    expected = expected[:, :, 1:5, 1:6]
+    assert_allclose(result, expected)
+
+    if be.get_backend() == "torch":
+        assert upsampled.device == image.device
+        assert result.device == image.device
+
+        upsample_grad = torch.autograd.grad(
+            upsampled.sum(), image, retain_graph=True, allow_unused=True
+        )[0]
+        result_grad = torch.autograd.grad(
+            result.sum(), image, allow_unused=True
+        )[0]
+
+        assert upsample_grad is not None
+        assert result_grad is not None
+        assert torch.all(torch.isfinite(upsample_grad))
+        assert torch.all(torch.isfinite(result_grad))
+        assert torch.any(result_grad != 0)
