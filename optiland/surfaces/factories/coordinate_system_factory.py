@@ -30,13 +30,14 @@ class CoordinateSystemFactory:
             index (int): The index of the surface within the optical system.
             surface_group (SurfaceGroup): The group containing all surfaces.
             **kwargs: Additional keyword arguments specifying position and rotation.
+
                 - x (float): X-coordinate (if absolute positioning is used).
                 - y (float): Y-coordinate (if absolute positioning is used).
                 - z (float): Z-coordinate (if absolute positioning is used).
                 - dx (float): X displacement relative to the previous surface.
                 - dy (float): Y displacement relative to the previous surface.
-                - thickness (float): Thickness of the surface (if relative positioning
-                    is used).
+                - thickness (float): Thickness of the surface (if relative
+                  positioning is used).
                 - rx (float): Rotation about the X-axis.
                 - ry (float): Rotation about the Y-axis.
                 - rz (float): Rotation about the Z-axis.

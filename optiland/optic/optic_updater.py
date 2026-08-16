@@ -322,6 +322,7 @@ class OpticUpdater:
         """Sets the apodization for the optical system.
 
         This method supports setting the apodization in multiple ways:
+
         1. By providing an instance of a `BaseApodization` subclass.
         2. By providing a string identifier (e.g., "GaussianApodization")
            and keyword arguments for its parameters.

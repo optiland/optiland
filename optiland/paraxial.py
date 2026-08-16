@@ -86,6 +86,49 @@ class Paraxial:
         f2 = -y[0] / u[-1]
         return f2[0]
 
+    def f2_range(
+        self,
+        start: int,
+        end: int,
+        wavelength: float | None = None,
+    ) -> ScalarOrArray:
+        """Calculate the effective focal length of a range of surfaces.
+
+        The range is treated as a lens group in isolation: the returned value
+        is the paraxial EFL that surfaces ``start`` through ``end`` have with
+        their own conjugates, evaluated in the media that bound the range in
+        the parent system.
+
+        This is deliberately not a decomposition of the full system's power.
+        The focal lengths of a system's groups do not, in general, recombine
+        into :meth:`f2`, since that would additionally require the separations
+        between the groups' principal planes.
+
+        Args:
+            start: Index of the first surface of the range, inclusive.
+            end: Index of the last surface of the range, inclusive.
+            wavelength: Wavelength in micrometers at which the refractive
+                indices are evaluated. Defaults to the system's primary
+                wavelength.
+
+        Returns:
+            Effective focal length of the surface range. A range with no net
+                power (an afocal group) returns infinity.
+
+        Raises:
+            ValueError: If the surface range is invalid.
+
+        """
+        matrix = self.ray_transfer_matrix(start, end, wavelength)
+
+        # A ray entering parallel to the axis (y=1, u=0) leaves the range with
+        # slope u_out = C, so the EFL is -y_in / u_out = -1 / C. This is the
+        # same ratio f2() forms from an explicit paraxial trace.
+        C = matrix[1, 0]
+        if C == 0:
+            return be.array(float("inf"))
+        return -1.0 / C
+
     def F1(self) -> ScalarOrArray:
         """Calculate the front focal point (F1) location.
 
@@ -472,6 +515,131 @@ class Paraxial:
                 - u_ray: Slopes of the traced ray after each surface.
         """
         return self._ray_tracer.trace(Hy, Py, wavelength)
+
+    def ray_transfer_matrix(
+        self,
+        start: int,
+        end: int,
+        wavelength: float | None = None,
+    ) -> BEArray:
+        """Build the paraxial ray-transfer (ABCD) matrix of a surface range.
+
+        The matrix maps a paraxial ray incident on surface ``start`` to the
+        ray leaving surface ``end``::
+
+            [y_out]   [A  B] [y_in]
+            [u_out] = [C  D] [u_in]
+
+        Both indices are inclusive. The input height and slope are those
+        immediately before surface ``start``, and the output height and slope
+        those immediately after surface ``end``. Only surfaces inside the
+        range contribute: no propagation is included before ``start`` or after
+        ``end``.
+
+        The per-surface refraction, reflection and transfer steps follow the
+        same conventions as :meth:`trace_generic`, so the matrix and an
+        explicit paraxial trace of the same range agree.
+
+        Args:
+            start: Index of the first surface of the range, inclusive. Must be
+                at least 1, since surface 0 is the object surface and carries
+                no power.
+            end: Index of the last surface of the range, inclusive.
+            wavelength: Wavelength in micrometers at which the refractive
+                indices are evaluated. Defaults to the system's primary
+                wavelength.
+
+        Returns:
+            The 2x2 ray-transfer matrix of the surface range.
+
+        Raises:
+            ValueError: If the surface range is invalid.
+
+        """
+        num_surfaces = self.surfaces.num_surfaces
+        if start < 1:
+            raise ValueError(
+                f"Invalid start surface, got {start}. The range must begin at "
+                "an optical surface, so its index must be at least 1 (index 0 "
+                "is the object surface)."
+            )
+        if end > num_surfaces - 1:
+            raise ValueError(
+                f"Invalid end surface, got {end}. The system has "
+                f"{num_surfaces} surfaces, so the largest valid index is "
+                f"{num_surfaces - 1}."
+            )
+        if start > end:
+            raise ValueError(
+                f"Invalid surface range, got start={start} and end={end}. The "
+                "range is inclusive and ordered, so start must not exceed end."
+            )
+
+        if wavelength is None:
+            wavelength = self.optic.primary_wavelength
+
+        R = self.surfaces.radii
+        n = self.surfaces.n(wavelength)
+        pos = be.ravel(self.surfaces.positions)
+
+        matrix = self._interaction_matrix(start, R, n)
+        for k in range(start + 1, end + 1):
+            transfer = self._transfer_matrix(pos[k] - pos[k - 1], n)
+            matrix = be.matmul(
+                self._interaction_matrix(k, R, n), be.matmul(transfer, matrix)
+            )
+        return matrix
+
+    def _interaction_matrix(self, k: int, R: BEArray, n: BEArray) -> BEArray:
+        """Build the ray-transfer matrix of a single surface interaction.
+
+        Args:
+            k: Index of the surface.
+            R: Radii of curvature of all surfaces.
+            n: Refractive indices following each surface.
+
+        Returns:
+            The 2x2 ray-transfer matrix of the surface interaction.
+
+        """
+        surface = self.surfaces[k]
+
+        # Derive the constants from n so they carry the backend's dtype and
+        # device. R is unsuitable, as it is infinite for a plane surface.
+        zero = n[k] * 0.0
+        one = zero + 1.0
+
+        if surface.interaction_model.is_reflective:
+            D = -one
+            if surface.surface_type == "paraxial":
+                C = -one / surface.interaction_model.f
+            else:
+                C = -2.0 / R[k]
+        else:
+            D = n[k - 1] / n[k]
+            if surface.surface_type == "paraxial":
+                C = -one / (surface.interaction_model.f * n[k])
+            else:
+                C = -((n[k] - n[k - 1]) / R[k]) / n[k]
+
+        return be.stack([be.stack([one, zero]), be.stack([C, D])])
+
+    @staticmethod
+    def _transfer_matrix(t: BEArray, n: BEArray) -> BEArray:
+        """Build the ray-transfer matrix for propagation over a distance.
+
+        Args:
+            t: The axial distance to propagate.
+            n: Refractive indices following each surface, used only as a
+                template for the backend's dtype and device.
+
+        Returns:
+            The 2x2 ray-transfer matrix of the propagation.
+
+        """
+        zero = n[0] * 0.0
+        one = zero + 1.0
+        return be.stack([be.stack([one, t + zero]), be.stack([zero, one])])
 
     def trace_generic(
         self,

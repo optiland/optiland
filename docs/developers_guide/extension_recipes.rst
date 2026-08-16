@@ -76,12 +76,17 @@ element with a non-standard diffraction law).
    from optiland.interactions.base import BaseInteractionModel
 
    class MyInteractionModel(BaseInteractionModel):
-       def interact_real_rays(self, rays, surface):
-           # modify rays.L, rays.M, rays.N, rays.intensity in-place
+       def interact_real_rays(self, rays):
+           # modify rays.L, rays.M, rays.N, rays.intensity in-place;
+           # self.parent_surface gives access to the owning Surface
            ...
 
-       def interact_paraxial_rays(self, rays, surface):
+       def interact_paraxial_rays(self, rays):
            # modify paraxial ray height and angle
+           ...
+
+       def flip(self):
+           # flip the interaction model when the surface orientation reverses
            ...
 
 **Step 3:** Register in ``optiland/interactions/__init__.py``.
@@ -154,8 +159,10 @@ Recipe 5: Add a New Optimization Operand
 **Scenario:** Add a custom merit-function term (e.g., chief-ray angle at a specific surface,
 image distortion at a given field).
 
-**Step 1:** Add a new function to ``optiland/optimization/operand/operand.py`` and register it
-in the operand registry at the bottom of that file:
+**Step 1:** Add a new function to ``optiland/optimization/operand/operand.py`` (or one of the
+sibling modules such as ``ray.py``, ``aberration.py``, ``paraxial.py``) and register it, either
+by adding it to the ``METRIC_DICT`` dict near the top of ``operand.py``, or at runtime via the
+``operand_registry`` singleton:
 
 .. code-block:: python
 
@@ -163,8 +170,9 @@ in the operand registry at the bottom of that file:
        # compute and return a scalar value
        ...
 
-   # Register:
-   OPERAND_REGISTRY["my_operand"] = my_operand
+   # Register (at runtime, e.g. from a plugin):
+   from optiland.optimization.operand.operand import operand_registry
+   operand_registry.register("my_operand", my_operand)
 
 **Step 2:** Add tests in ``tests/test_optimization/test_operand.py``.
 
@@ -178,27 +186,29 @@ Recipe 6: Add a Custom Tolerance Sensitivity Class
 **Scenario:** Model a non-standard manufacturing error (e.g., index inhomogeneity, surface
 irregularity described by Zernike coefficients).
 
-**Step 1:** Create or extend ``optiland/tolerancing/perturbations.py`` with a new perturbation
-class. Perturbations must implement ``apply(optic)`` and ``revert(optic)``:
+**Step 1:** Optiland's ``Perturbation`` class (``optiland/tolerancing/perturbation.py``) is not
+subclassed per error type — it wraps an existing optimization ``Variable`` (selected by a
+``variable_type`` string, e.g. ``"radius"``) and draws new values from a ``sampler``. To model a
+new *kind* of randomization, subclass ``BaseSampler`` and implement ``sample()``:
 
 .. code-block:: python
 
-   class MyPerturbation:
-       def __init__(self, surface_number, magnitude):
-           self._surface_number = surface_number
+   from optiland.tolerancing.perturbation import BaseSampler
+
+   class MySampler(BaseSampler):
+       def __init__(self, magnitude):
            self._magnitude = magnitude
-           self._original = None
 
-       def apply(self, optic):
-           s = optic.surfaces.surfaces[self._surface_number]
-           self._original = s.geometry.radius
-           s.geometry.radius += self._magnitude
+       def sample(self):
+           # return the next perturbation value
+           ...
 
-       def revert(self, optic):
-           s = optic.surfaces.surfaces[self._surface_number]
-           s.geometry.radius = self._original
+If instead you need to perturb a parameter that has no existing optimization variable, add a new
+variable type via ``VariableBehavior``/``Variable`` (see :doc:`optimization_framework`) — the
+tolerancing framework reuses that system directly.
 
-**Step 2:** Pass an instance of your perturbation to ``Tolerancing.add_perturbation()``.
+**Step 2:** Register the perturbation on a ``Tolerancing`` instance:
+``Tolerancing.add_perturbation(variable_type, sampler, **kwargs)``.
 
 **Step 3:** Add tests in ``tests/test_tolerancing/``.
 
@@ -257,7 +267,7 @@ focal-plane heat map, add a new 3D actor).
            # add matplotlib artists to self._ax
            ...
 
-**Step 2:** Integrate with ``OpticViewer`` in ``optiland/visualization/optic_viewer.py`` if
+**Step 2:** Integrate with ``OpticViewer`` in ``optiland/visualization/system/optic_viewer.py`` if
 the component should appear in the standard ``lens.draw()`` output.
 
 **For 3D (VTK):**
@@ -273,7 +283,7 @@ the component should appear in the standard ``lens.draw()`` output.
            # return a vtkActor (or vtkAssembly)
            ...
 
-**Step 2:** Integrate with ``OpticViewer3D`` in ``optiland/visualization/optic_viewer_3d.py``.
+**Step 2:** Integrate with ``OpticViewer3D`` in ``optiland/visualization/system/optic_viewer_3d.py``.
 
 **Step 3:** Add tests in ``tests/test_visualization/``.
 

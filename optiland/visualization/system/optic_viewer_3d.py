@@ -33,9 +33,7 @@ class OpticViewer3D(BaseViewer):
         iren: The vtkRenderWindowInteractor object for interaction.
 
     Methods:
-        view(fields='all', wavelengths='primary', num_rays=24,
-             distribution='ring', figsize=(1200, 800), dark_mode=False):
-            Visualizes the optical system in 3D.
+        See :meth:`view` for visualizing the optical system in 3D.
 
     """
 

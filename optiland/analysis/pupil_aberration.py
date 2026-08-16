@@ -117,12 +117,12 @@ class PupilAberration(BaseAnalysis):
 
         Notes
         -----
-        - If `fig_to_plot_on` is provided, the plots are embedded in the given Figure,
-        otherwise a new Figure is created.
-        - For each field, two subplots are created: one for aberration vs $P_y$ and one
-        for aberration vs $P_x$.
-        - If there are no fields to plot, a warning is printed or a message is displayed
-        on the Figure.
+        - If `fig_to_plot_on` is provided, the plots are embedded in the given
+          Figure, otherwise a new Figure is created.
+        - For each field, two subplots are created: one for aberration vs
+          $P_y$ and one for aberration vs $P_x$.
+        - If there are no fields to plot, a warning is printed or a message
+          is displayed on the Figure.
         - A legend is added if there are plotted wavelengths.
         """
         is_gui_embedding = fig_to_plot_on is not None

@@ -224,8 +224,8 @@ class HexagonalDistribution(BaseDistribution):
 class CrossDistribution(BaseDistribution):
     """A class representing a cross-shaped distribution.
 
-    This distribution generates points in the shape of a cross,
-        with the x-axis and y-axis as the arms of the cross.
+    This distribution generates points in the shape of a cross, with the
+    x-axis and y-axis as the arms of the cross.
     If `num_points` is odd, it generates `2 * num_points - 1` points.
     If `num_points` is even and positive, it generates `2 * num_points` points.
     `num_points` represents the number of points along the full extent of each
@@ -267,7 +267,7 @@ class CrossDistribution(BaseDistribution):
 
 
 class GaussianQuadrature(BaseDistribution):
-    """A class for Gaussian quadrature on circular domains, based on _[1].
+    """A class for Gaussian quadrature on circular domains, based on [1]_.
 
     Generates points in a circular pattern, with optimal placement for Gaussian
     quadrature over the unit disk. The total number of points is `num_rings *
@@ -285,12 +285,13 @@ class GaussianQuadrature(BaseDistribution):
 
     def generate_points(self, num_rings: int, num_spokes: int | None = None):
         """Generate radially symmetric points.
+
         Args:
             num_rings (int): Number of rings.
-            num_angles (int | None) : Number of spokes, by default None. If None, the
-                number of spokes is `4 * (num_rings + 1)`. In that case, the integration
-                over the unit disk is exact for polynomials of degree `num_rings` in x
-                and y.
+            num_spokes (int | None): Number of spokes, by default None. If
+                None, the number of spokes is `4 * (num_rings + 1)`. In that
+                case, the integration over the unit disk is exact for
+                polynomials of degree `num_rings` in x and y.
         """
         from scipy.special import roots_legendre
 

@@ -5,7 +5,7 @@ Authors
 
 **Optiland** was created and is actively maintained by:
 
-- **Kramer Harrison** (`GitHub <https://github.com/HarrisonKramer>`_)
+- **Kramer Harrison** (`GitHub <https://github.com/HarrisonKramer>`__)
 
 Contributors
 ------------
@@ -52,5 +52,5 @@ We sincerely appreciate the contributions of the following individuals, whose ef
 
 Your contributions, whether in the form of code, documentation, feedback, or discussions, are what make **Optiland** better for everyone.
 
-Want to contribute?  
+Want to contribute?
 We welcome new contributors! If you're interested, please check out the :ref:`Contributing <contributing>` section to get started.
