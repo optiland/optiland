@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import optiland.backend as be
+from optiland.coatings import FresnelCoating
 from optiland.coordinate_system import CoordinateSystem
 from optiland.geometries.plane import Plane
 from optiland.materials.ideal import IdealMaterial
@@ -13,7 +14,11 @@ from ..utils import assert_allclose
 
 def _plane_surface(previous, material_post, z=0.0):
     geometry = Plane(CoordinateSystem(z=z))
-    return Surface(previous_surface=previous, material_post=material_post, geometry=geometry)
+    return Surface(
+        previous_surface=previous,
+        material_post=material_post,
+        geometry=geometry,
+    )
 
 
 def _build_chain(materials):
@@ -66,7 +71,7 @@ class TestSurfaceViewTracesLikeSurface:
         assert_allclose(view_rays.N, nominal_rays.N)
         assert_allclose(view_rays.opd, nominal_rays.opd)
 
-        for view, surface in zip(views, surfaces[1:]):
+        for view, surface in zip(views, surfaces[1:], strict=True):
             assert_allclose(view.x, surface.x)
             assert_allclose(view.y, surface.y)
             assert_allclose(view.opd, surface.opd)
@@ -83,9 +88,7 @@ class TestSurfaceViewRevisit:
         ]
         surfaces = _build_chain(materials)
 
-        views = resolve_sequence(
-            surfaces, [1, (2, "reflect"), (1, "reflect"), 2]
-        )
+        views = resolve_sequence(surfaces, [1, (2, "reflect"), (1, "reflect"), 2])
         first_hit_of_1, _, second_hit_of_1, _ = views
 
         rays = _make_rays()
@@ -115,3 +118,19 @@ class TestSurfaceViewRevisit:
         # traced directly and keeps its own empty buffers.
         assert be.size(views[0].x) == 2
         assert be.size(base.x) == 0
+
+
+class TestSurfaceViewCoatings:
+    def test_coating_rebinds_media_in_reverse_view(self):
+        air = IdealMaterial(n=1.0)
+        glass = IdealMaterial(n=1.5)
+        surfaces = _build_chain([air, glass, air])
+        surfaces[1].interaction_model.coating = FresnelCoating(air, glass)
+
+        views = resolve_sequence(surfaces, [1, (2, "reflect"), (1, "reflect"), 2])
+        reverse_view = views[2]
+        assert reverse_view.reverse is True
+        assert reverse_view.material_pre == glass
+        assert reverse_view.material_post == glass
+        assert reverse_view.interaction_model.coating.material_pre == glass
+        assert reverse_view.interaction_model.coating.material_post == glass

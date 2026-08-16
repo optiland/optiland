@@ -12,16 +12,25 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from optiland.sequences.steps import parse_steps
+from optiland.sequences.steps import SequenceStep, parse_steps
 from optiland.sequences.surface_view import SurfaceView, resolve_view_materials
 
 if TYPE_CHECKING:
-    from optiland.sequences.steps import RawStep, SequenceStep
+    from optiland.sequences.steps import RawStep
     from optiland.surfaces.standard_surface import Surface
 
 
 class SequenceValidationError(ValueError):
     """Raised when a sequence's steps are not physically consistent."""
+
+
+def _is_step_reflective(step: SequenceStep, base_surface: Surface) -> bool:
+    """Whether a step reflects, considering both overrides and nominal mirrors."""
+    if step.interaction_override == "reflect":
+        return True
+    if step.interaction_override == "refract":
+        return False
+    return getattr(base_surface.interaction_model, "is_reflective", False)
 
 
 def _effective_exit_material(step: SequenceStep, base_surfaces: list[Surface]):
@@ -35,7 +44,8 @@ def _effective_exit_material(step: SequenceStep, base_surfaces: list[Surface]):
     pre, post = resolve_view_materials(
         base_surface, step.reverse, step.interaction_override
     )
-    return pre if step.interaction_override == "reflect" else post
+    is_reflective = _is_step_reflective(step, base_surface)
+    return pre if is_reflective else post
 
 
 def validate_sequence(steps: list[SequenceStep], base_surfaces: list[Surface]) -> None:
@@ -97,6 +107,23 @@ def resolve_sequence(
                 f"Sequence step references surface index {step.index}, but "
                 f"the optic only has {len(base_surfaces)} surfaces."
             )
+
+    # Refine reverse direction inference taking nominal mirrors into account
+    refined_steps: list[SequenceStep] = []
+    reverse = False
+    for step in steps:
+        base_surface = base_surfaces[step.index]
+        refined_steps.append(
+            SequenceStep(
+                index=step.index,
+                reverse=reverse,
+                interaction_override=step.interaction_override,
+            )
+        )
+        if _is_step_reflective(step, base_surface):
+            reverse = not reverse
+
+    steps = refined_steps
 
     validate_sequence(steps, base_surfaces)
 

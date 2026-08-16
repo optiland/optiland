@@ -42,13 +42,20 @@ a lightweight proxy that **shares** state with a base ``Surface`` and **owns** t
      - ``previous_view`` link
    * - ``aperture``, ``semi_aperture``
      - ``reverse`` flag
-   * - Coating / BSDF objects
+   * - Coating / BSDF objects (non-polarized)
      - ``interaction_model`` instance (rebound, ``is_reflective`` overridable)
    * - ``is_stop``, ``comment``, ``surface_type``, ``thickness``
-     - (not applicable; these are not per-view)
+     - Polarized coatings (``FresnelCoating``, ``ThinFilmCoating``): rebound copies
 
-Because geometry and materials are shared **by reference**, editing a base surface, or
-optimizing a variable on it, is immediately visible in every sequence built over it.
+Because geometry and non-polarized materials/coatings are shared **by reference**,
+editing a base surface, or optimizing a variable on it, is immediately visible in every
+sequence built over it. Polarized coatings are the one exception: a
+``FresnelCoating``/``ThinFilmCoating`` is constructed against a fixed ``(material_pre,
+material_post)`` pair, which a reversed or reflected view resolves differently than its
+base surface does. ``SurfaceView`` therefore rebuilds its own copy of the coating,
+bound to the view's own resolved media (and, for a multilayer ``ThinFilmCoating``, with
+the layer stack reversed for a ``reverse`` view) — everything else about the coating
+(materials, layer thicknesses) still traces back to the base surface's definition.
 
 Riding the existing pipeline
 -----------------------------
@@ -94,9 +101,16 @@ Step syntax and direction inference
 
 A raw step is either a bare surface index (forward, nominal interaction) or an
 ``(index, "reflect")`` / ``(index, "refract")`` pair to force an interaction type at
-that surface. Direction is not specified explicitly; it starts forward and flips after
+that surface — a plain ``list`` of the same two elements (e.g. ``[3, "reflect"]``) is
+accepted identically, since that is the shape a pair round-trips to through JSON.
+Direction is not specified explicitly; it starts forward and flips after
 every reflective step, since a reflection is what physically reverses the direction of
-propagation. :func:`~optiland.sequences.steps.parse_steps` implements this inference.
+propagation. A surface that is itself a nominal mirror (``is_reflective`` already true on
+its base interaction model, e.g. the primary of a Cassegrain) also flips the direction
+even when the step gives no explicit override.
+:func:`~optiland.sequences.steps.parse_steps` implements the raw-step inference;
+:func:`~optiland.sequences.resolver.resolve_sequence` refines it against each base
+surface's nominal reflectivity.
 
 For example, a two-bounce ghost between surfaces 2 and 3::
 
@@ -143,6 +157,16 @@ Because ``SequencedOptic`` exposes ``trace``, ``trace_generic``, ``surfaces``, `
 analyses and optimization operands work against a sequence unmodified. ``image_surface``
 means the sequence's own terminal step here, not necessarily the system's physical image
 plane, since a ghost path does not always end there.
+
+Serialization
+----------------
+
+``Optic.to_dict()``/``Optic.from_dict()`` round-trip every sequence registered via
+``add_sequence``: each entry in ``optic.sequences`` is serialized as its ``raw_steps``
+list under a top-level ``"sequences"`` key, and re-resolved against the (already
+deserialized) base surfaces on load. Because a sequence is just a raw step list resolved
+against the base surfaces, this is enough to reconstruct it exactly — there is no
+separate view state to persist.
 
 Known limitations (v1)
 -------------------------

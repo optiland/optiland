@@ -71,7 +71,7 @@ class TestSequencedSurfaceGroupBasics:
         surfaces = _build_chain([AIR, GLASS_A, GLASS_B])
         group = SequencedSurfaceGroup(surfaces, [0, 1, 2])
         with pytest.raises(ValueError, match="No stop surface"):
-            group.stop_index
+            _ = group.stop_index
 
     def test_invalid_sequence_raises_at_construction(self, set_test_backend):
         from optiland.sequences.resolver import SequenceValidationError
@@ -107,9 +107,7 @@ class TestSequencedSurfaceGroupTrace:
         # A revisit sequence: 4 steps over only 2 distinct base surfaces.
         materials = [AIR, GLASS_A, AIR]
         surfaces = _build_chain(materials)
-        group = SequencedSurfaceGroup(
-            surfaces, [1, (2, "reflect"), (1, "reflect"), 2]
-        )
+        group = SequencedSurfaceGroup(surfaces, [1, (2, "reflect"), (1, "reflect"), 2])
         group.trace(_make_rays())
 
         assert group.x.shape[0] == 4

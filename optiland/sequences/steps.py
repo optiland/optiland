@@ -18,10 +18,11 @@ Kramer Harrison, 2026
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 VALID_OVERRIDES = frozenset({"reflect", "refract"})
 
-RawStep = int | tuple[int, str]
+RawStep = int | tuple[int, str] | list[Any]
 
 
 @dataclass(frozen=True)
@@ -44,25 +45,36 @@ class SequenceStep:
     interaction_override: str | None = None
 
 
-def _parse_raw_step(raw: int | tuple[int, str]) -> tuple[int, str | None]:
+def _parse_raw_step(raw: RawStep) -> tuple[int, str | None]:
     """Split a raw step into ``(index, interaction_override)``."""
-    if isinstance(raw, tuple):
+    if isinstance(raw, tuple | list):
         if len(raw) != 2:
             raise ValueError(
-                f"Step tuple must be (index, interaction_override), got {raw!r}."
+                f"Step pair must be (index, interaction_override), got {raw!r}."
             )
         index, override = raw
-        if override not in VALID_OVERRIDES:
+        if not isinstance(index, int):
+            raise ValueError(
+                f"Surface index must be an int, got {index!r} of type "
+                f"{type(index).__name__}."
+            )
+        if not isinstance(override, str) or override not in VALID_OVERRIDES:
             raise ValueError(
                 f"Unknown interaction override {override!r} at step for surface "
                 f"{index}; expected one of {sorted(VALID_OVERRIDES)}."
             )
         return index, override
 
+    if not isinstance(raw, int):
+        raise ValueError(
+            f"Invalid raw step {raw!r}. Expected an int surface index or a "
+            "(index, interaction_override) pair."
+        )
+
     return raw, None
 
 
-def parse_steps(raw_steps: list[int | tuple[int, str]]) -> list[SequenceStep]:
+def parse_steps(raw_steps: list[RawStep]) -> list[SequenceStep]:
     """Parse a raw step list into resolved :class:`SequenceStep` objects.
 
     Direction is inferred: it starts forward (``reverse=False``) and flips

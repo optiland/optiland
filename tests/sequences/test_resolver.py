@@ -4,23 +4,33 @@ import pytest
 
 from optiland.coordinate_system import CoordinateSystem
 from optiland.geometries.plane import Plane
+from optiland.interactions.refractive_reflective_model import RefractiveReflectiveModel
 from optiland.materials.ideal import IdealMaterial
 from optiland.sequences.resolver import SequenceValidationError, resolve_sequence
 from optiland.sequences.surface_view import resolve_view_materials
 from optiland.surfaces.standard_surface import Surface
 
 
-def _plane_surface(previous, material_post, z=0.0):
+def _plane_surface(previous, material_post, z=0.0, is_reflective=False):
     geometry = Plane(CoordinateSystem(z=z))
-    return Surface(previous_surface=previous, material_post=material_post, geometry=geometry)
+    surf = Surface(
+        previous_surface=previous, material_post=material_post, geometry=geometry
+    )
+    if is_reflective:
+        surf.interaction_model = RefractiveReflectiveModel(
+            parent_surface=surf, is_reflective=True
+        )
+    return surf
 
 
-def _build_chain(materials):
+def _build_chain(materials, reflective_indices=None):
     """Build a forward chain of surfaces whose material_post is ``materials[i]``."""
     surfaces = []
     previous = None
+    reflective_indices = reflective_indices or set()
     for i, material in enumerate(materials):
-        surface = _plane_surface(previous, material, z=float(i))
+        is_refl = i in reflective_indices
+        surface = _plane_surface(previous, material, z=float(i), is_reflective=is_refl)
         surfaces.append(surface)
         previous = surface
     return surfaces
@@ -34,13 +44,17 @@ GLASS_B = IdealMaterial(n=1.6)
 class TestResolveViewMaterials:
     def test_forward_nominal(self):
         surfaces = _build_chain([AIR, GLASS_A, GLASS_B])
-        pre, post = resolve_view_materials(surfaces[1], reverse=False, interaction_override=None)
+        pre, post = resolve_view_materials(
+            surfaces[1], reverse=False, interaction_override=None
+        )
         assert pre == AIR
         assert post == GLASS_A
 
     def test_reverse_swaps_pre_and_post(self):
         surfaces = _build_chain([AIR, GLASS_A, GLASS_B])
-        pre, post = resolve_view_materials(surfaces[1], reverse=True, interaction_override=None)
+        pre, post = resolve_view_materials(
+            surfaces[1], reverse=True, interaction_override=None
+        )
         assert pre == GLASS_A
         assert post == AIR
 
@@ -77,11 +91,45 @@ class TestResolveSequence:
         )
         assert len(views) == 7
         assert [v.reverse for v in views] == [
-            False, False, False, False, True, False, False,
+            False,
+            False,
+            False,
+            False,
+            True,
+            False,
+            False,
         ]
         assert [v.interaction_override for v in views] == [
-            None, None, None, "reflect", "reflect", None, None,
+            None,
+            None,
+            None,
+            "reflect",
+            "reflect",
+            None,
+            None,
         ]
+
+    def test_list_steps_syntax_is_valid(self):
+        surfaces = _build_chain([AIR, GLASS_A, GLASS_B, AIR, AIR])
+        views = resolve_sequence(
+            surfaces, [0, 1, 2, [3, "reflect"], [2, "reflect"], 3, 4]
+        )
+        assert len(views) == 7
+        assert [v.reverse for v in views] == [
+            False,
+            False,
+            False,
+            False,
+            True,
+            False,
+            False,
+        ]
+
+    def test_nominal_mirror_infers_reverse_direction(self):
+        # Surface 1 is a nominal mirror (e.g. in a Cassegrain telescope)
+        surfaces = _build_chain([AIR, AIR, AIR], reflective_indices={1})
+        views = resolve_sequence(surfaces, [0, 1, 2])
+        assert [v.reverse for v in views] == [False, False, True]
 
     def test_skipped_surface_breaks_medium_chain(self):
         surfaces = _build_chain([AIR, GLASS_A, GLASS_B])

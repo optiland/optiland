@@ -10,8 +10,6 @@ from __future__ import annotations
 
 import math
 
-import pytest
-
 from optiland.analysis.spot_diagram.core import SpotDiagram
 from optiland.mtf.geometric import GeometricMTF
 from optiland.samples.objectives import CookeTriplet

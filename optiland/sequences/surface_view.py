@@ -94,7 +94,31 @@ class SurfaceView:
         elif interaction_override == "refract":
             self.interaction_model.is_reflective = False
 
+        self._rebind_coating()
         self.reset()
+
+    def _rebind_coating(self) -> None:
+        """Rebind polarized coatings to this view's resolved media."""
+        coating = getattr(self.interaction_model, "coating", None)
+        if coating is None:
+            return
+
+        from optiland.coatings import FresnelCoating, ThinFilmCoating
+
+        if isinstance(coating, FresnelCoating):
+            self.interaction_model.coating = FresnelCoating(
+                self.material_pre, self.material_post
+            )
+        elif isinstance(coating, ThinFilmCoating):
+            layers = [
+                (layer.material, layer.thickness_nm, layer.name)
+                for layer in coating.stack.layers
+            ]
+            if self.reverse:
+                layers = layers[::-1]
+            self.interaction_model.coating = ThinFilmCoating(
+                self.material_pre, self.material_post, layers=layers
+            )
 
     # -- Shared-by-reference passthrough properties -----------------------
 

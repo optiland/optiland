@@ -83,7 +83,7 @@ class TestSequencedOpticDelegation:
 class TestSequencedOpticTrace:
     def test_forward_sequence_matches_base_optic_trace(self, set_test_backend):
         optic = _build_optic()
-        seq = optic.add_sequence("fwd", steps=[0, 1, 2, 3])
+        optic.add_sequence("fwd", steps=[0, 1, 2, 3])
 
         base_rays = optic.trace(0, 0, 0.55, num_rays=6)
         # base_optic.trace() mutates optic.surfaces' record buffers, so trace
@@ -115,3 +115,17 @@ class TestSequencedOpticTrace:
         seq.trace(0, 0, 0.55, num_rays=6)
         assert be.size(optic.surfaces[1].x) == 0
         assert be.size(seq.surfaces[1].x) > 0
+
+
+class TestSequencedOpticSerialization:
+    def test_serialization_round_trip_preserves_sequences(self):
+        optic = _build_optic()
+        optic.add_sequence("ghost", steps=[0, 1, (2, "reflect"), (1, "reflect"), 2, 3])
+
+        data = optic.to_dict()
+        assert "sequences" in data
+        assert "ghost" in data["sequences"]
+
+        restored = Optic.from_dict(data)
+        assert "ghost" in restored.sequences
+        assert len(restored.sequences["ghost"].surfaces) == 6
