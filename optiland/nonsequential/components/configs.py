@@ -38,8 +38,15 @@ class SurfaceConfig:
     When a field is set, it overrides the compound's default for that surface.
 
     Attributes:
-        bsdf: Custom BSDF for this surface.  Overrides the default specular
-            behaviour.
+        bsdf: Custom BSDF for this surface.  Routes rays through the scatter
+            model instead of the surface's specular/refractive behaviour.
+        scatter_fraction: Probability in [0, 1] that a ray striking this
+            surface is routed through ``bsdf`` rather than following the
+            specular or refractive path.  The default of 1.0 sends every ray
+            to the BSDF, turning the surface into a pure diffuser.  Set it
+            below 1 to model a partially scattering surface, e.g. 0.1 for a
+            surface that scatters a tenth of the light and transmits the
+            rest.  Ignored when ``bsdf`` is None.
         coating: Thin-film coating model (deferred -- not yet implemented).
         aperture_radius: Semi-diameter override [mm].  Overrides the aperture
             computed from the compound config.
@@ -47,6 +54,7 @@ class SurfaceConfig:
     """
 
     bsdf: BaseBSDF | None = None
+    scatter_fraction: float = 1.0
     coating: object | None = None  # BaseCoating -- deferred
     aperture_radius: float | None = None
     interaction: InteractionType | None = None

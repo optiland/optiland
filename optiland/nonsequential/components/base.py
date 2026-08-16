@@ -43,6 +43,7 @@ class BaseComponent(ABC):
         material_back: NSQMaterial,
         bsdf: BaseBSDF | None = None,
         name: str = "",
+        scatter_fraction: float = 1.0,
     ) -> None:
         """Initialize BaseComponent.
 
@@ -53,6 +54,8 @@ class BaseComponent(ABC):
             material_back: Medium on the back side.
             bsdf: Optional BSDF scatter model.
             name: Optional label for this component.
+            scatter_fraction: Probability that a ray striking this surface is
+                routed through ``bsdf`` instead of the specular path.
         """
         self.cs = cs
         self.geometry = geometry
@@ -60,6 +63,7 @@ class BaseComponent(ABC):
         self.material_back = material_back
         self.bsdf = bsdf
         self.name = name
+        self.scatter_fraction = float(scatter_fraction)
 
     def intersect(
         self, rays: NSQRayBundle

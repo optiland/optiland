@@ -108,22 +108,32 @@ class LambertianBSDF(BaseBSDF):
 def _orthonormal_basis(n: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Build two tangent vectors perpendicular to n (numpy, for detached sampling).
 
+    Uses the branchless construction of Duff et al., *Building an Orthonormal
+    Basis, Revisited* (JCGT 2017). The denominator ``sign + n_z`` has
+    magnitude >= 1 for any unit ``n``, because ``sign`` carries the sign of
+    ``n_z``, so no normalisation and no division by zero is involved.
+
+    The previous construction took ``cross(n, ref)`` against a fixed reference
+    axis and normalised the result. That divides by zero whenever ``n`` is
+    parallel to ``ref`` and, more importantly, whenever ``n`` is the zero
+    vector: BSDF sampling is evaluated for every ray in the bundle, and rays
+    that hit nothing carry a zero normal. The resulting NaN directions were
+    masked out of the forward result but still emitted a RuntimeWarning, and
+    would poison gradients on the torch backend.
+
     Args:
-        n: Normal vectors, shape (N, 3), already normalised.
+        n: Normal vectors, shape (N, 3), already normalised. A zero vector
+            yields an arbitrary but finite basis.
 
     Returns:
         Pair of tangent vectors (t, b), each shape (N, 3).
     """
-    N = n.shape[0]
+    nx, ny, nz = n[:, 0], n[:, 1], n[:, 2]
 
-    abs_nx = np.abs(n[:, 0])
-    use_y = abs_nx > 0.9
+    sign = np.copysign(1.0, nz)
+    a = -1.0 / (sign + nz)
+    b = nx * ny * a
 
-    ref = np.zeros((N, 3), dtype=n.dtype)
-    ref[~use_y, 1] = 1.0
-    ref[use_y, 2] = 1.0
-
-    t_vec = np.cross(n, ref)
-    t_vec /= (t_vec * t_vec).sum(axis=1, keepdims=True) ** 0.5
-    b_vec = np.cross(n, t_vec)
+    t_vec = np.stack([1.0 + sign * nx * nx * a, sign * b, -sign * nx], axis=1)
+    b_vec = np.stack([b, sign + ny * ny * a, -ny], axis=1)
     return t_vec, b_vec

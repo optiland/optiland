@@ -49,6 +49,7 @@ class RefractiveComponent(BaseComponent):
         material_back: NSQMaterial,
         bsdf: BaseBSDF | None = None,
         name: str = "",
+        scatter_fraction: float = 1.0,
     ) -> None:
         """Initialize RefractiveComponent.
 
@@ -59,8 +60,18 @@ class RefractiveComponent(BaseComponent):
             material_back: Back-side medium.
             bsdf: Optional BSDF scatter model.
             name: Optional label.
+            scatter_fraction: Probability that a hit ray is routed through
+                ``bsdf`` rather than refracted.
         """
-        super().__init__(cs, geometry, material_front, material_back, bsdf, name)
+        super().__init__(
+            cs,
+            geometry,
+            material_front,
+            material_back,
+            bsdf,
+            name,
+            scatter_fraction=scatter_fraction,
+        )
 
     def interact(
         self,
@@ -196,11 +207,18 @@ class RefractiveComponent(BaseComponent):
                 rays.wavelength,
                 rng,
             )
-            hit_col_bsdf = hit_mask[:, None]
+            # Route only a scatter_fraction of the hit rays through the BSDF;
+            # the rest keep the refracted direction computed above. The branch
+            # is drawn from a detached probability, matching the Fresnel
+            # split, so the surface can be partially diffusing.
+            scatters = hit_mask & be.array(
+                rng.random(rays.num_rays) < self.scatter_fraction
+            )
+            scatter_col = scatters[:, None]
             cur_dirs = be.stack([rays.L, rays.M, rays.N], axis=1)
-            new_dirs = be.where(hit_col_bsdf, bsdf_dirs, cur_dirs)
+            new_dirs = be.where(scatter_col, bsdf_dirs, cur_dirs)
             rays.L = new_dirs[:, 0]
             rays.M = new_dirs[:, 1]
             rays.N = new_dirs[:, 2]
-            bsdf_gate = be.where(hit_mask, bsdf_weights, be.ones_like(bsdf_weights))
+            bsdf_gate = be.where(scatters, bsdf_weights, be.ones_like(bsdf_weights))
             rays.flux = rays.flux * bsdf_gate

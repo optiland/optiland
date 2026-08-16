@@ -42,6 +42,7 @@ class ReflectiveComponent(BaseComponent):
         bsdf: BaseBSDF | None = None,
         material_front: NSQMaterial = VACUUM,
         name: str = "",
+        scatter_fraction: float = 1.0,
     ) -> None:
         """Initialize ReflectiveComponent.
 
@@ -51,8 +52,18 @@ class ReflectiveComponent(BaseComponent):
             bsdf: Optional BSDF scatter model. None = perfect mirror.
             material_front: Medium on the front side (default: vacuum).
             name: Optional label.
+            scatter_fraction: Probability that a hit ray is routed through
+                ``bsdf`` rather than specularly reflected.
         """
-        super().__init__(cs, geometry, material_front, material_front, bsdf, name)
+        super().__init__(
+            cs,
+            geometry,
+            material_front,
+            material_front,
+            bsdf,
+            name,
+            scatter_fraction=scatter_fraction,
+        )
 
     def interact(
         self,
@@ -83,8 +94,18 @@ class ReflectiveComponent(BaseComponent):
 
         dirs = be.stack([rays.L, rays.M, rays.N], axis=1)
 
+        # Specular reflection: d - 2*(d.n)*n. Always computed, because with a
+        # scatter_fraction below 1 it is the fallback for rays that do not
+        # enter the BSDF lobe.
+        raw_dot = (dirs * normals).sum(axis=1, keepdims=True)
+        reflected = dirs - 2.0 * raw_dot * normals
+        norms_r = (reflected * reflected).sum(axis=1, keepdims=True) ** 0.5
+        reflected = reflected / (norms_r + 1e-30)
+        hit_col = hit_mask[:, None]
+        new_dirs = be.where(hit_col, reflected, dirs)
+
         if self.bsdf is not None:
-            # Compute BSDF for all N rays; where-select only hit rays
+            # Compute BSDF for all N rays; where-select only scattering rays
             bsdf_dirs, bsdf_weights = self.bsdf.sample(
                 rays.num_rays,
                 dirs,
@@ -92,19 +113,16 @@ class ReflectiveComponent(BaseComponent):
                 rays.wavelength,
                 rng,
             )
-            hit_col = hit_mask[:, None]
-            new_dirs = be.where(hit_col, bsdf_dirs, dirs)
-            rays.flux = rays.flux * be.where(
-                hit_mask, bsdf_weights, be.ones_like(bsdf_weights)
+            # Route only a scatter_fraction of the hit rays into the lobe; the
+            # rest reflect specularly. The branch is drawn from a detached
+            # probability, matching the Fresnel split.
+            scatters = hit_mask & be.array(
+                rng.random(rays.num_rays) < self.scatter_fraction
             )
-        else:
-            # Specular reflection: d - 2*(d.n)*n
-            raw_dot = (dirs * normals).sum(axis=1, keepdims=True)
-            reflected = dirs - 2.0 * raw_dot * normals
-            norms_r = (reflected * reflected).sum(axis=1, keepdims=True) ** 0.5
-            reflected = reflected / (norms_r + 1e-30)
-            hit_col = hit_mask[:, None]
-            new_dirs = be.where(hit_col, reflected, dirs)
+            new_dirs = be.where(scatters[:, None], bsdf_dirs, new_dirs)
+            rays.flux = rays.flux * be.where(
+                scatters, bsdf_weights, be.ones_like(bsdf_weights)
+            )
 
         rays.L = new_dirs[:, 0]
         rays.M = new_dirs[:, 1]
