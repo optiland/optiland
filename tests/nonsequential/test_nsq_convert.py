@@ -9,7 +9,6 @@ import pytest
 
 from optiland.nonsequential.convert import ConversionError, sequential_to_nonsequential
 
-
 # ---------------------------------------------------------------------------
 # Helpers — build sequential optics
 # ---------------------------------------------------------------------------
@@ -21,7 +20,9 @@ def _singlet_optic():
 
     optic = Optic()
     optic.add_surface(index=0, thickness=float("inf"))
-    optic.add_surface(index=1, radius=50.0, thickness=5.0, material="N-BK7", is_stop=True)
+    optic.add_surface(
+        index=1, radius=50.0, thickness=5.0, material="N-BK7", is_stop=True
+    )
     optic.add_surface(index=2, radius=-50.0, thickness=50.0)
     optic.add_surface(index=3)
     optic.set_aperture(aperture_type="EPD", value=10.0)
@@ -37,7 +38,9 @@ def _doublet_optic():
 
     optic = Optic()
     optic.add_surface(index=0, thickness=float("inf"))
-    optic.add_surface(index=1, radius=60.0, thickness=6.0, material="N-BK7", is_stop=True)
+    optic.add_surface(
+        index=1, radius=60.0, thickness=6.0, material="N-BK7", is_stop=True
+    )
     optic.add_surface(index=2, radius=-30.0, thickness=2.0, material="N-F2")
     optic.add_surface(index=3, radius=-80.0, thickness=50.0)
     optic.add_surface(index=4)
@@ -54,7 +57,9 @@ def _multi_field_optic():
 
     optic = Optic()
     optic.add_surface(index=0, thickness=float("inf"))
-    optic.add_surface(index=1, radius=50.0, thickness=5.0, material="N-BK7", is_stop=True)
+    optic.add_surface(
+        index=1, radius=50.0, thickness=5.0, material="N-BK7", is_stop=True
+    )
     optic.add_surface(index=2, radius=-50.0, thickness=50.0)
     optic.add_surface(index=3)
     optic.set_aperture(aperture_type="EPD", value=10.0)
@@ -134,7 +139,9 @@ def test_height_field_creates_point_source():
 
     optic = Optic()
     optic.add_surface(index=0, thickness=100.0)
-    optic.add_surface(index=1, radius=50.0, thickness=5.0, material="N-BK7", is_stop=True)
+    optic.add_surface(
+        index=1, radius=50.0, thickness=5.0, material="N-BK7", is_stop=True
+    )
     optic.add_surface(index=2, radius=-50.0, thickness=50.0)
     optic.add_surface(index=3)
     optic.set_aperture(aperture_type="EPD", value=10.0)
@@ -187,7 +194,6 @@ def test_material_name_preserved():
 
 def test_unsupported_geometry_raises():
     """A surface with an unsupported geometry must raise ConversionError."""
-    from optiland.geometries.even_asphere import EvenAsphere
     from optiland.optic import Optic
 
     optic = Optic()
@@ -210,8 +216,9 @@ def test_unsupported_geometry_raises():
     # EvenAsphere is in the unsupported set — it may or may not be supported
     # depending on implementation; test that *if* unsupported it raises.
     # We test with a known-unsupported type by patching geometry name.
-    from optiland.nonsequential.convert import _check_geometry
     from unittest.mock import MagicMock
+
+    from optiland.nonsequential.convert import _check_geometry
 
     surf = MagicMock()
     surf.geometry = MagicMock()
@@ -252,7 +259,9 @@ def test_image_height_field_raises():
 
     optic = Optic()
     optic.add_surface(index=0, thickness=float("inf"))
-    optic.add_surface(index=1, radius=50.0, thickness=5.0, material="N-BK7", is_stop=True)
+    optic.add_surface(
+        index=1, radius=50.0, thickness=5.0, material="N-BK7", is_stop=True
+    )
     optic.add_surface(index=2, radius=-50.0, thickness=50.0)
     optic.add_surface(index=3)
     optic.set_aperture(aperture_type="EPD", value=10.0)

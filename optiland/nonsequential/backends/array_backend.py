@@ -129,7 +129,11 @@ class ArrayBackend(TracerBackend):
                 if i == len(sources) - 1:
                     n = remaining
                 else:
-                    n = max(1, round(num_rays_total * src.total_flux / total_flux_in))
+                    # float(): total_flux may be a tensor under autograd
+                    n = max(
+                        1,
+                        round(num_rays_total * float(src.total_flux) / total_flux_in),
+                    )
                     remaining -= n
                 rays_per_source.append(n)
 
@@ -380,12 +384,17 @@ class ArrayBackend(TracerBackend):
             if hasattr(result, "total_flux"):
                 total_flux_detected += result.total_flux
 
+        # Every launched watt ends up detected, absorbed, escaped, or killed
+        # by the flux/depth cutoffs. Omitting total_flux_lost makes the metric
+        # report a large error for any scene that depth-kills rays, which is
+        # exactly the stray-light case this diagnostic exists to serve.
         flux_err = (
             abs(
                 total_flux_in
                 - total_flux_detected
                 - total_flux_absorbed
                 - total_flux_escaped
+                - total_flux_lost
             )
             / total_flux_in
             if total_flux_in > 0

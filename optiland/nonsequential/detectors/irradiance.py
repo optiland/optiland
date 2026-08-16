@@ -14,6 +14,7 @@ import numpy as np
 
 import optiland.backend as be
 from optiland.backend.utils import to_numpy
+from optiland.nonsequential._utils import as_float, as_param
 from optiland.nonsequential.components.base import _get_transform
 from optiland.nonsequential.components.geometry.analytic.plane import (
     FinitePlaneGeometry,
@@ -69,20 +70,22 @@ class IrradianceDetector(BaseDetector):
         """
         geometry = FinitePlaneGeometry(width=width, height=height)
         super().__init__(cs, geometry, name=name)
-        self.width = float(width)
-        self.height = float(height)
+        self.width = as_param(width)
+        self.height = as_param(height)
         self.num_pixels_x = int(num_pixels_x)
         self.num_pixels_y = int(num_pixels_y)
         self.splat = splat
-        self.splat_sigma = float(splat_sigma)
+        self.splat_sigma = as_float(splat_sigma)
 
         # Flat accumulation buffer: shape (ny * nx,)
         self._data = be.zeros(num_pixels_y * num_pixels_x)
         self._num_rays_hit: int = 0
 
-        # Pixel bin edges (NumPy, used for index arithmetic)
-        self._x_edges = np.linspace(-width / 2.0, width / 2.0, num_pixels_x + 1)
-        self._y_edges = np.linspace(-height / 2.0, height / 2.0, num_pixels_y + 1)
+        # Pixel bin edges (NumPy, used for index arithmetic -- always detached)
+        w_f = as_float(width)
+        h_f = as_float(height)
+        self._x_edges = np.linspace(-w_f / 2.0, w_f / 2.0, num_pixels_x + 1)
+        self._y_edges = np.linspace(-h_f / 2.0, h_f / 2.0, num_pixels_y + 1)
 
     def record(self, rays: NSQRayBundle, t: np.ndarray, hit_mask: np.ndarray) -> None:
         """Accumulate flux from hit rays into the pixel grid.

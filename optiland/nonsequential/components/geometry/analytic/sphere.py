@@ -10,6 +10,7 @@ from __future__ import annotations
 import numpy as np
 
 import optiland.backend as be
+from optiland.nonsequential._utils import as_float, as_param
 from optiland.nonsequential.components.geometry.base import AABB, AnalyticGeometry
 
 
@@ -32,9 +33,9 @@ class SphereGeometry(AnalyticGeometry):
             aperture_radius: Optional transverse aperture limit [mm]. Points
                 outside this radius are not considered valid hits.
         """
-        self.radius = float(radius)
+        self.radius = as_param(radius)
         self.aperture_radius = (
-            float(aperture_radius) if aperture_radius is not None else None
+            as_param(aperture_radius) if aperture_radius is not None else None
         )
 
     def ray_intersect(
@@ -113,5 +114,5 @@ class SphereGeometry(AnalyticGeometry):
             AABB in global frame.
         """
         t = np.array(transform[0], dtype=float)
-        r = self.radius
+        r = as_float(self.radius)
         return AABB(t - r, t + r)

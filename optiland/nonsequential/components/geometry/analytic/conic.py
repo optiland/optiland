@@ -19,10 +19,17 @@ Kramer Harrison, 2026
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 import optiland.backend as be
+from optiland.nonsequential._utils import as_float, as_param
 from optiland.nonsequential.components.geometry.base import AABB, AnalyticGeometry
+
+# Largest Newton-Raphson step accepted per iteration [mm]. Generous relative to
+# any physical optic, but finite, so a diverging lane cannot reach inf.
+_MAX_NEWTON_STEP = 1e6
 
 
 class ConicGeometry(AnalyticGeometry):
@@ -46,9 +53,26 @@ class ConicGeometry(AnalyticGeometry):
             conic: Conic constant K.
             aperture_radius: Aperture semi-diameter [mm].
         """
-        self.radius = float(radius)
-        self.conic = float(conic)
-        self.aperture_radius = float(aperture_radius)
+        self.radius = as_param(radius)
+        self.conic = as_param(conic)
+        self.aperture_radius = as_param(aperture_radius)
+
+    def _curvature(self):
+        """Return the vertex curvature c = 1 / radius.
+
+        A radius of 0 or infinity both denote a flat surface (``r2=0.0`` is
+        the plano convention used by :class:`LensConfig`), and both map to
+        c = 0.  A degenerate radius is returned as a detached float: there is
+        no meaningful derivative at the flat limit, and evaluating ``1 / R``
+        there would emit an inf that backpropagates as NaN.
+
+        Returns:
+            Curvature [1/mm], as a tensor when ``radius`` is a tensor.
+        """
+        r_val = as_float(self.radius)
+        if r_val == 0.0 or not math.isfinite(r_val):
+            return 0.0
+        return 1.0 / self.radius
 
     def _sag(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """Compute conic surface sag z(x, y).
@@ -61,14 +85,18 @@ class ConicGeometry(AnalyticGeometry):
             Sag values z, shape (N,).
         """
         r2 = x**2 + y**2
-        R = self.radius
+        c = self._curvature()
         K = self.conic
-        under_root = 1.0 - (1.0 + K) * r2 / (R * R)
+        # Curvature form. The radius form (dividing by R * R) evaluates to
+        # inf * 0 for a flat surface (radius = inf); the forward value is
+        # right but the backward pass returns NaN for every scene parameter.
+        # With c = 1/R a flat surface is simply c = 0.
+        under_root = 1.0 - (1.0 + K) * c**2 * r2
         # Clamp to a small positive epsilon (not 0): sqrt has an infinite
         # derivative at 0, which would poison gradients for rays at the conic
         # edge. The forward value changes by <= 1e-6 (sqrt(1e-12)).
         safe_root = be.maximum(under_root, 1e-12)
-        return r2 / (R * (1.0 + safe_root**0.5))
+        return c * r2 / (1.0 + safe_root**0.5)
 
     def _normal_local(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """Compute outward surface normals in local frame at (x, y, z(x,y)).
@@ -83,19 +111,18 @@ class ConicGeometry(AnalyticGeometry):
             Outward normals (not yet normalized), shape (N, 3).
         """
         r2 = x**2 + y**2
-        R = self.radius
+        c = self._curvature()
         K = self.conic
         # Epsilon-clamped (not 0) so the sqrt derivative stays finite at the edge.
-        under_root = be.maximum(1.0 - (1.0 + K) * r2 / (R * R), 1e-12)
+        under_root = be.maximum(1.0 - (1.0 + K) * c**2 * r2, 1e-12)
         sqrt_term = under_root**0.5
 
-        # dz/dx, dz/dy from implicit differentiation
-        factor = 1.0 / (R * (1.0 + sqrt_term)) + (1.0 + K) * r2 / (
-            2.0 * R**3 * under_root * (1.0 + sqrt_term) ** 2 + 1e-30
-        )
-        # Gradient of (z - sag): (-dsag/dx, -dsag/dy, 1)
-        gx = -x * 2.0 * factor
-        gy = -y * 2.0 * factor
+        # For a conic, dz/dr = c * r / sqrt(1 - (1+K) c^2 r^2), so
+        # dz/dx = c * x / S and dz/dy = c * y / S. Written in curvature form
+        # this stays finite for a flat surface (c = 0), where the radius form
+        # produces an inf/inf that returns NaN gradients.
+        gx = -c * x / sqrt_term
+        gy = -c * y / sqrt_term
         gz = be.ones_like(x)
         norms = be.stack([gx, gy, gz], axis=1)
         return norms
@@ -137,7 +164,16 @@ class ConicGeometry(AnalyticGeometry):
             df_dt = dz - dsag_dx * dx - dsag_dy * dy
 
             step = be.where(be.abs(df_dt) > 1e-15, f / df_dt, be.zeros_like(f))
+            # Freeze diverging lanes. Rays aimed far outside the aperture drive
+            # the clamped radicand to its floor, which makes the Newton step
+            # blow up to inf/NaN. Those lanes are masked out of the hit test,
+            # but a non-finite forward value still backpropagates as NaN
+            # (0 * inf) into every scene parameter, so it must be replaced with
+            # a finite constant here rather than filtered downstream.
+            step = be.where(be.isfinite(step), step, be.zeros_like(step))
+            step = be.maximum(be.minimum(step, _MAX_NEWTON_STEP), -_MAX_NEWTON_STEP)
             t = t - step
+            t = be.where(be.isfinite(t), t, be.zeros_like(t))
 
         # Validate hit
         px = ox + t * dx
@@ -174,11 +210,15 @@ class ConicGeometry(AnalyticGeometry):
         """
         t_vec = np.array(transform[0], dtype=float)
         R = np.array(transform[1], dtype=float)
-        r = self.aperture_radius
-        # Max sag (at edge of aperture)
-        x_edge = np.array([r])
-        y_edge = np.array([0.0])
-        sag_edge = float(self._sag(x_edge, y_edge)[0])
+        r = as_float(self.aperture_radius)
+        # Max sag (at edge of aperture).  Computed from detached floats: the
+        # AABB is NumPy-only bookkeeping and never carries gradients, and
+        # mixing a torch parameter with NumPy arrays is disallowed.
+        c = as_float(self._curvature())
+        K = as_float(self.conic)
+        r2 = r * r
+        under_root = max(1.0 - (1.0 + K) * c * c * r2, 1e-12)
+        sag_edge = c * r2 / (1.0 + np.sqrt(under_root))
         z_max = max(0.0, sag_edge)
         z_min = min(0.0, sag_edge)
 

@@ -9,7 +9,6 @@ import pytest
 
 from optiland.visualization.base import BaseViewer2D, BaseViewer3D
 
-
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
 # ---------------------------------------------------------------------------
@@ -37,12 +36,20 @@ def _make_minimal_scene():
     scene.add_lens(
         "L1",
         CoordinateSystem(z=0.0),
-        LensConfig(r1=50.0, r2=-50.0, thickness=5.0, material="N-BK7", front_aperture_radius=10.0),
+        LensConfig(
+            r1=50.0,
+            r2=-50.0,
+            thickness=5.0,
+            material="N-BK7",
+            front_aperture_radius=10.0,
+        ),
     )
     scene.add_detector(
         "D1",
         CoordinateSystem(z=60.0),
-        IrradianceDetectorConfig(width=5.0, height=5.0, num_pixels_x=64, num_pixels_y=64),
+        IrradianceDetectorConfig(
+            width=5.0, height=5.0, num_pixels_x=64, num_pixels_y=64
+        ),
     )
     return scene
 
@@ -104,12 +111,14 @@ def test_base_viewer_2d_make_figure_returns_fig_ax():
     assert isinstance(fig, matplotlib.figure.Figure)
     assert isinstance(ax, Axes)
     import matplotlib.pyplot as plt
+
     plt.close(fig)
 
 
 def test_base_viewer_2d_make_figure_reuses_ax():
     """When ax is passed to _make_figure, it must reuse the existing figure."""
     import matplotlib.pyplot as plt
+
     from optiland.visualization.themes import get_active_theme
 
     viewer = _ConcreteViewer2D(None)
@@ -125,6 +134,7 @@ def test_base_viewer_2d_make_figure_reuses_ax():
 def test_base_viewer_2d_apply_axes_style_labels():
     """_apply_axes_style sets the correct axis labels for each projection."""
     import matplotlib.pyplot as plt
+
     from optiland.visualization.themes import get_active_theme
 
     viewer = _ConcreteViewer2D(None)
@@ -160,6 +170,7 @@ def test_nsq_viewer_2d_view_returns_fig_ax(minimal_scene):
     assert len(result) == 2
     fig, ax = result
     import matplotlib.figure
+
     assert isinstance(fig, matplotlib.figure.Figure)
     plt.close(fig)
 
@@ -213,8 +224,8 @@ def test_nsq_viewer_2d_uses_existing_ray_paths(minimal_scene):
     """
     import matplotlib.pyplot as plt
 
-    from optiland.nonsequential.visualization import NSQViewer2D
     from optiland.nonsequential.tracer import SimulationResult
+    from optiland.nonsequential.visualization import NSQViewer2D
 
     # A result without ray_paths (the common case before record_paths=True)
     result = SimulationResult(ray_paths=None)
@@ -235,7 +246,9 @@ def _make_simple_optic():
 
     optic = Optic()
     optic.add_surface(index=0, thickness=float("inf"))
-    optic.add_surface(index=1, radius=50.0, thickness=5.0, material="N-BK7", is_stop=True)
+    optic.add_surface(
+        index=1, radius=50.0, thickness=5.0, material="N-BK7", is_stop=True
+    )
     optic.add_surface(index=2, radius=-50.0, thickness=50.0)
     optic.add_surface(index=3)
     optic.set_aperture(aperture_type="EPD", value=10.0)

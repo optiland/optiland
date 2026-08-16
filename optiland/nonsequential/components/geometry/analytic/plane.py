@@ -11,6 +11,7 @@ from __future__ import annotations
 import numpy as np
 
 import optiland.backend as be
+from optiland.nonsequential._utils import as_float, as_param
 from optiland.nonsequential.components.geometry.base import AABB, AnalyticGeometry
 
 
@@ -43,8 +44,10 @@ class PlaneGeometry(AnalyticGeometry):
         t = be.where(hit_mask, t, be.ones_like(t) * be.inf)
 
         # Normal: +z or -z depending on ray direction
-        normals = be.zeros_like(origins)
-        normals[:, 2] = be.where(dz < 0, 1.0, -1.0)
+        # Built with stack (not in-place assignment): an in-place write into
+        # a leaf tensor raises under be.grad_mode.enable().
+        nz = be.where(dz < 0, be.ones_like(dz), -be.ones_like(dz))
+        normals = be.stack([be.zeros_like(dz), be.zeros_like(dz), nz], axis=1)
 
         return t, normals, hit_mask
 
@@ -89,10 +92,10 @@ class FinitePlaneGeometry(AnalyticGeometry):
             height: Full height [mm] along local y axis.
             aperture_radius: If set, circular aperture of this radius [mm].
         """
-        self.width = float(width)
-        self.height = float(height)
+        self.width = as_param(width)
+        self.height = as_param(height)
         self.aperture_radius = (
-            float(aperture_radius) if aperture_radius is not None else None
+            as_param(aperture_radius) if aperture_radius is not None else None
         )
 
     def ray_intersect(
@@ -133,8 +136,10 @@ class FinitePlaneGeometry(AnalyticGeometry):
         hit_mask = plane_valid & (t < be.inf) & in_aperture
 
         t = be.where(hit_mask, t, inf_arr)
-        normals = be.zeros_like(origins)
-        normals[:, 2] = be.where(dz < 0, 1.0, -1.0)
+        # Built with stack (not in-place assignment): an in-place write into
+        # a leaf tensor raises under be.grad_mode.enable().
+        nz = be.where(dz < 0, be.ones_like(dz), -be.ones_like(dz))
+        normals = be.stack([be.zeros_like(dz), be.zeros_like(dz), nz], axis=1)
 
         return t, normals, hit_mask
 
@@ -152,7 +157,7 @@ class FinitePlaneGeometry(AnalyticGeometry):
         R = np.array(rot, dtype=float)
 
         if self.aperture_radius is not None:
-            r = self.aperture_radius
+            r = as_float(self.aperture_radius)
             corners_local = np.array(
                 [
                     [-r, -r, 0],
@@ -163,8 +168,8 @@ class FinitePlaneGeometry(AnalyticGeometry):
                 dtype=float,
             )
         else:
-            hw = self.width / 2.0
-            hh = self.height / 2.0
+            hw = as_float(self.width) / 2.0
+            hh = as_float(self.height) / 2.0
             corners_local = np.array(
                 [
                     [-hw, -hh, 0],

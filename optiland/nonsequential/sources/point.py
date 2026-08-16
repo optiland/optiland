@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from optiland.nonsequential._utils import as_detached_param
 from optiland.nonsequential.components.base import _get_transform
 from optiland.nonsequential.ray_bundle import NSQRayBundle
 from optiland.nonsequential.sources.base import BaseNSQSource, Spectrum
@@ -52,7 +53,9 @@ class PointSource(BaseNSQSource):
             medium: Medium the source is embedded in (default: vacuum).
         """
         super().__init__(cs, spectrum, total_flux)
-        self.half_angle_deg = float(half_angle_deg)
+        self.half_angle_deg = as_detached_param(
+            half_angle_deg, "half_angle_deg", "PointSource"
+        )
         self.medium = medium
 
     def generate(self, num_rays: int, rng: np.random.Generator) -> NSQRayBundle:

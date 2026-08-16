@@ -14,8 +14,8 @@ seams. For *user*-facing tutorials see the
 .. note::
 
    **Beta.** The NSQ engine is differentiable and torch-native. The public API
-   is stabilizing toward a frozen 1.0. The canonical engine reference is
-   ``SPEC_NSQ_Revamp_20260608.md`` in the repository root.
+   is stabilizing toward a frozen 1.0. This page is the canonical engine
+   reference; see also :doc:`/gallery/nonsequential/limitations_and_roadmap`.
 
 .. _nsq_arch:
 

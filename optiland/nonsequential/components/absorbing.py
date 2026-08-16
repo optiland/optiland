@@ -69,6 +69,11 @@ class AbsorbingComponent(BaseComponent):
             hit_mask: True for rays hitting this component, shape (N,).
             rng: Random number generator (unused).
         """
+        # Missed rays carry t = inf; zero it before the position update so the
+        # masked-out be.where branch cannot backpropagate 0 * inf = NaN into
+        # the ray directions.
+        t = be.where(hit_mask, t, be.zeros_like(t))
+
         # Advance to hit point before killing
         rays.x = be.where(hit_mask, rays.x + t * rays.L, rays.x)
         rays.y = be.where(hit_mask, rays.y + t * rays.M, rays.y)

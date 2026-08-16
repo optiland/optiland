@@ -36,7 +36,6 @@ from optiland.nonsequential.serialization import (
     scene_to_dict,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -49,7 +48,11 @@ def _make_lens_scene() -> NSQScene:
     # Collimated source along +z, 5 mm aperture, 550 nm monochromatic
     src_cs = CoordinateSystem(x=0, y=0, z=0)
     spec = Spectrum.monochromatic(0.55)
-    scene.add_source("S1", src_cs, CollimatedSourceConfig(spectrum=spec, total_flux=1.0, aperture_radius=5.0))
+    scene.add_source(
+        "S1",
+        src_cs,
+        CollimatedSourceConfig(spectrum=spec, total_flux=1.0, aperture_radius=5.0),
+    )
 
     # Plano-convex N-BK7 lens at z=20 mm, r1=50 mm, plano back, 5 mm thick
     lens_cs = CoordinateSystem(x=0, y=0, z=20.0)

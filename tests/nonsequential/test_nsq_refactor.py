@@ -12,8 +12,6 @@ Kramer Harrison, 2026
 
 from __future__ import annotations
 
-import math
-
 import numpy as np
 import pytest
 
@@ -22,23 +20,18 @@ from optiland.nonsequential import (
     VACUUM,
     AnnularPlaneGeometry,
     CylindricalFrustumGeometry,
-    IrradianceDetector,
     IrradianceDetectorConfig,
     Lens,
     LensConfig,
-    Mirror,
     MirrorConfig,
     NSQScene,
-    NSQTracer,
     NSQViewer2D,
-    PointSource,
     PointSourceConfig,
     Spectrum,
     SurfaceConfig,
 )
 from optiland.nonsequential.components.configs import InteractionType
 from optiland.nonsequential.components.registry import ComponentRegistry
-
 
 # ---------------------------------------------------------------------------
 # § ComponentRegistry
@@ -48,7 +41,13 @@ from optiland.nonsequential.components.registry import ComponentRegistry
 class TestComponentRegistry:
     def test_add_and_get(self):
         cs = CoordinateSystem()
-        lens = Lens("L1", cs, LensConfig(r1=50, r2=-50, thickness=5, material=VACUUM, front_aperture_radius=12.5))
+        lens = Lens(
+            "L1",
+            cs,
+            LensConfig(
+                r1=50, r2=-50, thickness=5, material=VACUUM, front_aperture_radius=12.5
+            ),
+        )
         reg = ComponentRegistry()
         reg.add("L1", lens)
         assert reg.get("L1") is lens
@@ -56,7 +55,13 @@ class TestComponentRegistry:
     def test_contains(self):
         reg = ComponentRegistry()
         cs = CoordinateSystem()
-        lens = Lens("L1", cs, LensConfig(r1=50, r2=-50, thickness=5, material=VACUUM, front_aperture_radius=12.5))
+        lens = Lens(
+            "L1",
+            cs,
+            LensConfig(
+                r1=50, r2=-50, thickness=5, material=VACUUM, front_aperture_radius=12.5
+            ),
+        )
         reg.add("L1", lens)
         assert "L1" in reg
         assert "L2" not in reg
@@ -64,7 +69,13 @@ class TestComponentRegistry:
     def test_remove(self):
         reg = ComponentRegistry()
         cs = CoordinateSystem()
-        lens = Lens("L1", cs, LensConfig(r1=50, r2=-50, thickness=5, material=VACUUM, front_aperture_radius=12.5))
+        lens = Lens(
+            "L1",
+            cs,
+            LensConfig(
+                r1=50, r2=-50, thickness=5, material=VACUUM, front_aperture_radius=12.5
+            ),
+        )
         reg.add("L1", lens)
         reg.remove("L1")
         assert "L1" not in reg
@@ -72,7 +83,13 @@ class TestComponentRegistry:
     def test_duplicate_name_raises(self):
         reg = ComponentRegistry()
         cs = CoordinateSystem()
-        lens = Lens("L1", cs, LensConfig(r1=50, r2=-50, thickness=5, material=VACUUM, front_aperture_radius=12.5))
+        lens = Lens(
+            "L1",
+            cs,
+            LensConfig(
+                r1=50, r2=-50, thickness=5, material=VACUUM, front_aperture_radius=12.5
+            ),
+        )
         reg.add("L1", lens)
         with pytest.raises(KeyError):
             reg.add("L1", lens)
@@ -80,16 +97,29 @@ class TestComponentRegistry:
     def test_surfaces_flat_list(self):
         reg = ComponentRegistry()
         cs = CoordinateSystem()
-        lens = Lens("L1", cs, LensConfig(r1=50, r2=-50, thickness=5, material=VACUUM, front_aperture_radius=12.5))
+        lens = Lens(
+            "L1",
+            cs,
+            LensConfig(
+                r1=50, r2=-50, thickness=5, material=VACUUM, front_aperture_radius=12.5
+            ),
+        )
         reg.add("L1", lens)
         surfs = reg.surfaces
-        # Symmetric lens → 3 surfaces (front, back, edge; no rim because equal apertures)
+        # Symmetric lens → 3 surfaces (front, back, edge; no rim when the
+        # apertures are equal)
         assert len(surfs) == 3
 
     def test_compounds_list(self):
         reg = ComponentRegistry()
         cs = CoordinateSystem()
-        lens = Lens("L1", cs, LensConfig(r1=50, r2=-50, thickness=5, material=VACUUM, front_aperture_radius=12.5))
+        lens = Lens(
+            "L1",
+            cs,
+            LensConfig(
+                r1=50, r2=-50, thickness=5, material=VACUUM, front_aperture_radius=12.5
+            ),
+        )
         reg.add("L1", lens)
         assert reg.compounds == [lens]
 
@@ -103,7 +133,9 @@ class TestLensBuild:
     def _make_symmetric_lens(self, front_r=12.5, back_r=None):
         cs = CoordinateSystem(z=50)
         cfg = LensConfig(
-            r1=50.0, r2=-50.0, thickness=5.0,
+            r1=50.0,
+            r2=-50.0,
+            thickness=5.0,
             material=VACUUM,
             front_aperture_radius=front_r,
             back_aperture_radius=back_r,
@@ -123,10 +155,14 @@ class TestLensBuild:
     def test_back_cs_offset(self):
         """Back face CS should be offset by thickness along lens axis."""
         cs = CoordinateSystem(x=0, y=0, z=50)
-        cfg = LensConfig(r1=50, r2=-50, thickness=8.0, material=VACUUM, front_aperture_radius=10)
+        cfg = LensConfig(
+            r1=50, r2=-50, thickness=8.0, material=VACUUM, front_aperture_radius=10
+        )
         lens = Lens("L", cs, cfg)
 
-        from optiland.nonsequential.components.base import _get_transform  # noqa: PLC0415
+        from optiland.nonsequential.components.base import (
+            _get_transform,  # noqa: PLC0415
+        )
 
         front_t, _ = _get_transform(lens.surfaces[0].cs)
         back_t, _ = _get_transform(lens.surfaces[1].cs)
@@ -136,12 +172,17 @@ class TestLensBuild:
 
     def test_surface_config_bsdf_override(self):
         """SurfaceConfig.bsdf on the front face should be applied."""
-        from optiland.nonsequential.bsdf.lambertian import LambertianBSDF  # noqa: PLC0415
+        from optiland.nonsequential.bsdf.lambertian import (
+            LambertianBSDF,  # noqa: PLC0415
+        )
 
         custom_bsdf = LambertianBSDF(reflectance_value=0.5)
         cs = CoordinateSystem(z=50)
         cfg = LensConfig(
-            r1=50, r2=-50, thickness=5, material=VACUUM,
+            r1=50,
+            r2=-50,
+            thickness=5,
+            material=VACUUM,
             front_aperture_radius=10,
             front=SurfaceConfig(bsdf=custom_bsdf),
         )
@@ -156,7 +197,10 @@ class TestLensBuild:
 
         cs = CoordinateSystem(z=50)
         cfg = LensConfig(
-            r1=50, r2=-50, thickness=5, material=VACUUM,
+            r1=50,
+            r2=-50,
+            thickness=5,
+            material=VACUUM,
             front_aperture_radius=10,
             front=SurfaceConfig(interaction=InteractionType.REFLECTIVE),
         )
@@ -165,7 +209,13 @@ class TestLensBuild:
 
     def test_name_property(self):
         cs = CoordinateSystem()
-        lens = Lens("MyLens", cs, LensConfig(r1=50, r2=-50, thickness=5, material=VACUUM, front_aperture_radius=10))
+        lens = Lens(
+            "MyLens",
+            cs,
+            LensConfig(
+                r1=50, r2=-50, thickness=5, material=VACUUM, front_aperture_radius=10
+            ),
+        )
         assert lens.name == "MyLens"
 
 
@@ -177,7 +227,9 @@ class TestLensBuild:
 class TestCylindricalFrustumGeometry:
     def test_axial_ray_misses(self):
         """A ray along the z-axis (r=0) should miss the frustum barrel."""
-        geom = CylindricalFrustumGeometry(r_front=5.0, r_back=5.0, z_front=0.0, z_back=10.0)
+        geom = CylindricalFrustumGeometry(
+            r_front=5.0, r_back=5.0, z_front=0.0, z_back=10.0
+        )
         origins = np.array([[0.0, 0.0, -5.0]])
         directions = np.array([[0.0, 0.0, 1.0]])
         t, _, hit = geom.ray_intersect(origins, directions)
@@ -196,8 +248,10 @@ class TestCylindricalFrustumGeometry:
 
     def test_ray_outside_z_range_misses(self):
         """Ray aimed at the cylinder band but hits outside the z-range."""
-        geom = CylindricalFrustumGeometry(r_front=5.0, r_back=5.0, z_front=0.0, z_back=5.0)
-        origins = np.array([[20.0, 0.0, 8.0]])    # z=8 > z_back=5
+        geom = CylindricalFrustumGeometry(
+            r_front=5.0, r_back=5.0, z_front=0.0, z_back=5.0
+        )
+        origins = np.array([[20.0, 0.0, 8.0]])  # z=8 > z_back=5
         directions = np.array([[-1.0, 0.0, 0.0]])
         t, _, hit = geom.ray_intersect(origins, directions)
         assert not hit[0]
@@ -231,7 +285,7 @@ class TestAnnularPlaneGeometry:
     def test_ray_hits_inner_hole_misses(self):
         """Ray through the inner hole should miss."""
         geom = AnnularPlaneGeometry(inner_radius=3.0, outer_radius=8.0, z_offset=5.0)
-        origins = np.array([[1.0, 0.0, 0.0]])   # r=1 < inner_radius=3
+        origins = np.array([[1.0, 0.0, 0.0]])  # r=1 < inner_radius=3
         directions = np.array([[0.0, 0.0, 1.0]])
         t, _, hit = geom.ray_intersect(origins, directions)
         assert not hit[0]
@@ -239,7 +293,7 @@ class TestAnnularPlaneGeometry:
     def test_ray_outside_outer_radius_misses(self):
         """Ray outside outer_radius should miss."""
         geom = AnnularPlaneGeometry(inner_radius=3.0, outer_radius=8.0, z_offset=5.0)
-        origins = np.array([[10.0, 0.0, 0.0]])   # r=10 > outer_radius=8
+        origins = np.array([[10.0, 0.0, 0.0]])  # r=10 > outer_radius=8
         directions = np.array([[0.0, 0.0, 1.0]])
         t, _, hit = geom.ray_intersect(origins, directions)
         assert not hit[0]
@@ -256,9 +310,9 @@ class TestAnnularPlaneGeometry:
         """Normal should oppose the incoming ray direction."""
         geom = AnnularPlaneGeometry(inner_radius=3.0, outer_radius=8.0, z_offset=5.0)
         origins = np.array([[5.0, 0.0, 0.0]])
-        directions = np.array([[0.0, 0.0, 1.0]])   # incoming from -z
+        directions = np.array([[0.0, 0.0, 1.0]])  # incoming from -z
         t, normals, hit = geom.ray_intersect(origins, directions)
-        assert normals[0, 2] < 0.0   # normal faces -z (opposes incoming)
+        assert normals[0, 2] < 0.0  # normal faces -z (opposes incoming)
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +324,9 @@ class TestNSQSceneNewAPI:
     def test_add_lens_creates_surfaces(self):
         scene = NSQScene()
         cs = CoordinateSystem(z=50)
-        cfg = LensConfig(r1=50, r2=-50, thickness=5, material=VACUUM, front_aperture_radius=12.5)
+        cfg = LensConfig(
+            r1=50, r2=-50, thickness=5, material=VACUUM, front_aperture_radius=12.5
+        )
         scene.add_lens("L1", cs, cfg)
         assert len(scene.surfaces) == 3  # front + back + edge
 
@@ -297,7 +353,9 @@ class TestNSQSceneNewAPI:
     def test_remove_component(self):
         scene = NSQScene()
         cs = CoordinateSystem(z=50)
-        cfg = LensConfig(r1=50, r2=-50, thickness=5, material=VACUUM, front_aperture_radius=10)
+        cfg = LensConfig(
+            r1=50, r2=-50, thickness=5, material=VACUUM, front_aperture_radius=10
+        )
         scene.add_lens("L1", cs, cfg)
         scene.remove_component("L1")
         assert len(scene.surfaces) == 0
@@ -320,10 +378,14 @@ class TestBackwardCompat:
         from optiland.nonsequential.components.geometry.analytic.plane import (  # noqa: PLC0415
             FinitePlaneGeometry,
         )
-        from optiland.nonsequential.components.reflective import ReflectiveComponent  # noqa: PLC0415
+        from optiland.nonsequential.components.reflective import (
+            ReflectiveComponent,  # noqa: PLC0415
+        )
 
         cs = CoordinateSystem(z=50)
-        comp = ReflectiveComponent(cs=cs, geometry=FinitePlaneGeometry(width=20, height=20))
+        comp = ReflectiveComponent(
+            cs=cs, geometry=FinitePlaneGeometry(width=20, height=20)
+        )
         scene = NSQScene()
         scene.add_component("mirror", comp)
         assert len(scene.surfaces) == 1
@@ -332,14 +394,22 @@ class TestBackwardCompat:
         cs = CoordinateSystem()
         spec = Spectrum.monochromatic(0.55)
         scene = NSQScene()
-        scene.add_source("source_0", cs, PointSourceConfig(spectrum=spec, total_flux=1.0))
+        scene.add_source(
+            "source_0", cs, PointSourceConfig(spectrum=spec, total_flux=1.0)
+        )
         assert len(scene.sources) == 1
         assert "source_0" in scene.source_registry
 
     def test_old_add_detector(self):
         cs = CoordinateSystem(z=100)
         scene = NSQScene()
-        scene.add_detector("detector_0", cs, IrradianceDetectorConfig(width=10, height=10, num_pixels_x=16, num_pixels_y=16))
+        scene.add_detector(
+            "detector_0",
+            cs,
+            IrradianceDetectorConfig(
+                width=10, height=10, num_pixels_x=16, num_pixels_y=16
+            ),
+        )
         assert len(scene.detectors) == 1
         assert "detector_0" in scene.detector_registry
 
@@ -361,20 +431,31 @@ class TestLensIntegration:
 
         # Source at origin, 30° half-angle
         src_cs = CoordinateSystem(z=0)
-        scene.add_source("S1", src_cs,
-                         PointSourceConfig(spectrum=spec, total_flux=1.0, half_angle_deg=30))
+        scene.add_source(
+            "S1",
+            src_cs,
+            PointSourceConfig(spectrum=spec, total_flux=1.0, half_angle_deg=30),
+        )
 
         # Biconvex lens at z=50, VACUUM material for simplicity
         lens_cs = CoordinateSystem(z=50)
-        scene.add_lens("L1", lens_cs,
-                       LensConfig(r1=50, r2=-50, thickness=5, material=VACUUM,
-                                  front_aperture_radius=12.5))
+        scene.add_lens(
+            "L1",
+            lens_cs,
+            LensConfig(
+                r1=50, r2=-50, thickness=5, material=VACUUM, front_aperture_radius=12.5
+            ),
+        )
 
         # Large detector at z=200
         det_cs = CoordinateSystem(z=200)
-        scene.add_detector("D1", det_cs,
-                           IrradianceDetectorConfig(width=50, height=50,
-                                                     num_pixels_x=64, num_pixels_y=64))
+        scene.add_detector(
+            "D1",
+            det_cs,
+            IrradianceDetectorConfig(
+                width=50, height=50, num_pixels_x=64, num_pixels_y=64
+            ),
+        )
 
         result = scene.trace(num_rays=10_000, max_depth=10, seed=42)
 
@@ -398,19 +479,22 @@ class TestVisualizationSmoke:
         spec = Spectrum.monochromatic(0.55)
         scene = NSQScene()
         src_cs = CoordinateSystem(z=0)
-        scene.add_source("S1", src_cs,
-                         PointSourceConfig(spectrum=spec, total_flux=1.0))
+        scene.add_source("S1", src_cs, PointSourceConfig(spectrum=spec, total_flux=1.0))
         lens_cs = CoordinateSystem(z=50)
-        scene.add_lens("L1", lens_cs,
-                       LensConfig(r1=50, r2=-50, thickness=5, material=VACUUM,
-                                  front_aperture_radius=12.5))
+        scene.add_lens(
+            "L1",
+            lens_cs,
+            LensConfig(
+                r1=50, r2=-50, thickness=5, material=VACUUM, front_aperture_radius=12.5
+            ),
+        )
         det_cs = CoordinateSystem(z=200)
-        scene.add_detector("D1", det_cs,
-                           IrradianceDetectorConfig(width=50, height=50))
+        scene.add_detector("D1", det_cs, IrradianceDetectorConfig(width=50, height=50))
         return scene
 
     def test_viewer_2d_no_exception(self):
         import matplotlib  # noqa: PLC0415
+
         matplotlib.use("Agg")  # non-interactive backend
 
         scene = self._build_minimal_scene()
@@ -419,10 +503,12 @@ class TestVisualizationSmoke:
         assert fig is not None
 
         import matplotlib.pyplot as plt  # noqa: PLC0415
+
         plt.close("all")
 
     def test_viewer_2d_with_rays_no_exception(self):
         import matplotlib  # noqa: PLC0415
+
         matplotlib.use("Agg")  # non-interactive backend
 
         scene = self._build_minimal_scene()
@@ -431,4 +517,5 @@ class TestVisualizationSmoke:
         assert fig is not None
 
         import matplotlib.pyplot as plt  # noqa: PLC0415
+
         plt.close("all")

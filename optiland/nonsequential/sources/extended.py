@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from optiland.nonsequential._utils import as_detached_param
 from optiland.nonsequential.components.base import _get_transform
 from optiland.nonsequential.ray_bundle import NSQRayBundle
 from optiland.nonsequential.sources.base import BaseNSQSource, Spectrum
@@ -64,12 +65,16 @@ class ExtendedSource(BaseNSQSource):
             medium: Medium the source is embedded in (default: vacuum).
         """
         super().__init__(cs, spectrum, total_flux)
-        self.width = float(width)
-        self.height = float(height)
+        self.width = as_detached_param(width, "width", "ExtendedSource")
+        self.height = as_detached_param(height, "height", "ExtendedSource")
         self.aperture_radius = (
-            float(aperture_radius) if aperture_radius is not None else None
+            as_detached_param(aperture_radius, "aperture_radius", "ExtendedSource")
+            if aperture_radius is not None
+            else None
         )
-        self.half_angle_deg = float(half_angle_deg)
+        self.half_angle_deg = as_detached_param(
+            half_angle_deg, "half_angle_deg", "ExtendedSource"
+        )
         self.medium = medium
 
     def generate(self, num_rays: int, rng: np.random.Generator) -> NSQRayBundle:

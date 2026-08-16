@@ -1,4 +1,4 @@
-"""Non-Sequential Raytracing for Optiland.
+r"""Non-Sequential Raytracing for Optiland.
 
 .. warning:: **Beta release — API stabilizing toward a frozen 1.0.**
 
@@ -79,10 +79,36 @@ Public API::
 Differentiability
 -----------------
 When ``optiland.backend`` is configured to ``"torch"`` the tracer builds a
-full PyTorch autograd graph through the Monte Carlo loop.  Scene parameters
-stored as ``torch.Tensor`` leaf variables (e.g. ``geometry.radius``) receive
-gradients via ``loss.backward()``, enabling gradient-based illumination
-optimisation.
+full PyTorch autograd graph through the Monte Carlo loop.  Pass a
+``torch.Tensor`` with ``requires_grad=True`` directly into the ordinary
+config objects and call ``loss.backward()``::
+
+    r1 = torch.tensor(120.0, dtype=torch.float64, requires_grad=True)
+    scene.add_lens("L1", CoordinateSystem(z=100.0), LensConfig(
+        r1=r1, r2=float("inf"), thickness=5.0, material="N-BK7",
+        front_aperture_radius=12.0))
+    loss = scene.trace(num_rays=20_000, seed=1).detectors["D1"].data.sum()
+    loss.backward()        # -> r1.grad
+
+**Differentiable parameters:**
+
+- Component geometry — conic ``radius`` and ``conic``, ``aperture_radius``,
+  sphere/plane/annulus/frustum extents
+- ``IrradianceDetector`` ``width`` and ``height``
+- Source ``total_flux``
+- Material refractive index, and BSDF reflectance
+
+**Not differentiable in this release** (these *raise* rather than silently
+detaching, so a dead design variable is never mistaken for a live one):
+
+- Source geometry — ``aperture_radius``, ``half_angle_deg``, emitter extent —
+  because source sampling runs in NumPy
+- ``SpectralDetector`` extents, which accumulate into a NumPy histogram
+- Visibility: *which* surface a ray hits is a discrete choice and contributes
+  no gradient (see Limitations below)
+
+Use ``float64`` (``be.set_precision("float64")``) for gradient work; the
+Monte Carlo trace is numerically delicate near surface edges.
 
 **v1 envelope:**
 
@@ -111,9 +137,8 @@ GitHub issue and describe your use case — your feedback directly shapes the
 roadmap.
 
 **Contribute.**  The roadmap items above (especially reparameterization, PRB,
-and GUI integration) are open for contributors.  The NSQ revamp spec
-``SPEC_NSQ_Revamp_20260608.md`` in the repository root is the canonical
-reference.  Join the discussion at
+and GUI integration) are open for contributors.  The Limitations and Roadmap
+page linked above is the canonical reference.  Join the discussion at
 https://github.com/HarrisonKramer/optiland/issues.
 
 Kramer Harrison, 2026

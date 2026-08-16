@@ -182,7 +182,11 @@ class TorchBackend(TracerBackend):
                 if i == len(sources) - 1:
                     n = remaining
                 else:
-                    n = max(1, round(num_rays_total * src.total_flux / total_flux_in))
+                    # float(): total_flux may be a tensor under autograd
+                    n = max(
+                        1,
+                        round(num_rays_total * float(src.total_flux) / total_flux_in),
+                    )
                     remaining -= n
                 rays_per_source.append(n)
 
@@ -242,10 +246,11 @@ class TorchBackend(TracerBackend):
                         rays, scene.surfaces
                     )
 
-                    # Detector intersections (numpy, no grad needed for dispatch)
-                    det_t_min_np, det_normals_np, det_idx_np = (
-                        self._intersect_detectors_np(rays, scene.detectors)
+                    # Detector intersections. Dispatch is numpy; t stays attached.
+                    det_t_min, _det_normals, det_idx_np = self._intersect_detectors(
+                        rays, scene.detectors
                     )
+                    det_t_min_np = to_numpy(det_t_min)
                     t_min_np = to_numpy(t_min)
 
                     # Nearest hit: component vs detector
@@ -257,20 +262,25 @@ class TorchBackend(TracerBackend):
                     comp_first_np = any_comp_hit_np & (~det_first_np)
 
                     det_first = be.array(det_first_np)
-                    det_t_min = be.array(det_t_min_np)
+                    # Rays that hit no detector carry t = inf. Zero those before
+                    # any multiplication: the discarded branch of be.where still
+                    # backpropagates 0 * inf = NaN into the ray directions.
+                    det_t_safe = be.where(
+                        det_first, det_t_min, be.zeros_like(det_t_min)
+                    )
 
                     # Record detector hits
                     for di, det in enumerate(scene.detectors):
                         mask_di_np = det_first_np & (det_idx_np == di)
                         if mask_di_np.any():
                             mask_di = be.array(mask_di_np)
-                            det.record(rays, det_t_min, mask_di)
+                            det.record(rays, det_t_safe, mask_di)
 
                     # Advance and kill detector-hit rays
                     if det_first_np.any():
-                        dx_det = det_t_min * rays.L
-                        dy_det = det_t_min * rays.M
-                        dz_det = det_t_min * rays.N
+                        dx_det = det_t_safe * rays.L
+                        dy_det = det_t_safe * rays.M
+                        dz_det = det_t_safe * rays.N
                         rays.x = be.where(det_first, rays.x + dx_det, rays.x)
                         rays.y = be.where(det_first, rays.y + dy_det, rays.y)
                         rays.z = be.where(det_first, rays.z + dz_det, rays.z)
@@ -345,12 +355,17 @@ class TorchBackend(TracerBackend):
             if hasattr(result, "total_flux"):
                 total_flux_detected += result.total_flux
 
+        # Every launched watt ends up detected, absorbed, escaped, or killed
+        # by the flux/depth cutoffs. Omitting total_flux_lost makes the metric
+        # report a large error for any scene that depth-kills rays, which is
+        # exactly the stray-light case this diagnostic exists to serve.
         flux_err = (
             abs(
                 total_flux_in
                 - total_flux_detected
                 - total_flux_absorbed
                 - total_flux_escaped
+                - total_flux_lost
             )
             / total_flux_in
             if total_flux_in > 0
@@ -387,32 +402,47 @@ class TorchBackend(TracerBackend):
             ray_paths=ray_paths,
         )
 
-    def _intersect_detectors_np(
+    def _intersect_detectors(
         self,
         rays: NSQRayBundle,
         detectors: list,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Find nearest detector intersection, returning numpy arrays.
+    ) -> tuple[object, object, np.ndarray]:
+        """Find nearest detector intersection, keeping ``t`` in the graph.
 
-        Detector dispatch indices don't need gradients.
+        Only the *dispatch* (which detector, and whether it beats the nearest
+        component) is decided in NumPy — that choice is a discrete visibility
+        event with no gradient anyway.  The returned ``t_min`` stays attached
+        to the autograd graph, because the splatted landing position is
+        ``origin + t * direction``: detaching ``t`` drops the
+        ``direction * dt/dtheta`` term from every spatial loss.  That term is
+        negligible at normal incidence but reaches tens of percent for fast
+        systems and tilted detectors.
+
+        Args:
+            rays: Current ray bundle.
+            detectors: Scene detectors.
 
         Returns:
-            ``(t_min_np, hit_normals_np, detector_indices_np)``
+            ``(t_min, hit_normals, detector_indices)`` where ``t_min`` and
+            ``hit_normals`` are backend arrays and the indices are NumPy.
         """
         N = rays.num_rays
-        t_min = np.full(N, np.inf, dtype=np.float64)
-        hit_normals = np.zeros((N, 3), dtype=np.float64)
+        t_min = be.ones(N) * be.inf
+        t_min_np = np.full(N, np.inf, dtype=np.float64)
+        hit_normals = be.zeros((N, 3))
         det_indices = np.full(N, -1, dtype=np.int32)
 
         for i, det in enumerate(detectors):
             t_d, normals_d, hit_d = det.intersect(rays)
             t_d_np = to_numpy(t_d).astype(np.float64)
-            normals_d_np = to_numpy(normals_d).astype(np.float64)
             hit_d_np = to_numpy(hit_d).astype(bool)
-            better = hit_d_np & (t_d_np < t_min)
-            t_min = np.where(better, t_d_np, t_min)
-            hit_normals = np.where(better[:, None], normals_d_np, hit_normals)
-            det_indices = np.where(better, i, det_indices)
+            better_np = hit_d_np & (t_d_np < t_min_np)
+            better = be.array(better_np)
+
+            t_min = be.where(better, t_d, t_min)
+            hit_normals = be.where(better[:, None], normals_d, hit_normals)
+            t_min_np = np.where(better_np, t_d_np, t_min_np)
+            det_indices = np.where(better_np, i, det_indices)
 
         return t_min, hit_normals, det_indices
 

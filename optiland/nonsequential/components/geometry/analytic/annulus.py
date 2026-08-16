@@ -14,6 +14,7 @@ from __future__ import annotations
 import numpy as np
 
 import optiland.backend as be
+from optiland.nonsequential._utils import as_float, as_param
 from optiland.nonsequential.components.geometry.base import AABB, AnalyticGeometry
 
 
@@ -43,9 +44,9 @@ class AnnularPlaneGeometry(AnalyticGeometry):
             outer_radius: Outer (rim) radius [mm].
             z_offset: Axial z-position of the plane [mm].
         """
-        self.inner_radius = float(inner_radius)
-        self.outer_radius = float(outer_radius)
-        self.z_offset = float(z_offset)
+        self.inner_radius = as_param(inner_radius)
+        self.outer_radius = as_param(outer_radius)
+        self.z_offset = as_param(z_offset)
 
     def ray_intersect(
         self, origins: np.ndarray, directions: np.ndarray
@@ -104,14 +105,15 @@ class AnnularPlaneGeometry(AnalyticGeometry):
         """
         t_vec = np.array(transform[0], dtype=float)
         R = np.array(transform[1], dtype=float)
-        r = self.outer_radius
+        r = as_float(self.outer_radius)
+        z = as_float(self.z_offset)
 
         corners_local = np.array(
             [
-                [-r, -r, self.z_offset],
-                [-r, r, self.z_offset],
-                [r, -r, self.z_offset],
-                [r, r, self.z_offset],
+                [-r, -r, z],
+                [-r, r, z],
+                [r, -r, z],
+                [r, r, z],
             ],
             dtype=float,
         )

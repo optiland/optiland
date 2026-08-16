@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 
 import optiland.backend as be
+from optiland.nonsequential._utils import as_detached_param
 from optiland.nonsequential.components.base import _get_transform
 from optiland.nonsequential.ray_bundle import NSQRayBundle
 from optiland.nonsequential.sources.base import BaseNSQSource, Spectrum
@@ -60,12 +61,14 @@ class CollimatedSource(BaseNSQSource):
             medium: Medium the source is embedded in (default: vacuum).
         """
         super().__init__(cs, spectrum, total_flux)
-        self.aperture_radius = float(aperture_radius)
+        self.aperture_radius = as_detached_param(
+            aperture_radius, "aperture_radius", "CollimatedSource"
+        )
         self.profile = profile
         self.gaussian_sigma = (
-            float(gaussian_sigma)
+            as_detached_param(gaussian_sigma, "gaussian_sigma", "CollimatedSource")
             if gaussian_sigma is not None
-            else aperture_radius / 2.0
+            else self.aperture_radius / 2.0
         )
         self.medium = medium
 

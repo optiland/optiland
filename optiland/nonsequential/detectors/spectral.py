@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
-from optiland.nonsequential._utils import to_numpy
+from optiland.nonsequential._utils import as_detached_param, to_numpy
 from optiland.nonsequential.components.base import _get_transform
 from optiland.nonsequential.components.geometry.analytic.plane import (
     FinitePlaneGeometry,
@@ -71,8 +71,9 @@ class SpectralDetector(BaseDetector):
         """
         geometry = FinitePlaneGeometry(width=width, height=height)
         super().__init__(cs, geometry, name=name)
-        self.width = float(width)
-        self.height = float(height)
+        _reason = "it accumulates into a NumPy histogram"
+        self.width = as_detached_param(width, "width", "SpectralDetector", _reason)
+        self.height = as_detached_param(height, "height", "SpectralDetector", _reason)
         self.num_pixels_x = int(num_pixels_x)
         self.num_pixels_y = int(num_pixels_y)
         self.splat = splat
@@ -85,8 +86,12 @@ class SpectralDetector(BaseDetector):
         )
         self._num_rays_hit = 0
 
-        self._x_edges = np.linspace(-width / 2.0, width / 2.0, num_pixels_x + 1)
-        self._y_edges = np.linspace(-height / 2.0, height / 2.0, num_pixels_y + 1)
+        self._x_edges = np.linspace(
+            -self.width / 2.0, self.width / 2.0, num_pixels_x + 1
+        )
+        self._y_edges = np.linspace(
+            -self.height / 2.0, self.height / 2.0, num_pixels_y + 1
+        )
 
     def record(self, rays: NSQRayBundle, t: np.ndarray, hit_mask: np.ndarray) -> None:
         """Accumulate per-wavelength flux from hit rays.

@@ -47,7 +47,8 @@ Limitations (v1)
    detached-sample / attached-weight estimator differentiates interior
    interactions (Fresnel, refraction, dispersion) but not the discrete
    visibility decision. Reparameterization (roadmap #1) closes this gap. A
-   dedicated test (``tests/nonsequential/test_nsq_gradients.py``) explicitly
+   dedicated test
+   (``tests/nonsequential/test_nsq_geometric_gradients.py``) explicitly
    asserts this behaviour.
 2. **Mesh geometry is forward-only.** Analytic conics
    (:class:`~optiland.nonsequential.components.geometry.ConicGeometry`,
@@ -55,8 +56,18 @@ Limitations (v1)
    :class:`~optiland.nonsequential.components.geometry.ParaboloidGeometry`) are
    differentiable; :class:`~optiland.nonsequential.components.geometry.MeshGeometry`
    is not — calling ``backward()`` through a mesh interaction will raise.
-3. **No polarization.** Stokes tracking is not present in v1 (roadmap #6).
-4. **Gradient-mode memory cap.** The ~1 × 10\ :sup:`5`-ray envelope is a hard
+3. **Source geometry is not differentiable.** Source sampling
+   (aperture position, emission angle, emitter extent) runs in NumPy, so
+   ``aperture_radius``, ``half_angle_deg`` and the extended-source dimensions
+   cannot carry gradients. Passing a ``requires_grad`` tensor for one of these
+   raises :class:`NotImplementedError` rather than detaching silently, so a
+   dead design variable is never mistaken for a live one. Source
+   ``total_flux`` *is* differentiable. ``SpectralDetector`` extents are
+   likewise detached (the detector accumulates into a NumPy histogram);
+   :class:`~optiland.nonsequential.detectors.IrradianceDetector` extents are
+   differentiable.
+4. **No polarization.** Stokes tracking is not present in v1 (roadmap #6).
+5. **Gradient-mode memory cap.** The ~1 × 10\ :sup:`5`-ray envelope is a hard
    constraint of the naive autograd strategy. Path Replay Backpropagation
    (roadmap #3) lifts this cap.
 
@@ -93,7 +104,8 @@ your use case — your feedback directly shapes the roadmap.
 **Contribute.** The roadmap items above (especially reparameterization, PRB, and
 GUI integration) are open for contributors. Development happens on the
 ``feat/nonsequential`` branch; PRs target ``master``. The canonical engine
-reference is ``SPEC_NSQ_Revamp_20260608.md`` in the repository root.
+reference is the :doc:`developer guide
+</developers_guide/nonsequential_raytracing>`.
 
 References
 ----------

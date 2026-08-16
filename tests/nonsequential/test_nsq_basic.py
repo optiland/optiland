@@ -15,26 +15,21 @@ import pytest
 
 from optiland.coordinate_system import CoordinateSystem
 from optiland.nonsequential import (
-    VACUUM,
     CollimatedSource,
     CollimatedSourceConfig,
     ConicGeometry,
-    FarFieldDetector,
-    FinitePlaneGeometry,
     IrradianceDetector,
     IrradianceDetectorConfig,
+    LensConfig,
     NSQScene,
     NSQTracer,
     PointSource,
     PointSourceConfig,
     ReflectiveComponent,
-    RefractiveComponent,
     Spectrum,
     SpecularBRDF,
-    LambertianBSDF,
 )
 from optiland.nonsequential.backends.numpy_backend import NumpyBackend
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -135,7 +130,9 @@ class TestPointSource:
 
 class TestPlaneGeometry:
     def test_infinite_plane_hits(self):
-        from optiland.nonsequential.components.geometry.analytic.plane import PlaneGeometry  # noqa: PLC0415
+        from optiland.nonsequential.components.geometry.analytic.plane import (
+            PlaneGeometry,  # noqa: PLC0415
+        )
 
         geom = PlaneGeometry()
         N = 5
@@ -149,7 +146,9 @@ class TestPlaneGeometry:
         np.testing.assert_allclose(t, 1.0, atol=1e-9)
 
     def test_parallel_ray_no_hit(self):
-        from optiland.nonsequential.components.geometry.analytic.plane import PlaneGeometry  # noqa: PLC0415
+        from optiland.nonsequential.components.geometry.analytic.plane import (
+            PlaneGeometry,  # noqa: PLC0415
+        )
 
         geom = PlaneGeometry()
         origins = np.array([[0.0, 0.0, -1.0]])
@@ -159,7 +158,9 @@ class TestPlaneGeometry:
         assert t[0] == np.inf
 
     def test_finite_plane_aperture_check(self):
-        from optiland.nonsequential.components.geometry.analytic.plane import FinitePlaneGeometry  # noqa: PLC0415
+        from optiland.nonsequential.components.geometry.analytic.plane import (
+            FinitePlaneGeometry,  # noqa: PLC0415
+        )
 
         geom = FinitePlaneGeometry(width=10.0, height=10.0)
         # Ray hitting inside aperture
@@ -181,7 +182,9 @@ class TestPlaneGeometry:
 
 class TestSphereGeometry:
     def test_sphere_center_ray(self):
-        from optiland.nonsequential.components.geometry.analytic.sphere import SphereGeometry  # noqa: PLC0415
+        from optiland.nonsequential.components.geometry.analytic.sphere import (
+            SphereGeometry,  # noqa: PLC0415
+        )
 
         R = 10.0
         geom = SphereGeometry(radius=R)
@@ -193,7 +196,9 @@ class TestSphereGeometry:
         np.testing.assert_allclose(t[0], 10.0, atol=1e-9)  # hits at z=-10
 
     def test_sphere_normal_outward(self):
-        from optiland.nonsequential.components.geometry.analytic.sphere import SphereGeometry  # noqa: PLC0415
+        from optiland.nonsequential.components.geometry.analytic.sphere import (
+            SphereGeometry,  # noqa: PLC0415
+        )
 
         geom = SphereGeometry(radius=5.0)
         origins = np.array([[0.0, 0.0, -10.0]])
@@ -220,7 +225,7 @@ class TestFlatMirrorReflection:
         # A +z beam hits the mirror and reflects to +x.
         src_cs = CoordinateSystem(x=0, y=0, z=0)
         spec = Spectrum.monochromatic(0.55)
-        src = CollimatedSource(
+        CollimatedSource(
             cs=src_cs,
             spectrum=spec,
             total_flux=1.0,
@@ -229,7 +234,9 @@ class TestFlatMirrorReflection:
 
         # Mirror: ry=-pi/4 rad → reflects +z global to +x global
         mirror_cs = CoordinateSystem(x=0, y=0, z=50, ry=-math.pi / 4)
-        from optiland.nonsequential.components.geometry.analytic.plane import FinitePlaneGeometry  # noqa: PLC0415
+        from optiland.nonsequential.components.geometry.analytic.plane import (
+            FinitePlaneGeometry,  # noqa: PLC0415
+        )
 
         mirror = ReflectiveComponent(
             cs=mirror_cs,
@@ -240,7 +247,7 @@ class TestFlatMirrorReflection:
         # Detector at x=50, z=50 (ry=pi/2 rad → local z points in +x global).
         # Reflected beam travels +x and hits the detector.
         det_cs = CoordinateSystem(x=50, y=0, z=50, ry=math.pi / 2)
-        det = IrradianceDetector(
+        IrradianceDetector(
             cs=det_cs,
             width=10.0,
             height=10.0,
@@ -250,8 +257,18 @@ class TestFlatMirrorReflection:
 
         scene = NSQScene()
         scene.add_component("mirror", mirror)
-        scene.add_source("src", src_cs, CollimatedSourceConfig(spectrum=spec, total_flux=1.0, aperture_radius=1.0))
-        scene.add_detector("det", det_cs, IrradianceDetectorConfig(width=10.0, height=10.0, num_pixels_x=64, num_pixels_y=64))
+        scene.add_source(
+            "src",
+            src_cs,
+            CollimatedSourceConfig(spectrum=spec, total_flux=1.0, aperture_radius=1.0),
+        )
+        scene.add_detector(
+            "det",
+            det_cs,
+            IrradianceDetectorConfig(
+                width=10.0, height=10.0, num_pixels_x=64, num_pixels_y=64
+            ),
+        )
 
         tracer = NSQTracer(scene)
         result = tracer.trace(num_rays=10_000, max_depth=5, seed=42)
@@ -275,11 +292,10 @@ class TestFluxConservation:
         Since no components are between source and detector, all rays should
         reach the detector. Flux conservation error should be ~0.
         """
-        from optiland.nonsequential.components.geometry.analytic.plane import FinitePlaneGeometry  # noqa: PLC0415
 
         src_cs = CoordinateSystem(x=0, y=0, z=0)
         spec = Spectrum.monochromatic(0.55)
-        src = CollimatedSource(
+        CollimatedSource(
             cs=src_cs,
             spectrum=spec,
             total_flux=1.0,
@@ -288,7 +304,7 @@ class TestFluxConservation:
 
         # Large detector at z=100, centred, covers the full beam cross-section
         det_cs = CoordinateSystem(x=0, y=0, z=100)
-        det = IrradianceDetector(
+        IrradianceDetector(
             cs=det_cs,
             width=30.0,
             height=30.0,
@@ -297,8 +313,18 @@ class TestFluxConservation:
         )
 
         scene = NSQScene()
-        scene.add_source("src", src_cs, CollimatedSourceConfig(spectrum=spec, total_flux=1.0, aperture_radius=5.0))
-        scene.add_detector("det", det_cs, IrradianceDetectorConfig(width=30.0, height=30.0, num_pixels_x=32, num_pixels_y=32))
+        scene.add_source(
+            "src",
+            src_cs,
+            CollimatedSourceConfig(spectrum=spec, total_flux=1.0, aperture_radius=5.0),
+        )
+        scene.add_detector(
+            "det",
+            det_cs,
+            IrradianceDetectorConfig(
+                width=30.0, height=30.0, num_pixels_x=32, num_pixels_y=32
+            ),
+        )
 
         tracer = NSQTracer(scene)
         result = tracer.trace(num_rays=10_000, max_depth=5, seed=0)
@@ -307,9 +333,7 @@ class TestFluxConservation:
         # All rays should reach the detector (beam r=5mm, detector 30mm wide)
         assert irr.num_rays_hit == 10_000
         # Total detected flux should equal total source flux
-        np.testing.assert_allclose(
-            irr.total_flux, 1.0, rtol=1e-6
-        )
+        np.testing.assert_allclose(irr.total_flux, 1.0, rtol=1e-6)
         assert result.flux_conservation_error < 0.001
         assert result.trace_time_sec > 0.0
 
@@ -322,7 +346,6 @@ class TestFluxConservation:
         # Source at z=0 is at the focus. Source emits upward (+z global).
         # Reflected rays go parallel to local +z (global -z), downward.
         # A detector below at z=-100 (global) catches the collimated beam.
-        from optiland.nonsequential.components.geometry.analytic.plane import FinitePlaneGeometry  # noqa: PLC0415
 
         mirror_cs = CoordinateSystem(x=0, y=0, z=100, ry=math.pi)
         mirror = ReflectiveComponent(
@@ -334,11 +357,11 @@ class TestFluxConservation:
         src_cs = CoordinateSystem(x=0, y=0, z=0)
         spec = Spectrum.monochromatic(0.55)
         # Source at focus, emit upward toward the mirror
-        src = PointSource(cs=src_cs, spectrum=spec, total_flux=1.0, half_angle_deg=30.0)
+        PointSource(cs=src_cs, spectrum=spec, total_flux=1.0, half_angle_deg=30.0)
 
         # Large detector below the mirror to catch reflected collimated beam
         det_cs = CoordinateSystem(x=0, y=0, z=-50)
-        det = IrradianceDetector(
+        IrradianceDetector(
             cs=det_cs,
             width=200.0,
             height=200.0,
@@ -348,8 +371,18 @@ class TestFluxConservation:
 
         scene = NSQScene()
         scene.add_component("mirror", mirror)
-        scene.add_source("src", src_cs, PointSourceConfig(spectrum=spec, total_flux=1.0, half_angle_deg=30.0))
-        scene.add_detector("det", det_cs, IrradianceDetectorConfig(width=200.0, height=200.0, num_pixels_x=64, num_pixels_y=64))
+        scene.add_source(
+            "src",
+            src_cs,
+            PointSourceConfig(spectrum=spec, total_flux=1.0, half_angle_deg=30.0),
+        )
+        scene.add_detector(
+            "det",
+            det_cs,
+            IrradianceDetectorConfig(
+                width=200.0, height=200.0, num_pixels_x=64, num_pixels_y=64
+            ),
+        )
 
         tracer = NSQTracer(scene)
         result = tracer.trace(num_rays=20_000, max_depth=5, seed=0)
@@ -364,12 +397,12 @@ class TestFluxConservation:
         # All flux should be accounted for.
         src_cs = CoordinateSystem(x=0, y=0, z=0)
         spec = Spectrum.monochromatic(0.55)
-        src = CollimatedSource(
-            cs=src_cs, spectrum=spec, total_flux=1.0, aperture_radius=2.0
-        )
+        CollimatedSource(cs=src_cs, spectrum=spec, total_flux=1.0, aperture_radius=2.0)
 
         mirror_cs = CoordinateSystem(x=0, y=0, z=50, ry=-math.pi / 4)
-        from optiland.nonsequential.components.geometry.analytic.plane import FinitePlaneGeometry  # noqa: PLC0415
+        from optiland.nonsequential.components.geometry.analytic.plane import (
+            FinitePlaneGeometry,  # noqa: PLC0415
+        )
 
         mirror = ReflectiveComponent(
             cs=mirror_cs,
@@ -378,14 +411,24 @@ class TestFluxConservation:
         )
 
         det_cs = CoordinateSystem(x=50, y=0, z=50, ry=math.pi / 2)
-        det = IrradianceDetector(
+        IrradianceDetector(
             cs=det_cs, width=20.0, height=20.0, num_pixels_x=32, num_pixels_y=32
         )
 
         scene = NSQScene()
         scene.add_component("mirror", mirror)
-        scene.add_source("src", src_cs, CollimatedSourceConfig(spectrum=spec, total_flux=1.0, aperture_radius=2.0))
-        scene.add_detector("det", det_cs, IrradianceDetectorConfig(width=20.0, height=20.0, num_pixels_x=32, num_pixels_y=32))
+        scene.add_source(
+            "src",
+            src_cs,
+            CollimatedSourceConfig(spectrum=spec, total_flux=1.0, aperture_radius=2.0),
+        )
+        scene.add_detector(
+            "det",
+            det_cs,
+            IrradianceDetectorConfig(
+                width=20.0, height=20.0, num_pixels_x=32, num_pixels_y=32
+            ),
+        )
 
         tracer = NSQTracer(scene)
         result = tracer.trace(num_rays=5_000, max_depth=5, seed=0)
@@ -404,7 +447,9 @@ class TestCollimatedSource:
     def test_directions_parallel(self):
         cs = CoordinateSystem(x=0, y=0, z=0)
         spec = Spectrum.monochromatic(0.55)
-        src = CollimatedSource(cs=cs, spectrum=spec, total_flux=1.0, aperture_radius=5.0)
+        src = CollimatedSource(
+            cs=cs, spectrum=spec, total_flux=1.0, aperture_radius=5.0
+        )
         rng = np.random.default_rng(0)
         rays = src.generate(200, rng)
         # All rays point in +z direction (no tilt in this CS)
@@ -419,7 +464,7 @@ class TestCollimatedSource:
         src = CollimatedSource(cs=cs, spectrum=spec, total_flux=1.0, aperture_radius=r)
         rng = np.random.default_rng(0)
         rays = src.generate(500, rng)
-        radii = (rays.x ** 2 + rays.y ** 2) ** 0.5
+        radii = (rays.x**2 + rays.y**2) ** 0.5
         assert np.all(radii <= r + 1e-9)
 
 
@@ -432,7 +477,13 @@ class TestNSQScene:
     def test_validate_no_sources(self):
         scene = NSQScene()
         cs = CoordinateSystem(x=0, y=0, z=0)
-        scene.add_detector("det", cs, IrradianceDetectorConfig(width=10.0, height=10.0, num_pixels_x=32, num_pixels_y=32))
+        scene.add_detector(
+            "det",
+            cs,
+            IrradianceDetectorConfig(
+                width=10.0, height=10.0, num_pixels_x=32, num_pixels_y=32
+            ),
+        )
         with pytest.raises(ValueError, match="no sources"):
             scene.validate()
 
@@ -467,7 +518,7 @@ class TestBSDFs:
 
         bsdf = SpecularBRDF()
         N = 1
-        dirs = np.array([[0.0, 0.0, -1.0]])   # incoming downward
+        dirs = np.array([[0.0, 0.0, -1.0]])  # incoming downward
         normals = np.array([[0.0, 0.0, 1.0]])  # normal upward
         wl = np.array([0.55])
         rng = np.random.default_rng(0)
@@ -475,7 +526,9 @@ class TestBSDFs:
         np.testing.assert_allclose(scattered, [[0.0, 0.0, 1.0]], atol=1e-10)
 
     def test_lambertian_reflectance(self):
-        from optiland.nonsequential.bsdf.lambertian import LambertianBSDF  # noqa: PLC0415
+        from optiland.nonsequential.bsdf.lambertian import (
+            LambertianBSDF,  # noqa: PLC0415
+        )
 
         bsdf = LambertianBSDF(reflectance_value=0.8)
         N = 5
@@ -486,7 +539,9 @@ class TestBSDFs:
         np.testing.assert_allclose(r, 0.8)
 
     def test_lambertian_sample_directions_on_hemisphere(self):
-        from optiland.nonsequential.bsdf.lambertian import LambertianBSDF  # noqa: PLC0415
+        from optiland.nonsequential.bsdf.lambertian import (
+            LambertianBSDF,  # noqa: PLC0415
+        )
 
         bsdf = LambertianBSDF()
         N = 1000
@@ -512,10 +567,12 @@ class TestSelfIntersectionGuard:
 
     def test_t_epsilon_no_self_hit(self):
         """After a ray crosses a surface, it should not immediately re-hit it."""
-        from optiland.nonsequential.components.geometry.analytic.plane import FinitePlaneGeometry  # noqa: PLC0415
+        from optiland.nonsequential.components.geometry.analytic.plane import (
+            FinitePlaneGeometry,  # noqa: PLC0415
+        )
         from optiland.nonsequential.ray_bundle import NSQRayBundle  # noqa: PLC0415
 
-        spec = Spectrum.monochromatic(0.55)
+        Spectrum.monochromatic(0.55)
         cs = CoordinateSystem(x=0, y=0, z=10)
         geom = FinitePlaneGeometry(width=20.0, height=20.0)
         comp = ReflectiveComponent(cs=cs, geometry=geom, bsdf=SpecularBRDF())
@@ -553,9 +610,23 @@ class TestMultiSourceRayCount:
         det_cs = CoordinateSystem(x=0, y=0, z=10)
 
         scene = NSQScene()
-        scene.add_source("src1", src1_cs, CollimatedSourceConfig(spectrum=spec, total_flux=1.0, aperture_radius=1.0))
-        scene.add_source("src2", src2_cs, CollimatedSourceConfig(spectrum=spec, total_flux=1.0, aperture_radius=1.0))
-        scene.add_detector("det", det_cs, IrradianceDetectorConfig(width=30.0, height=30.0, num_pixels_x=32, num_pixels_y=32))
+        scene.add_source(
+            "src1",
+            src1_cs,
+            CollimatedSourceConfig(spectrum=spec, total_flux=1.0, aperture_radius=1.0),
+        )
+        scene.add_source(
+            "src2",
+            src2_cs,
+            CollimatedSourceConfig(spectrum=spec, total_flux=1.0, aperture_radius=1.0),
+        )
+        scene.add_detector(
+            "det",
+            det_cs,
+            IrradianceDetectorConfig(
+                width=30.0, height=30.0, num_pixels_x=32, num_pixels_y=32
+            ),
+        )
 
         tracer = NSQTracer(scene)
         result = tracer.trace(num_rays=2000, seed=0)
@@ -573,7 +644,9 @@ class TestWavelengthUm:
         """Generated ray bundle should have wavelength in µm range."""
         spec = Spectrum.monochromatic(0.55)
         cs = CoordinateSystem(x=0, y=0, z=0)
-        src = CollimatedSource(cs=cs, spectrum=spec, total_flux=1.0, aperture_radius=1.0)
+        src = CollimatedSource(
+            cs=cs, spectrum=spec, total_flux=1.0, aperture_radius=1.0
+        )
         rng = np.random.default_rng(0)
         rays = src.generate(100, rng)
         # Wavelength should be ~0.55 µm (not 550 nm)
@@ -585,8 +658,12 @@ class TestAbsorbedCount:
     """AbsorbingComponent tracks absorbed ray and flux counts."""
 
     def test_absorbed_count_increments(self):
-        from optiland.nonsequential.components.absorbing import AbsorbingComponent  # noqa: PLC0415
-        from optiland.nonsequential.components.geometry.analytic.plane import FinitePlaneGeometry  # noqa: PLC0415
+        from optiland.nonsequential.components.absorbing import (
+            AbsorbingComponent,  # noqa: PLC0415
+        )
+        from optiland.nonsequential.components.geometry.analytic.plane import (
+            FinitePlaneGeometry,  # noqa: PLC0415
+        )
         from optiland.nonsequential.ray_bundle import NSQRayBundle  # noqa: PLC0415
 
         cs = CoordinateSystem(x=0, y=0, z=10)
@@ -620,8 +697,12 @@ class TestAbsorbedCount:
         assert absorber._absorbed_flux == pytest.approx(3.0)
 
     def test_reset_stats(self):
-        from optiland.nonsequential.components.absorbing import AbsorbingComponent  # noqa: PLC0415
-        from optiland.nonsequential.components.geometry.analytic.plane import FinitePlaneGeometry  # noqa: PLC0415
+        from optiland.nonsequential.components.absorbing import (
+            AbsorbingComponent,  # noqa: PLC0415
+        )
+        from optiland.nonsequential.components.geometry.analytic.plane import (
+            FinitePlaneGeometry,  # noqa: PLC0415
+        )
 
         cs = CoordinateSystem(x=0, y=0, z=0)
         geom = FinitePlaneGeometry(width=10.0, height=10.0)
@@ -638,13 +719,17 @@ class TestDeathCauseFluxKilled:
 
     def test_flux_killed_count(self):
         """A ray that loses most flux should be killed and counted."""
-        from optiland.nonsequential.components.absorbing import AbsorbingComponent  # noqa: PLC0415
-        from optiland.nonsequential.components.geometry.analytic.plane import FinitePlaneGeometry  # noqa: PLC0415
+        from optiland.nonsequential.components.absorbing import (
+            AbsorbingComponent,  # noqa: PLC0415
+        )
+        from optiland.nonsequential.components.geometry.analytic.plane import (
+            FinitePlaneGeometry,  # noqa: PLC0415
+        )
 
         # Source with 1 ray
         spec = Spectrum.monochromatic(0.55)
         src_cs = CoordinateSystem(x=0, y=0, z=0)
-        src = CollimatedSource(cs=src_cs, spectrum=spec, total_flux=1.0, aperture_radius=1.0)
+        CollimatedSource(cs=src_cs, spectrum=spec, total_flux=1.0, aperture_radius=1.0)
 
         # Absorber that kills some flux before detector
         abs_cs = CoordinateSystem(x=0, y=0, z=50)
@@ -652,17 +737,139 @@ class TestDeathCauseFluxKilled:
         absorber = AbsorbingComponent(cs=abs_cs, geometry=abs_geom)
 
         det_cs = CoordinateSystem(x=0, y=0, z=100)
-        det = IrradianceDetector(
+        IrradianceDetector(
             cs=det_cs, width=50.0, height=50.0, num_pixels_x=16, num_pixels_y=16
         )
 
         scene = NSQScene()
         scene.add_component("absorber", absorber)
-        scene.add_source("src", src_cs, CollimatedSourceConfig(spectrum=spec, total_flux=1.0, aperture_radius=1.0))
-        scene.add_detector("det", det_cs, IrradianceDetectorConfig(width=50.0, height=50.0, num_pixels_x=16, num_pixels_y=16))
+        scene.add_source(
+            "src",
+            src_cs,
+            CollimatedSourceConfig(spectrum=spec, total_flux=1.0, aperture_radius=1.0),
+        )
+        scene.add_detector(
+            "det",
+            det_cs,
+            IrradianceDetectorConfig(
+                width=50.0, height=50.0, num_pixels_x=16, num_pixels_y=16
+            ),
+        )
 
         result = scene.trace(num_rays=1000, seed=0)
 
         # Absorber should have captured rays
         assert absorber._absorbed_count > 0
         assert result.num_rays_absorbed > 0
+
+
+# ---------------------------------------------------------------------------
+# Flux bookkeeping — every launched watt must be accounted for
+# ---------------------------------------------------------------------------
+
+
+class TestFluxBookkeeping:
+    """The flux ledger must close, including rays killed by the cutoffs."""
+
+    @staticmethod
+    def _scene():
+        """Lens scene with a deliberately shallow depth budget."""
+        scene = NSQScene()
+        scene.add_source(
+            "S1",
+            CoordinateSystem(),
+            CollimatedSourceConfig(
+                spectrum=Spectrum.monochromatic(0.55),
+                total_flux=1.0,
+                aperture_radius=8.0,
+            ),
+        )
+        scene.add_lens(
+            "L1",
+            CoordinateSystem(z=50.0),
+            LensConfig(
+                r1=60.0,
+                r2=-60.0,
+                thickness=6.0,
+                material="N-BK7",
+                front_aperture_radius=12.0,
+            ),
+        )
+        scene.add_detector(
+            "D1",
+            CoordinateSystem(z=200.0),
+            IrradianceDetectorConfig(
+                width=40, height=40, num_pixels_x=32, num_pixels_y=32
+            ),
+        )
+        return scene
+
+    def test_ledger_closes(self):
+        """detected + absorbed + escaped + lost must equal the launched flux."""
+        result = self._scene().trace(num_rays=20_000, seed=3)
+        balance = (
+            result.total_flux_in
+            - result.total_flux_detected
+            - result.total_flux_absorbed
+            - result.total_flux_escaped
+            - result.total_flux_lost
+        )
+        assert abs(balance) / result.total_flux_in < 1e-9, (
+            f"Flux ledger does not close: residual {balance:.6e} of "
+            f"{result.total_flux_in:.6e} launched"
+        )
+
+    def test_conservation_error_counts_killed_rays(self):
+        """Rays killed by the depth cutoff must not be reported as an error.
+
+        ``flux_conservation_error`` omitting ``total_flux_lost`` made any
+        scene that depth-kills rays report a large error that is not real —
+        precisely the stray-light scenes the diagnostic exists to serve.
+        """
+        # max_depth=1 forces most rays to be depth-killed inside the lens.
+        result = self._scene().trace(num_rays=5_000, seed=3, max_depth=1)
+        assert result.num_rays_depth_killed > 0, "Test scene killed nothing"
+        assert result.total_flux_lost > 0.0
+        assert result.flux_conservation_error < 1e-9, (
+            "Depth-killed flux must be part of the ledger, not counted as a "
+            f"conservation error (got {result.flux_conservation_error:.3e})"
+        )
+
+
+class TestConicSurfaceNormals:
+    """Conic normals must match the analytic sag derivative.
+
+    For a conic, dz/dr = c*r / sqrt(1 - (1+K) c^2 r^2). An incorrect normal
+    tilts every refracted ray, and the error grows with aperture and |K|, so
+    it is easy to miss on a slow spherical test case.
+    """
+
+    @pytest.mark.parametrize(
+        ("radius", "conic"),
+        [(120.0, 0.0), (25.0, -2.5), (25.0, 1.5), (-40.0, -0.6), (50.0, -1.0)],
+    )
+    def test_normal_matches_finite_difference_sag(self, radius, conic):
+        geom = ConicGeometry(radius, conic, 12.0)
+        h = 1e-6
+        for x_val in (1.0, 5.0, 9.0):
+            x = np.array([x_val])
+            y = np.array([0.0])
+            dsag_dx_fd = float(
+                (geom._sag(x + h, y) - geom._sag(x - h, y))[0] / (2.0 * h)
+            )
+            # _normal_local returns the gradient of (z - sag): (-dsag/dx, ...)
+            dsag_dx_analytic = -float(geom._normal_local(x, y)[0, 0])
+            assert dsag_dx_analytic == pytest.approx(dsag_dx_fd, rel=1e-6), (
+                f"R={radius}, K={conic}, x={x_val}"
+            )
+
+    @pytest.mark.parametrize("radius", [0.0, float("inf")])
+    def test_flat_surface_conventions(self, radius):
+        """radius=0 and radius=inf both denote a plano surface."""
+        geom = ConicGeometry(radius, 0.0, 10.0)
+        x = np.linspace(-9.0, 9.0, 5)
+        y = np.zeros(5)
+        assert np.allclose(np.asarray(geom._sag(x, y)), 0.0)
+        normals = np.asarray(geom._normal_local(x, y))
+        assert np.allclose(normals[:, 0], 0.0)
+        assert np.allclose(normals[:, 1], 0.0)

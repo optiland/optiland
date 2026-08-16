@@ -25,16 +25,18 @@ from optiland.coordinate_system import CoordinateSystem
 
 torch = pytest.importorskip("torch", reason="Torch not available — skip gradient tests")
 
+# Imports below intentionally follow importorskip: they must not run when
+# torch is unavailable.
+# ruff: noqa: E402
+
 import optiland.backend as be
 from optiland.nonsequential import (
     CollimatedSourceConfig,
     IrradianceDetectorConfig,
     NSQScene,
-    PointSourceConfig,
     Spectrum,
 )
 from optiland.nonsequential.backends.torch_backend import TorchBackend
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -49,7 +51,9 @@ def _reset_backend() -> None:
     be.set_backend(_NUMPY_BACKEND)
 
 
-def _build_mirror_scene(num_pixels: int = 8) -> tuple[NSQScene, CoordinateSystem, CoordinateSystem]:
+def _build_mirror_scene(
+    num_pixels: int = 8,
+) -> tuple[NSQScene, CoordinateSystem, CoordinateSystem]:
     """Collimated source → large flat detector (no intermediate components).
 
     Returns (scene, src_cs, det_cs). Useful for flux-linearity tests.
@@ -177,6 +181,7 @@ class TestSourceFluxGradient:
         For linear scaling, FD and autograd must agree exactly (within
         floating-point precision), regardless of MC noise.
         """
+
         def loss_fn(flux_val: float, seed: int) -> float:
             with torch.no_grad():
                 data = _run_with_flux(float(flux_val), seed, num_rays=200)
@@ -245,7 +250,7 @@ class TestBSDFReflectanceGradient:
         bsdf = LambertianBSDF(reflectance_value=reflectance)
 
         spec = Spectrum.monochromatic(0.55)
-        src_cs = CoordinateSystem()          # z=0, pointing +z
+        src_cs = CoordinateSystem()  # z=0, pointing +z
         mirror_cs = CoordinateSystem(z=5)
         # Detector is BEHIND the source (z=-1) so backscattered rays can reach it
         det_cs = CoordinateSystem(z=-1)
@@ -318,7 +323,9 @@ class TestBSDFReflectanceGradient:
             )
             backend = TorchBackend(seed=seed)
             with torch.no_grad():
-                result = scene.trace(num_rays=500, max_depth=4, seed=seed, backend=backend)
+                result = scene.trace(
+                    num_rays=500, max_depth=4, seed=seed, backend=backend
+                )
             return float(result.detectors["D"].data.sum())
 
         grad_fd = _fd_gradient(_loss_reflectance, param_val=0.8, h=0.05, seed=99)
@@ -330,7 +337,9 @@ class TestBSDFReflectanceGradient:
             "S",
             CoordinateSystem(),
             CollimatedSourceConfig(
-                spectrum=Spectrum.monochromatic(0.55), total_flux=1.0, aperture_radius=2.0
+                spectrum=Spectrum.monochromatic(0.55),
+                total_flux=1.0,
+                aperture_radius=2.0,
             ),
         )
         scene.add_component(
@@ -385,16 +394,15 @@ class TestVisibilityGradientZero:
     def teardown_method(self):
         _reset_backend()
 
-    def test_position_gradient_interior_is_attached(self):
-        """Position parameter (x-shift of absorber) produces a grad.
+    def test_throughput_path_is_attached(self):
+        """The radiometric path through the trace carries gradients.
 
-        This tests that the *path* through the computation is attached —
-        gradients of flux *through* the parameter are non-zero. Pure
-        visibility (argmin over surfaces) would be zero.
-
-        Note: this test verifies the detached-sample/attached-weight
-        path carries ∂R/∂θ; it does NOT verify visibility gradients
-        (those are v1-zero and tracked in test_visibility_grad_zero).
+        Scope note: this covers only the throughput multiplier chain. It does
+        *not* exercise ray positions, surface intersection, or refraction —
+        ``total_flux`` scales every ray's contribution linearly and never
+        touches the geometry. Geometric-parameter gradients (which is what
+        illumination design optimizes) are validated against finite
+        differences in ``test_nsq_geometric_gradients.py``.
         """
         total_flux = torch.tensor(1.0, requires_grad=True)
         data = _run_with_flux(total_flux, seed=7, num_rays=100)
@@ -405,34 +413,38 @@ class TestVisibilityGradientZero:
         assert total_flux.grad.abs() > 0
 
     def test_visibility_grad_zero_is_documented_limitation(self):
-        """argmin over surface t-values is detached — visibility grad = 0.
+        """Which-surface-is-hit is a discrete choice with no gradient path.
 
-        This test documents the v1 limitation: gradients of *which*
-        surface a ray hits (discrete visibility event) are zero.
-        Roadmap #1 (reparameterization) addresses this.
+        Documents the v1 limitation. The dispatch is resolved by comparing
+        hit distances in NumPy, so ``comp_indices`` is an integer array with
+        no autograd history — silhouette and vignetting boundaries therefore
+        contribute nothing to the gradient. Reparameterization (roadmap #1)
+        addresses this.
+
+        Measured directly rather than asserted structurally: a live
+        occluder-translation gradient is exercised in
+        ``test_nsq_geometric_gradients.TestVisibilityGradientIsZero``.
         """
-        # In v1, the `argmin` over component t_min is implemented via
-        # numpy integer comparison (comp_indices are numpy int32).
-        # This is explicitly detached; there is no autograd path through
-        # which-component-is-hit. This is the correct v1 behavior.
-        #
-        # Verification: the TorchBackend.intersect_scene() returns
-        # comp_indices as numpy int32 (see torch_backend.py).
-        from optiland.nonsequential.backends.torch_backend import TorchBackend
-
-        backend = TorchBackend(seed=0)
-        # comp_indices dtype must be numpy int32 (detached by construction)
         import numpy as np
 
-        # Check that the intersect_scene output's comp_indices is numpy int32
-        # This is the architectural guarantee of v1 zero visibility grads.
-        # (We test the architecture, not a live gradient, to keep this fast.)
-        assert hasattr(backend, "intersect_scene"), (
-            "TorchBackend must implement intersect_scene()"
-        )
-        # The spec's visibility-gradient=0 guarantee is provided by
-        # comp_indices being numpy int32 (not torch Tensor).
-        # Reparameterization (roadmap #1) will change this.
+        from optiland.nonsequential.backends.torch_backend import TorchBackend
+
+        scene, _, _ = _build_mirror_scene()
+        backend = TorchBackend(seed=0)
+        rays = scene.sources[0].generate(64, backend.rng)
+        rays = backend._ensure_torch_bundle(rays)
+
+        t_min, normals, comp_indices = backend.intersect_scene(rays, scene.surfaces)
+
+        # The dispatch index is a plain integer array: no grad_fn, so no
+        # gradient can flow through the choice of surface.
+        assert isinstance(comp_indices, np.ndarray)
+        assert np.issubdtype(comp_indices.dtype, np.integer)
+
+        # The hit *distance*, by contrast, must stay attached -- the landing
+        # position depends on it continuously.
+        assert isinstance(t_min, torch.Tensor)
+        assert isinstance(normals, torch.Tensor)
 
 
 # ---------------------------------------------------------------------------
@@ -480,18 +492,14 @@ class TestBackendCrossCheck:
 
         be.set_backend(_NUMPY_BACKEND)
         scene_np = _build_scene("hard")
-        result_np = scene_np.trace(
-            num_rays=5000, seed=0, backend=NumpyBackend(seed=0)
-        )
+        result_np = scene_np.trace(num_rays=5000, seed=0, backend=NumpyBackend(seed=0))
         flux_np = result_np.total_flux_detected
 
         # Torch backend
         be.set_backend(_TORCH_BACKEND)
         scene_torch = _build_scene("bilinear")
         backend_torch = TorchBackend(seed=0)
-        result_torch = scene_torch.trace(
-            num_rays=5000, seed=0, backend=backend_torch
-        )
+        result_torch = scene_torch.trace(num_rays=5000, seed=0, backend=backend_torch)
         flux_torch = float(result_torch.detectors["D"].data.sum())
 
         be.set_backend(_NUMPY_BACKEND)
@@ -570,19 +578,27 @@ class TestPerfSmoke:
                 "D",
                 CoordinateSystem(z=20),
                 IrradianceDetectorConfig(
-                    width=30, height=30, num_pixels_x=32, num_pixels_y=32, splat="bilinear"
+                    width=30,
+                    height=30,
+                    num_pixels_x=32,
+                    num_pixels_y=32,
+                    splat="bilinear",
                 ),
             )
             backend = TorchBackend(seed=0)
             t0 = time.perf_counter()
-            result = scene.trace(num_rays=100_000, max_depth=16, seed=0, backend=backend)
+            result = scene.trace(
+                num_rays=100_000, max_depth=16, seed=0, backend=backend
+            )
             loss = result.detectors["D"].data.sum()
             loss.backward()
             t_elapsed = time.perf_counter() - t0
 
             assert total_flux.grad is not None
             # Not a hard timing assert; just document the envelope
-            assert t_elapsed < 600, f"Torch 1e5 rays took {t_elapsed:.1f}s (>600s limit)"
+            assert t_elapsed < 600, (
+                f"Torch 1e5 rays took {t_elapsed:.1f}s (>600s limit)"
+            )
         finally:
             _reset_backend()
 
@@ -599,9 +615,7 @@ class TestPerfSmoke:
         scene.add_source(
             "S",
             CoordinateSystem(),
-            CollimatedSourceConfig(
-                spectrum=spec, total_flux=1.0, aperture_radius=5.0
-            ),
+            CollimatedSourceConfig(spectrum=spec, total_flux=1.0, aperture_radius=5.0),
         )
         scene.add_detector(
             "D",
@@ -613,7 +627,9 @@ class TestPerfSmoke:
         from optiland.nonsequential.backends.numpy_backend import NumpyBackend
 
         t0 = time.perf_counter()
-        result = scene.trace(num_rays=500_000, max_depth=16, seed=0, backend=NumpyBackend(seed=0))
+        result = scene.trace(
+            num_rays=500_000, max_depth=16, seed=0, backend=NumpyBackend(seed=0)
+        )
         t_elapsed = time.perf_counter() - t0
 
         assert result.num_rays_total == 500_000
@@ -634,10 +650,11 @@ class TestAnalyticForward:
 
     def test_plane_at_z10_t_is_10(self):
         """Ray from origin along +z should hit z=10 plane at t=10."""
+        import numpy as _np
+
         from optiland.nonsequential.components.geometry.analytic.plane import (
             FinitePlaneGeometry,
         )
-        import numpy as _np
 
         # FinitePlaneGeometry lives at LOCAL z=0.  Ray starts at z=-10 in
         # local frame and travels +z, so it hits the plane at t=10.

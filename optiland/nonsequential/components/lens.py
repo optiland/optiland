@@ -10,6 +10,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
+from optiland.nonsequential._utils import as_float, as_param
 from optiland.nonsequential.components.absorbing import AbsorbingComponent
 from optiland.nonsequential.components.compound import CompoundComponent
 from optiland.nonsequential.components.configs import (
@@ -133,22 +134,22 @@ class Lens(CompoundComponent):
         sag_front = _sag_at_rim(cfg.r1, cfg.conic1, front_r)
         sag_back = _sag_at_rim(cfg.r2, cfg.conic2, back_r)
 
-        wider_r = max(front_r, back_r)
-        narrower_r = min(front_r, back_r)
+        wider_r = max(as_float(front_r), as_float(back_r))
+        narrower_r = min(as_float(front_r), as_float(back_r))
 
-        if front_r > back_r:
+        if as_float(front_r) > as_float(back_r):
             z_front_edge = sag_front
-            z_back_edge = cfg.thickness + sag_back
+            z_back_edge = as_float(cfg.thickness) + sag_back
             cs_rim = cs_back
             rim_z = sag_back
-        elif back_r > front_r:
+        elif as_float(back_r) > as_float(front_r):
             z_front_edge = sag_front
-            z_back_edge = cfg.thickness + sag_back
+            z_back_edge = as_float(cfg.thickness) + sag_back
             cs_rim = cs_front
             rim_z = sag_front
         else:
             z_front_edge = sag_front
-            z_back_edge = cfg.thickness + sag_back
+            z_back_edge = as_float(cfg.thickness) + sag_back
 
         edge_geom = CylindricalFrustumGeometry(
             r_front=wider_r,
@@ -220,6 +221,11 @@ def _offset_cs(cs: CoordinateSystem, dz: float) -> CoordinateSystem:
 def _sag_at_rim(radius: float, conic: float, aperture_radius: float) -> float:
     """Compute the sag of a conic surface at the aperture rim.
 
+    The edge/rim surfaces this feeds are absorbing bookkeeping geometry, not
+    part of the differentiable optical path, so the sag is evaluated from
+    detached floats.  This keeps a tensor-valued ``radius`` from leaking a
+    partial (and physically incomplete) gradient into the lens edge.
+
     Args:
         radius: Vertex radius of curvature [mm].  0 -> flat (sag = 0).
         conic: Conic constant K.
@@ -228,6 +234,9 @@ def _sag_at_rim(radius: float, conic: float, aperture_radius: float) -> float:
     Returns:
         Sag value z(aperture_radius) [mm].
     """
+    radius = as_float(radius)
+    conic = as_float(conic)
+    aperture_radius = as_float(aperture_radius)
     if radius == 0.0 or aperture_radius == 0.0:
         return 0.0
     r2 = aperture_radius**2
@@ -241,7 +250,7 @@ def _sag_at_rim(radius: float, conic: float, aperture_radius: float) -> float:
 
 def _approx_equal(a: float, b: float, tol: float = 1e-9) -> bool:
     """Return True if ``|a - b| <= tol``."""
-    return abs(a - b) <= tol
+    return abs(as_float(a) - as_float(b)) <= tol
 
 
 def _resolve_interaction(
@@ -287,7 +296,7 @@ def _make_surface(
     bsdf = cfg.bsdf if cfg is not None else None
     aperture_override = cfg.aperture_radius if cfg is not None else None
     if aperture_override is not None and hasattr(geom, "aperture_radius"):
-        geom.aperture_radius = float(aperture_override)
+        geom.aperture_radius = as_param(aperture_override)
 
     if resolved == InteractionType.REFRACTIVE:
         return RefractiveComponent(cs, geom, mat_front, mat_back, bsdf=bsdf)

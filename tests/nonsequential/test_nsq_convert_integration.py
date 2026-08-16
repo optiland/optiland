@@ -12,7 +12,6 @@ import pytest
 
 from optiland.nonsequential.convert import sequential_to_nonsequential
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -24,7 +23,9 @@ def _singlet_optic():
 
     optic = Optic()
     optic.add_surface(index=0, thickness=float("inf"))
-    optic.add_surface(index=1, radius=50.0, thickness=5.0, material="N-BK7", is_stop=True)
+    optic.add_surface(
+        index=1, radius=50.0, thickness=5.0, material="N-BK7", is_stop=True
+    )
     optic.add_surface(index=2, radius=-50.0, thickness=50.0)
     optic.add_surface(index=3)
     optic.set_aperture(aperture_type="EPD", value=10.0)
@@ -40,7 +41,9 @@ def _doublet_optic():
 
     optic = Optic()
     optic.add_surface(index=0, thickness=float("inf"))
-    optic.add_surface(index=1, radius=60.0, thickness=6.0, material="N-BK7", is_stop=True)
+    optic.add_surface(
+        index=1, radius=60.0, thickness=6.0, material="N-BK7", is_stop=True
+    )
     optic.add_surface(index=2, radius=-30.0, thickness=2.0, material="N-F2")
     optic.add_surface(index=3, radius=-80.0, thickness=50.0)
     optic.add_surface(index=4)

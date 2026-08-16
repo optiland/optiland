@@ -13,6 +13,7 @@ from __future__ import annotations
 import numpy as np
 
 import optiland.backend as be
+from optiland.nonsequential._utils import as_float, as_param
 from optiland.nonsequential.components.geometry.base import AABB, AnalyticGeometry
 
 
@@ -46,10 +47,10 @@ class CylindricalFrustumGeometry(AnalyticGeometry):
             z_front: Axial z-position of the front rim [mm].
             z_back: Axial z-position of the back rim [mm].
         """
-        self.r_front = float(r_front)
-        self.r_back = float(r_back)
-        self.z_front = float(z_front)
-        self.z_back = float(z_back)
+        self.r_front = as_param(r_front)
+        self.r_back = as_param(r_back)
+        self.z_front = as_param(z_front)
+        self.z_back = as_param(z_back)
 
     def ray_intersect(
         self, origins: np.ndarray, directions: np.ndarray
@@ -160,18 +161,20 @@ class CylindricalFrustumGeometry(AnalyticGeometry):
         """
         t_vec = np.array(transform[0], dtype=float)
         R = np.array(transform[1], dtype=float)
-        r_max = max(self.r_front, self.r_back)
+        r_max = max(as_float(self.r_front), as_float(self.r_back))
+        z_f = as_float(self.z_front)
+        z_b = as_float(self.z_back)
 
         corners_local = np.array(
             [
-                [-r_max, -r_max, self.z_front],
-                [-r_max, r_max, self.z_front],
-                [r_max, -r_max, self.z_front],
-                [r_max, r_max, self.z_front],
-                [-r_max, -r_max, self.z_back],
-                [-r_max, r_max, self.z_back],
-                [r_max, -r_max, self.z_back],
-                [r_max, r_max, self.z_back],
+                [-r_max, -r_max, z_f],
+                [-r_max, r_max, z_f],
+                [r_max, -r_max, z_f],
+                [r_max, r_max, z_f],
+                [-r_max, -r_max, z_b],
+                [-r_max, r_max, z_b],
+                [r_max, -r_max, z_b],
+                [r_max, r_max, z_b],
             ],
             dtype=float,
         )
