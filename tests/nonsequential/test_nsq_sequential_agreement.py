@@ -9,10 +9,11 @@ formula; this confirms the whole chain.
 
 Two quantities are compared for an on-axis collimated beam:
 
-- **Marginal ray height** at the image plane. This is a single deterministic
-  ray in both engines (the edge-of-aperture ray), so it must agree tightly.
-  It is sensitive to surface sag, surface normals, and refraction at both
-  faces — the conic normal formula in particular.
+- **Marginal ray height** at the image plane: the edge-of-aperture ray,
+  deterministic in the sequential engine and the outermost sampled ray in
+  NSQ, so the two must agree tightly (measured: within 0.02%). It is
+  sensitive to surface sag, surface normals, and refraction at both faces,
+  the conic normal formula in particular.
 - **RMS spot radius**. Compared loosely: the engines sample the pupil
   differently (hexapolar grid vs. uniform Monte Carlo), which changes the
   radial weighting, so a few percent of difference is expected and fine.
@@ -83,18 +84,26 @@ def _sequential_spot(
 def _nsq_spot(scene: NSQScene, num_rays: int = 20_000) -> tuple[float, float]:
     """Trace the equivalent NSQ scene and measure the spot.
 
-    A few ghost rays — ones whose Fresnel branch sampled reflection at an
-    interface — reach the detector far from focus. They cannot be separated
+    A few ghost rays (ones whose Fresnel branch sampled reflection at an
+    interface) reach the detector far from focus. They cannot be separated
     by flux: the detached-sample / attached-weight estimator keeps every
     ray's forward flux at its full value and represents reflection by
     *sampling* the branch, so a ghost carries exactly the same flux as a
-    direct ray. That is the correct unbiased behaviour, and it means the
-    spot statistics must be robust to a small outlier population rather than
-    filtered by flux.
+    direct ray. That is the correct unbiased behaviour, and it means ghosts
+    must be rejected geometrically instead.
 
-    Both statistics are therefore computed on rays inside the 99.5th
-    percentile radius. The marginal ray height is read from that percentile,
-    which for a filled circular pupil is the edge-of-aperture ray.
+    Direct rays form a dense cluster that runs continuously out to the
+    marginal ray, while ghosts sit several times further out, so a gap
+    criterion separates them cleanly: anything beyond 1.5x the 99th
+    percentile radius is a ghost.
+
+    The marginal ray height is then the *maximum* radius of the direct
+    cluster, matching the statistic taken from the sequential tracer. A
+    percentile must not be used here: for a uniformly sampled disk the 99.5th
+    percentile corresponds to pupil radius sqrt(0.995) * R rather than the
+    edge, and under strong spherical aberration (image radius growing roughly
+    as pupil cubed) that undershoots the true marginal ray by ~0.7% -- an
+    artefact of the statistic, not a disagreement between the engines.
 
     Args:
         scene: Scene whose detector "D1" is a RayDatabaseDetector.
@@ -108,10 +117,15 @@ def _nsq_spot(scene: NSQScene, num_rays: int = 20_000) -> tuple[float, float]:
     radius = np.hypot(np.asarray(db.x), np.asarray(db.y))
     assert radius.size > 0.5 * num_rays, "Most rays should reach the detector"
 
-    marginal = float(np.percentile(radius, 99.5))
-    direct = radius <= marginal
+    ghost_cut = 1.5 * float(np.percentile(radius, 99.0))
+    direct = radius <= ghost_cut
+    assert direct.sum() > 0.95 * radius.size, (
+        "Ghost rejection discarded too many rays; the direct cluster and the "
+        "ghost population are not cleanly separated in this scene"
+    )
+
     rms = float(np.sqrt(np.mean(radius[direct] ** 2)))
-    return rms, marginal
+    return rms, float(radius[direct].max())
 
 
 def _add_source_and_detector(
@@ -167,7 +181,7 @@ class TestSequentialAgreement:
         _add_source_and_detector(scene, _LENS_Z + thickness + back_focus)
         rms_nsq, marginal_nsq = _nsq_spot(scene)
 
-        assert marginal_nsq == pytest.approx(marginal_seq, rel=5e-3), (
+        assert marginal_nsq == pytest.approx(marginal_seq, rel=2e-3), (
             f"Marginal ray height disagrees: sequential {marginal_seq * 1e3:.3f} um "
             f"vs NSQ {marginal_nsq * 1e3:.3f} um"
         )
@@ -208,7 +222,7 @@ class TestSequentialAgreement:
         _add_source_and_detector(scene, _LENS_Z + t1 + t2 + back_focus)
         rms_nsq, marginal_nsq = _nsq_spot(scene)
 
-        assert marginal_nsq == pytest.approx(marginal_seq, rel=5e-3), (
+        assert marginal_nsq == pytest.approx(marginal_seq, rel=2e-3), (
             f"Marginal ray height disagrees: sequential {marginal_seq * 1e3:.3f} um "
             f"vs NSQ {marginal_nsq * 1e3:.3f} um"
         )
@@ -225,8 +239,9 @@ class TestSequentialAgreement:
         surface is both fast and strongly conic, with the error growing
         toward the aperture edge. This configuration is chosen to have that
         sensitivity: the previous (incorrect) normal expression deviates
-        from the sequential tracer by 5.6% here, against 0.7% for the
-        analytic curvature form, so the tolerance below separates them.
+        from the sequential tracer by 5.6% here, against 0.02% for the
+        analytic curvature form, so the tolerance below separates them by a
+        wide margin.
         """
         epd = 20.0
         r1, conic, r2, thickness, back_focus = 30.0, 2.5, -50.0, 5.0, 45.0
@@ -261,7 +276,7 @@ class TestSequentialAgreement:
         _add_source_and_detector(scene, _LENS_Z + thickness + back_focus, epd=epd)
         rms_nsq, marginal_nsq = _nsq_spot(scene)
 
-        assert marginal_nsq == pytest.approx(marginal_seq, rel=0.02), (
+        assert marginal_nsq == pytest.approx(marginal_seq, rel=2e-3), (
             f"Marginal ray height disagrees for K={conic}: sequential "
             f"{marginal_seq * 1e3:.3f} um vs NSQ {marginal_nsq * 1e3:.3f} um"
         )
