@@ -52,6 +52,21 @@ _DENOM_EPS_MULTIPLIER = 32.0
 _CONV_EPS_MULTIPLIER = 8.0
 
 
+def _nz_threshold(nz):
+    """Dtype-aware validity threshold for the surface-normal z component.
+
+    The sag slopes are reconstructed from the normalized normal as
+    ``s_x = -n_x / n_z``; when ``|n_z|`` approaches round-off the surface is
+    not a numerically valid single-valued height function ``z = s(x, y)`` at
+    that point, and the reconstruction (and therefore the implicit derivative)
+    is meaningless. Uses the same conservative multiplier as the ``dF/dt``
+    threshold. For float64 this lands near the historical ``1e-14``; for
+    float32 it is orders of magnitude larger, which is the point -- a fixed
+    ``1e-14`` is below float32 round-off and never triggers.
+    """
+    return _DENOM_EPS_MULTIPLIER * machine_eps(nz)
+
+
 # -- utility functions --
 def _is_radius_infinite(radius):
     """Checks if the given radius represents an infinite radius (a plane).
@@ -75,12 +90,19 @@ def _is_radius_infinite(radius):
     )
 
 
-def _sign_preserving_floor(value, eps=1e-14):
+def _sign_preserving_floor(value, eps=None):
     """Clamp values to a minimum absolute magnitude while preserving sign.
 
     Preserving the sign matters: replacing a small *negative* denominator with
     a positive constant reverses the Newton step direction.
+
+    When ``eps`` is None, a dtype-aware floor is derived from the machine
+    epsilon of ``value``. This is a numerical safeguard for the graph-free
+    primal iteration only; the implicit correction rejects rays for which the
+    floor would have engaged (see :meth:`_classify_final_roots`).
     """
+    if eps is None:
+        eps = _DENOM_EPS_MULTIPLIER * machine_eps(value)
     return be.where(
         be.abs(value) > eps,
         value,
@@ -153,6 +175,47 @@ class _DistanceSolveResult:
     residual: Any
     converged: Any
     iterations: int
+
+
+@dataclass
+class _RootClassification:
+    """Regularity classification of every ray at the final primal root.
+
+    ``regular`` rays satisfy the full implicit-function-theorem contract:
+    converged, all quantities finite, ``|n_z|`` above the dtype-aware
+    threshold and ``|dF/dt|`` above the dtype- and scale-aware threshold.
+    Only these rays receive the exact first-order implicit derivative.
+
+    The rejection masks are mutually exclusive diagnostic categories, in
+    priority order: ``nonfinite`` (any non-finite quantity at the root),
+    ``nonconverged`` (finite but did not meet the tolerance), ``nz_singular``
+    (converged but the surface is not a valid local height function),
+    ``near_singular`` (converged but tangent/grazing, ``|dF/dt|`` below
+    threshold).
+
+    Attributes:
+        regular: Per-ray mask of rays eligible for implicit differentiation.
+        df_dt: Detached, unclipped ``dF/dt`` at the final root.
+        nonfinite: Rejection mask -- non-finite state at the root.
+        nonconverged: Rejection mask -- residual above tolerance.
+        nz_singular: Rejection mask -- ``|n_z|`` below dtype threshold.
+        near_singular: Rejection mask -- ``|dF/dt|`` below threshold.
+    """
+
+    regular: Any
+    df_dt: Any
+    nonfinite: Any
+    nonconverged: Any
+    nz_singular: Any
+    near_singular: Any
+
+
+def _all_finite(*values):
+    """Elementwise AND of ``isfinite`` over several same-shaped arrays."""
+    finite = be.isfinite(values[0])
+    for value in values[1:]:
+        finite = be.logical_and(finite, be.isfinite(value))
+    return finite
 
 
 class NewtonRaphsonGeometry(StandardGeometry, ABC):
@@ -246,23 +309,32 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
         return self.sag(x_int, y_int) - z_int
 
     def _surface_residual_dt(self, t, rays):
-        """Derivative ``dF/dt = s_x L + s_y M - N`` and its local scale.
+        """Derivative ``dF/dt = s_x L + s_y M - N``, its scale, and validity.
 
         The sag slopes ``s_x, s_y`` are recovered from the surface normal.
         The returned scale ``|s_x L| + |s_y M| + |N|`` is used to build a
         scale-aware singularity threshold (see :func:`_denominator_threshold`).
+
+        Returns:
+            tuple: ``(df_dt, scale, nz_regular)``. The ``nz_regular`` mask
+            flags rays for which ``|n_z|`` is safely above the dtype-aware
+            threshold, i.e. the surface is a numerically valid local height
+            function there. The primal solver may still take a floored step
+            for irregular rays; the implicit correction must reject them.
         """
         x_int = rays.x + t * rays.L
         y_int = rays.y + t * rays.M
 
         nx, ny, nz = self._surface_normal(x_int, y_int)
-        nz_safe = _sign_preserving_floor(nz)
+        tau_nz = _nz_threshold(nz)
+        nz_regular = be.logical_and(be.isfinite(nz), be.abs(nz) > tau_nz)
+        nz_safe = _sign_preserving_floor(nz, tau_nz)
         fx = -nx / nz_safe
         fy = -ny / nz_safe
 
         df_dt = fx * rays.L + fy * rays.M - rays.N
         scale = be.abs(fx * rays.L) + be.abs(fy * rays.M) + be.abs(rays.N)
-        return df_dt, scale
+        return df_dt, scale, nz_regular
 
     def _solve_distance_primal(self, rays):
         """Run the Newton-Raphson iteration to find the intersection distance.
@@ -302,7 +374,7 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
                 break
 
             # 4. Only reached while at least one ray is still unconverged.
-            df_dt, scale = self._surface_residual_dt(t, rays)
+            df_dt, scale, _ = self._surface_residual_dt(t, rays)
             safe_df_dt, _ = _regularize_signed(df_dt, scale)
 
             # 5. Freeze already-converged rays so a converged root is not
@@ -316,6 +388,126 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
 
         return _DistanceSolveResult(
             t=t, residual=f_t, converged=converged, iterations=iterations
+        )
+
+    def _classify_final_roots(self, result, rays):
+        """Classify every ray at the *final* primal root (graph-free).
+
+        Must be called with autograd disabled. Evaluates ``dF/dt`` at the
+        final root -- never reusing a value from an earlier iteration -- and
+        builds the regularity mask required for the implicit derivative to be
+        the exact first-order physics:
+
+        ``regular = converged AND finite(everything) AND |n_z| > tau_nz
+        AND |dF/dt| > tau_dFdt``
+
+        Returns:
+            _RootClassification: Detached masks and the detached, unclipped
+            final-root ``dF/dt``.
+        """
+        t = result.t
+        df_dt, scale, nz_regular = self._surface_residual_dt(t, rays)
+
+        finite = _all_finite(
+            t,
+            result.residual,
+            rays.x,
+            rays.y,
+            rays.z,
+            rays.L,
+            rays.M,
+            rays.N,
+            df_dt,
+            scale,
+        )
+
+        tau = _denominator_threshold(df_dt, scale)
+        denom_regular = be.abs(df_dt) > tau
+
+        converged = result.converged
+        regular = be.logical_and(
+            be.logical_and(converged, finite),
+            be.logical_and(nz_regular, denom_regular),
+        )
+
+        # Mutually exclusive diagnostic categories, in priority order.
+        nonfinite = be.logical_not(finite)
+        nonconverged = be.logical_and(finite, be.logical_not(converged))
+        conv_finite = be.logical_and(finite, converged)
+        nz_singular = be.logical_and(conv_finite, be.logical_not(nz_regular))
+        near_singular = be.logical_and(
+            be.logical_and(conv_finite, nz_regular), be.logical_not(denom_regular)
+        )
+
+        return _RootClassification(
+            regular=regular,
+            df_dt=df_dt,
+            nonfinite=nonfinite,
+            nonconverged=nonconverged,
+            nz_singular=nz_singular,
+            near_singular=near_singular,
+        )
+
+    def _surface_residual_subset(self, t, rays, mask):
+        """Grad-attached residual evaluated only for the rays in ``mask``.
+
+        Restricting the evaluation to the regular subset matters: PyTorch can
+        propagate ``NaN`` through the *backward* pass from an invalid branch
+        even when that branch is later discarded by ``where``. Rejected rays
+        are therefore never traced through a grad-attached residual at all.
+        """
+        x_int = rays.x[mask] + t[mask] * rays.L[mask]
+        y_int = rays.y[mask] + t[mask] * rays.M[mask]
+        z_int = rays.z[mask] + t[mask] * rays.N[mask]
+        return self.sag(x_int, y_int) - z_int
+
+    def _warn_rejected_rays(self, state, result):
+        """Emit one grouped ``RuntimeWarning`` for all rejected rays.
+
+        Reports the per-category counts, the iteration count and (where
+        meaningful) the worst residual, without dumping arrays.
+        """
+
+        def _count(mask) -> int:
+            return int(be.to_numpy(be.sum(mask)))
+
+        n_nonfinite = _count(state.nonfinite)
+        n_nonconverged = _count(state.nonconverged)
+        n_nz = _count(state.nz_singular)
+        n_tangent = _count(state.near_singular)
+        n_rejected = n_nonfinite + n_nonconverged + n_nz + n_tangent
+        if n_rejected == 0:
+            return
+
+        parts = []
+        if n_nonconverged:
+            masked = be.where(state.nonconverged, be.abs(result.residual), 0.0)
+            max_residual = float(be.to_numpy(be.max(masked)))
+            parts.append(
+                f"{n_nonconverged} non-converged "
+                f"(max residual {max_residual:.3e} > tol {self.tol:.3e})"
+            )
+        if n_nonfinite:
+            parts.append(f"{n_nonfinite} with non-finite state at the root")
+        if n_tangent:
+            parts.append(
+                f"{n_tangent} tangent/grazing (|dF/dt| below the dtype- and "
+                "scale-aware threshold)"
+            )
+        if n_nz:
+            parts.append(
+                f"{n_nz} with |n_z| below the dtype-aware threshold "
+                "(surface not a valid local height function)"
+            )
+
+        n_total = int(be.size(result.t))
+        warnings.warn(
+            f"Newton-Raphson intersection rejected {n_rejected} of {n_total} "
+            f"ray(s) from implicit differentiation after {result.iterations} "
+            f"iteration(s): {'; '.join(parts)}. Rejected rays keep their "
+            "detached primal forward value and contribute zero gradient.",
+            RuntimeWarning,
+            stacklevel=3,
         )
 
     def _invalidate_cached_derived_state_for_autograd(self) -> None:
@@ -366,12 +558,17 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
         2. that root stays on the same branch under small parameter changes;
         3. ``dF/dt`` is not zero or numerically singular (no tangent/grazing
            intersection);
-        4. ``sag()`` and ``_surface_normal()`` describe the same surface;
-        5. only first derivatives are supported.
+        4. ``|n_z|`` is above the dtype-aware threshold, so the surface is a
+           numerically valid local height function;
+        5. ``sag()`` and ``_surface_normal()`` describe the same surface;
+        6. only first derivatives are supported.
 
-        Rays that fail (1) keep their forward value but receive a **detached**
-        distance, so a failed root never carries a confident-looking but
-        invalid gradient.
+        Rays that fail any of (1)-(4) keep their **detached** primal forward
+        value and are never evaluated through a grad-attached residual, so a
+        failed or singular root never carries a confident-looking but invalid
+        gradient and never contaminates the gradients of valid rays in the
+        same batch. A grouped ``RuntimeWarning`` reports the rejections by
+        category.
 
         Args:
             rays (RealRays): The rays used for calculating distance.
@@ -386,11 +583,12 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
             and torch.is_grad_enabled()
         )
 
-        # --- Primal solve (no gradient tracking) -------------------------
+        # --- Phase A: graph-free primal solve and root classification ----
         ctx = torch.no_grad() if use_torch_diff else contextlib.nullcontext()
 
         with ctx:
             result = self._solve_distance_primal(rays)
+            state = self._classify_final_roots(result, rays) if use_torch_diff else None
 
         if not use_torch_diff:
             return result.t
@@ -399,39 +597,36 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
         # the autograd graph before the differentiable correction runs.
         self._invalidate_cached_derived_state_for_autograd()
 
-        # --- DiffOptics-style one-step implicit correction ----------------
-        t_detached = result.t.detach()
-
-        F = self._surface_residual(t_detached, rays)
-
-        dF_dt, scale = self._surface_residual_dt(t_detached, rays)
+        # --- Phase B: grad-attached correction on the regular subset -----
+        # DiffOptics-style one-step implicit correction,
+        #
+        #     t_valid = t_bar - F(t_bar, theta) / stopgrad(dF/dt),
+        #
+        # applied only to rays whose final root is regular. The forward value
+        # is approximately unchanged (F ~ 0 at convergence) but the expression
+        # carries the exact first-order gradient dt*/dtheta = -F_theta / F_t.
         # The implicit function theorem needs only the *value* of the inverse
-        # Jacobian for a first derivative, so the denominator is detached.
-        safe_dF_dt, _ = _regularize_signed(dF_dt.detach(), scale.detach())
+        # Jacobian for a first derivative, so the denominator is detached --
+        # and for regular rays it is used unclipped: regularity guarantees it
+        # is safely above the singularity threshold.
+        t_out = result.t.detach()
+        regular = state.regular
 
-        # Implicit correction: t_implicit has value approx t_detached (since
-        # F approx 0) but carries correct gradients: dt*/dtheta = -F_theta / F_t.
-        t_implicit = t_detached - F / safe_dF_dt
+        if bool(be.to_numpy(be.all(regular))):
+            F = self._surface_residual(t_out, rays)
+            t_out = t_out - F / state.df_dt
+        elif bool(be.to_numpy(be.any(regular))):
+            F_valid = self._surface_residual_subset(t_out, rays, regular)
+            t_valid = t_out[regular] - F_valid / state.df_dt[regular]
+            # Functional scatter: keeps t_out detached everywhere else while
+            # gradients flow from the inserted values.
+            t_out = t_out.masked_scatter(regular, t_valid)
+        # If no ray is regular, the detached primal result is returned without
+        # ever evaluating the differentiable residual.
 
-        converged = result.converged
-        if not be.all(converged):
-            n_failed = int(be.to_numpy(be.sum(be.where(converged, 0.0, 1.0))))
-            max_residual = float(
-                be.to_numpy(be.max(be.abs(be.where(converged, 0.0, result.residual))))
-            )
-            warnings.warn(
-                f"Newton-Raphson intersection did not converge for {n_failed} "
-                f"ray(s) after {result.iterations} iteration(s) "
-                f"(max residual {max_residual:.3e} > tol {self.tol:.3e}). "
-                "Those rays keep their forward value but are excluded from "
-                "implicit differentiation.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            # Non-converged rays keep the primal forward value, detached.
-            return be.where(converged, t_implicit, t_detached)
-
-        return t_implicit
+        # --- Phase C: grouped failure reporting --------------------------
+        self._warn_rejected_rays(state, result)
+        return t_out
 
     def _intersection_plane(self, rays):
         """Calculates the intersection points of the rays with a plane (z=0).
