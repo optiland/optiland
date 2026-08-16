@@ -51,14 +51,15 @@ def get_working_FNO(optic, field, wavelength):
 
     Algorithm:
         1. Retrieve the defined given wavelength and field coordinates.
-        2. Determine the image-space refractive index 'n' at the given wavelength.
-        3. Trace four marginal rays (top, bottom, left, right) at the pupil edges,
-            as well as the chief ray.
+        2. Determine the image-space refractive index 'n' at the given
+           wavelength.
+        3. Trace four marginal rays (top, bottom, left, right) at the pupil
+           edges, as well as the chief ray.
         4. Compute the angle between each marginal ray and the chief ray.
-        4. Calculate the average of the squared numerical apertures from all traced
-            marginal rays.
-        5. Compute the working F-number as 1 / (2 * be.sqrt(average_NA_squared)).
-        6. Cap the calculated F/# at 10,000 if it exceeds this value.
+        5. Calculate the average of the squared numerical apertures from all
+           traced marginal rays.
+        6. Compute the working F-number as 1 / (2 * be.sqrt(average_NA_squared)).
+        7. Cap the calculated F/# at 10,000 if it exceeds this value.
 
     Returns:
         float: The working F-number.

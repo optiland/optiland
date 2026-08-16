@@ -629,6 +629,7 @@ class ThinFilmStack:
         thickness in nanometers.
         Bars are colored according to the material of each layer, and a legend is
         provided to identify materials.
+
         Args:
             ax (plt.Axes, optional): The matplotlib Axes object to plot on.
                 If None, a new figure and axes will be created.

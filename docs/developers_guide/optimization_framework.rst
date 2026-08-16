@@ -53,6 +53,9 @@ Components Explained
      - **Least Squares** (local)
      - **Orthogonal Descent** (local)
      - **Nelder-Mead**, **Powell**, **BFGS**, **L-BFGS-B**, **COBYLA**, etc. (local optimization, from `scipy.optimize.minimize`)
+     - **CMA-ES** and **Particle Swarm** (custom, gradient-free global optimizers in `optiland.optimization.optimizer.custom`)
+     - **Adam** and **SGD** (PyTorch-native gradient-based optimizers in `optiland.optimization.optimizer.torch`, useful for differentiable/autograd workflows)
+     - **GlassExpert** (mixed continuous/categorical optimizer for glass selection; see below)
    - Users can subclass the base optimizer for custom methods.
 
 3. **Operands and Variables**:
@@ -213,12 +216,15 @@ How to Extend This
 
 **Scenario:** Add a new optimization operand to Optiland.
 
-**Step 1:** Add a new function to ``optiland/optimization/operand/operand.py``.
-**Step 2:** Register the function in the ``OPERAND_REGISTRY`` dict at the bottom of that file.
+**Step 1:** Add a new function to ``optiland/optimization/operand/operand.py`` (or the relevant
+``optiland/optimization/operand/*.py`` module, e.g. ``ray.py``, ``aberration.py``, ``paraxial.py``).
+**Step 2:** Register it either by adding an entry to the ``METRIC_DICT`` dict near the top of
+``operand.py``, or at runtime via ``operand_registry.register(name, func)``.
 **Step 3:** Add tests in ``tests/test_optimization/test_operand.py``.
 
 To add a new **variable type**: subclass ``VariableBehavior`` in
-``optiland/optimization/variable.py`` and register the new type in the ``Variable`` class.
+``optiland/optimization/variable/base.py`` and register the new type in the ``Variable`` class
+(``optiland/optimization/variable/variable.py``).
 
 To add a new **optimizer**: subclass ``OptimizerGeneric`` in
 ``optiland/optimization/optimizer/scipy/base.py``.
@@ -317,7 +323,7 @@ Also please note that the run duration scales with the number of lenses and the 
 
 **Key Code Aspects**
 
-*   **optiland.optimization.glass_expert.GlassExpert**: The main class implementing the algorithm.
+*   **optiland.optimization.optimizer.scipy.glass_expert.GlassExpert**: The main class implementing the algorithm.
 *   **Material Representation**: Glasses are primarily identified by their names (strings), but their (n_d, V_d) properties are used for neighborhood searches and catalog downsampling. Functions like `get_nd_vd` and `get_neighbour_glasses` from `optiland.materials` are utilized.
 *   **Variable Handling**: GlassExpert temporarily separates continuous and categorical (glass) variables. Continuous optimizations are run only on the continuous set, while glass variables are iteratively substituted.
 *   **run() method**: The primary entry point, which orchestrates the global exploration, local exploration, and final optimization passes. It accepts parameters like `num_neighbours`, `maxiter` (for local optimizations), and `tol`.
