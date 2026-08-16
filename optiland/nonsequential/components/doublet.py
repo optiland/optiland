@@ -105,6 +105,7 @@ class Doublet(CompoundComponent):
                 mat1,
                 cfg.front,
                 InteractionType.REFRACTIVE,
+                f"{self._name}.front",
             )
         )
 
@@ -117,6 +118,7 @@ class Doublet(CompoundComponent):
                 mat2,
                 cfg.cemented,
                 InteractionType.REFRACTIVE,
+                f"{self._name}.cemented",
             )
         )
 
@@ -129,6 +131,7 @@ class Doublet(CompoundComponent):
                 VACUUM,
                 cfg.back,
                 InteractionType.REFRACTIVE,
+                f"{self._name}.back",
             )
         )
 
@@ -150,6 +153,7 @@ class Doublet(CompoundComponent):
                 VACUUM,
                 cfg.edge,
                 InteractionType.ABSORBING,
+                f"{self._name}.edge",
             )
         )
 

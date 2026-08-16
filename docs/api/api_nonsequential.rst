@@ -254,7 +254,9 @@ Sources
    * - ``half_angle_deg``
      - float
      - ``90.0``
-     - Emission cone half-angle [deg].
+     - Emission cone half-angle [deg]. Rays are uniform within the cone
+       below 90; at 90 and above they are cosine-weighted over the full
+       hemisphere (Lambertian), and values above 90 behave as 90.
    * - ``medium``
      - ``NSQMaterial`` | None
      - ``None``
@@ -398,7 +400,16 @@ All fields default to ``None`` (use the compound-level default).
    * - ``bsdf``
      - ``BaseBSDF`` | None
      - ``None``
-     - Custom BSDF; overrides default specular behaviour.
+     - Scatter model. Rays routed to it are scattered *instead of* being
+       refracted or specularly reflected.
+   * - ``scatter_fraction``
+     - float
+     - ``1.0``
+     - Probability that a ray striking this surface is routed through
+       ``bsdf`` rather than following the specular/refractive path. The
+       default of 1.0 makes the surface a pure diffuser; use a smaller
+       value for a partially scattering surface. Ignored when ``bsdf``
+       is ``None``.
    * - ``coating``
      - object | None
      - ``None``

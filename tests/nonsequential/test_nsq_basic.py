@@ -18,6 +18,7 @@ from optiland.nonsequential import (
     CollimatedSource,
     CollimatedSourceConfig,
     ConicGeometry,
+    FarFieldDetectorConfig,
     IrradianceDetector,
     IrradianceDetectorConfig,
     LensConfig,
@@ -25,6 +26,7 @@ from optiland.nonsequential import (
     NSQTracer,
     PointSource,
     PointSourceConfig,
+    RayDatabaseConfig,
     ReflectiveComponent,
     Spectrum,
     SpecularBRDF,
@@ -873,3 +875,181 @@ class TestConicSurfaceNormals:
         normals = np.asarray(geom._normal_local(x, y))
         assert np.allclose(normals[:, 0], 0.0)
         assert np.allclose(normals[:, 1], 0.0)
+
+
+class TestBatchingFluxInvariance:
+    """Splitting a trace into batches must not change the launched energy.
+
+    ``source.generate(n)`` spreads the source's whole ``total_flux`` over the
+    ``n`` rays it is asked for. When the tracer processes a source in several
+    batches, each batch therefore has to be rescaled to its share of the ray
+    budget; otherwise every batch re-emits the full flux and the simulation
+    manufactures energy in proportion to the batch count. This affects any run
+    with more rays than ``batch_size`` (default 1e6), which is exactly the
+    high-ray-count forward regime.
+    """
+
+    @staticmethod
+    def _scene(total_flux=1.0):
+        scene = NSQScene()
+        scene.add_source(
+            "S",
+            CoordinateSystem(z=-80),
+            CollimatedSourceConfig(
+                spectrum=Spectrum.monochromatic(0.55),
+                total_flux=total_flux,
+                aperture_radius=10.0,
+            ),
+        )
+        scene.add_lens(
+            "L",
+            CoordinateSystem(z=0),
+            LensConfig(
+                r1=50,
+                r2=-50,
+                thickness=5,
+                material="N-BK7",
+                front_aperture_radius=12.5,
+            ),
+        )
+        scene.add_detector(
+            "D",
+            CoordinateSystem(z=100),
+            IrradianceDetectorConfig(
+                width=40, height=40, num_pixels_x=64, num_pixels_y=64
+            ),
+        )
+        return scene
+
+    @pytest.mark.parametrize("batch_size", [500, 2_000, 10_000, 1_000_000])
+    def test_detected_flux_never_exceeds_launched(self, batch_size):
+        """Detected flux must stay within the launched budget for any batch size."""
+        result = self._scene().trace(num_rays=10_000, seed=42, batch_size=batch_size)
+        detected = result.detectors["D"].total_flux
+        assert detected <= result.total_flux_in + 1e-9, (
+            f"batch_size={batch_size} detected {detected:.4f} W from "
+            f"{result.total_flux_in:.4f} W launched"
+        )
+        assert result.flux_conservation_error < 1e-9
+
+    def test_flux_is_independent_of_batch_size(self):
+        """Batching is an implementation detail, not a physical parameter."""
+        fluxes = [
+            self._scene()
+            .trace(num_rays=10_000, seed=42, batch_size=b)
+            .detectors["D"]
+            .total_flux
+            for b in (500, 2_000, 10_000, 1_000_000)
+        ]
+        # Differences are Monte Carlo noise only: batching changes how the RNG
+        # stream is consumed, not how much energy is launched.
+        assert max(fluxes) - min(fluxes) < 0.02, fluxes
+
+    def test_multi_source_batching_conserves_flux(self):
+        """Two sources with unequal flux, split across batches."""
+        scene = self._scene(total_flux=1.0)
+        scene.add_source(
+            "S2",
+            CoordinateSystem(z=-80, x=3.0),
+            CollimatedSourceConfig(
+                spectrum=Spectrum.monochromatic(0.55),
+                total_flux=2.0,
+                aperture_radius=5.0,
+            ),
+        )
+        result = scene.trace(num_rays=9_000, seed=1, batch_size=700)
+        assert result.total_flux_in == pytest.approx(3.0)
+        assert result.detectors["D"].total_flux <= 3.0 + 1e-9
+        assert result.flux_conservation_error < 1e-9
+
+
+class TestDetectorFluxAccounting:
+    """Every detector must report flux in watts and join the flux ledger.
+
+    ``SimulationResult`` builds ``total_flux_detected`` by summing each
+    detector result's ``total_flux``, so a detector that reports the wrong
+    quantity, or none at all, silently corrupts the global flux budget.
+    """
+
+    @staticmethod
+    def _point_source_scene(detector_name, detector_config, z=100.0):
+        scene = NSQScene()
+        scene.add_source(
+            "S",
+            CoordinateSystem(z=0),
+            PointSourceConfig(
+                spectrum=Spectrum.monochromatic(0.55),
+                total_flux=1.0,
+                half_angle_deg=20.0,
+            ),
+        )
+        scene.add_detector(detector_name, CoordinateSystem(z=z), detector_config)
+        return scene
+
+    def test_far_field_reports_flux_not_intensity(self):
+        """FarFieldPattern.total_flux is watts, not the sum of W/sr bins.
+
+        ``intensity`` is divided by the per-bin solid angle, so summing it
+        gives a number that is both dimensionally wrong and numerically far
+        larger than the launched flux.
+        """
+        scene = self._point_source_scene(
+            "FF", FarFieldDetectorConfig(num_theta=45, num_phi=180)
+        )
+        result = scene.trace(num_rays=20_000, seed=42)
+        ff = result.detectors["FF"]
+
+        assert ff.total_flux <= result.total_flux_in + 1e-9, (
+            f"Far-field total_flux={ff.total_flux:.3f} W exceeds the "
+            f"{result.total_flux_in:.3f} W launched"
+        )
+        assert ff.total_flux > 0.9, "Nearly all rays should reach the detector"
+        assert result.flux_conservation_error < 1e-9
+
+    def test_far_field_intensity_is_still_per_steradian(self):
+        """The fix must not disturb the intensity normalisation."""
+        scene = self._point_source_scene(
+            "FF", FarFieldDetectorConfig(num_theta=45, num_phi=180)
+        )
+        ff = scene.trace(num_rays=20_000, seed=42).detectors["FF"]
+        # W/sr over a narrow cone is much larger than the flux in W.
+        assert ff.intensity.sum() > ff.total_flux
+
+    def test_ray_database_joins_the_flux_ledger(self):
+        """RayDatabase exposes total_flux so detected flux is not undercounted."""
+        scene = self._point_source_scene(
+            "RDB", RayDatabaseConfig(width=200, height=200)
+        )
+        result = scene.trace(num_rays=20_000, seed=42)
+        db = result.detectors["RDB"]
+
+        assert db.total_flux == pytest.approx(float(np.sum(db.flux)))
+        assert result.total_flux_detected == pytest.approx(db.total_flux)
+        assert result.flux_conservation_error < 1e-9
+
+    def test_irradiance_and_far_field_agree_on_total_flux(self):
+        """Two detector types on the same beam must record the same flux."""
+        spec = Spectrum.monochromatic(0.55)
+        common = dict(spectrum=spec, total_flux=1.0, half_angle_deg=20.0)
+
+        scene_irr = NSQScene()
+        scene_irr.add_source("S", CoordinateSystem(z=0), PointSourceConfig(**common))
+        scene_irr.add_detector(
+            "D",
+            CoordinateSystem(z=100),
+            IrradianceDetectorConfig(
+                width=400, height=400, num_pixels_x=64, num_pixels_y=64
+            ),
+        )
+        flux_irr = scene_irr.trace(num_rays=20_000, seed=42).detectors["D"].total_flux
+
+        scene_ff = NSQScene()
+        scene_ff.add_source("S", CoordinateSystem(z=0), PointSourceConfig(**common))
+        scene_ff.add_detector(
+            "FF",
+            CoordinateSystem(z=100),
+            FarFieldDetectorConfig(num_theta=45, num_phi=180),
+        )
+        flux_ff = scene_ff.trace(num_rays=20_000, seed=42).detectors["FF"].total_flux
+
+        assert flux_ff == pytest.approx(flux_irr, rel=1e-6)

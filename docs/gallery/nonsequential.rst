@@ -163,6 +163,12 @@ not fixed or when you care about where stray light lands.
    * - ``TabulatedBSDF``
      - Measured BSDF from tabulated angular scatter data
 
+A BSDF **replaces** the specular or refractive behaviour for the rays it
+handles, so attaching one with the default settings turns a surface into a pure
+diffuser. Use ``SurfaceConfig(bsdf=..., scatter_fraction=f)`` to send only a
+fraction ``f`` of the light through the scatter model and keep the rest
+specular, which is how a real partially scattering surface behaves.
+
 **Sequential conversion**
 
 ``sequential_to_nonsequential(optic)`` converts an existing sequential

@@ -63,7 +63,10 @@ class ExtendedSourceConfig:
         height: Source height [mm].
         aperture_radius: Circular aperture radius [mm]. If set, overrides
             width/height for a circular source.
-        half_angle_deg: Half-angle of the emission cone [deg].
+        half_angle_deg: Half-angle of the emission cone [deg]. Below 90 the
+            rays are distributed uniformly within the cone; at 90 or above
+            they are cosine-weighted over the full hemisphere (Lambertian),
+            and values above 90 behave the same as 90.
         medium: Medium the source is embedded in (default: vacuum).
     """
 

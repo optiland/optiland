@@ -78,6 +78,24 @@ class NSQScene:
         """Ordered list of all registered detectors."""
         return self.detector_registry.detectors
 
+    @property
+    def component_names(self) -> list[str]:
+        """Names of the registered components, in registration order."""
+        return list(self.component_registry._registry.keys())
+
+    @property
+    def source_names(self) -> list[str]:
+        """Names of the registered sources, in registration order."""
+        return list(self.source_registry._registry.keys())
+
+    @property
+    def detector_names(self) -> list[str]:
+        """Names of the registered detectors, in registration order.
+
+        These are the keys of ``SimulationResult.detectors``.
+        """
+        return list(self.detector_registry._registry.keys())
+
     def add_lens(
         self,
         name: str,

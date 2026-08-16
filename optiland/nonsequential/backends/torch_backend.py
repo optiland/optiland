@@ -229,6 +229,12 @@ class TorchBackend(TracerBackend):
             while source_remaining > 0:
                 batch = min(batch_size, source_remaining)
                 rays = source.generate(batch, self.rng)
+                # source.generate() spreads the source's whole total_flux over
+                # the rays it is asked for, so a batched source would re-emit
+                # the full flux once per batch. Rescale to this batch's share
+                # of the source's ray budget. A no-op when batch == the budget.
+                if batch != source_num_rays:
+                    rays.flux = rays.flux * (batch / source_num_rays)
                 # Ensure all physics arrays are torch tensors.  Sources
                 # produce numpy arrays by default; NumPy 2.0 disallows
                 # mixed numpy/torch arithmetic, so we promote upfront.

@@ -64,6 +64,16 @@ class RayDatabase:
         """Number of stored rays."""
         return len(self.x)
 
+    @property
+    def total_flux(self) -> float:
+        """Total flux recorded at this detector [W].
+
+        Exposed so a ray-database detector contributes to the tracer's flux
+        ledger like every other detector; without it the detected flux is
+        undercounted and ``flux_conservation_error`` misreports.
+        """
+        return float(np.sum(self.flux))
+
     def to_dataframe(self):
         """Return ray data as a pandas DataFrame.
 

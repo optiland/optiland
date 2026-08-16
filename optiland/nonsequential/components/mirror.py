@@ -76,4 +76,14 @@ class Mirror(CompoundComponent):
         cfg = self._config
         geom = ConicGeometry(cfg.radius, cfg.conic, cfg.aperture_radius)
         interaction = _resolve_interaction(cfg.surface, InteractionType.REFLECTIVE)
-        return [_make_surface(self._cs, geom, VACUUM, VACUUM, cfg.surface, interaction)]
+        return [
+            _make_surface(
+                self._cs,
+                geom,
+                VACUUM,
+                VACUUM,
+                cfg.surface,
+                interaction,
+                f"{self._name}.surface",
+            )
+        ]

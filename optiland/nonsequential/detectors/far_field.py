@@ -63,6 +63,7 @@ class FarFieldDetector(BaseDetector):
 
         self._intensity = np.zeros((num_bins_theta, num_bins_phi), dtype=np.float64)
         self._num_rays_hit = 0
+        self._total_flux = 0.0
 
         self._theta_edges = np.linspace(0.0, theta_max_deg, num_bins_theta + 1)
         self._phi_edges = np.linspace(-180.0, 180.0, num_bins_phi + 1)
@@ -118,6 +119,9 @@ class FarFieldDetector(BaseDetector):
 
         np.add.at(self._intensity, (i_theta, i_phi), flux_hit / solid_angle)
         self._num_rays_hit += hit_mask_np.sum()
+        # Track the radiometric flux separately: _intensity is divided by the
+        # per-bin solid angle, so summing it gives W/sr, not W.
+        self._total_flux += float(flux_hit.sum())
 
     def get_result(self) -> FarFieldPattern:
         """Return the accumulated far-field pattern.
@@ -131,7 +135,7 @@ class FarFieldDetector(BaseDetector):
             intensity=self._intensity.copy(),
             theta=theta_centres,
             phi=phi_centres,
-            total_flux=float(self._intensity.sum()),
+            total_flux=self._total_flux,
             num_rays_hit=self._num_rays_hit,
         )
 
@@ -139,3 +143,4 @@ class FarFieldDetector(BaseDetector):
         """Clear accumulated data."""
         self._intensity[:] = 0.0
         self._num_rays_hit = 0
+        self._total_flux = 0.0

@@ -519,3 +519,60 @@ class TestVisualizationSmoke:
         import matplotlib.pyplot as plt  # noqa: PLC0415
 
         plt.close("all")
+
+
+class TestSceneNameAccessors:
+    """Scenes expose their registered names without touching the registries."""
+
+    @staticmethod
+    def _scene():
+        from optiland.coordinate_system import CoordinateSystem
+        from optiland.nonsequential import (
+            CollimatedSourceConfig,
+            IrradianceDetectorConfig,
+            LensConfig,
+            NSQScene,
+            Spectrum,
+        )
+
+        scene = NSQScene()
+        scene.add_source(
+            "S1",
+            CoordinateSystem(),
+            CollimatedSourceConfig(
+                spectrum=Spectrum.monochromatic(0.55),
+                total_flux=1.0,
+                aperture_radius=5.0,
+            ),
+        )
+        scene.add_lens(
+            "L1",
+            CoordinateSystem(z=50),
+            LensConfig(
+                r1=100.0,
+                r2=-100.0,
+                thickness=5.0,
+                material="N-BK7",
+                front_aperture_radius=12.5,
+            ),
+        )
+        scene.add_detector(
+            "D1",
+            CoordinateSystem(z=150),
+            IrradianceDetectorConfig(
+                width=20, height=20, num_pixels_x=16, num_pixels_y=16
+            ),
+        )
+        return scene
+
+    def test_names_are_reported_in_registration_order(self):
+        scene = self._scene()
+        assert scene.component_names == ["L1"]
+        assert scene.source_names == ["S1"]
+        assert scene.detector_names == ["D1"]
+
+    def test_detector_names_match_result_keys(self):
+        """detector_names is the documented way to key into the result."""
+        scene = self._scene()
+        result = scene.trace(num_rays=500, seed=0)
+        assert list(result.detectors.keys()) == scene.detector_names
