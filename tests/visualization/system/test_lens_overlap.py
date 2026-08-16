@@ -176,3 +176,74 @@ def test_lens2d_and_lens3d_empty_or_single_surface():
         s = MagicMock()
         Lens2D([s])
         Lens3D([s])
+
+
+def test_to_float_helper():
+    """Test _to_float helper with various input types and fallback."""
+    from optiland.visualization.system.lens import _to_float
+
+    assert _to_float(3.14) == 3.14
+    assert _to_float(42) == 42.0
+    assert _to_float(be.array(1.5)) == 1.5
+    assert _to_float(be.array([2.5])) == 2.5
+    assert _to_float("invalid_string", default=99.0) == 99.0
+    assert _to_float(None, default=0.0) == 0.0
+
+
+def test_lens2d_surfaces_missing_attributes():
+    """Test that surfaces without surf or geometry attributes are skipped safely."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        # Objects without surf attribute
+        s1 = object()
+        s2 = object()
+        Lens2D([s1, s2])
+
+        # Objects with surf but without geometry
+        s3 = MagicMock(spec=[])
+        s4 = MagicMock(spec=[])
+        s3.surf = object()
+        s4.surf = object()
+        Lens2D([s3, s4])
+
+
+def test_surfaces_overlap_zero_extent(set_test_backend):
+    """Test surface overlap behavior when aperture extent is zero."""
+    # Valid lens with epd=0 (zero extent) and thickness > 0
+    optic_valid = _create_singlet(r1=50.0, r2=-50.0, thickness=2.0, epd=0.0)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        fig, ax = optic_valid.draw()
+        plt.close(fig)
+
+    # Overlapping lens with epd=0 and thickness <= 0
+    optic_zero_t = _create_singlet(r1=50.0, r2=-50.0, thickness=0.0, epd=0.0)
+    with pytest.warns(UserWarning, match="Lens surfaces overlap."):
+        fig, ax = optic_zero_t.draw()
+        plt.close(fig)
+
+
+def test_surfaces_overlap_non_finite_fallback(set_test_backend):
+    """Test fallback when surface sags return all non-finite (NaN/inf) values."""
+    optic = _create_singlet(r1=50.0, r2=-50.0, thickness=2.0, epd=20.0)
+    surf1 = optic.surfaces.surfaces[1]
+    surf2 = optic.surfaces.surfaces[2]
+
+    lens = Lens2D([])
+    with patch.object(surf1.geometry, "sag", return_value=be.array([be.nan])):
+        # thickness = 2.0 > 0 -> returns False (no overlap)
+        assert not lens._surfaces_overlap(
+            MagicMock(surf=surf1, extent=10.0),
+            MagicMock(surf=surf2, extent=10.0),
+        )
+
+    # thickness <= 0 -> returns True (overlap)
+    with (
+        patch.object(surf1.geometry, "sag", return_value=be.array([be.nan])),
+        patch.object(surf1, "thickness", 0.0),
+    ):
+        assert lens._surfaces_overlap(
+            MagicMock(surf=surf1, extent=10.0),
+            MagicMock(surf=surf2, extent=10.0),
+        )
+

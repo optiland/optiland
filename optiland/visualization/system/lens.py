@@ -8,6 +8,7 @@ Kramer Harrison, 2024
 from __future__ import annotations
 
 import warnings
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -16,6 +17,15 @@ from matplotlib.patches import Polygon
 
 import optiland.backend as be
 from optiland.visualization.system.utils import revolve_contour, transform, transform_3d
+
+
+def _to_float(val: Any, default: float = 0.0) -> float:
+    """Convert a scalar or 0-d backend array to a Python float."""
+    try:
+        arr = be.to_numpy(val)
+        return float(arr.item() if hasattr(arr, "item") else arr)
+    except Exception:
+        return default
 
 
 class Lens2D:
@@ -33,11 +43,11 @@ class Lens2D:
 
     """
 
-    def __init__(self, surfaces):
+    def __init__(self, surfaces: list[Any]) -> None:
         self.surfaces = surfaces
         self._check_surface_overlap()
 
-    def _check_surface_overlap(self):
+    def _check_surface_overlap(self) -> None:
         """Check if any neighboring surfaces in the lens physically overlap."""
         if not self.surfaces or len(self.surfaces) < 2:
             return
@@ -61,34 +71,18 @@ class Lens2D:
                 )
                 break
 
-    def _surfaces_overlap(self, surf1, surf2):
-        """Determine if two neighboring surfaces of a lens physically overlap."""
-        try:
-            t = (
-                float(be.to_numpy(surf1.surf.thickness).item())
-                if hasattr(be.to_numpy(surf1.surf.thickness), "item")
-                else float(surf1.surf.thickness)
-            )
-        except Exception:
-            t = 0.0
+    def _surfaces_overlap(self, surf1: Any, surf2: Any) -> bool:
+        """Determine if two neighboring surfaces of a lens physically overlap.
 
-        try:
-            e1 = (
-                float(be.to_numpy(surf1.extent).item())
-                if hasattr(be.to_numpy(surf1.extent), "item")
-                else float(surf1.extent)
-            )
-        except Exception:
-            e1 = 0.0
-
-        try:
-            e2 = (
-                float(be.to_numpy(surf2.extent).item())
-                if hasattr(be.to_numpy(surf2.extent), "item")
-                else float(surf2.extent)
-            )
-        except Exception:
-            e2 = 0.0
+        Note:
+            Overlap sampling is performed along X and Y cross-sections. For
+            non-rotationally-symmetric surfaces (such as Zernike, biconic, or
+            freeform surfaces), off-axis intersections that occur outside these
+            cross-sections may not be detected.
+        """
+        t = _to_float(getattr(surf1.surf, "thickness", 0.0))
+        e1 = _to_float(getattr(surf1, "extent", 0.0))
+        e2 = _to_float(getattr(surf2, "extent", 0.0))
 
         e_max = max(e1, e2)
         if not np.isfinite(e_max) or e_max <= 0:
@@ -171,10 +165,10 @@ class Lens2D:
 
             circle = plt.Circle(
                 (
-                    float(be.to_numpy(center_x_global).item()),
-                    float(be.to_numpy(center_y_global).item()),
+                    _to_float(center_x_global),
+                    _to_float(center_y_global),
                 ),
-                float(be.to_numpy(max_extent).item()),
+                _to_float(max_extent),
                 facecolor=facecolor,
                 edgecolor=edgecolor,
                 label="Lens",
@@ -371,7 +365,7 @@ class Lens3D(Lens2D):
 
     """
 
-    def __init__(self, surfaces):
+    def __init__(self, surfaces: list[Any]) -> None:
         super().__init__(surfaces)
 
     @property
