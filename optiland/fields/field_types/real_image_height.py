@@ -62,11 +62,99 @@ except (ImportError, ModuleNotFoundError):
 # matching the budget used by ``IterativeRayAimer``.
 _MAX_BACKTRACK = 8
 
-# Multiplier on the machine epsilon for the scaled singular-Jacobian test.
-_DET_EPS_MULTIPLIER = 64.0
+# Documented multiplier ``C`` on the machine epsilon for the reciprocal
+# Frobenius-condition singularity test of the 2x2 field Jacobian. A matrix is
+# classified unusable when ``rho_F = |det(A)| / ||A||_F^2 <= C * eps(dtype)``,
+# where ``A`` is the Jacobian normalized by its largest-magnitude entry. The
+# test is scale invariant: a global unit or magnification rescaling of the
+# Jacobian cannot change the classification.
+_RCOND_EPS_MULTIPLIER = 64.0
 
-# A paraxial scale below this magnitude cannot seed the solve.
-_PARAXIAL_SINGULAR = 1e-14
+# Multiplier on the machine epsilon for the paraxial-seed singularity test.
+_PARAXIAL_EPS_MULTIPLIER = 64.0
+
+
+def _paraxial_singular_threshold(value) -> float:
+    """Dtype-aware threshold below which a unit-chief-ray scale is singular.
+
+    The unit chief ray is traced with unit object-space input, so its natural
+    scale is O(1); a magnitude at the level of ``C * eps(dtype)`` is numerical
+    noise, not a meaningful paraxial response. For float64 this lands near the
+    historical ``1e-14``; for float32 it is orders of magnitude larger, as it
+    must be -- a fixed ``1e-14`` is below float32 round-off.
+    """
+    return _PARAXIAL_EPS_MULTIPLIER * machine_eps(value)
+
+
+@dataclass
+class _Jacobian2x2Condition:
+    """Scale-invariant conditioning state of per-field ``2x2`` Jacobians.
+
+    Attributes:
+        a, b, c, d: Entries of the normalized matrix ``A = J / s``.
+        scale: Per-field normalization ``s = max(|J11|,|J12|,|J21|,|J22|)``,
+            replaced by 1 where ``s == 0`` (those fields are singular).
+        det: Determinant of the normalized matrix ``A``.
+        singular: Per-field mask -- non-finite entries, zero scale, or
+            reciprocal Frobenius condition at round-off level.
+    """
+
+    a: Any
+    b: Any
+    c: Any
+    d: Any
+    scale: Any
+    det: Any
+    singular: Any
+
+
+def _jacobian_2x2_condition(J11, J12, J21, J22) -> _Jacobian2x2Condition:
+    """Classify per-field ``2x2`` Jacobians with a scale-invariant test.
+
+    Normalizes each field's Jacobian by its largest-magnitude entry and
+    computes the reciprocal Frobenius-condition estimate
+
+    ``rho_F = |det(A)| / (a^2 + b^2 + c^2 + d^2)``,
+
+    which for a ``2x2`` matrix bounds ``1 / cond_F(J)``. The classification is
+    invariant under a global scaling of the Jacobian, so a well-conditioned
+    but small-magnitude matrix (e.g. ``1e-3 * I`` in float32) is never
+    misclassified as singular. This is the single authority for all field
+    Jacobian validation; do not duplicate determinant logic elsewhere.
+    """
+    finite = be.logical_and(
+        be.logical_and(be.isfinite(J11), be.isfinite(J12)),
+        be.logical_and(be.isfinite(J21), be.isfinite(J22)),
+    )
+
+    magnitude = be.maximum(
+        be.maximum(be.abs(J11), be.abs(J12)),
+        be.maximum(be.abs(J21), be.abs(J22)),
+    )
+    zero_scale = magnitude == 0.0
+    # Safe placeholder scale for zero-scale entries only; they are singular.
+    scale = be.where(zero_scale, be.ones_like(magnitude), magnitude)
+
+    a = J11 / scale
+    b = J12 / scale
+    c = J21 / scale
+    d = J22 / scale
+    det = a * d - b * c
+
+    frob_sq = a * a + b * b + c * c + d * d
+    safe_frob_sq = be.where(frob_sq > 0.0, frob_sq, be.ones_like(frob_sq))
+    rho = be.abs(det) / safe_frob_sq
+
+    singular = be.logical_or(
+        be.logical_or(be.logical_not(finite), zero_scale),
+        be.logical_or(
+            be.logical_not(be.isfinite(det)),
+            rho <= _RCOND_EPS_MULTIPLIER * machine_eps(det),
+        ),
+    )
+    return _Jacobian2x2Condition(
+        a=a, b=b, c=c, d=d, scale=scale, det=det, singular=singular
+    )
 
 
 @dataclass
@@ -98,12 +186,23 @@ class _FieldSolveResult:
 class RealImageHeightField(BaseFieldDefinition):
     """Defines fields by the chief ray's real height at the image plane.
 
+    Coordinate contract:
+        The requested image height ``(h_x, h_y)`` is defined in the **global**
+        ``x``/``y`` coordinates of the chief ray's traced intercept on the
+        image surface (surfaces globalize ray coordinates after each trace).
+        For a tilted or decentered image surface the solve therefore drives
+        the *global* transverse coordinates to the target, not coordinates
+        local to the image surface.
+
     Note:
         The chief ray is constructed by aiming at the *paraxial* entrance-pupil
-        center. Exact aiming through the local stop center for arbitrary
-        tilted/decentered systems (which requires a nested field-plus-ray-aiming
-        solve and accounts for pupil aberration) is deliberately out of scope
-        here; see the ray-aiming machinery for that problem.
+        center. This is **not** exact stop-center aiming: in systems with
+        strong pupil aberration or a tilted/decentered stop, the traced ray
+        does not necessarily cross the physical stop at its center. Exact
+        aiming through the local stop center for arbitrary tilted/decentered
+        systems (which requires a nested field-plus-ray-aiming solve and
+        accounts for pupil aberration) is deliberately out of scope here; see
+        the ray-aiming machinery for that problem.
     """
 
     def __init__(self, max_iter: int = 20) -> None:
@@ -150,13 +249,13 @@ class RealImageHeightField(BaseFieldDefinition):
         y_img_mag = float(be.to_numpy(be.max(be.abs(be.atleast_1d(y_img_unit)))))
         obj_mag = float(be.to_numpy(be.max(be.abs(be.atleast_1d(obj_unit)))))
 
-        if y_img_mag < _PARAXIAL_SINGULAR:
+        if y_img_mag < _paraxial_singular_threshold(y_img_unit):
             raise ValueError(
                 "Paraxial unit chief-ray image height is singular "
                 f"({y_img_mag:.3e}); cannot seed the real-image-height field "
                 "solve. Check the stop definition and surface powers."
             )
-        if obj_mag < _PARAXIAL_SINGULAR:
+        if obj_mag < _paraxial_singular_threshold(obj_unit):
             raise ValueError(
                 "Paraxial unit chief-ray object-space scale is singular "
                 f"({obj_mag:.3e}); cannot seed the real-image-height field "
@@ -223,13 +322,21 @@ class RealImageHeightField(BaseFieldDefinition):
         return (eps**0.75) * scale
 
     def _solve_2x2(self, J11, J12, J21, J22, rx, ry, *, strict=False):
-        """Solve ``J dq = R`` analytically for a per-field 2x2 system.
+        """Solve ``J dq = R`` per field via the normalized system ``A dq = R/s``.
+
+        The Jacobian is first normalized by its largest-magnitude entry
+        (see :func:`_jacobian_2x2_condition`), which makes both the
+        singularity classification and the solve invariant under global
+        scaling and avoids raw-determinant overflow/underflow.
 
         Args:
             J11, J12, J21, J22: Per-field Jacobian entries.
             rx, ry: Per-field residuals.
-            strict: If True, raise on a singular Jacobian instead of
-                regularizing the determinant.
+            strict: If True, raise on a singular/ill-conditioned Jacobian
+                before any division. If False, singular fields receive a zero
+                placeholder step and are reported through the returned mask so
+                the caller can retry (e.g. with a central-FD Jacobian). The
+                determinant is never clipped to fabricate a step.
 
         Returns:
             tuple: ``(dq_x, dq_y, singular_mask)``.
@@ -237,37 +344,35 @@ class RealImageHeightField(BaseFieldDefinition):
         Raises:
             ValueError: If ``strict`` and any field's Jacobian is singular.
         """
-        det = J11 * J22 - J12 * J21
+        cond = _jacobian_2x2_condition(J11, J12, J21, J22)
 
-        # Scaled singularity criterion -- a fixed absolute floor would either
-        # never trigger or misclassify a well-conditioned but small-magnitude
-        # Jacobian.
-        magnitude = be.abs(J11 * J22) + be.abs(J12 * J21)
-        tau = (
-            _DET_EPS_MULTIPLIER
-            * machine_eps(det)
-            * be.maximum(magnitude, be.ones_like(magnitude))
-        )
-        singular = be.abs(det) <= tau
-
-        if strict and bool(be.any(singular)):
+        if strict and bool(be.any(cond.singular)):
+            n_singular = int(be.to_numpy(be.sum(cond.singular)))
+            n_total = int(be.size(cond.det))
             raise ValueError(
-                "Real-image-height field Jacobian is singular "
-                f"(|det| <= {float(be.to_numpy(be.max(tau))):.3e}). The field "
-                "map is locally non-invertible, so the implicit derivative is "
-                "undefined. Check for a degenerate/afocal configuration or a "
-                "field point beyond the usable image height."
+                f"Real-image-height field Jacobian is singular for "
+                f"{n_singular} of {n_total} field(s): reciprocal Frobenius "
+                "condition estimate at round-off level "
+                f"(rho_F <= {_RCOND_EPS_MULTIPLIER:g} * eps). The field map "
+                "is locally non-invertible, so the implicit derivative is "
+                "undefined and the field solve is aborted. Check for a "
+                "degenerate/afocal configuration or a field point beyond the "
+                "usable image height."
             )
 
-        safe_det = be.where(
-            singular,
-            be.where(det >= 0, tau * be.ones_like(det), -tau * be.ones_like(det)),
-            det,
-        )
+        # Placeholder determinant avoids division by ~0; singular fields are
+        # then explicitly zeroed rather than receiving a clipped step.
+        safe_det = be.where(cond.singular, be.ones_like(cond.det), cond.det)
 
-        dq_x = (J22 * rx - J12 * ry) / safe_det
-        dq_y = (-J21 * rx + J11 * ry) / safe_det
-        return dq_x, dq_y, singular
+        rx_s = rx / cond.scale
+        ry_s = ry / cond.scale
+        dq_x = (cond.d * rx_s - cond.b * ry_s) / safe_det
+        dq_y = (-cond.c * rx_s + cond.a * ry_s) / safe_det
+
+        zero = be.zeros_like(dq_x)
+        dq_x = be.where(cond.singular, zero, dq_x)
+        dq_y = be.where(cond.singular, zero, dq_y)
+        return dq_x, dq_y, cond.singular
 
     # ------------------------------------------------------------------
     # Jacobians
@@ -494,44 +599,30 @@ class RealImageHeightField(BaseFieldDefinition):
         """Fall back to a central-FD Jacobian if the AD Jacobian is unusable.
 
         The AD Jacobian is preferred because it is the exact local derivative
-        of the implemented differentiable trace. It is replaced when it is
-        non-finite, or singular while the FD estimate is not.
+        of the implemented differentiable trace. It is replaced only when the
+        shared scale-invariant condition test classifies it as unusable while
+        the FD estimate passes the same test.
         """
-        finite = (
-            bool(be.all(be.isfinite(J11)))
-            and bool(be.all(be.isfinite(J12)))
-            and bool(be.all(be.isfinite(J21)))
-            and bool(be.all(be.isfinite(J22)))
-        )
-
-        det = J11 * J22 - J12 * J21
-        magnitude = be.abs(J11 * J22) + be.abs(J12 * J21)
-        tau = (
-            _DET_EPS_MULTIPLIER
-            * machine_eps(det)
-            * be.maximum(magnitude, be.ones_like(magnitude))
-        )
-        singular = bool(be.any(be.abs(det) <= tau))
-
-        if finite and not singular:
+        ad_cond = _jacobian_2x2_condition(J11, J12, J21, J22)
+        if not bool(be.any(ad_cond.singular)):
             return J11, J12, J21, J22
 
         with torch.no_grad():
             fd = self._final_central_fd_jacobian(optic, qx, qy, target_x, target_y)
 
-        fd_det = fd[0] * fd[3] - fd[1] * fd[2]
-        fd_usable = bool(be.all(be.isfinite(fd_det))) and bool(
-            be.all(be.abs(fd_det) > 0.0)
-        )
-        if not fd_usable:
+        # The fallback must satisfy the same conditioning contract as the AD
+        # Jacobian -- a merely nonzero FD determinant is not evidence of a
+        # usable inverse.
+        fd_cond = _jacobian_2x2_condition(*fd)
+        if bool(be.any(fd_cond.singular)):
             # Neither estimate is usable; let the strict 2x2 solve raise with a
             # descriptive message rather than silently returning garbage.
             return J11, J12, J21, J22
 
         warnings.warn(
-            "Real-image-height AD field Jacobian was "
-            f"{'non-finite' if not finite else 'singular'}; falling back to a "
-            "central finite-difference Jacobian for the implicit correction.",
+            "Real-image-height AD field Jacobian was non-finite or "
+            "ill-conditioned; falling back to a central finite-difference "
+            "Jacobian for the implicit correction.",
             RuntimeWarning,
             stacklevel=2,
         )

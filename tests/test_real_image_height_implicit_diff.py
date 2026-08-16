@@ -459,3 +459,279 @@ class TestFailureModes:
 
         with pytest.raises(ValueError, match="singular"):
             field._initial_field_parameters(optic, be.array([0.0]), be.array([1.0]))
+
+
+# ----------------------------------------------------------------------
+# 9.9 Multi-field VJP block-diagonal verification (P1.1)
+# ----------------------------------------------------------------------
+
+
+class TestVjpJacobianExtraction:
+    """``_field_jacobian_by_vjp`` uses all-ones VJPs, which is exact only if
+    different field points are computationally independent. Verify both the
+    independence assumption and the extracted per-field blocks against an
+    exact full Jacobian."""
+
+    @pytest.mark.parametrize("precision", ["float64", "float32"])
+    def test_fields_are_independent_and_vjp_matches_exact_jacobian(
+        self, precision
+    ):
+        with backend_state("torch", precision):
+            optic = build_cooke()
+            field = optic.fields.field_definition
+
+            Hy = be.array([0.5, 1.0])
+            Hx = be.zeros_like(Hy)
+            target_x, target_y = field._targets(optic, Hx, Hy)
+            qx0, qy0 = field._initial_field_parameters(optic, target_x, target_y)
+            with torch.no_grad():
+                result = field._solve_field_parameters_primal(
+                    optic, qx0, qy0, target_x, target_y
+                )
+            assert bool(be.all(result.converged))
+
+            qx = result.qx.detach()
+            qy = result.qy.detach()
+
+            def residuals(q_flat):
+                rx, ry = field._image_residual(
+                    optic, q_flat[:2], q_flat[2:], target_x, target_y
+                )
+                return torch.cat([rx, ry])
+
+            q_flat = torch.cat([qx, qy])
+            J_full = torch.autograd.functional.jacobian(residuals, q_flat)
+
+            # Off-field blocks must vanish: residual i must not depend on the
+            # parameters of field j != i.
+            # Layout: rows = (rx0, rx1, ry0, ry1), cols = (qx0, qx1, qy0, qy1).
+            cross_tol = 1e-12 if precision == "float64" else 1e-5
+            cross_entries = [
+                J_full[0, 1], J_full[0, 3],
+                J_full[1, 0], J_full[1, 2],
+                J_full[2, 1], J_full[2, 3],
+                J_full[3, 0], J_full[3, 2],
+            ]
+            for entry in cross_entries:
+                assert float(entry.abs()) <= cross_tol, (
+                    f"fields are not computationally independent: |{entry}| > "
+                    f"{cross_tol}; the all-ones VJP extraction is invalid"
+                )
+
+            # The VJP extraction must reproduce the per-field diagonal blocks.
+            qx_probe = qx.clone().requires_grad_(True)
+            qy_probe = qy.clone().requires_grad_(True)
+            rx, ry = field._image_residual(
+                optic, qx_probe, qy_probe, target_x, target_y
+            )
+            J11, J12, J21, J22 = field._field_jacobian_by_vjp(
+                rx, ry, qx_probe, qy_probe
+            )
+
+            block_tol = 1e-9 if precision == "float64" else 1e-3
+            for i in range(2):
+                expected = {
+                    "J11": float(J_full[0 + i, 0 + i]),
+                    "J12": float(J_full[0 + i, 2 + i]),
+                    "J21": float(J_full[2 + i, 0 + i]),
+                    "J22": float(J_full[2 + i, 2 + i]),
+                }
+                actual = {
+                    "J11": float(be.to_numpy(J11)[i]),
+                    "J12": float(be.to_numpy(J12)[i]),
+                    "J21": float(be.to_numpy(J21)[i]),
+                    "J22": float(be.to_numpy(J22)[i]),
+                }
+                for name in expected:
+                    assert actual[name] == pytest.approx(
+                        expected[name],
+                        abs=block_tol,
+                        rel=block_tol,
+                    ), (
+                        f"field {i} {name}: VJP={actual[name]:.9e} "
+                        f"exact={expected[name]:.9e}"
+                    )
+
+
+# ----------------------------------------------------------------------
+# 9.10 Paraxial-seed threshold is dtype aware (P1.3)
+# ----------------------------------------------------------------------
+
+
+class TestParaxialSeedThreshold:
+    @pytest.mark.parametrize("precision", ["float64", "float32"])
+    def test_valid_seed_remains_valid(self, precision):
+        with backend_state("torch", precision):
+            optic = build_cooke()
+            field = optic.fields.field_definition
+            qx0, qy0 = field._initial_field_parameters(
+                optic, be.array([0.0]), be.array([20.0])
+            )
+            assert bool(be.all(be.isfinite(qx0)))
+            assert bool(be.all(be.isfinite(qy0)))
+
+    @pytest.mark.parametrize("precision", ["float64", "float32"])
+    def test_zero_scale_raises(self, precision):
+        with backend_state("torch", precision):
+            optic = build_cooke()
+            field = optic.fields.field_definition
+            original = field._paraxial_scales
+            field._paraxial_scales = lambda _o: (be.array([0.0]), original(_o)[1])
+            with pytest.raises(ValueError, match="singular"):
+                field._initial_field_parameters(
+                    optic, be.array([0.0]), be.array([1.0])
+                )
+
+    def test_threshold_scales_with_dtype(self):
+        """A ~1e-6 paraxial scale is numerically meaningless in float32 (it
+        sits at round-off level) but perfectly valid in float64. A fixed
+        1e-14 threshold cannot make that distinction."""
+
+        def _with_tiny_scale(field, optic):
+            original = field._paraxial_scales
+            field._paraxial_scales = lambda _o: (
+                be.array([1.0e-6]),
+                original(_o)[1],
+            )
+
+        with backend_state("torch", "float32"):
+            optic = build_cooke()
+            field = optic.fields.field_definition
+            _with_tiny_scale(field, optic)
+            with pytest.raises(ValueError, match="singular"):
+                field._initial_field_parameters(
+                    optic, be.array([0.0]), be.array([1.0])
+                )
+
+        with backend_state("torch", "float64"):
+            optic = build_cooke()
+            field = optic.fields.field_definition
+            _with_tiny_scale(field, optic)
+            qx0, qy0 = field._initial_field_parameters(
+                optic, be.array([0.0]), be.array([1.0])
+            )
+            assert bool(be.all(be.isfinite(qx0)))
+            assert bool(be.all(be.isfinite(qy0)))
+
+
+# ----------------------------------------------------------------------
+# 9.11 Image-height coordinate contract (P1.4)
+# ----------------------------------------------------------------------
+
+
+class TestImageHeightCoordinateContract:
+    def test_tilted_image_surface_uses_global_coordinates(self, set_test_backend):
+        """The requested image height is defined in *global* x/y at the traced
+        image-surface intercept. This regression locks that convention: for a
+        tilted image surface the solve still drives the global transverse
+        coordinates to the target."""
+        optic = build_cooke()
+        # Tilt the image surface about x by ~2.9 degrees.
+        optic.surfaces[-1].geometry.cs.rx = be.array(0.05)
+
+        field = optic.fields.field_definition
+        target_x, target_y = field._targets(optic, 0.0, 1.0)
+        qx0, qy0 = field._initial_field_parameters(optic, target_x, target_y)
+        result = field._solve_field_parameters_primal(
+            optic, qx0, qy0, target_x, target_y
+        )
+        assert bool(be.all(result.converged))
+
+        x_img, y_img = field._trace_chief_to_image(optic, result.qx, result.qy)
+        assert float(be.to_numpy(be.max(be.abs(x_img - target_x)))) < 1e-8
+        assert float(be.to_numpy(be.max(be.abs(y_img - target_y)))) < 1e-8
+
+        # The tilt is genuinely active: the solved field parameter differs
+        # from the untilted system's.
+        flat = build_cooke()
+        flat_field = flat.fields.field_definition
+        f_target_x, f_target_y = flat_field._targets(flat, 0.0, 1.0)
+        fqx0, fqy0 = flat_field._initial_field_parameters(
+            flat, f_target_x, f_target_y
+        )
+        flat_result = flat_field._solve_field_parameters_primal(
+            flat, fqx0, fqy0, f_target_x, f_target_y
+        )
+        assert (
+            float(be.to_numpy(be.max(be.abs(result.qy - flat_result.qy)))) > 1e-6
+        )
+
+
+# ----------------------------------------------------------------------
+# 9.12 Trainable-index cache lifecycle (P1.5)
+# ----------------------------------------------------------------------
+
+
+def build_index_singlet(material):
+    """Singlet whose only glass is the given material, with RIH fields."""
+    from optiland import optic as optic_module
+
+    lens = optic_module.Optic()
+    lens.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+    lens.surfaces.add(
+        index=1, thickness=7.0, radius=20.0, is_stop=True, material=material
+    )
+    lens.surfaces.add(index=2, thickness=30.0)
+    lens.surfaces.add(index=3)
+    lens.set_aperture(aperture_type="EPD", value=10.0)
+    lens.fields.set_type("real_image_height")
+    lens.fields.add(y=0)
+    lens.fields.add(y=2.0)
+    lens.wavelengths.add(value=0.587, is_primary=True)
+    return lens
+
+
+class TestTrainableIndexCacheLifecycle:
+    """A cache primed under the graph-free primal solve must not detach a
+    trainable refractive index (same principle as the Forbes coefficient
+    cache)."""
+
+    N0 = 1.55
+
+    @staticmethod
+    def _origin_y(index_value):
+        from optiland.materials.ideal import IdealMaterial
+
+        material = IdealMaterial(n=1.0)
+        material.index = (
+            index_value
+            if torch.is_tensor(index_value)
+            else torch.tensor([index_value], dtype=torch.float64)
+        )
+        if material.index.ndim == 0:
+            material.index = material.index.reshape(1)
+
+        lens = build_index_singlet(material)
+        # Batched field points make every internal chief-ray trace carry a
+        # multi-element wavelength array, exercising the array branch of the
+        # material cache -- the branch primed inside the no_grad primal solve.
+        Hy = be.array([0.5, 1.0])
+        _, y0, _ = lens.fields.field_definition.get_ray_origins(
+            lens, be.zeros_like(Hy), Hy, be.array([0.0]), be.array([0.0]), 0, 0
+        )
+        return y0.sum()
+
+    def test_index_gradient_matches_fd_after_no_grad_priming(self):
+        with backend_state("torch"):
+            param = torch.tensor(
+                [self.N0], dtype=torch.float64, requires_grad=True
+            )
+            out = self._origin_y(param)
+            assert out.requires_grad
+            (ad,) = torch.autograd.grad(out, param)
+            ad = float(ad)
+
+            assert abs(ad) > 0.0, (
+                "index gradient collapsed to zero -- a material cache primed "
+                "under no_grad detached the trainable index"
+            )
+
+            fd, fd_values = central_fd(
+                lambda n: self._origin_y(n.reshape(1)), self.N0, steps=(1e-5, 1e-6)
+            )
+            assert abs(fd_values[0] - fd_values[1]) <= max(1e-7, 1e-3 * abs(fd)), (
+                f"FD unstable across steps: {fd_values}"
+            )
+            assert abs(ad - fd) <= max(1e-8, 1e-2 * abs(fd)), (
+                f"AD/FD mismatch for trainable index: AD={ad:.12e} FD={fd:.12e}"
+            )
