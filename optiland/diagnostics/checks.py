@@ -23,7 +23,9 @@ from optiland.diagnostics.report import Diagnostic, Severity
 from optiland.surfaces.object_surface import ObjectSurface
 
 if TYPE_CHECKING:
+    from optiland._types import ScalarOrArray
     from optiland.optic.optic import Optic
+    from optiland.surfaces.standard_surface import Surface
 
 SystemCheck = Callable[["Optic"], "list[Diagnostic]"]
 
@@ -225,7 +227,9 @@ def check_stop_at_object_or_image(lens: Optic) -> list[Diagnostic]:
 # --------------------------------------------------------------------------
 
 
-def _interior_thickness_diagnostic(index: int, surf, n: int) -> Diagnostic | None:
+def _interior_thickness_diagnostic(
+    index: int, surf: Surface, n: int
+) -> Diagnostic | None:
     # The object surface (index 0) may legitimately sit at infinity, and
     # the image surface's thickness is not meaningful, so only interior
     # surfaces are checked for non-finite thickness.
@@ -243,7 +247,7 @@ def _interior_thickness_diagnostic(index: int, surf, n: int) -> Diagnostic | Non
     )
 
 
-def _nan_radius_diagnostic(index: int, surf) -> Diagnostic | None:
+def _nan_radius_diagnostic(index: int, surf: Surface) -> Diagnostic | None:
     radius = getattr(surf.geometry, "radius", None)
     # An infinite radius is a normal, flat surface; only NaN is a bug.
     if radius is None or not be.isnan(be.array(radius)).any():
@@ -274,7 +278,7 @@ def check_non_finite_interior_thickness(lens: Optic) -> list[Diagnostic]:
 # --------------------------------------------------------------------------
 
 
-def _material_dispersion_range(surf) -> tuple[float, float, str] | None:
+def _material_dispersion_range(surf: Surface) -> tuple[float, float, str] | None:
     material = getattr(surf, "material_post", None)
     material_data = getattr(material, "material_data", None)
     if not material_data:
@@ -330,7 +334,7 @@ def check_wavelength_outside_material_range(lens: Optic) -> list[Diagnostic]:
 
 
 def _thickness_sign_diagnostic(
-    index: int, thickness, expect_negative: bool, reflections: int
+    index: int, thickness: ScalarOrArray, expect_negative: bool, reflections: int
 ) -> Diagnostic | None:
     is_bad = thickness >= 0 if expect_negative else thickness <= 0
     if not is_bad:

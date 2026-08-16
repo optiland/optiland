@@ -336,8 +336,9 @@ class MultiConfiguration:
         """Remove a standard pickup."""
         self._remove_pickups(
             config_idx,
-            lambda p: p.target_surface_idx == surface_index
-            and p.attr_type == attr_type,
+            lambda p: (
+                p.target_surface_idx == surface_index and p.attr_type == attr_type
+            ),
         )
 
     def _ensure_generic_pickup(
