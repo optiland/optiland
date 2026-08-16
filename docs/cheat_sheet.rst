@@ -198,6 +198,17 @@ New to these concepts? See the :ref:`glossary` first.
    print("XPL:", lens.paraxial.XPL())   # exit pupil location, relative to the image surface
    print("Magnification:", lens.paraxial.magnification())
 
+   # EFL of a lens group, i.e. surfaces 1 through 2 only
+   print("Group EFL:", lens.paraxial.f2_range(1, 2))
+
+.. note::
+
+   ``f2_range(start, end)`` treats the surface range as a lens group **in
+   isolation**, with its own conjugates. It is not a decomposition of the
+   system's power, so the group focal lengths of a design will not add back up
+   to ``f2()``. The underlying 2x2 ray-transfer matrix of a surface range is
+   available as ``lens.paraxial.ray_transfer_matrix(start, end)``.
+
 .. note::
 
    ``EPL()`` is measured **relative to the first physical surface** (surface 1),

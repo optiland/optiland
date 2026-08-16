@@ -14,6 +14,8 @@ Design Tools
   Trace rays through traditional or advanced systems, including asymmetric and freeform designs.
 - **Nonsequential Ray Tracing**:
   Simulate complex light-matter interactions in non-sequential systems, including scattering, multi-source illumination, and stray light analysis.
+- **Multi-Sequence Tracing**:
+  Define sub-sequences that trace the same surfaces in a different order (ghost paths, reverse traces, sub-component views) via ``Optic.add_sequence``. Geometry and materials stay linked by reference to the base system, so edits and optimization on the base system are reflected in every sequence.
 - **Lens System Modeling**:
   Built-in support for spherical, conic, aspheric, and fully freeform surfaces.
 - **Aperture, Field, and Wavelength Configuration**:

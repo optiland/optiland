@@ -119,6 +119,7 @@ For more details, see the [installation guide](https://optiland.readthedocs.io/e
 | **🧮 Differentiable Core** | Switch between NumPy (CPU) and PyTorch (GPU/autograd) seamlessly for hybrid physics-ML workflows. |
 | **🔬 Ray Tracing** | Trace paraxial and real rays through sequential systems with support for polarization, birefringence, and coatings. |
 | **💡 Non-Sequential (beta)** | Differentiable non-sequential ray tracing: illumination, stray-light & ghost analysis, optimizable via `loss.backward()`. |
+| **👻 Multi-Sequence Tracing (beta)** | Trace ghost paths, reverse traces, and sub-component views as ordered sub-sequences over the same surfaces. Geometry and materials stay linked to the base system. |
 | **📊 Optical Analysis** | Generate spot diagrams, wavefront error maps, ray fans, PSF/MTF plots, Zernike decompositions, distortion plots, etc. |
 | **🧠 Optimization** | Local & global optimizers, autograd support, operand-based merit functions, and GlassExpert for categorical variable search. |
 | **📈 Tolerancing** | Monte Carlo and parametric sensitivity analysis to evaluate robustness and manufacturability. |
@@ -149,8 +150,9 @@ Optiland is continually evolving to provide new functionalities for optical desi
   - [ ] Volumetric media (Beer–Lambert, volume scatter)
   - [ ] Polarization (Stokes through Fresnel)
   - [ ] Dr.Jit / Mitsuba 3 backend
+- [x] **Multi-Sequence Ray Tracing** (beta) - ghost paths, reverse traces, and sub-component views as alternate traversal orders over the same surfaces. Per-sequence first-order analysis, a visualization overlay, and a ghost-enumeration helper are follow-ups.
 - [ ] **Physical Optics Propagation** (Diffraction, beam clipping, Gaussian beam evolution)
-- [ ] **Multi-Path Sequential Ray Tracing**
+- [ ] **Multi-Path Sequential Ray Tracing** (branching arms / beamsplitters)
 - [ ] **Additional Freeforms** (Superconic, etc.)
 
 ### Optimization & Algorithms
