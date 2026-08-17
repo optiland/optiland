@@ -27,6 +27,65 @@ from optiland.visualization.system.utils import project_rays
 if TYPE_CHECKING:
     from optiland.nonsequential.scene import NSQScene
 
+_EVENT_ORDER = {"birth": 0, "hit": 1, "death": 2}
+
+
+def _sort_ray_events(ev: np.ndarray) -> np.ndarray:
+    """Order one ray's events from birth, through its hits, to its death.
+
+    Every ``hit`` shares the same event-type rank, so the tie is broken on
+    ``bounce`` and then on original log order. Without both tiebreakers a
+    multi-bounce path is drawn with its segments shuffled.
+
+    Args:
+        ev: Structured event records for a single ray.
+
+    Returns:
+        The same records, sorted into path order.
+    """
+    type_rank = np.array(
+        [_EVENT_ORDER.get(str(e), 1) for e in ev["event_type"]], dtype=np.int64
+    )
+    # lexsort takes keys least-significant first.
+    order = np.lexsort((np.arange(len(ev)), ev["bounce"], type_rank))
+    return ev[order]
+
+
+def _paths_from_events(events: np.ndarray, num_rays: int) -> list[np.ndarray]:
+    """Split an event log into up to ``num_rays`` per-ray paths, in path order.
+
+    Grouping is done with a single sort rather than one boolean mask per ray
+    id. Masking per id costs O(rays x events), which for a trace recorded with
+    ``record_paths=True`` over a few hundred thousand rays takes longer than
+    the trace itself.
+
+    Args:
+        events: Structured event array with a ``ray_id`` field.
+        num_rays: Maximum number of distinct rays to return. Rays are taken
+            evenly across the recorded set so the sample spans the beam.
+
+    Returns:
+        List of per-ray event arrays, each sorted into path order.
+    """
+    if len(events) == 0:
+        return []
+
+    ray_ids = np.unique(events["ray_id"])
+    if 0 < num_rays < len(ray_ids):
+        keep = ray_ids[np.linspace(0, len(ray_ids) - 1, num_rays).astype(int)]
+        events = events[np.isin(events["ray_id"], keep)]
+
+    # One sort groups every ray's events together; boundaries fall where the
+    # ray id changes.
+    events = events[np.argsort(events["ray_id"], kind="stable")]
+    split_at = np.flatnonzero(np.diff(events["ray_id"])) + 1
+
+    return [
+        _sort_ray_events(group)
+        for group in np.split(events, split_at)
+        if len(group) >= 2
+    ]
+
 
 class NSQRays2D:
     """Visualize 2D ray paths for a non-sequential scene.
@@ -64,7 +123,11 @@ class NSQRays2D:
 
         Args:
             ax: Matplotlib axis to plot on.
-            num_rays: Number of rays to trace when *ray_paths* is ``None``.
+            num_rays: Number of ray paths to draw. When *ray_paths* is
+                ``None`` this is also the number of rays traced; when a
+                recorded log is supplied, that many paths are sampled evenly
+                from it. Drawing every path of a large recorded trace is slow
+                and renders as a solid block, so keep this small.
             theme: Optional theme (colour cycle, etc.).
             projection: Projection plane (``'YZ'``, ``'XZ'``, or ``'XY'``).
             rng_seed: RNG seed for the fresh trace (ignored when
@@ -82,7 +145,7 @@ class NSQRays2D:
         if not self.recorded_paths:
             return
 
-        self._plot_lines(ax, theme, projection, color_by)
+        self._plot_lines(ax, theme, projection, color_by, num_rays)
 
     def _trace(self, num_rays: int, seed: int) -> None:
         """Run a fresh trace and store the resulting ray paths.
@@ -95,7 +158,9 @@ class NSQRays2D:
         res = tracer.trace(num_rays=num_rays, seed=seed, record_paths=True)
         self.recorded_paths = res.ray_paths
 
-    def _plot_lines(self, ax, theme=None, projection="YZ", color_by="source"):
+    def _plot_lines(
+        self, ax, theme=None, projection="YZ", color_by="source", num_rays=0
+    ):
         ray_cycle = theme.parameters.get("ray_cycle") if theme else None
 
         if ray_cycle is None:
@@ -106,7 +171,9 @@ class NSQRays2D:
 
         # Support new event-based ray_paths format {"events": structured_array}
         if "events" in self.recorded_paths:
-            self._plot_from_events(ax, theme, projection, color_by, ray_cycle, color)
+            self._plot_from_events(
+                ax, theme, projection, color_by, ray_cycle, color, num_rays
+            )
             return
 
         xs = self.recorded_paths["x"]
@@ -151,22 +218,10 @@ class NSQRays2D:
                 ax.plot(horiz, vert, color=color, linewidth=1, alpha=0.5)
 
     def _plot_from_events(
-        self, ax, theme, projection, color_by, ray_cycle, color
+        self, ax, theme, projection, color_by, ray_cycle, color, num_rays=0
     ) -> None:
         """Plot rays from the new structured event-log format."""
-        events = self.recorded_paths["events"]
-        if len(events) == 0:
-            return
-
-        ray_ids = np.unique(events["ray_id"])
-        _order = {"birth": 0, "hit": 1, "death": 2}
-        for rid in ray_ids:
-            mask = events["ray_id"] == rid
-            ev = events[mask]
-            sort_idx = np.argsort([_order.get(str(e), 1) for e in ev["event_type"]])
-            ev = ev[sort_idx]
-            if len(ev) < 2:
-                continue
+        for ev in _paths_from_events(self.recorded_paths["events"], num_rays):
             px = ev["x"]
             py = ev["y"]
             pz = ev["z"]
@@ -177,8 +232,7 @@ class NSQRays2D:
                     seg_y = py[b_idx - 1 : b_idx + 1]
                     seg_z = pz[b_idx - 1 : b_idx + 1]
                     horiz, vert = project_rays(seg_x, seg_y, seg_z, projection)
-                    bounce_val = int(ev["bounce"][b_idx - 1])
-                    c = ray_cycle[bounce_val % len(ray_cycle)]
+                    c = ray_cycle[(b_idx - 1) % len(ray_cycle)]
                     ax.plot(horiz, vert, color=c, linewidth=1, alpha=0.5)
             else:
                 horiz, vert = project_rays(px, py, pz, projection)
@@ -220,7 +274,8 @@ class NSQRays3D(NSQRays2D):
 
         Args:
             ax: VTK renderer to add line actors to.
-            num_rays: Number of rays to trace when *ray_paths* is ``None``.
+            num_rays: Number of ray paths to draw; also the number of rays
+                traced when *ray_paths* is ``None``.
             theme: Optional theme object.
             rng_seed: RNG seed for the fresh trace (ignored when
                 *ray_paths* is supplied).
@@ -237,9 +292,11 @@ class NSQRays3D(NSQRays2D):
         if not self.recorded_paths:
             return
 
-        self._plot_lines(ax, theme, color_by=color_by)
+        self._plot_lines(ax, theme, color_by=color_by, num_rays=num_rays)
 
-    def _plot_lines(self, renderer, theme=None, projection=None, color_by="source"):
+    def _plot_lines(
+        self, renderer, theme=None, projection=None, color_by="source", num_rays=0
+    ):
         ray_cycle = theme.parameters.get("ray_cycle") if theme else None
 
         if ray_cycle is None:
@@ -253,7 +310,7 @@ class NSQRays3D(NSQRays2D):
 
         # Support new event-based ray_paths format
         if "events" in self.recorded_paths:
-            self._plot_from_events_3d(renderer, ray_cycle, color, color_by)
+            self._plot_from_events_3d(renderer, ray_cycle, color, color_by, num_rays)
             return
 
         xs = self.recorded_paths["x"]
@@ -307,21 +364,11 @@ class NSQRays3D(NSQRays2D):
 
                 renderer.AddActor(line_actor)
 
-    def _plot_from_events_3d(self, renderer, ray_cycle, color, color_by) -> None:
+    def _plot_from_events_3d(
+        self, renderer, ray_cycle, color, color_by, num_rays=0
+    ) -> None:
         """Plot rays from the new structured event-log format (3D)."""
-        events = self.recorded_paths["events"]
-        if len(events) == 0:
-            return
-
-        ray_ids = np.unique(events["ray_id"])
-        _order = {"birth": 0, "hit": 1, "death": 2}
-        for rid in ray_ids:
-            mask = events["ray_id"] == rid
-            ev = events[mask]
-            sort_idx = np.argsort([_order.get(str(e), 1) for e in ev["event_type"]])
-            ev = ev[sort_idx]
-            if len(ev) < 2:
-                continue
+        for ev in _paths_from_events(self.recorded_paths["events"], num_rays):
             for b in range(1, len(ev)):
                 p0 = [ev["x"][b - 1], ev["y"][b - 1], ev["z"][b - 1]]
                 p1 = [ev["x"][b], ev["y"][b], ev["z"][b]]
@@ -337,8 +384,7 @@ class NSQRays3D(NSQRays2D):
                 line_actor.GetProperty().SetLineWidth(1)
 
                 if color_by in ("bounce", "segment"):
-                    bounce_val = int(ev["bounce"][b - 1])
-                    c = ray_cycle[bounce_val % len(ray_cycle)]
+                    c = ray_cycle[(b - 1) % len(ray_cycle)]
                 else:
                     c = color
                 line_actor.GetProperty().SetColor(c)
