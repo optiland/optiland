@@ -27,9 +27,9 @@ import optiland.backend as be
 from optiland.nonsequential._utils import as_float, as_param
 from optiland.nonsequential.components.geometry.base import AABB, AnalyticGeometry
 
-# Largest Newton-Raphson step accepted per iteration [mm]. Generous relative to
-# any physical optic, but finite, so a diverging lane cannot reach inf.
-_MAX_NEWTON_STEP = 1e6
+# Denominators below this magnitude are treated as degenerate rather than
+# divided by, and the affected root is discarded.
+_TINY = 1e-30
 
 
 class ConicGeometry(AnalyticGeometry):
@@ -127,12 +127,55 @@ class ConicGeometry(AnalyticGeometry):
         norms = be.stack([gx, gy, gz], axis=1)
         return norms
 
+    def _root_valid(
+        self,
+        t: np.ndarray,
+        solvable: np.ndarray,
+        origins: np.ndarray,
+        directions: np.ndarray,
+        eps: float,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Test one quadratic root for a physical hit on the sag sheet.
+
+        Args:
+            t: Candidate distances along the ray, shape (N,).
+            solvable: Lanes where this root came from a well-posed division.
+            origins: Ray origins in local frame, shape (N, 3) [mm].
+            directions: Ray directions in local frame, shape (N, 3).
+            eps: Minimum accepted distance [mm].
+
+        Returns:
+            (valid, px, py): hit flag and the transverse hit coordinates.
+        """
+        px = origins[:, 0] + t * directions[:, 0]
+        py = origins[:, 1] + t * directions[:, 1]
+        pz = origins[:, 2] + t * directions[:, 2]
+
+        in_aperture = (px**2 + py**2) <= self.aperture_radius**2
+
+        # On the surface, sqrt(1 - (1+K) c^2 r^2) = 1 - (1+K) c z, so the sheet
+        # the sag function describes (positive root) is 1 - (1+K) c z >= 0.
+        on_sag_sheet = (1.0 - (1.0 + self.conic) * self._curvature() * pz) >= 0.0
+
+        valid = solvable & be.isfinite(t) & (t > eps) & in_aperture & on_sag_sheet
+        return valid, px, py
+
     def ray_intersect(
         self, origins: np.ndarray, directions: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Intersect rays with the conic surface.
 
-        Uses iterative Newton-Raphson to solve r(t) for the intersection.
+        Solved in closed form: the sag form in the module docstring is
+        algebraically the quadric
+
+            c * (x^2 + y^2) + (1 + K) * c * z^2 - 2 * z = 0,
+
+        so substituting p(t) = o + t*d gives a quadratic in t. The same
+        equation covers the flat limit (c = 0), where it becomes linear.
+
+        The quadric is the whole conic, including points the sag function does
+        not describe (the far side of an ellipsoid, the second branch of a
+        hyperboloid), which :meth:`_root_valid` rejects.
 
         Args:
             origins: Ray origins in local frame, shape (N, 3) [mm].
@@ -144,51 +187,54 @@ class ConicGeometry(AnalyticGeometry):
         ox, oy, oz = origins[:, 0], origins[:, 1], origins[:, 2]
         dx, dy, dz = directions[:, 0], directions[:, 1], directions[:, 2]
 
-        # Initial guess: plane intersection at z=0
-        t = be.where(be.abs(dz) > 1e-12, -oz / (dz + 1e-30), be.zeros_like(oz))
+        c = self._curvature()
+        kp = 1.0 + self.conic
 
-        # Newton-Raphson: f(t) = oz + t*dz - sag(ox + t*dx, oy + t*dy) = 0
-        num_iters = 10
+        # Coefficients of a*t^2 + b*t + c_0 = 0.
+        a = c * (dx**2 + dy**2 + kp * dz**2)
+        b = 2.0 * (c * (ox * dx + oy * dy + kp * oz * dz) - dz)
+        c_0 = c * (ox**2 + oy**2 + kp * oz**2) - 2.0 * oz
+
+        disc = b**2 - 4.0 * a * c_0
+        disc_ok = disc >= 0.0
+        # Clamp the radicand to a small positive epsilon (not 0): sqrt has an
+        # infinite derivative at 0, which combined with be.where yields a
+        # 0 * inf = NaN in the backward pass even though the forward is masked.
+        sqrt_disc = be.where(
+            disc_ok, be.maximum(disc, 1e-12) ** 0.5, be.zeros_like(disc)
+        )
+
+        # Numerically stable roots (Numerical Recipes' "citardauque" form): the
+        # textbook (-b +/- sqrt(disc)) / (2a) cancels catastrophically near the
+        # paraboloid limit and for near-axial rays, where "a" is tiny. This form
+        # also reduces continuously to the linear solution as a -> 0.
+        sign_b = be.where(b >= 0.0, 1.0, -1.0)
+        q = -0.5 * (b + sign_b * sqrt_disc)
+        # Guard both denominators in place: masking a division by ~0 after the
+        # fact still leaves an inf in the graph, which backpropagates as NaN.
+        a_ok = be.abs(a) > _TINY
+        q_ok = be.abs(q) > _TINY
+        t1 = q / be.where(a_ok, a, be.ones_like(a))
+        t2 = c_0 / be.where(q_ok, q, be.ones_like(q))
+
         eps = 1e-9
-        for _ in range(num_iters):
-            px = ox + t * dx
-            py = oy + t * dy
-            pz = oz + t * dz
-            sag = self._sag(px, py)
-            f = pz - sag
+        args = (origins, directions, eps)
+        valid1, px1, py1 = self._root_valid(t1, disc_ok & a_ok, *args)
+        valid2, px2, py2 = self._root_valid(t2, disc_ok & q_ok, *args)
 
-            # df/dt = dz - d(sag)/dt
-            n_raw = self._normal_local(px, py)  # (-dsag/dx, -dsag/dy, 1)
-            dsag_dx = -n_raw[:, 0]
-            dsag_dy = -n_raw[:, 1]
-            df_dt = dz - dsag_dx * dx - dsag_dy * dy
+        # Nearest valid root along the ray.
+        pick1 = valid1 & (~valid2 | (t1 <= t2))
+        pick2 = valid2 & ~pick1
+        hit_mask = pick1 | pick2
 
-            step = be.where(be.abs(df_dt) > 1e-15, f / df_dt, be.zeros_like(f))
-            # Freeze diverging lanes. Rays aimed far outside the aperture drive
-            # the clamped radicand to its floor, which makes the Newton step
-            # blow up to inf/NaN. Those lanes are masked out of the hit test,
-            # but a non-finite forward value still backpropagates as NaN
-            # (0 * inf) into every scene parameter, so it must be replaced with
-            # a finite constant here rather than filtered downstream.
-            step = be.where(be.isfinite(step), step, be.zeros_like(step))
-            step = be.maximum(be.minimum(step, _MAX_NEWTON_STEP), -_MAX_NEWTON_STEP)
-            t = t - step
-            t = be.where(be.isfinite(t), t, be.zeros_like(t))
-
-        # Validate hit
-        px = ox + t * dx
-        py = oy + t * dy
-        pz = oz + t * dz
-        sag_final = self._sag(px, py)
-        residual = be.abs(pz - sag_final)
-
-        in_aperture = (px**2 + py**2) <= self.aperture_radius**2
-        hit_mask = (t > eps) & (residual < 1e-4) & in_aperture
-
-        inf_arr = be.ones_like(t) * be.inf
+        inf_arr = be.ones_like(t1) * be.inf
+        t = be.where(pick1, t1, be.where(pick2, t2, be.zeros_like(t1)))
         t_out = be.where(hit_mask, t, inf_arr)
 
-        # Compute normals at hit points
+        # Normals from the finite hit points, not t_out: its inf lanes would
+        # poison every lane's gradient through be.where.
+        px = be.where(pick1, px1, be.where(pick2, px2, be.zeros_like(px1)))
+        py = be.where(pick1, py1, be.where(pick2, py2, be.zeros_like(py1)))
         n_raw = self._normal_local(px, py)
         n_len = (n_raw * n_raw).sum(axis=1, keepdims=True) ** 0.5
         normals = n_raw / (n_len + 1e-30)

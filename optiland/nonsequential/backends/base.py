@@ -12,6 +12,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
+from optiland.nonsequential._utils import DEFAULT_BATCH_SIZE
+
 if TYPE_CHECKING:
     from optiland.nonsequential.scene import NSQScene
     from optiland.nonsequential.tracer import SimulationResult
@@ -37,7 +39,7 @@ class TracerBackend(ABC):
         num_rays: int,
         max_depth: int = 16,
         min_flux_fraction: float = 1e-6,
-        batch_size: int = 1_000_000,
+        batch_size: int = DEFAULT_BATCH_SIZE,
         seed: int | None = None,
         record_paths: bool = False,
     ) -> SimulationResult:
@@ -52,7 +54,8 @@ class TracerBackend(ABC):
                 termination.
             min_flux_fraction: Rays whose flux drops below
                 ``min_flux_fraction * (total_flux / num_rays)`` are killed.
-            batch_size: Number of rays per processing batch.
+            batch_size: Number of rays per processing batch. Does not change the result,
+                only the speed; see ``DEFAULT_BATCH_SIZE``.
             seed: RNG seed for reproducibility.
             record_paths: If True, record the full phase-space path of
                 every ray, bounce-by-bounce, for visualization.

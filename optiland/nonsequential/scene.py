@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import optiland.backend as be
+from optiland.nonsequential._utils import DEFAULT_BATCH_SIZE
 from optiland.nonsequential.components.registry import ComponentRegistry
 from optiland.nonsequential.detectors.registry import DetectorRegistry
 from optiland.nonsequential.sources.registry import SourceRegistry
@@ -241,7 +242,7 @@ class NSQScene:
         num_rays: int,
         max_depth: int = 16,
         min_flux_fraction: float = 1e-6,
-        batch_size: int = 1_000_000,
+        batch_size: int = DEFAULT_BATCH_SIZE,
         seed: int | None = None,
         backend: TracerBackend | None = None,
         record_paths: bool = False,
@@ -252,7 +253,8 @@ class NSQScene:
             num_rays: Total rays to launch.
             max_depth: Maximum surface hits per ray.
             min_flux_fraction: Kill threshold relative to per-ray initial flux.
-            batch_size: Rays per processing batch.
+            batch_size: Rays per processing batch. Does not change the result,
+                only the speed; see ``DEFAULT_BATCH_SIZE``.
             seed: RNG seed.
             backend: TracerBackend to use. Defaults to NumpyBackend or
                 TorchBackend based on the active ``optiland.backend``.

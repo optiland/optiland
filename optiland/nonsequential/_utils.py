@@ -15,6 +15,11 @@ if TYPE_CHECKING:
 
 _TORCH_AVAILABLE = importlib.util.find_spec("torch") is not None
 
+# Default rays per trace batch. Affects speed only, not the result: the loop
+# holds several temporaries per live ray, and measured CPU throughput peaks
+# between roughly 10k and 20k rays per batch, falling off 2-3x on either side.
+DEFAULT_BATCH_SIZE = 16_384
+
 
 def is_tensor(value: Any) -> bool:
     """Return True if ``value`` is a PyTorch tensor.

@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from optiland.nonsequential._utils import DEFAULT_BATCH_SIZE
+
 if TYPE_CHECKING:
     from optiland.nonsequential.backends.base import TracerBackend
     from optiland.nonsequential.scene import NSQScene
@@ -92,7 +94,7 @@ class NSQTracer:
         num_rays: int,
         max_depth: int = 16,
         min_flux_fraction: float = 1e-6,
-        batch_size: int = 1_000_000,
+        batch_size: int = DEFAULT_BATCH_SIZE,
         seed: int | None = None,
         backend: TracerBackend | None = None,
         record_paths: bool = False,
@@ -105,7 +107,8 @@ class NSQTracer:
                 termination.
             min_flux_fraction: Kill threshold relative to per-ray initial
                 flux.
-            batch_size: Rays per processing batch.
+            batch_size: Rays per processing batch. Does not change the result,
+                only the speed; see ``DEFAULT_BATCH_SIZE``.
             seed: RNG seed for reproducibility.
             backend: Backend override. Uses constructor backend if not given.
                 Auto-selects from active ``optiland.backend`` if neither
