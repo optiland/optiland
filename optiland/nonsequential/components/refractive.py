@@ -32,6 +32,13 @@ class RefractiveComponent(BaseComponent):
     drawn from a detached probability, while the throughput weight carries
     the attached reflectance so gradients flow through material parameters.
 
+    The two materials name the media on either side of the surface, and the
+    component works out which one a ray is leaving from the index it is
+    already travelling in. Crossing direction therefore does not matter: the
+    same surface refracts correctly for a ray on its way in, for a ghost or
+    retro-reflection coming back through, and for the far side of a closed
+    solid modelled as a single geometry.
+
     Attributes:
         cs: Coordinate system.
         geometry: Surface geometry.
@@ -118,9 +125,16 @@ class RefractiveComponent(BaseComponent):
         n2_front = self.material_front.n(wl)
         n2_back = self.material_back.n(wl)
 
-        # dot < 0 -> ray opposes normal -> came from front side
-        from_front = dot < 0
-        n2 = be.where(from_front, n2_back, n2_front)
+        # Which side the ray is on cannot be read off `normals`: every geometry
+        # flips its normal to face the incoming ray, so `dot` is always
+        # negative. Use the medium the ray is actually travelling in instead --
+        # `n_current` is maintained across every interaction, so a ray leaves
+        # whichever of the two media it currently matches and enters the other.
+        # This is direction-agnostic, so a surface crossed in reverse (a ghost
+        # path, a retro-reflection, or the far side of a closed solid) refracts
+        # correctly.
+        in_back = be.abs(n1 - n2_back) < be.abs(n1 - n2_front)
+        n2 = be.where(in_back, n2_front, n2_back)
 
         # Fresnel reflectance (unpolarized, attached)
         n_ratio = n1 / (n2 + 1e-30)
