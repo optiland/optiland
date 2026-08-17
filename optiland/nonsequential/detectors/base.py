@@ -25,6 +25,12 @@ class BaseDetector(ABC):
     Detectors record ray data at a surface. They intersect rays (via their
     geometry) and accumulate hit data across simulation batches.
 
+    Detectors are **absorbing**: a ray that reaches a detector is recorded
+    and then terminated. Several detectors may share one scene, but only the
+    first one along a given ray's path sees it, so stacking detectors down a
+    beam records the beam at the nearest plane and nothing beyond it. To
+    profile a beam at several planes, trace one scene per plane.
+
     Attributes:
         cs: Coordinate system defining detector position and orientation.
         geometry: Surface geometry that defines the detector area.
