@@ -17,10 +17,12 @@ class SpectralResult:
     """Per-wavelength irradiance on a planar detector.
 
     Attributes:
-        irradiance: Irradiance [W/mm^2/nm], shape (ny, nx, n_lambda).
+        irradiance: Irradiance per wavelength bin [W/mm^2], shape
+            (ny, nx, n_lambda). Flux is binned, not divided by bin width, so
+            summing over the last axis gives the broadband irradiance.
         x_coords: Bin centre x-coordinates [mm].
         y_coords: Bin centre y-coordinates [mm].
-        wavelengths: Wavelength bin centres [nm].
+        wavelengths: Wavelength bin centres [µm].
         total_flux: Total flux recorded [W].
         num_rays_hit: Number of rays recorded.
     """
@@ -40,7 +42,7 @@ class SpectralResult:
             irradiance: 3D irradiance array [W/mm^2], shape (ny, nx, n_lambda).
             x_coords: Bin centre x-coordinates [mm].
             y_coords: Bin centre y-coordinates [mm].
-            wavelengths: Wavelength bin centres [nm].
+            wavelengths: Wavelength bin centres [µm].
             total_flux: Total detected flux [W].
             num_rays_hit: Number of rays that contributed.
         """
@@ -55,7 +57,7 @@ class SpectralResult:
         """Plot the irradiance map at the wavelength closest to wl.
 
         Args:
-            wl: Target wavelength [nm].
+            wl: Target wavelength [µm].
             ax: Optional Matplotlib Axes.
             **kwargs: Additional arguments passed to imshow.
 
@@ -86,7 +88,7 @@ class SpectralResult:
             **kwargs,
         )
         plt.colorbar(im, ax=ax, label="Irradiance [W/mm^2]")
-        ax.set_title(f"Irradiance at wl={actual_wl:.1f} nm")
+        ax.set_title(f"Irradiance at wl={actual_wl:.3f} µm")
         return fig
 
     def save(self, path: str | Path) -> None:

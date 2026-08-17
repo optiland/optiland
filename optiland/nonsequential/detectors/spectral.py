@@ -23,6 +23,10 @@ if TYPE_CHECKING:
     from optiland.coordinate_system import CoordinateSystem
     from optiland.nonsequential.ray_bundle import NSQRayBundle
 
+# Longest wavelength Optiland's material catalogs cover is well under this, so
+# any bin edge above it is a nanometre value that slipped through as µm.
+_MAX_PLAUSIBLE_WAVELENGTH_UM = 100.0
+
 
 class SpectralDetector(BaseDetector):
     """Per-wavelength irradiance detector on a planar rectangular surface.
@@ -68,6 +72,12 @@ class SpectralDetector(BaseDetector):
             splat_sigma: Gaussian splat sigma in pixels (reserved for future
                 use).
             name: Optional label.
+
+        Raises:
+            ValueError: If ``wavelength_bins`` are not plausibly in µm. Bin
+                edges are compared against ``rays.wavelength``, which is in
+                µm; nanometre edges would silently clip every ray into the
+                first bin.
         """
         geometry = FinitePlaneGeometry(width=width, height=height)
         super().__init__(cs, geometry, name=name)
@@ -79,6 +89,12 @@ class SpectralDetector(BaseDetector):
         self.splat = splat
         self.splat_sigma = float(splat_sigma)
         self.wavelength_bins = np.asarray(wavelength_bins, dtype=np.float64)
+        if self.wavelength_bins.min() > _MAX_PLAUSIBLE_WAVELENGTH_UM:
+            raise ValueError(
+                f"wavelength_bins must be in µm, but the smallest bin edge is "
+                f"{self.wavelength_bins.min():g}. Values this large look like "
+                f"nanometres - divide by 1000 (e.g. 550 nm -> 0.55)."
+            )
         n_lambda = len(wavelength_bins) - 1
 
         self._flux_map = np.zeros(

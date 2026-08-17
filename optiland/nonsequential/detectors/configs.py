@@ -39,20 +39,25 @@ class SpectralDetectorConfig:
         height: Detector height [mm].
         num_pixels_x: Number of pixels along x.
         num_pixels_y: Number of pixels along y.
-        wl_min: Minimum wavelength for spectral binning [nm].
-        wl_max: Maximum wavelength for spectral binning [nm].
+        wl_min: Minimum wavelength for spectral binning [µm].
+        wl_max: Maximum wavelength for spectral binning [µm].
         num_bins: Number of wavelength bins.
         splat: Splatting mode — 'bilinear', 'gaussian', or 'hard'.
             Note: only 'hard' is currently implemented for SpectralDetector.
         splat_sigma: Gaussian splat sigma in pixels (reserved for future use).
+
+    Note:
+        Wavelengths are in **micrometres**, matching ``Spectrum`` and every
+        other wavelength in Optiland. Visible light spans 0.4-0.7 µm, so a
+        detector spanning the visible is ``wl_min=0.4, wl_max=0.7``.
     """
 
     width: float
     height: float
     num_pixels_x: int = 256
     num_pixels_y: int = 256
-    wl_min: float = 400.0
-    wl_max: float = 700.0
+    wl_min: float = 0.4
+    wl_max: float = 0.7
     num_bins: int = 100
     splat: Literal["bilinear", "gaussian", "hard"] = "bilinear"
     splat_sigma: float = 0.5
