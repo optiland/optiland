@@ -142,6 +142,7 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
    developers_guide/interaction_models
    developers_guide/propagation_models
    developers_guide/geometry_overview
+   developers_guide/folded_systems
    developers_guide/analysis_framework
    developers_guide/optimization_framework
    developers_guide/tolerancing_framework
