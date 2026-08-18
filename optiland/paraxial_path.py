@@ -255,6 +255,12 @@ class ParaxialPath:
         is_folded_or_off_axis: Negation of ``positions_are_global_z``.
         diagnostics: Reasons this path lies outside the supported scalar
             domain (empty for supported paths).
+        advisories: Findings on a *supported* straight path that scalar
+            first-order results silently ignore (tilted powered surfaces,
+            interior decenters). Unlike ``diagnostics`` these never gate an
+            operation -- the historical numbers are still returned -- they
+            only make the approximation visible via
+            :meth:`warn_scalar_approximations`.
     """
 
     axial_positions: BEArray
@@ -273,6 +279,7 @@ class ParaxialPath:
     legacy_aiming_compatible: bool
     is_folded_or_off_axis: bool
     diagnostics: tuple
+    advisories: tuple = ()
 
     @property
     def num_surfaces(self) -> int:
@@ -331,6 +338,35 @@ class ParaxialPath:
             return
         raise UnsupportedParaxialGeometryError(message)
 
+    def warn_scalar_approximations(
+        self, operation: str = "scalar paraxial analysis"
+    ) -> None:
+        """Surface any advisories as a :class:`ParaxialDomainWarning`.
+
+        Straight +z systems with tilted powered surfaces or interior
+        decenters have always had their scalar first-order values computed
+        as if every surface were centered and normal to the axis. That
+        behavior (and every returned number) is unchanged; this method only
+        makes the approximation visible instead of silent. Real ray tracing
+        accounts for the tilt/decenter exactly.
+
+        Args:
+            operation: Name of the requested operation, used in the message.
+        """
+        if not self.advisories:
+            return
+        details = "\n".join(f"  - {d}" for d in self.advisories)
+        warnings.warn(
+            f"{operation}: scalar first-order results ignore surface "
+            "tilts/decenters on this system (each surface is treated as "
+            "centered and normal to the axis, the historical behavior):\n"
+            f"{details}\n"
+            "Real ray tracing (optic.surfaces.trace) accounts for them "
+            "exactly.",
+            ParaxialDomainWarning,
+            stacklevel=2,
+        )
+
     def point_from_axial_offset(
         self,
         surface_index: int,
@@ -361,9 +397,7 @@ class ParaxialPath:
         else:
             parity = self.parity_after[surface_index]
             direction = self.outgoing_directions_gcs[surface_index]
-        return tuple(
-            vertex[i] + parity * axial_offset * direction[i] for i in range(3)
-        )
+        return tuple(vertex[i] + parity * axial_offset * direction[i] for i in range(3))
 
     def entry_frame(self) -> tuple:
         """Entry frame ``(anchor, axial_anchor, direction, u, v)``.
@@ -494,6 +528,7 @@ def build_paraxial_path(surfaces: list) -> ParaxialPath:
 
     ang_tol = angular_tolerance()
     diagnostics: list[ParaxialPathDiagnostic] = []
+    advisories: list[ParaxialPathDiagnostic] = []
 
     if is_folded_or_off_axis and degenerate_entry and any_mirror_off_axis:
         diagnostics.append(
@@ -592,6 +627,38 @@ def build_paraxial_path(surfaces: list) -> ParaxialPath:
                         ),
                     )
                 )
+        elif k > 0 and oblique:
+            # Straight-classified path: the numbers stay the historical
+            # ones (tilt ignored); record an advisory so the approximation
+            # is no longer silent.
+            if powered:
+                advisories.append(
+                    ParaxialPathDiagnostic(
+                        code=TILTED_REFRACTIVE_SURFACE,
+                        surface_index=k,
+                        measured=axis_dot,
+                        tolerance=ang_tol,
+                        message=(
+                            "tilted powered surface on a straight system; "
+                            "scalar first-order results treat it as normal "
+                            "to the axis"
+                        ),
+                    )
+                )
+            elif not mirrors[k] and _surface_is_refractive_boundary(surf):
+                advisories.append(
+                    ParaxialPathDiagnostic(
+                        code=TILTED_REFRACTIVE_SURFACE,
+                        surface_index=k,
+                        measured=axis_dot,
+                        tolerance=ang_tol,
+                        message=(
+                            "tilted plane refractive interface on a straight "
+                            "system; the real beam is steered (Snell), which "
+                            "scalar first-order results ignore"
+                        ),
+                    )
+                )
 
         if mirrors[k]:
             projection = _dot(direction, axes[k])
@@ -610,12 +677,12 @@ def build_paraxial_path(surfaces: list) -> ParaxialPath:
             step = sum((nxt[i] - prev[i]) * direction[i] for i in range(3))
             if be.all(be.isfinite(axial[-1])) and be.all(be.isfinite(step)):
                 axial.append(axial[-1] + parity * step)
-                if is_folded_or_off_axis:
-                    residual = tuple(
-                        (nxt[i] - prev[i]) - step * direction[i] for i in range(3)
-                    )
-                    residual_norm = _to_float(_norm(residual))
-                    if residual_norm > pos_tol:
+                residual = tuple(
+                    (nxt[i] - prev[i]) - step * direction[i] for i in range(3)
+                )
+                residual_norm = _to_float(_norm(residual))
+                if residual_norm > pos_tol:
+                    if is_folded_or_off_axis:
                         diagnostics.append(
                             ParaxialPathDiagnostic(
                                 code=NONCOLLINEAR_VERTEX_CHAIN,
@@ -627,6 +694,20 @@ def build_paraxial_path(surfaces: list) -> ParaxialPath:
                                     "(transverse decenter); the scalar folded "
                                     "model has no transverse first-order "
                                     "coupling to carry it"
+                                ),
+                            )
+                        )
+                    else:
+                        advisories.append(
+                            ParaxialPathDiagnostic(
+                                code=NONCOLLINEAR_VERTEX_CHAIN,
+                                surface_index=k + 1,
+                                measured=residual_norm,
+                                tolerance=pos_tol,
+                                message=(
+                                    "decentered surface on a straight "
+                                    "system; scalar first-order results "
+                                    "treat it as centered on the axis"
                                 ),
                             )
                         )
@@ -668,9 +749,7 @@ def build_paraxial_path(surfaces: list) -> ParaxialPath:
         ax = abs(_to_float(vertices[1][0]))
         ay = abs(_to_float(vertices[1][1]))
         anchor_on_origin = ax <= pos_tol and ay <= pos_tol
-    legacy_aiming_compatible = positions_are_global_z and (
-        n < 2 or anchor_on_origin
-    )
+    legacy_aiming_compatible = positions_are_global_z and (n < 2 or anchor_on_origin)
 
     return ParaxialPath(
         axial_positions=axial_positions,
@@ -689,6 +768,7 @@ def build_paraxial_path(surfaces: list) -> ParaxialPath:
         legacy_aiming_compatible=legacy_aiming_compatible,
         is_folded_or_off_axis=is_folded_or_off_axis,
         diagnostics=tuple(diagnostics),
+        advisories=tuple(advisories),
     )
 
 

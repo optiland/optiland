@@ -121,7 +121,11 @@ class ParaxialRayTracer(BaseRayTracer):
         else:
             # Canonical +/-z chains always satisfy
             # parity * sgn(z_axis . d_in) = +1, so the authored values are
-            # already the effective ones -- kept bit-for-bit.
+            # already the effective ones -- kept bit-for-bit. Tilted or
+            # decentered surfaces on such a chain are still ignored by the
+            # scalar model (historical behavior); surface that as a warning
+            # rather than staying silent.
+            path.warn_scalar_approximations("paraxial ray tracing")
             f_signs = [1.0] * len(self.optic.surfaces.surfaces)
 
         if reverse:
