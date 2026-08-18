@@ -34,6 +34,7 @@ class ParaxialImageHeightField(BaseFieldDefinition):
             ValueError: If the field type is "object_height" for an object at
                 infinity.
         """
+        self._reject_folded_use(optic)
         y_img_target = optic.fields.max_field * Hy
         x_img_target = optic.fields.max_field * Hx
 
@@ -87,6 +88,7 @@ class ParaxialImageHeightField(BaseFieldDefinition):
                 position.
 
         """
+        self._reject_folded_use(optic)
         y_img_target = optic.fields.max_field * Hy
         y_img_unit, _ = self._trace_unit_chief_ray(optic, plane="image")
         y_obj_unit, u_obj_unit = self._trace_unit_chief_ray(optic, plane="object")

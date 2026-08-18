@@ -22,6 +22,31 @@ class BaseFieldDefinition(ABC):
 
     _registry: ClassVar[dict[str, type[BaseFieldDefinition]]] = {}
 
+    def _reject_folded_use(self, optic: Optic) -> None:
+        """Reject field definitions whose coordinate semantics are z-bound.
+
+        Field types that mix global z with heights (object height, paraxial
+        and real image height) have not been given folded coordinate
+        semantics; on a folded or off-axis-entered beam path they would
+        silently produce wrong ray targets.
+
+        Raises:
+            UnsupportedParaxialGeometryError: If the beam path is folded off
+                the global +z axis.
+        """
+        from optiland.paraxial_path import UnsupportedParaxialGeometryError
+
+        path = optic.surfaces.build_paraxial_path()
+        if not path.is_folded_or_off_axis:
+            return
+        raise UnsupportedParaxialGeometryError(
+            f"The field type {type(self).__name__!r} is not supported for "
+            "beam paths folded off the global +z axis (or entered along "
+            "another direction): its coordinate semantics are still "
+            'z-bound. Use the "angle" field type for folded systems, or '
+            "real ray tracing with explicit launch geometry."
+        )
+
     @classmethod
     def register(cls, name: str):
         """Class decorator to register a field type by name.

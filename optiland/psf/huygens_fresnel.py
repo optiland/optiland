@@ -265,12 +265,14 @@ class ScalarHuygensPSF(BasePSF):
             data = wf.get_data((0, 0), self.wavelengths[0].value)
 
         pupil_opd_ideal = be.zeros_like(data.opd)  # ideal case has no OPD
-        image_x = be.zeros((1, 1))  # single point for normalization
-        image_y = be.zeros((1, 1))
-        # Real-space image plane position: this seeds a global-frame point, so
-        # it must be global z rather than the unfolded axial coordinate.
-        ideal_z = self.optic.surfaces.global_z_positions[-1]
-        image_z = be.full((1, 1), ideal_z)
+        # Real-space image-surface vertex: the ideal normalization point is
+        # the full 3-D vertex of the image surface in the global frame --
+        # not (0, 0, global_z), which is only equivalent while the image
+        # vertex sits on the global z axis.
+        vx, vy, vz = self.optic.surfaces[-1].geometry.cs.position_in_gcs
+        image_x = be.full((1, 1), vx)
+        image_y = be.full((1, 1), vy)
+        image_z = be.full((1, 1), vz)
 
         psf_max = self._summation_strategy.compute(
             image_x,

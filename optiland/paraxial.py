@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 
     from optiland._types import BEArray, ScalarOrArray
     from optiland.optic import Optic
+    from optiland.paraxial_path import ParaxialPath
     from optiland.surfaces import SurfaceGroup
 
 
@@ -242,23 +243,78 @@ class Paraxial:
         loc_relative = y[-1] / u[-1]
         return loc_relative[0]
 
+    def entrance_pupil_axial_position(self) -> ScalarOrArray:
+        """Entrance pupil location on the unfolded signed axial coordinate.
+
+        This is ``EPL()`` re-anchored to the same axial coordinate that
+        ``SurfaceGroup.positions`` uses, so it can be differenced directly
+        against surface positions. It is a 1-D unfolded axial scalar, never
+        a Cartesian coordinate; use :meth:`entrance_pupil_point_gcs` for the
+        pupil's real-space location.
+        """
+        return self.EPL() + self.surfaces.positions[1, 0]
+
     def entrance_pupil_z(self) -> ScalarOrArray:
-        """Entrance pupil location as a global z coordinate.
+        """Entrance pupil location as an axial scalar (legacy name).
 
         ``EPL()`` returns a value relative to the first physical surface (per
         the documented convention). Call sites that mix the pupil location
-        with other global coordinates (object z, surface positions, ray
-        launch points) should use this helper so the conversion lives in one
-        place. Issue #613 was caused by call sites silently assuming EPL was
-        global; routing them through this helper makes the convention
-        explicit at the boundary.
+        with other axial coordinates (object position, surface positions)
+        should use this helper so the conversion lives in one place. Issue
+        #613 was caused by call sites silently assuming EPL was global;
+        routing them through this helper makes the convention explicit at
+        the boundary.
 
-        For a beam path folded off the z axis the value is the pupil's
-        axial coordinate along the unfolded axis (see
-        ``SurfaceGroup.positions``); its position in space is a point on
-        the entry line, not a z plane.
+        Despite the historical name, this is NOT a Cartesian global z: it is
+        the pupil's coordinate along the signed unfolded axis of
+        ``SurfaceGroup.positions``. The two coincide only while every leg of
+        the beam path runs along +z. For a folded or off-axis-entered system
+        the pupil's position in space is a point on the entry line -- use
+        :meth:`entrance_pupil_point_gcs` for that point, and prefer
+        :meth:`entrance_pupil_axial_position` (same value, honest name) in
+        new code.
         """
-        return self.EPL() + self.surfaces.positions[1, 0]
+        return self.entrance_pupil_axial_position()
+
+    def entrance_pupil_point_gcs(self, path: ParaxialPath | None = None) -> tuple:
+        """Entrance pupil position as a 3-D point in global coordinates.
+
+        The entrance pupil is the stop imaged into object space; in the
+        scalar folded model its apparent point lies on the unfolded entry
+        line: ``r_EP = r_1 + EPL * d_0``, with ``r_1`` the first physical
+        surface's vertex and ``d_0`` the unit entry direction.
+
+        Args:
+            path: Optional prebuilt :class:`ParaxialPath` to reuse.
+
+        Returns:
+            The pupil point as an ``(x, y, z)`` tuple of backend scalars.
+        """
+        if path is None:
+            path = self.surfaces.build_paraxial_path()
+        epl = self.EPL()
+        anchor = path.vertices_gcs[1]
+        d0 = path.entry_direction
+        return tuple(anchor[i] + epl * d0[i] for i in range(3))
+
+    def exit_pupil_point_gcs(self, path: ParaxialPath | None = None) -> tuple:
+        """Exit pupil position as a 3-D point in global coordinates.
+
+        Maps the axial ``XPL()`` scalar onto the physical image-space leg:
+        ``r_XP = r_I + p_I * XPL * d_I``, with ``r_I`` the image vertex and
+        ``p_I``, ``d_I`` the reflection parity and physical beam direction
+        arriving at the image plane.
+
+        Args:
+            path: Optional prebuilt :class:`ParaxialPath` to reuse.
+
+        Returns:
+            The pupil point as an ``(x, y, z)`` tuple of backend scalars.
+        """
+        if path is None:
+            path = self.surfaces.build_paraxial_path()
+        xpl = self.XPL()
+        return path.point_from_axial_offset(-1, xpl, side="incoming")
 
     def EPD(self) -> ScalarOrArray:
         """Calculate the entrance pupil diameter (EPD).

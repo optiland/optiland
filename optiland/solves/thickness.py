@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
+from optiland.paraxial_path import require_global_z_geometry
 from optiland.solves.base import BaseSolve
 
 
@@ -59,7 +60,17 @@ class ThicknessSolve(BaseSolve, ABC):
         This method calculates the necessary shift in z-position for the
         target surface and all subsequent surfaces to achieve the desired
         ray height.
+
+        Raises:
+            UnsupportedParaxialGeometryError: If the system's unfolded axial
+                coordinate is not global z (folded or off-axis-entered
+                systems), before any surface is mutated -- the computed
+                offset is an unfolded axial distance and writing it into
+                ``cs.z`` would move surfaces off their physical legs.
         """
+        # Guard before any computation touches geometry: no partial mutation.
+        require_global_z_geometry(self.optic.surfaces, "ThicknessSolve")
+
         y, u = self._get_ray_y_u()
 
         # Ensure surface_idx is within bounds for y and u

@@ -73,7 +73,16 @@ class QuickFocusSolve(BaseSolve):
 
         This method calculates the optimal focus distance and sets the
         z-position of the last surface (image plane) accordingly.
+
+        Raises:
+            UnsupportedParaxialGeometryError: If the beam path is folded off
+                global +z, before any mutation -- moving the image plane
+                along z only would take it off its physical leg.
         """
+        from optiland.paraxial_path import require_global_z_geometry
+
+        require_global_z_geometry(self.optic.surfaces, "QuickFocusSolve")
+
         z_focus = self.optimal_focus_distance(
             wavelength=self.optic.wavelengths.primary_wavelength.value,
         )

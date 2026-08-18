@@ -140,11 +140,13 @@ class VectorialHuygensPSF(ScalarHuygensPSF):
             )
 
         pupil_opd_ideal = be.zeros_like(data.opd)
-        image_x = be.zeros((1, 1))
-        image_y = be.zeros((1, 1))
-        # Global-frame image plane position, not the unfolded axial coordinate.
-        ideal_z = self.optic.surfaces.global_z_positions[-1]
-        image_z = be.full((1, 1), ideal_z)
+        # Same corrected image reference point as the scalar Huygens PSF:
+        # the full 3-D image-surface vertex in the global frame, not
+        # (0, 0, global_z).
+        vx, vy, vz = self.optic.surfaces[-1].geometry.cs.position_in_gcs
+        image_x = be.full((1, 1), vx)
+        image_y = be.full((1, 1), vy)
+        image_z = be.full((1, 1), vz)
 
         is_valid = data.intensity > 0
         norm = 0.0

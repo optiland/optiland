@@ -31,6 +31,7 @@ class RealImageHeightField(BaseFieldDefinition):
             tuple: A tuple containing the x, y, and z coordinates of the
                 object position.
         """
+        self._reject_folded_use(optic)
         # Initial guess using ParaxialImageHeightField logic
         paraxial_field = ParaxialImageHeightField()
         paraxial_field.scale_chief_ray_for_field(
@@ -154,11 +155,14 @@ class RealImageHeightField(BaseFieldDefinition):
             optic, val_x, val_y, zeros, zeros, 0, 0
         )
 
-        z_pupil = optic.paraxial.entrance_pupil_z()
+        # Aim at the entrance pupil's real-space point (its 3-D location on
+        # the entry line), not at (0, 0, axial-scalar): the two only agree
+        # for a system on the global z axis through the origin.
+        px, py, pz = optic.paraxial.entrance_pupil_point_gcs()
 
-        x1 = be.zeros_like(x0)
-        y1 = be.zeros_like(y0)
-        z1 = be.full_like(x0, z_pupil)
+        x1 = be.full_like(x0, px)
+        y1 = be.full_like(y0, py)
+        z1 = be.full_like(x0, pz)
 
         mag = be.sqrt((x1 - x0) ** 2 + (y1 - y0) ** 2 + (z1 - z0) ** 2)
         L = (x1 - x0) / mag
