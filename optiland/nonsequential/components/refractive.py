@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from optiland.coordinate_system import CoordinateSystem
     from optiland.nonsequential.bsdf.base import BaseBSDF
     from optiland.nonsequential.components.geometry.base import ComponentGeometry
+    from optiland.nonsequential.ir.bsdf_ir import BsdfIR
     from optiland.nonsequential.materials.nsq_material import NSQMaterial
     from optiland.nonsequential.ray_bundle import NSQRayBundle
     from optiland.nonsequential.rng import NSQRng
@@ -89,6 +90,7 @@ class RefractiveComponent(BaseComponent):
         normals: np.ndarray,
         hit_mask: np.ndarray,
         rng: NSQRng,
+        bsdf_ir: BsdfIR,
     ) -> None:
         """Apply Fresnel refraction/reflection at hit points (in-place).
 
@@ -106,6 +108,10 @@ class RefractiveComponent(BaseComponent):
                 are keyed by this ray's own id and its bounce count as of
                 this interaction, so they are independent of batch_size,
                 compaction, and every other ray in the bundle.
+            bsdf_ir: This surface's lowered BSDF descriptor. Whether the
+                scatter branch below runs at all is decided from
+                ``bsdf_ir.kind != "none"`` (verified by the caller to match
+                ``self.bsdf``), not from ``self.bsdf is not None``.
         """
         # Every RNG draw in this call is keyed to the ray's identity as of
         # this specific interaction event -- captured before any of the
@@ -224,7 +230,7 @@ class RefractiveComponent(BaseComponent):
         rays.bounce = be.where(hit_mask, rays.bounce + 1, rays.bounce)
 
         # Apply BSDF scatter if present (compute for all rays, use where to select)
-        if self.bsdf is not None:
+        if bsdf_ir.kind != "none":
             # Compute BSDF for all N rays; where-select only hit rays
             bsdf_dirs, bsdf_weights = self.bsdf.sample(
                 rays.num_rays,

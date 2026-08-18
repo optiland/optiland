@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from optiland.coordinate_system import CoordinateSystem
     from optiland.nonsequential.bsdf.base import BaseBSDF
     from optiland.nonsequential.components.geometry.base import AABB, ComponentGeometry
+    from optiland.nonsequential.ir.bsdf_ir import BsdfIR
     from optiland.nonsequential.materials.nsq_material import NSQMaterial
     from optiland.nonsequential.ray_bundle import NSQRayBundle
     from optiland.nonsequential.rng import NSQRng
@@ -123,11 +124,21 @@ class BaseComponent(ABC):
         normals: np.ndarray,
         hit_mask: np.ndarray,
         rng: NSQRng,
+        bsdf_ir: BsdfIR,
     ) -> None:
         """Apply optical interaction at hit points (in-place).
 
         Updates ray positions, directions, flux, n_current, bounce, and
         alive status for rays that hit this component.
+
+        This is a private implementation detail of the reference NumPy/Torch
+        interpreters (``optiland.nonsequential.ir.interpreter
+        .apply_primitive_interactions``), not the engine's public dispatch
+        contract -- a non-Python backend never calls it. ``bsdf_ir`` is what
+        makes the *dispatch* IR-driven: whether to route a hit ray through
+        ``self.bsdf`` is decided from ``bsdf_ir.kind`` (verified to match
+        ``self.bsdf``'s actual type by the caller), not from a bare
+        ``self.bsdf is not None`` check.
 
         Args:
             rays: Ray bundle to update in-place.
@@ -135,6 +146,9 @@ class BaseComponent(ABC):
             normals: Surface normals in global frame, shape (N, 3).
             hit_mask: True for rays that hit this component, shape (N,).
             rng: Keyed PCG32 RNG for stochastic interactions.
+            bsdf_ir: This surface's lowered BSDF descriptor (``BsdfIR(kind=
+                "none")`` when no scatter model is attached), matching
+                ``self.bsdf``.
         """
 
     @property

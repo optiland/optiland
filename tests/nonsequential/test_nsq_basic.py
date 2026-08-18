@@ -699,8 +699,10 @@ class TestAbsorbedCount:
         normals = np.zeros((N, 3))
         normals[:, 2] = -1.0
 
+        from optiland.nonsequential.ir.bsdf_ir import BsdfIR  # noqa: PLC0415
+
         rng = np.random.default_rng(0)
-        absorber.interact(rays, t, normals, hit_mask, rng)
+        absorber.interact(rays, t, normals, hit_mask, rng, BsdfIR(kind="none"))
 
         assert absorber._absorbed_count == 3
         assert absorber._absorbed_flux == pytest.approx(3.0)

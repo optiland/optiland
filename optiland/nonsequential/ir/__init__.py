@@ -8,9 +8,12 @@ methods. ``lower()`` converts a live
 
 This is what makes a third-party backend (Mitsuba 3, OptiX) possible without
 reworking the NumPy/Torch reference engines again: any backend that can
-interpret a :class:`~.scene_ir.SceneIR` can trace the scene, and
-:mod:`optiland.nonsequential.backends` -- once PR4 lands -- becomes just the
-reference *interpreter* of this data, not the scene's source of truth.
+interpret a :class:`~.scene_ir.SceneIR` can trace the scene.
+:mod:`optiland.nonsequential.backends` builds a fresh ``SceneIR`` at the
+start of every ``trace()`` call and drives its per-bounce interaction
+dispatch from it (see :mod:`.interpreter`) rather than branching on the
+Python class of each ``scene.surfaces`` entry -- the reference
+*interpreter* of this data, not the scene's source of truth.
 
 Translatability checklist
 --------------------------
@@ -32,6 +35,11 @@ Kramer Harrison, 2026
 from __future__ import annotations
 
 from optiland.nonsequential.ir.bsdf_ir import BsdfIR
+from optiland.nonsequential.ir.interpreter import (
+    apply_primitive_interactions,
+    assert_bsdf_matches,
+    assert_component_kind_matches,
+)
 from optiland.nonsequential.ir.lower import lower
 from optiland.nonsequential.ir.medium_ir import MediumIR
 from optiland.nonsequential.ir.scene_ir import (
@@ -56,6 +64,9 @@ __all__ = [
     "SceneIR",
     "SensorIR",
     "VolumeIR",
+    "apply_primitive_interactions",
+    "assert_bsdf_matches",
+    "assert_component_kind_matches",
     "lower",
     "scene_ir_from_dict",
     "scene_ir_to_dict",

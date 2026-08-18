@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from optiland.coordinate_system import CoordinateSystem
     from optiland.nonsequential.bsdf.base import BaseBSDF
     from optiland.nonsequential.components.geometry.base import ComponentGeometry
+    from optiland.nonsequential.ir.bsdf_ir import BsdfIR
     from optiland.nonsequential.materials.nsq_material import NSQMaterial
     from optiland.nonsequential.ray_bundle import NSQRayBundle
     from optiland.nonsequential.rng import NSQRng
@@ -75,6 +76,7 @@ class ReflectiveComponent(BaseComponent):
         normals: np.ndarray,
         hit_mask: np.ndarray,
         rng: NSQRng,
+        bsdf_ir: BsdfIR,
     ) -> None:
         """Apply specular (or BSDF) reflection at hit points (in-place).
 
@@ -85,6 +87,10 @@ class ReflectiveComponent(BaseComponent):
             hit_mask: True for rays hitting this component, shape (N,).
             rng: Keyed PCG32 RNG. Draws are keyed by this ray's own id and
                 its bounce count as of this interaction.
+            bsdf_ir: This surface's lowered BSDF descriptor. Whether the
+                scatter branch below runs at all is decided from
+                ``bsdf_ir.kind != "none"`` (verified by the caller to match
+                ``self.bsdf``), not from ``self.bsdf is not None``.
         """
         # Captured before any mutation below (including the bounce
         # increment at the end of this method) changes rays.bounce.
@@ -113,7 +119,7 @@ class ReflectiveComponent(BaseComponent):
         hit_col = hit_mask[:, None]
         new_dirs = be.where(hit_col, reflected, dirs)
 
-        if self.bsdf is not None:
+        if bsdf_ir.kind != "none":
             # Compute BSDF for all N rays; where-select only scattering rays
             bsdf_dirs, bsdf_weights = self.bsdf.sample(
                 rays.num_rays,

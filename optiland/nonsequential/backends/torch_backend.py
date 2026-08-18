@@ -26,6 +26,8 @@ from optiland.nonsequential._utils import (
     get_detector_names,
 )
 from optiland.nonsequential.backends.base import TracerBackend
+from optiland.nonsequential.ir.interpreter import apply_primitive_interactions
+from optiland.nonsequential.ir.lower import lower
 from optiland.nonsequential.rng import NSQRng
 
 if TYPE_CHECKING:
@@ -151,6 +153,10 @@ class TorchBackend(TracerBackend):
         for comp in scene.surfaces:
             if isinstance(comp, AbsorbingComponent):
                 comp.reset_stats()
+
+        # The per-bounce interaction loop below is driven by this IR, not by
+        # iterating scene.surfaces and branching on Python class identity.
+        ir = lower(scene)
 
         t_start = time.perf_counter()
 
@@ -279,12 +285,19 @@ class TorchBackend(TracerBackend):
                         rays.alive = rays.alive & ~det_first
                         rays.bounce = be.where(det_first, rays.bounce + 1, rays.bounce)
 
-                    # Apply component interactions
-                    for ci, comp in enumerate(scene.surfaces):
-                        mask_ci_np = comp_first_np & (comp_idx == ci)
-                        if mask_ci_np.any():
-                            mask_ci = be.array(mask_ci_np)
-                            comp.interact(rays, t_min, hit_normals, mask_ci, self.rng)
+                    # Apply component interactions, dispatched from the IR
+                    # (ir.primitives[i].component_kind / .bsdf.kind) rather
+                    # than by iterating scene.surfaces and checking isinstance.
+                    apply_primitive_interactions(
+                        rays,
+                        ir,
+                        scene.surfaces,
+                        t_min,
+                        hit_normals,
+                        comp_idx,
+                        comp_first_np,
+                        self.rng,
+                    )
 
                     # Kill escaped rays
                     no_hit_np = ~any_comp_hit_np & ~any_det_hit_np
