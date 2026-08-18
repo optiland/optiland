@@ -9,7 +9,9 @@ and the development roadmap. The README, the package ``__init__`` docstring, the
 :ref:`gallery overview <gallery_nonsequential>`, and the
 :ref:`developer guide <nonsequential_raytracing>` all link here rather than
 keeping their own copies. See :ref:`nsq_validation_report` for what the engine
-is actually checked against in CI (closed-form benchmarks and invariants).
+is actually checked against in CI (closed-form benchmarks and invariants), and
+:ref:`nsq_whats_changed_v2` for the physics changes since the pre-revamp (v1)
+schema, which v1 scene files can no longer be loaded against.
 
 Beta status
 -----------

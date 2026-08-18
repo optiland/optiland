@@ -30,7 +30,10 @@ designs drop straight into NSQ for stray-light and ghost analysis::
    :ref:`nsq_limitations_and_roadmap` (canonical) for the v1 envelope, known
    limitations (notably zero visibility gradients), and the development roadmap.
    See :ref:`nsq_validation_report` for the closed-form benchmarks and
-   invariants the engine is checked against in CI.
+   invariants the engine is checked against in CI. See
+   :ref:`nsq_whats_changed_v2` if you are comparing results against an older
+   NSQ scene file -- schema v1 files are refused on load and cannot be
+   auto-migrated.
 
 .. rubric:: When to use the NSQ engine
 
@@ -230,3 +233,4 @@ Examples
 
    nonsequential/limitations_and_roadmap
    nonsequential/validation_report
+   nonsequential/whats_changed_v2

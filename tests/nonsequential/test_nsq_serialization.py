@@ -151,6 +151,23 @@ class TestSchemaVersion:
         with pytest.raises(FileNotFoundError):
             NSQScene.from_json(tmp_path / "does_not_exist.json")
 
+    def test_v1_schema_refused_with_pointed_error(self):
+        """A pre-revamp (v1) file must be refused with a pointed, non-generic
+        error naming the old version, explaining there is no auto-migration,
+        and pointing at the what's-changed doc -- not just the generic
+        "schema version mismatch" message used for arbitrary/future
+        versions."""
+        d = scene_to_dict(_make_lens_scene())
+        d["nsq_schema_version"] = 1
+
+        with pytest.raises(ValueError, match="whats_changed_v2") as exc_info:
+            scene_from_dict(d)
+
+        message = str(exc_info.value)
+        assert "version 1" in message
+        assert "no auto-migration" in message
+        assert "pre-revamp" in message
+
 
 class TestTensorSerialization:
     def test_values_stored_as_plain_floats(self, tmp_path):
