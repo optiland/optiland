@@ -88,17 +88,45 @@ class ParaxialRayTracer(BaseRayTracer):
         u_ = self._process_input(u)
         z_ = self._process_input(z)
 
+        path = self.optic.surfaces.build_paraxial_path()
+
         R = self.optic.surfaces.radii
         n = self.optic.surfaces.n(wavelength)
-        pos = be.ravel(self.optic.surfaces.positions)
+        pos = be.ravel(path.axial_positions)
         surfs = self.optic.surfaces
 
+        if path.is_folded_or_off_axis:
+            # The scalar folded model is only defined on its supported
+            # domain; reject anything outside it rather than returning
+            # plausible numbers.
+            path.require_scalar_paraxial("paraxial ray tracing")
+            # A powered surface on an odd-parity leg, or one authored with
+            # its local +z against the beam, needs its paraxial power sign
+            # corrected: R_eff = parity * sgn(z_axis . d_in) * R_authored.
+            # Authored radii are never mutated; infinities are preserved to
+            # keep +inf/-inf output unchanged. Real-ray geometry is
+            # untouched.
+            sign = path.orientation_sign_array
+            R = be.where(be.isfinite(R), sign * R, R)
+            f_signs = [float(s) for s in path.orientation_sign]
+        else:
+            # Canonical +/-z chains always satisfy
+            # parity * sgn(z_axis . d_in) = +1, so the authored values are
+            # already the effective ones -- kept bit-for-bit.
+            f_signs = [1.0] * len(self.optic.surfaces.surfaces)
+
         if reverse:
+            # The reverse transform (flip order, negate radii, mirror
+            # positions, roll indices) is a pure 1-D map of the forward
+            # paraxial system, so it applies to the orientation-corrected
+            # effective values exactly as it did to the authored ones --
+            # the orientation sign must not be applied a second time.
             R = -be.flip(R)
             n = be.roll(n, shift=1)
             n = be.flip(n)
             pos = pos[-1] - be.flip(pos)
             surfs = surfs[::-1]
+            f_signs = f_signs[::-1]
 
         power = be.diff(n, prepend=be.array([n[0]])) / R
 
@@ -119,17 +147,14 @@ class ParaxialRayTracer(BaseRayTracer):
             # reflect or refract
             if surfs[k].interaction_model.is_reflective:
                 if surfs[k].surface_type == "paraxial":
-                    f = (
-                        -surfs[k].interaction_model.f
-                        if reverse
-                        else surfs[k].interaction_model.f
-                    )
+                    f = f_signs[k] * surfs[k].interaction_model.f
+                    f = -f if reverse else f
                     u_ = -u_ - y_ / f
                 else:
                     u_ = -u_ - 2 * y_ / R[k]
             else:
                 if surfs[k].surface_type == "paraxial":
-                    f = surfs[k].interaction_model.f
+                    f = f_signs[k] * surfs[k].interaction_model.f
                     u_ = (n[k - 1] * u_ - y_ / f) / n[k]
                 else:
                     u_ = (n[k - 1] * u_ - y_ * power[k]) / n[k]
