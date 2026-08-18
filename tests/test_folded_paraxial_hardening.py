@@ -1030,6 +1030,29 @@ class TestGatedOperations:
         with pytest.raises(UnsupportedParaxialGeometryError):
             optic.updater.set_thickness(10.0, 1)
 
+    def test_folded_through_focus_raises_before_mutation(self, set_test_backend):
+        """Through-focus analysis steps the image plane along global z only,
+        so it is gated on folded paths before any geometry is touched."""
+        from optiland.analysis import ThroughFocusSpotDiagram
+
+        optic = folded()
+        z_before = float(be.to_numpy(optic.image_surface.geometry.cs.z))
+        with pytest.raises(UnsupportedParaxialGeometryError):
+            ThroughFocusSpotDiagram(optic, num_steps=1)
+        z_after = float(be.to_numpy(optic.image_surface.geometry.cs.z))
+        assert z_before == z_after
+
+    def test_translated_straight_through_focus_still_works(
+        self, set_test_backend
+    ):
+        """A laterally translated straight system keeps positions == global
+        z, so through-focus analysis remains supported."""
+        from optiland.analysis import ThroughFocusSpotDiagram
+
+        optic = _translate(straight_finite(), dx=5.0)
+        analysis = ThroughFocusSpotDiagram(optic, num_steps=1)
+        assert len(analysis.results) == 1
+
     def test_neg_z_entry_z_solves_are_gated(self, set_test_backend):
         """-z entry has positions != global z, so z-offset solves must be
         rejected too (the offset would carry the wrong sign)."""
@@ -1080,6 +1103,142 @@ class TestGatedOperations:
             Hx=0, Hy=1, wavelength=0.55, num_rays=3, distribution="line_y"
         )
         assert rays is not None
+
+
+class TestStraightSystemAdvisories:
+    """Tilted/decentered surfaces on straight +z systems: the scalar
+    first-order numbers stay the historical ones (tilt ignored), but the
+    approximation is now surfaced as a ParaxialDomainWarning instead of
+    staying silent."""
+
+    @staticmethod
+    def _tilted_lens():
+        optic = Optic(name="straight_tilted_lens")
+        optic.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+        optic.surfaces.add(
+            index=1,
+            radius=25.84,
+            thickness=4.0,
+            material="N-BK7",
+            is_stop=True,
+            rx=0.05,
+        )
+        optic.surfaces.add(index=2, radius=be.inf, thickness=46.0)
+        optic.surfaces.add(index=3)
+        return _finish(optic)
+
+    @staticmethod
+    def _decentered_lens():
+        optic = Optic(name="straight_decentered_lens")
+        optic.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+        optic.surfaces.add(
+            index=1,
+            radius=25.84,
+            thickness=4.0,
+            material="N-BK7",
+            is_stop=True,
+            dy=1.5,
+        )
+        optic.surfaces.add(index=2, radius=be.inf, thickness=46.0)
+        optic.surfaces.add(index=3)
+        return _finish(optic)
+
+    def test_tilted_lens_warns_and_keeps_historical_values(
+        self, set_test_backend
+    ):
+        optic = self._tilted_lens()
+        with pytest.warns(ParaxialDomainWarning, match="TILTED_REFRACTIVE"):
+            f2_tilted = optic.paraxial.f2()
+        # The numbers themselves are unchanged: same result as untilted.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ParaxialDomainWarning)
+            f2_ref = straight().paraxial.f2()
+        assert_allclose(f2_tilted, f2_ref)
+
+    def test_decentered_lens_warns(self, set_test_backend):
+        optic = self._decentered_lens()
+        path = optic.surfaces.build_paraxial_path()
+        # The decenter shows up as an advisory, never as a gating
+        # diagnostic: the system stays fully supported.
+        assert path.positions_are_global_z
+        assert not path.diagnostics
+        assert path.advisories
+        with pytest.warns(ParaxialDomainWarning, match="NONCOLLINEAR"):
+            optic.paraxial.f2()
+
+    def test_plain_straight_system_stays_silent(self, set_test_backend):
+        optic = straight()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", ParaxialDomainWarning)
+            optic.paraxial.f2()
+            optic.paraxial.chief_ray()
+
+    def test_advisories_never_gate(self, set_test_backend):
+        """Advisory systems keep working end to end (trace, aim), unlike
+        diagnostic (folded out-of-domain) systems."""
+        optic = self._tilted_lens()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ParaxialDomainWarning)
+            rays = optic.trace(
+                Hx=0, Hy=0, wavelength=0.55, num_rays=3, distribution="line_y"
+            )
+        assert rays is not None
+
+
+def test_domain_exceptions_are_top_level_exports():
+    """Users must be able to catch the domain error without knowing the
+    internal module layout."""
+    import optiland
+
+    assert optiland.UnsupportedParaxialGeometryError is (
+        UnsupportedParaxialGeometryError
+    )
+    assert optiland.ParaxialDomainWarning is ParaxialDomainWarning
+
+
+def test_entrance_pupil_z_is_deprecated_alias(set_test_backend):
+    """The legacy name still returns the identical value but points callers
+    to entrance_pupil_axial_position."""
+    optic = straight()
+    with pytest.warns(DeprecationWarning, match="entrance_pupil_axial_position"):
+        legacy = optic.paraxial.entrance_pupil_z()
+    assert_allclose(legacy, optic.paraxial.entrance_pupil_axial_position())
+
+
+class TestViewerRealSpaceLimits:
+    def test_folded_view_covers_folded_arm(self, set_test_backend):
+        """Default 2-D view limits must cover the whole vertex chain: the
+        folded arm of ``folded()`` ends at (0, 26, 24), which the previous
+        first-to-last-z / symmetric-about-the-axis sizing clipped."""
+        import matplotlib.pyplot as plt
+
+        from optiland.visualization.system import OpticViewer
+
+        optic = folded()
+        viewer = OpticViewer(optic)
+        fig, ax, _ = viewer.view(projection="YZ")
+        xlim = ax.get_xlim()
+        ylim = ax.get_ylim()
+        plt.close(fig)
+
+        assert xlim[0] <= 0.0 and xlim[1] >= 24.0
+        assert ylim[1] >= 26.0
+
+    def test_straight_view_limits_unchanged(self, set_test_backend):
+        """For a straight +z system the vertex chain has x = y = 0, so the
+        vertex-based sizing must reduce to the previous behavior: z from
+        first to last surface, transverse limits symmetric about the axis."""
+        import matplotlib.pyplot as plt
+
+        from optiland.visualization.system import OpticViewer
+
+        optic = straight()
+        viewer = OpticViewer(optic)
+        fig, ax, _ = viewer.view(projection="YZ")
+        ylim = ax.get_ylim()
+        plt.close(fig)
+
+        assert_allclose(ylim[0], -ylim[1])
 
 
 # ---------------------------------------------------------------------------
