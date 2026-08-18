@@ -37,7 +37,15 @@ geometry. Inside the ray aimers, where paraxial values only seed a
 real-ray Newton solve, the same finding is reported as a
 :class:`~optiland.paraxial_path.ParaxialDomainWarning` so that e.g. a
 slightly tilted stop mirror can still be aimed (the aimed rays are
-verified against real traces).
+verified against real traces). Both are importable from the package root
+(``optiland.UnsupportedParaxialGeometryError``,
+``optiland.ParaxialDomainWarning``).
+
+Straight ``+z`` systems with tilted powered surfaces or interior decenters
+remain fully supported with their historical first-order numbers (the
+tilt/decenter is ignored by the scalar model, as it always was), but that
+approximation is now surfaced as a :class:`ParaxialDomainWarning` instead
+of staying silent. Real ray tracing accounts for the perturbation exactly.
 
 The signed unfolded axial coordinate
 ------------------------------------
@@ -112,8 +120,8 @@ Real-space pupil points are exposed directly:
   :math:`\mathbf r_I + p_I\,XPL\,\mathbf d_I` (image vertex, parity and
   beam direction at the image plane);
 - ``Paraxial.entrance_pupil_axial_position()`` -- the axial scalar
-  (``entrance_pupil_z()`` is a legacy alias of it and, despite the name, is
-  **not** a Cartesian z).
+  (``entrance_pupil_z()`` is a deprecated legacy alias of it and, despite
+  the name, is **not** a Cartesian z).
 
 The chief-ray wavefront reference sphere and the Huygens PSF normalization
 use these 3-D points (never ``global_z + axial_scalar``).

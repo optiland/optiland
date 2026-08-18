@@ -20,15 +20,23 @@ object-space quantities are measured relative to the first physical surface
   follow the same per-surface convention, where ``1`` denotes object space and
   ``2`` denotes image space.
 
-When a **global** z coordinate is needed for the entrance pupil — for instance
-to compare it against object or surface positions — use
-:py:meth:`~paraxial.Paraxial.entrance_pupil_z`, which converts ``EPL()`` to the
-global frame in one place. Internally, every ray-aiming, ray-tracing, and
-aperture consumer that mixes the pupil location with global coordinates routes
-through this helper.
+When the entrance pupil is needed on the same axial coordinate as surface
+positions — for instance to compare it against object or surface positions —
+use :py:meth:`~paraxial.Paraxial.entrance_pupil_axial_position`, which
+re-anchors ``EPL()`` in one place (``entrance_pupil_z`` is its deprecated
+legacy alias). Internally, every ray-aiming, ray-tracing, and aperture
+consumer that mixes the pupil location with axial coordinates routes through
+this helper. For the pupil's real-space location in a folded system, use
+:py:meth:`~paraxial.Paraxial.entrance_pupil_point_gcs` and
+:py:meth:`~paraxial.Paraxial.exit_pupil_point_gcs`.
+
+The scalar first-order model itself is written on the **signed unfolded
+axial coordinate** carried by :py:class:`~paraxial_path.ParaxialPath` (see
+the developer's guide page :doc:`../developers_guide/folded_systems`).
 
 .. autosummary::
    :toctree: paraxial/
    :caption: Paraxial Modules
 
    paraxial
+   paraxial_path
