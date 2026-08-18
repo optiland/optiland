@@ -41,7 +41,7 @@ class TracerBackend(ABC):
         min_flux_fraction: float = 1e-6,
         batch_size: int = DEFAULT_BATCH_SIZE,
         seed: int | None = None,
-        record_paths: bool = False,
+        record_paths: bool | int = False,
     ) -> SimulationResult:
         """Run the full simulation and return results.
 
@@ -57,8 +57,11 @@ class TracerBackend(ABC):
             batch_size: Number of rays per processing batch. Does not change the result,
                 only the speed; see ``DEFAULT_BATCH_SIZE``.
             seed: RNG seed for reproducibility.
-            record_paths: If True, record the full phase-space path of
-                every ray, bounce-by-bounce, for visualization.
+            record_paths: ``False`` records nothing, ``True`` records every
+                ray's full phase-space path bounce-by-bounce, and a positive
+                ``int`` records an approximately that-many-ray subset
+                selected deterministically by ``ray_id`` hash (D-7, §5.4) --
+                see :mod:`optiland.nonsequential.path_recording`.
 
         Returns:
             :class:`~optiland.nonsequential.tracer.SimulationResult` with

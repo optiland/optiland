@@ -42,7 +42,9 @@ class SimulationResult:
             ``|flux_in - detected - absorbed - bulk_absorbed - escaped
             - lost| / flux_in``.
         trace_time_sec: Wall-clock time for the trace [s].
-        ray_paths: Optional per-ray event log dict (if record_paths=True).
+        ray_paths: Optional per-ray event log dict (``{"events":
+            structured_array}``), populated when ``record_paths`` is
+            truthy -- see :mod:`optiland.nonsequential.path_recording`.
     """
 
     detectors: dict[str, object] = field(default_factory=dict)
@@ -103,7 +105,7 @@ class NSQTracer:
         batch_size: int = DEFAULT_BATCH_SIZE,
         seed: int | None = None,
         backend: TracerBackend | None = None,
-        record_paths: bool = False,
+        record_paths: bool | int = False,
     ) -> SimulationResult:
         """Run the simulation and return results.
 
@@ -119,7 +121,11 @@ class NSQTracer:
             backend: Backend override. Uses constructor backend if not given.
                 Auto-selects from active ``optiland.backend`` if neither
                 is provided.
-            record_paths: If True, tracks node points of bouncing rays.
+            record_paths: ``False`` records nothing, ``True`` records every
+                ray's path, and a positive ``int`` records an approximately
+                that-many-ray subset selected deterministically by
+                ``ray_id`` hash (D-7, §5.4) -- see
+                :mod:`optiland.nonsequential.path_recording`.
 
         Returns:
             SimulationResult.

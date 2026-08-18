@@ -254,7 +254,7 @@ class NSQScene:
         batch_size: int = DEFAULT_BATCH_SIZE,
         seed: int | None = None,
         backend: TracerBackend | None = None,
-        record_paths: bool = False,
+        record_paths: bool | int = False,
     ) -> SimulationResult:
         """Run the Monte Carlo simulation and return results.
 
@@ -272,7 +272,13 @@ class NSQScene:
             seed: RNG seed.
             backend: TracerBackend to use. Defaults to NumpyBackend or
                 TorchBackend based on the active ``optiland.backend``.
-            record_paths: If True, tracks node points of bouncing rays.
+            record_paths: ``False`` (default) records nothing. ``True``
+                records every ray's full path. A positive ``int`` records
+                an approximately that-many-ray subset, selected
+                deterministically by ``ray_id`` hash (D-7, §5.4), so a
+                large trace stays cheap while still yielding a bounded
+                sample for visualization/diagnosis, e.g.
+                ``scene.trace(num_rays=10_000_000, record_paths=1_000)``.
 
         Returns:
             SimulationResult with per-detector results and statistics.

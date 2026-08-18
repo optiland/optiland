@@ -27,6 +27,10 @@ from optiland.nonsequential.detectors.dispatch import (
 )
 from optiland.nonsequential.ir.interpreter import apply_primitive_interactions
 from optiland.nonsequential.ir.lower import lower
+from optiland.nonsequential.path_recording import (  # noqa: F401
+    _EVENT_DTYPE,
+    PathRecorder,
+)
 from optiland.nonsequential.ray_bundle import NSQRayBundle
 from optiland.nonsequential.rng import EventSlot
 from optiland.nonsequential.sampling import russian_roulette
@@ -34,24 +38,6 @@ from optiland.nonsequential.sampling import russian_roulette
 if TYPE_CHECKING:
     from optiland.nonsequential.scene import NSQScene
     from optiland.nonsequential.tracer import SimulationResult
-
-# Dtype for per-ray event records (always numpy structured array for display)
-_EVENT_DTYPE = np.dtype(
-    [
-        ("ray_id", np.int64),
-        ("event_type", "U10"),
-        ("x", np.float64),
-        ("y", np.float64),
-        ("z", np.float64),
-        ("L", np.float64),
-        ("M", np.float64),
-        ("N", np.float64),
-        ("flux", np.float64),
-        ("wavelength", np.float64),
-        ("bounce", np.int32),
-        ("component_name", "U64"),
-    ]
-)
 
 
 # Floor on the split-budget culling survival probability, mirroring
@@ -129,7 +115,7 @@ class ArrayBackend(TracerBackend):
         min_flux_fraction: float = 1e-6,
         batch_size: int = DEFAULT_BATCH_SIZE,
         seed: int | None = None,
-        record_paths: bool = False,
+        record_paths: bool | int = False,
     ) -> SimulationResult:
         """Run the full Monte Carlo simulation.
 
@@ -146,7 +132,14 @@ class ArrayBackend(TracerBackend):
             batch_size: Rays per processing batch. Does not change the result,
                 only the speed; see ``DEFAULT_BATCH_SIZE``.
             seed: RNG seed for reproducibility.
-            record_paths: If True, records per-ray event log.
+            record_paths: ``False`` (default) records nothing. ``True``
+                records every ray's full path -- fine for small traces, but
+                O(rays x bounces) memory for large ones. A positive ``int``
+                records an approximately that-many-ray subset, selected by a
+                PCG32 hash of ``ray_id`` (D-7, §5.4) so the trace stays
+                full-size and cheap while a bounded, deterministic sample is
+                available for visualization/diagnosis -- e.g.
+                ``scene.trace(num_rays=10_000_000, record_paths=1_000)``.
 
         Returns:
             SimulationResult.
@@ -196,8 +189,12 @@ class ArrayBackend(TracerBackend):
             num_rays_total, [float(s.total_flux) for s in sources]
         )
 
-        # Per-ray event log (numpy-only, for display/visualization)
-        event_log: list[dict] | None = [] if record_paths else None
+        # Vectorised columnar path recording (D-7, PR12): PathRecorder
+        # replaces the old per-event Python dict + repeated to_numpy()
+        # closures with preallocated array writes, and implements the
+        # record_paths: int subset contract (§5.4).
+        path_recorder = PathRecorder(record_paths, num_rays_total, self.rng.seed)
+
         _next_ray_id: list[int] = [0]
 
         def _alloc_ray_ids(n: int) -> np.ndarray:
@@ -210,117 +207,6 @@ class ArrayBackend(TracerBackend):
             start = _next_ray_id[0]
             _next_ray_id[0] += n
             return np.arange(start, start + n, dtype=np.int64)
-
-        def _log_birth(rays: NSQRayBundle, source_name: str) -> None:
-            if event_log is None:
-                return
-            ids = to_numpy(rays.ray_id)
-            x_np = to_numpy(rays.x)
-            y_np = to_numpy(rays.y)
-            z_np = to_numpy(rays.z)
-            L_np = to_numpy(rays.L)
-            M_np = to_numpy(rays.M)
-            N_np = to_numpy(rays.N)
-            flux_np = to_numpy(rays.flux)
-            wl_np = to_numpy(rays.wavelength)
-            bounce_np = to_numpy(rays.bounce)
-            for k in range(rays.num_rays):
-                event_log.append(
-                    {
-                        "ray_id": int(ids[k]),
-                        "event_type": "birth",
-                        "x": float(x_np[k]),
-                        "y": float(y_np[k]),
-                        "z": float(z_np[k]),
-                        "L": float(L_np[k]),
-                        "M": float(M_np[k]),
-                        "N": float(N_np[k]),
-                        "flux": float(flux_np[k]),
-                        "wavelength": float(wl_np[k]),
-                        "bounce": int(bounce_np[k]),
-                        "component_name": source_name,
-                    }
-                )
-
-        def _log_hits(
-            rays: NSQRayBundle,
-            mask: np.ndarray,
-            comp_name: str,
-            t_offset: np.ndarray | None = None,
-        ) -> None:
-            if event_log is None or rays.ray_id is None:
-                return
-            mask_np = to_numpy(mask).astype(bool)
-            idx = np.where(mask_np)[0]
-            if len(idx) == 0:
-                return
-            ids = to_numpy(rays.ray_id)[idx]
-            x_np = to_numpy(rays.x)[idx]
-            y_np = to_numpy(rays.y)[idx]
-            z_np = to_numpy(rays.z)[idx]
-            L_np = to_numpy(rays.L)[idx]
-            M_np = to_numpy(rays.M)[idx]
-            N_np = to_numpy(rays.N)[idx]
-            if t_offset is not None:
-                t_np = to_numpy(t_offset)[idx]
-                x_np = x_np + t_np * L_np
-                y_np = y_np + t_np * M_np
-                z_np = z_np + t_np * N_np
-            flux_np = to_numpy(rays.flux)[idx]
-            wl_np = to_numpy(rays.wavelength)[idx]
-            bounce_np = to_numpy(rays.bounce)[idx]
-            for k in range(len(idx)):
-                event_log.append(
-                    {
-                        "ray_id": int(ids[k]),
-                        "event_type": "hit",
-                        "x": float(x_np[k]),
-                        "y": float(y_np[k]),
-                        "z": float(z_np[k]),
-                        "L": float(L_np[k]),
-                        "M": float(M_np[k]),
-                        "N": float(N_np[k]),
-                        "flux": float(flux_np[k]),
-                        "wavelength": float(wl_np[k]),
-                        "bounce": int(bounce_np[k]),
-                        "component_name": comp_name,
-                    }
-                )
-
-        def _log_deaths(rays: NSQRayBundle, mask: np.ndarray, cause: str) -> None:
-            if event_log is None or rays.ray_id is None:
-                return
-            mask_np = to_numpy(mask).astype(bool)
-            idx = np.where(mask_np)[0]
-            if len(idx) == 0:
-                return
-            ids = to_numpy(rays.ray_id)[idx]
-            x_np = to_numpy(rays.x)[idx]
-            y_np = to_numpy(rays.y)[idx]
-            z_np = to_numpy(rays.z)[idx]
-            L_np = to_numpy(rays.L)[idx]
-            M_np = to_numpy(rays.M)[idx]
-            N_np = to_numpy(rays.N)[idx]
-            flux_np = to_numpy(rays.flux)[idx]
-            wl_np = to_numpy(rays.wavelength)[idx]
-            bounce_np = to_numpy(rays.bounce)[idx]
-            for k in range(len(idx)):
-                event_log.append(
-                    {
-                        "ray_id": int(ids[k]),
-                        "event_type": "death",
-                        "x": float(x_np[k]),
-                        "y": float(y_np[k]),
-                        "z": float(z_np[k]),
-                        "L": float(L_np[k]),
-                        "M": float(M_np[k]),
-                        "N": float(N_np[k]),
-                        "flux": float(flux_np[k]),
-                        "wavelength": float(wl_np[k]),
-                        "bounce": int(bounce_np[k]),
-                        "component_name": cause,
-                    }
-                )
 
         # Main trace loop
         for source_idx, (source, source_num_rays) in enumerate(
@@ -343,7 +229,7 @@ class ArrayBackend(TracerBackend):
                 if batch != source_num_rays:
                     rays.flux = rays.flux * (batch / source_num_rays)
 
-                _log_birth(rays, source_name)
+                path_recorder.log_birth(rays, source_name)
 
                 while rays.num_rays_alive > 0:
                     # Component intersections
@@ -403,7 +289,9 @@ class ArrayBackend(TracerBackend):
                         mask_di = det_first & (det_idx == di)
                         if mask_di.any():
                             det_name = getattr(det, "name", f"detector_{di}")
-                            _log_hits(rays, mask_di, det_name, t_offset=det_t_safe)
+                            path_recorder.log_hits(
+                                rays, mask_di, det_name, t_offset=det_t_safe
+                            )
                             det.record(rays, det_t_safe, mask_di)
 
                     # Advance detector-hit rays. Absorbing detectors
@@ -442,7 +330,7 @@ class ArrayBackend(TracerBackend):
                         comp_idx,
                         comp_first,
                         self.rng,
-                        log_hit_fn=_log_hits,
+                        log_hit_fn=path_recorder.log_hits,
                         ray_id_allocator=_alloc_ray_ids,
                     )
 
@@ -454,7 +342,7 @@ class ArrayBackend(TracerBackend):
                         total_flux_escaped += float(
                             to_numpy(rays.flux[escaped_now]).sum()
                         )
-                        _log_deaths(rays, escaped_now, "escaped")
+                        path_recorder.log_deaths(rays, escaped_now, "escaped")
                         bounding_scale = estimate_bounding_scale(scene)
                         ex = bounding_scale * rays.L
                         ey = bounding_scale * rays.M
@@ -475,7 +363,9 @@ class ArrayBackend(TracerBackend):
                         total_flux_lost += float(
                             to_numpy(rays.flux[newly_depth_killed]).sum()
                         )
-                        _log_deaths(rays, newly_depth_killed, "depth_killed")
+                        path_recorder.log_deaths(
+                            rays, newly_depth_killed, "depth_killed"
+                        )
                     rays.alive = rays.alive & alive_depth
 
                     # Russian roulette (D-9) replaces the old biased hard
@@ -502,7 +392,7 @@ class ArrayBackend(TracerBackend):
                         total_flux_lost += float(
                             to_numpy(flux_before_rr)[rr_killed_np].sum()
                         )
-                        _log_deaths(rays, rr_killed_np, "flux_killed")
+                        path_recorder.log_deaths(rays, rr_killed_np, "flux_killed")
 
                     # Merge bounded-splitting (D2, PR11) spawned transmit
                     # children into the live bundle, now that this bounce's
@@ -572,14 +462,10 @@ class ArrayBackend(TracerBackend):
             else 0.0
         )
 
-        # Build ray_paths from event log
-        ray_paths = None
-        if event_log is not None and event_log:
-            arr = np.zeros(len(event_log), dtype=_EVENT_DTYPE)
-            for k, ev in enumerate(event_log):
-                for fname in _EVENT_DTYPE.names:
-                    arr[k][fname] = ev[fname]
-            ray_paths = {"events": arr}
+        # Vectorised (D-7, PR12): single conversion of the columnar buffers
+        # to the structured-array format, done once here rather than
+        # incrementally per event.
+        ray_paths = path_recorder.finalize()
 
         return SimulationResult(
             detectors=detector_results,

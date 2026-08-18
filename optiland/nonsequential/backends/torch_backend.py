@@ -33,6 +33,7 @@ from optiland.nonsequential.detectors.dispatch import (
 )
 from optiland.nonsequential.ir.interpreter import apply_primitive_interactions
 from optiland.nonsequential.ir.lower import lower
+from optiland.nonsequential.path_recording import PathRecorder
 from optiland.nonsequential.rng import NSQRng
 from optiland.nonsequential.sampling import russian_roulette
 
@@ -131,7 +132,7 @@ class TorchBackend(TracerBackend):
         min_flux_fraction: float = 1e-6,
         batch_size: int = DEFAULT_BATCH_SIZE,
         seed: int | None = None,
-        record_paths: bool = False,
+        record_paths: bool | int = False,
     ) -> SimulationResult:
         """Run the differentiable fixed-depth trace.
 
@@ -149,7 +150,11 @@ class TorchBackend(TracerBackend):
             batch_size: Rays per processing batch (forward pass only). Does not
                 change the result, only the speed; see ``DEFAULT_BATCH_SIZE``.
             seed: RNG seed override (overrides constructor seed if provided).
-            record_paths: If True, records per-ray event log (numpy, detached).
+            record_paths: ``False`` records nothing, ``True`` records every
+                ray's path (numpy, detached), and a positive ``int`` records
+                an approximately that-many-ray subset selected
+                deterministically by ``ray_id`` hash (D-7, §5.4) -- see
+                :mod:`optiland.nonsequential.path_recording`.
 
         Returns:
             SimulationResult with differentiable detector ``data`` tensors.
@@ -215,31 +220,14 @@ class TorchBackend(TracerBackend):
             num_rays_total, [float(s.total_flux) for s in sources]
         )
 
-        # Per-ray event log (numpy, detached -- for visualization only)
-        event_log: list[dict] | None = [] if record_paths else None
+        # Vectorised columnar path recording (D-7, PR12): PathRecorder
+        # replaces the old birth-only per-event Python dict closure with
+        # preallocated array writes, and adds hit/death recording (the
+        # array backend already had both; this backend previously recorded
+        # only birth events -- an existing parity gap this PR also closes)
+        # plus the record_paths: int subset contract (§5.4).
+        path_recorder = PathRecorder(record_paths, num_rays_total, self.rng.seed)
         _next_ray_id: list[int] = [0]
-
-        def _log_birth(rays: NSQRayBundle, source_name: str) -> None:
-            if event_log is None:
-                return
-            ids = to_numpy(rays.ray_id)
-            for k in range(rays.num_rays):
-                event_log.append(
-                    {
-                        "ray_id": int(ids[k]),
-                        "event_type": "birth",
-                        "x": float(to_numpy(rays.x)[k]),
-                        "y": float(to_numpy(rays.y)[k]),
-                        "z": float(to_numpy(rays.z)[k]),
-                        "L": float(to_numpy(rays.L)[k]),
-                        "M": float(to_numpy(rays.M)[k]),
-                        "N": float(to_numpy(rays.N)[k]),
-                        "flux": float(to_numpy(rays.flux)[k]),
-                        "wavelength": float(to_numpy(rays.wavelength)[k]),
-                        "bounce": int(to_numpy(rays.bounce)[k]),
-                        "component_name": source_name,
-                    }
-                )
 
         # Main trace loop (no compaction -- fixed-shape for autograd)
         for source_idx, (source, source_num_rays) in enumerate(
@@ -265,7 +253,7 @@ class TorchBackend(TracerBackend):
                 # produce numpy arrays by default; NumPy 2.0 disallows
                 # mixed numpy/torch arithmetic, so we promote upfront.
                 rays = self._ensure_torch_bundle(rays)
-                _log_birth(rays, source_name)
+                path_recorder.log_birth(rays, source_name)
 
                 # Fixed-depth loop (no compaction)
                 for _depth in range(max_depth):
@@ -334,6 +322,10 @@ class TorchBackend(TracerBackend):
                         mask_di_np = det_first_np & (det_idx_np == di)
                         if mask_di_np.any():
                             mask_di = be.array(mask_di_np)
+                            det_name = getattr(det, "name", f"detector_{di}")
+                            path_recorder.log_hits(
+                                rays, mask_di_np, det_name, t_offset=det_t_safe
+                            )
                             det.record(rays, det_t_safe, mask_di)
 
                     # Advance detector-hit rays. Absorbing detectors
@@ -366,6 +358,7 @@ class TorchBackend(TracerBackend):
                         comp_idx,
                         comp_first_np,
                         self.rng,
+                        log_hit_fn=path_recorder.log_hits,
                     )
 
                     # Kill escaped rays
@@ -376,6 +369,7 @@ class TorchBackend(TracerBackend):
                         total_flux_escaped += float(
                             to_numpy(rays.flux)[escaped_np].sum()
                         )
+                        path_recorder.log_deaths(rays, escaped_np, "escaped")
                         escaped = be.array(escaped_np)
                         bs = estimate_bounding_scale(scene)
                         rays.x = be.where(escaped, rays.x + bs * rays.L, rays.x)
@@ -395,6 +389,9 @@ class TorchBackend(TracerBackend):
                         num_rays_depth_killed += int(newly_depth_killed.sum())
                         total_flux_lost += float(
                             to_numpy(rays.flux)[newly_depth_killed].sum()
+                        )
+                        path_recorder.log_deaths(
+                            rays, newly_depth_killed, "depth_killed"
                         )
                     rays.alive = rays.alive & be.array(alive_depth_np)
 
@@ -426,6 +423,7 @@ class TorchBackend(TracerBackend):
                         total_flux_lost += float(
                             to_numpy(flux_before_rr)[rr_killed_np].sum()
                         )
+                        path_recorder.log_deaths(rays, rr_killed_np, "flux_killed")
 
                 source_remaining -= batch
 
@@ -472,18 +470,10 @@ class TorchBackend(TracerBackend):
             else 0.0
         )
 
-        # Build ray_paths from event log (numpy structured array, detached)
-        from optiland.nonsequential.backends.array_backend import (  # noqa: PLC0415
-            _EVENT_DTYPE,
-        )
-
-        ray_paths = None
-        if event_log is not None and event_log:
-            arr = np.zeros(len(event_log), dtype=_EVENT_DTYPE)
-            for k, ev in enumerate(event_log):
-                for fname in _EVENT_DTYPE.names:
-                    arr[k][fname] = ev[fname]
-            ray_paths = {"events": arr}
+        # Vectorised (D-7, PR12): single conversion of the columnar buffers
+        # to the structured-array format (numpy, detached), done once here
+        # rather than incrementally per event.
+        ray_paths = path_recorder.finalize()
 
         return SimulationResult(
             detectors=detector_results,

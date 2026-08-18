@@ -83,6 +83,7 @@ class EventSlot(IntEnum):
     BSDF_U2 = 8
     RR = 9
     BSDF_LOBE_BRANCH = 10
+    PATH_SAMPLE = 11
 
 
 def _splitmix64(z: np.ndarray) -> np.ndarray:
