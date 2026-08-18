@@ -26,6 +26,7 @@ from optiland.nonsequential._utils import (
     get_detector_names,
 )
 from optiland.nonsequential.backends.base import TracerBackend
+from optiland.nonsequential.rng import NSQRng
 
 if TYPE_CHECKING:
     from optiland.nonsequential.components.base import BaseComponent
@@ -52,7 +53,8 @@ class TorchBackend(TracerBackend):
     Attributes:
         seed: RNG seed.
         gradient_mode: Gradient strategy (currently only "autograd").
-        rng: NumPy RNG for detached sampling decisions.
+        rng: Keyed PCG32 RNG for detached sampling decisions (see
+            :mod:`optiland.nonsequential.rng`).
     """
 
     def __init__(
@@ -69,8 +71,8 @@ class TorchBackend(TracerBackend):
         """
         self.seed = seed
         self.gradient_mode = gradient_mode
-        # Detached sampling uses numpy RNG (sampling decisions are detached)
-        self.rng = np.random.default_rng(seed)
+        # Detached sampling uses a keyed RNG (sampling decisions are detached)
+        self.rng = NSQRng(seed)
 
     def intersect_scene(
         self,
@@ -107,17 +109,6 @@ class TorchBackend(TracerBackend):
 
         return t_min, hit_normals, comp_indices
 
-    def random_uniform(self, shape: tuple[int, ...]) -> np.ndarray:
-        """Generate uniform random numbers for detached sampling.
-
-        Args:
-            shape: Shape of the output array.
-
-        Returns:
-            NumPy array of uniform random numbers in [0, 1).
-        """
-        return self.rng.random(shape)
-
     def trace(
         self,
         scene: NSQScene,
@@ -152,7 +143,7 @@ class TorchBackend(TracerBackend):
         )
 
         if seed is not None:
-            self.rng = np.random.default_rng(seed)
+            self.rng = NSQRng(seed)
 
         # Reset detectors and absorber stats
         for det in scene.detectors:
@@ -191,11 +182,8 @@ class TorchBackend(TracerBackend):
         def _log_birth(rays: NSQRayBundle, source_name: str) -> None:
             if event_log is None:
                 return
-            n = rays.num_rays
-            ids = np.arange(_next_ray_id[0], _next_ray_id[0] + n, dtype=np.int64)
-            rays.ray_id = ids
-            _next_ray_id[0] += n
-            for k in range(n):
+            ids = to_numpy(rays.ray_id)
+            for k in range(rays.num_rays):
                 event_log.append(
                     {
                         "ray_id": int(ids[k]),
@@ -222,7 +210,11 @@ class TorchBackend(TracerBackend):
 
             while source_remaining > 0:
                 batch = min(batch_size, source_remaining)
-                rays = source.generate(batch, self.rng)
+                ray_id = np.arange(
+                    _next_ray_id[0], _next_ray_id[0] + batch, dtype=np.int64
+                )
+                _next_ray_id[0] += batch
+                rays = source.generate(ray_id, self.rng)
                 # source.generate() spreads the source's whole total_flux over
                 # the rays it is asked for, so a batched source would re-emit
                 # the full flux once per batch. Rescale to this batch's share

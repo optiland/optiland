@@ -431,7 +431,7 @@ class TestVisibilityGradientZero:
 
         scene, _, _ = _build_mirror_scene()
         backend = TorchBackend(seed=0)
-        rays = scene.sources[0].generate(64, backend.rng)
+        rays = scene.sources[0].generate(np.arange(64), backend.rng)
         rays = backend._ensure_torch_bundle(rays)
 
         t_min, normals, comp_indices = backend.intersect_scene(rays, scene.surfaces)

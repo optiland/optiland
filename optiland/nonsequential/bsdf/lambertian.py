@@ -7,11 +7,17 @@ Kramer Harrison, 2026
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 
 import optiland.backend as be
 from optiland.backend.utils import to_numpy
 from optiland.nonsequential.bsdf.base import BaseBSDF
+from optiland.nonsequential.rng import EventSlot
+
+if TYPE_CHECKING:
+    from optiland.nonsequential.rng import NSQRng
 
 
 class LambertianBSDF(BaseBSDF):
@@ -37,31 +43,32 @@ class LambertianBSDF(BaseBSDF):
         incident_dirs: np.ndarray,
         normals: np.ndarray,
         wavelengths: np.ndarray,
-        rng: np.random.Generator | None = None,
+        rng: NSQRng,
+        ray_id: np.ndarray,
+        bounce: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Sample cosine-weighted hemisphere directions around normals.
 
         Uses Malley's method: sample uniform disk, project to hemisphere.
-        Sampling is detached (numpy RNG); weights are plain scalars.
+        Sampling is detached (keyed PCG32); weights are plain scalars.
 
         Args:
             num_rays: Number of rays.
             incident_dirs: Incident directions, shape (N, 3).
             normals: Surface normals, shape (N, 3), pointing toward ray side.
             wavelengths: Wavelengths [µm], shape (N,).
-            rng: NumPy random generator.
+            rng: Keyed PCG32 RNG.
+            ray_id: Per-ray identifiers, shape (N,).
+            bounce: Per-ray bounce/step index, shape (N,).
 
         Returns:
             (scattered_dirs, flux_weights) with flux_weights = reflectance.
         """
-        if rng is None:
-            rng = np.random.default_rng()
-
         # Sampling is inherently stochastic/detached -- use numpy throughout
         normals_np = np.asarray(to_numpy(normals), dtype=np.float64)
 
-        r1 = rng.random(num_rays)
-        r2 = rng.random(num_rays)
+        r1 = rng.uniform(ray_id, bounce, EventSlot.BSDF_U1)
+        r2 = rng.uniform(ray_id, bounce, EventSlot.BSDF_U2)
 
         # Malley's method
         phi = 2.0 * np.pi * r1

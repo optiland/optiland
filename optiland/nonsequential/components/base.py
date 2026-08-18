@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from optiland.nonsequential.components.geometry.base import AABB, ComponentGeometry
     from optiland.nonsequential.materials.nsq_material import NSQMaterial
     from optiland.nonsequential.ray_bundle import NSQRayBundle
+    from optiland.nonsequential.rng import NSQRng
 
 
 class BaseComponent(ABC):
@@ -121,7 +122,7 @@ class BaseComponent(ABC):
         t: np.ndarray,
         normals: np.ndarray,
         hit_mask: np.ndarray,
-        rng: np.random.Generator,
+        rng: NSQRng,
     ) -> None:
         """Apply optical interaction at hit points (in-place).
 
@@ -133,7 +134,7 @@ class BaseComponent(ABC):
             t: Hit distances [mm], shape (N,).
             normals: Surface normals in global frame, shape (N, 3).
             hit_mask: True for rays that hit this component, shape (N,).
-            rng: Random number generator for stochastic interactions.
+            rng: Keyed PCG32 RNG for stochastic interactions.
         """
 
     @property

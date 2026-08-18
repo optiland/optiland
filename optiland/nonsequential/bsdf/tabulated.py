@@ -8,6 +8,7 @@ Kramer Harrison, 2026
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
@@ -15,6 +16,10 @@ from scipy.interpolate import RegularGridInterpolator
 import optiland.backend as be
 from optiland.backend.utils import to_numpy
 from optiland.nonsequential.bsdf.base import BaseBSDF
+from optiland.nonsequential.rng import EventSlot
+
+if TYPE_CHECKING:
+    from optiland.nonsequential.rng import NSQRng
 
 
 class TabulatedBSDF(BaseBSDF):
@@ -62,26 +67,27 @@ class TabulatedBSDF(BaseBSDF):
         incident_dirs: np.ndarray,
         normals: np.ndarray,
         wavelengths: np.ndarray,
-        rng: np.random.Generator | None = None,
+        rng: NSQRng,
+        ray_id: np.ndarray,
+        bounce: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Sample scattered directions from the tabulated BSDF.
 
         Uses importance sampling via Lambertian hemisphere + BSDF weighting.
-        Sampling is detached (numpy).
+        Sampling is detached (keyed PCG32).
 
         Args:
             num_rays: Number of rays.
             incident_dirs: Incident directions, shape (N, 3).
             normals: Surface normals, shape (N, 3).
             wavelengths: Wavelengths [µm], shape (N,).
-            rng: NumPy random generator.
+            rng: Keyed PCG32 RNG.
+            ray_id: Per-ray identifiers, shape (N,).
+            bounce: Per-ray bounce/step index, shape (N,).
 
         Returns:
             (scattered_dirs, flux_weights).
         """
-        if rng is None:
-            rng = np.random.default_rng()
-
         n_np = np.asarray(to_numpy(normals), dtype=np.float64)
         d_np = np.asarray(to_numpy(incident_dirs), dtype=np.float64)
 
@@ -93,8 +99,8 @@ class TabulatedBSDF(BaseBSDF):
             _orthonormal_basis,
         )
 
-        r1 = rng.random(num_rays)
-        r2 = rng.random(num_rays)
+        r1 = rng.uniform(ray_id, bounce, EventSlot.BSDF_U1)
+        r2 = rng.uniform(ray_id, bounce, EventSlot.BSDF_U2)
         phi = 2.0 * np.pi * r1
         cos_theta = np.sqrt(r2)
         sin_theta = np.sqrt(1.0 - r2)

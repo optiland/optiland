@@ -7,11 +7,17 @@ Kramer Harrison, 2026
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 
 import optiland.backend as be
 from optiland.backend.utils import to_numpy
 from optiland.nonsequential.bsdf.base import BaseBSDF
+from optiland.nonsequential.rng import EventSlot
+
+if TYPE_CHECKING:
+    from optiland.nonsequential.rng import NSQRng
 
 # Largest reachable direction-cosine offset: both the specular and the
 # scattered direction lie in the unit disk, so |beta - beta0| <= 2.
@@ -106,7 +112,9 @@ class HarveyShackBSDF(BaseBSDF):
         incident_dirs: np.ndarray,
         normals: np.ndarray,
         wavelengths: np.ndarray,
-        rng: np.random.Generator | None = None,
+        rng: NSQRng,
+        ray_id: np.ndarray,
+        bounce: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Sample scattered directions from the ABg lobe about the specular ray.
 
@@ -135,13 +143,13 @@ class HarveyShackBSDF(BaseBSDF):
             incident_dirs: Incident directions, shape (N, 3).
             normals: Surface normals, shape (N, 3).
             wavelengths: Wavelengths [µm], shape (N,).
-            rng: NumPy random generator.
+            rng: Keyed PCG32 RNG.
+            ray_id: Per-ray identifiers, shape (N,).
+            bounce: Per-ray bounce/step index, shape (N,).
 
         Returns:
             (scattered_dirs, flux_weights).
         """
-        if rng is None:
-            rng = np.random.default_rng()
         if self._beta_grid is None:
             self._build_tables()
 
@@ -173,8 +181,8 @@ class HarveyShackBSDF(BaseBSDF):
         spec_normal_sign[spec_normal_sign == 0.0] = 1.0
 
         # Radial offset from the tabulated inverse CDF; azimuth uniform.
-        u_radial = rng.random(num_rays)
-        u_azimuth = rng.random(num_rays)
+        u_radial = rng.uniform(ray_id, bounce, EventSlot.BSDF_U1)
+        u_azimuth = rng.uniform(ray_id, bounce, EventSlot.BSDF_U2)
         delta = np.interp(u_radial, self._cdf_grid, self._beta_grid)
         psi = 2.0 * np.pi * u_azimuth
 

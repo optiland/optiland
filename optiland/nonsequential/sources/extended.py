@@ -14,10 +14,12 @@ import numpy as np
 from optiland.nonsequential._utils import as_detached_param
 from optiland.nonsequential.components.base import _get_transform
 from optiland.nonsequential.ray_bundle import NSQRayBundle
+from optiland.nonsequential.rng import EventSlot
 from optiland.nonsequential.sources.base import BaseNSQSource, Spectrum
 
 if TYPE_CHECKING:
     from optiland.coordinate_system import CoordinateSystem
+    from optiland.nonsequential.rng import NSQRng
 
 
 class ExtendedSource(BaseNSQSource):
@@ -77,38 +79,42 @@ class ExtendedSource(BaseNSQSource):
         )
         self.medium = medium
 
-    def generate(self, num_rays: int, rng: np.random.Generator) -> NSQRayBundle:
+    def generate(self, ray_id: np.ndarray, rng: NSQRng) -> NSQRayBundle:
         """Generate rays from the extended source in global coordinates.
 
         Args:
-            num_rays: Number of rays to generate.
-            rng: NumPy random generator.
+            ray_id: Unique identifiers for the rays to generate, shape (N,).
+            rng: Keyed PCG32 RNG.
 
         Returns:
             NSQRayBundle with all rays alive.
         """
+        num_rays = len(ray_id)
+        bounce0 = np.zeros(num_rays, dtype=np.int32)
         translation, rot = _get_transform(self.cs)
 
         # Sample positions on source surface (local x-y plane)
         if self.aperture_radius is not None:
             # Circular aperture: uniform disk sampling
-            u1 = rng.random(num_rays)
-            u2 = rng.random(num_rays)
+            u1 = rng.uniform(ray_id, bounce0, EventSlot.SOURCE_U1)
+            u2 = rng.uniform(ray_id, bounce0, EventSlot.SOURCE_U2)
             r = self.aperture_radius * np.sqrt(u1)
             phi_pos = 2.0 * np.pi * u2
             lx = r * np.cos(phi_pos)
             ly = r * np.sin(phi_pos)
         else:
             # Rectangular aperture
-            lx = (rng.random(num_rays) - 0.5) * self.width
-            ly = (rng.random(num_rays) - 0.5) * self.height
+            u1 = rng.uniform(ray_id, bounce0, EventSlot.SOURCE_U1)
+            u2 = rng.uniform(ray_id, bounce0, EventSlot.SOURCE_U2)
+            lx = (u1 - 0.5) * self.width
+            ly = (u2 - 0.5) * self.height
 
         lz_pos = np.zeros(num_rays)
 
         # Sample emission directions (Lambertian or cone)
         cos_max = np.cos(np.radians(self.half_angle_deg))
-        u1d = rng.random(num_rays)
-        u2d = rng.random(num_rays)
+        u1d = rng.uniform(ray_id, bounce0, EventSlot.SOURCE_U3)
+        u2d = rng.uniform(ray_id, bounce0, EventSlot.SOURCE_U4)
 
         if self.half_angle_deg >= 90.0:
             # Cosine-weighted hemisphere (Lambertian)
@@ -132,7 +138,7 @@ class ExtendedSource(BaseNSQSource):
         dirs_global = dirs_local @ rot.T
 
         # Sample wavelengths [µm]
-        wavelengths = self.spectrum.sample(num_rays, rng)
+        wavelengths = self.spectrum.sample(ray_id, bounce0, rng)
         flux_per_ray = self.total_flux / num_rays
 
         # Initialize n_current from medium if provided
@@ -154,6 +160,7 @@ class ExtendedSource(BaseNSQSource):
             flux=np.full(num_rays, flux_per_ray),
             wavelength=wavelengths,
             n_current=n_init,
-            bounce=np.zeros(num_rays, dtype=np.int32),
+            bounce=bounce0,
             alive=np.ones(num_rays, dtype=bool),
+            ray_id=ray_id,
         )

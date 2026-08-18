@@ -14,10 +14,12 @@ import numpy as np
 from optiland.nonsequential._utils import as_detached_param
 from optiland.nonsequential.components.base import _get_transform
 from optiland.nonsequential.ray_bundle import NSQRayBundle
+from optiland.nonsequential.rng import EventSlot
 from optiland.nonsequential.sources.base import BaseNSQSource, Spectrum
 
 if TYPE_CHECKING:
     from optiland.coordinate_system import CoordinateSystem
+    from optiland.nonsequential.rng import NSQRng
 
 
 class PointSource(BaseNSQSource):
@@ -58,7 +60,7 @@ class PointSource(BaseNSQSource):
         )
         self.medium = medium
 
-    def generate(self, num_rays: int, rng: np.random.Generator) -> NSQRayBundle:
+    def generate(self, ray_id: np.ndarray, rng: NSQRng) -> NSQRayBundle:
         """Generate rays from a point source in global coordinates.
 
         Directions are sampled uniformly within the emission cone using
@@ -66,19 +68,21 @@ class PointSource(BaseNSQSource):
         the spectrum.
 
         Args:
-            num_rays: Number of rays to generate.
-            rng: NumPy random generator.
+            ray_id: Unique identifiers for the rays to generate, shape (N,).
+            rng: Keyed PCG32 RNG.
 
         Returns:
             NSQRayBundle with all rays alive.
         """
+        num_rays = len(ray_id)
+        bounce0 = np.zeros(num_rays, dtype=np.int32)
         translation, rot = _get_transform(self.cs)
 
         # Sample directions in local frame (cone around +z)
         cos_max = np.cos(np.radians(self.half_angle_deg))
         # Uniform sampling on spherical cap
-        u1 = rng.random(num_rays)
-        u2 = rng.random(num_rays)
+        u1 = rng.uniform(ray_id, bounce0, EventSlot.SOURCE_U1)
+        u2 = rng.uniform(ray_id, bounce0, EventSlot.SOURCE_U2)
         cos_theta = 1.0 - u1 * (1.0 - cos_max)
         sin_theta = np.sqrt(np.maximum(1.0 - cos_theta**2, 0.0))
         phi = 2.0 * np.pi * u2
@@ -97,7 +101,7 @@ class PointSource(BaseNSQSource):
         pos = translation  # shape (3,)
 
         # Sample wavelengths [µm]
-        wavelengths = self.spectrum.sample(num_rays, rng)
+        wavelengths = self.spectrum.sample(ray_id, bounce0, rng)
 
         flux_per_ray = self.total_flux / num_rays
 
@@ -120,6 +124,7 @@ class PointSource(BaseNSQSource):
             flux=np.full(num_rays, flux_per_ray),
             wavelength=wavelengths,
             n_current=n_init,
-            bounce=np.zeros(num_rays, dtype=np.int32),
+            bounce=bounce0,
             alive=np.ones(num_rays, dtype=bool),
+            ray_id=ray_id,
         )

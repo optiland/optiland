@@ -11,9 +11,12 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from optiland.nonsequential.rng import EventSlot
+
 if TYPE_CHECKING:
     from optiland.coordinate_system import CoordinateSystem
     from optiland.nonsequential.ray_bundle import NSQRayBundle
+    from optiland.nonsequential.rng import NSQRng
 
 
 @dataclass
@@ -55,21 +58,23 @@ class Spectrum:
             weights=np.array([1.0]),
         )
 
-    def sample(self, num: int, rng: np.random.Generator) -> np.ndarray:
-        """Sample n wavelengths from the spectrum.
+    def sample(self, ray_id: np.ndarray, bounce: np.ndarray, rng: NSQRng) -> np.ndarray:
+        """Sample one wavelength per ray from the spectrum.
 
         Uses inverse-CDF (quantile) sampling.
 
         Args:
-            num: Number of wavelengths to sample.
-            rng: NumPy random generator.
+            ray_id: Per-ray identifiers, shape (N,).
+            bounce: Per-ray bounce/step index, shape (N,) or scalar.
+            rng: Keyed PCG32 RNG.
 
         Returns:
-            Sampled wavelengths [µm], shape (n,).
+            Sampled wavelengths [µm], shape (N,).
         """
+        num = len(ray_id)
         if len(self.wavelengths) == 1:
             return np.full(num, self.wavelengths[0])
-        u = rng.random(num)
+        u = rng.uniform(ray_id, bounce, EventSlot.SOURCE_WAVELENGTH)
         indices = np.searchsorted(self._cdf, u)
         indices = np.clip(indices, 0, len(self.wavelengths) - 1)
         return self.wavelengths[indices]
@@ -103,19 +108,24 @@ class BaseNSQSource(ABC):
         self.total_flux = total_flux
 
     @abstractmethod
-    def generate(self, num_rays: int, rng: np.random.Generator) -> NSQRayBundle:
-        """Generate num_rays rays in global coordinates.
+    def generate(self, ray_id: np.ndarray, rng: NSQRng) -> NSQRayBundle:
+        """Generate one ray per id in global coordinates.
 
         Each ray carries:
           - position sampled from source geometry
           - direction sampled from source emission pattern
           - wavelength sampled from spectrum (Monte Carlo)
-          - initial flux = total_flux / num_rays
+          - initial flux = total_flux / len(ray_id)
+
+        All random draws are keyed by ``ray_id`` (at ``bounce=0``), so a
+        ray's birth-time sampling depends only on its own id -- never on
+        ``batch_size`` or on the order sources/batches are processed in.
 
         Args:
-            num_rays: Number of rays to generate.
-            rng: NumPy random generator.
+            ray_id: Unique identifiers for the rays to generate, shape (N,).
+            rng: Keyed PCG32 RNG.
 
         Returns:
-            NSQRayBundle with all rays alive and flux = total_flux / num_rays.
+            NSQRayBundle with all rays alive, ``ray_id`` set, and
+            flux = total_flux / len(ray_id).
         """

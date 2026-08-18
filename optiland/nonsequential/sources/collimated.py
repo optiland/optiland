@@ -15,10 +15,19 @@ import optiland.backend as be
 from optiland.nonsequential._utils import as_detached_param
 from optiland.nonsequential.components.base import _get_transform
 from optiland.nonsequential.ray_bundle import NSQRayBundle
+from optiland.nonsequential.rng import EventSlot
 from optiland.nonsequential.sources.base import BaseNSQSource, Spectrum
 
 if TYPE_CHECKING:
     from optiland.coordinate_system import CoordinateSystem
+    from optiland.nonsequential.rng import NSQRng
+
+# Bounded rejection-sampling attempts for the truncated Gaussian disk. Each
+# round accepts ~1 - exp(-2) ~ 86% of samples for the default sigma =
+# radius / 2, so 32 rounds leaves an astronomically small failure
+# probability; any ray still rejected after that is clamped to the
+# boundary (a deterministic, keyed fallback -- never an unbounded loop).
+_MAX_GAUSSIAN_ATTEMPTS = 32
 
 
 class CollimatedSource(BaseNSQSource):
@@ -72,28 +81,30 @@ class CollimatedSource(BaseNSQSource):
         )
         self.medium = medium
 
-    def generate(self, num_rays: int, rng: np.random.Generator) -> NSQRayBundle:
+    def generate(self, ray_id: np.ndarray, rng: NSQRng) -> NSQRayBundle:
         """Generate collimated rays in global coordinates.
 
         Positions are sampled within the circular aperture. All directions
         are along the local +z axis.
 
         Args:
-            num_rays: Number of rays to generate.
-            rng: NumPy random generator.
+            ray_id: Unique identifiers for the rays to generate, shape (N,).
+            rng: Keyed PCG32 RNG.
 
         Returns:
             NSQRayBundle with all rays alive and parallel directions.
         """
+        num_rays = len(ray_id)
+        bounce0 = np.zeros(num_rays, dtype=np.int32)
         translation, rot = _get_transform(self.cs)
 
         if self.profile == "gaussian":
             # Sample truncated Gaussian on disk
-            lx, ly = self._sample_gaussian_disk(num_rays, rng)
+            lx, ly = self._sample_gaussian_disk(ray_id, bounce0, rng)
         else:
             # Uniform disk sampling
-            u1 = rng.random(num_rays)
-            u2 = rng.random(num_rays)
+            u1 = rng.uniform(ray_id, bounce0, EventSlot.SOURCE_U1)
+            u2 = rng.uniform(ray_id, bounce0, EventSlot.SOURCE_U2)
             r = self.aperture_radius * np.sqrt(u1)
             phi = 2.0 * np.pi * u2
             lx = r * np.cos(phi)
@@ -112,7 +123,7 @@ class CollimatedSource(BaseNSQSource):
         dirs_global = dirs_local @ rot.T
 
         # Sample wavelengths [µm]
-        wavelengths = self.spectrum.sample(num_rays, rng)
+        wavelengths = self.spectrum.sample(ray_id, bounce0, rng)
         # Divide preserves torch tensor when total_flux is a Tensor (for autograd)
         flux_per_ray = self.total_flux / num_rays
 
@@ -137,36 +148,65 @@ class CollimatedSource(BaseNSQSource):
             flux=be.ones(num_rays) * flux_per_ray,
             wavelength=wavelengths,
             n_current=n_init,
-            bounce=np.zeros(num_rays, dtype=np.int32),
+            bounce=bounce0,
             alive=np.ones(num_rays, dtype=bool),
+            ray_id=ray_id,
         )
 
     def _sample_gaussian_disk(
-        self, num_rays: int, rng: np.random.Generator
+        self, ray_id: np.ndarray, bounce0: np.ndarray, rng: NSQRng
     ) -> tuple[np.ndarray, np.ndarray]:
         """Sample positions from a truncated Gaussian disk (rejection sampling).
 
+        Each ray gets its own bounded rejection sequence keyed by its own
+        id: attempt ``k`` draws a fresh (u1, u2) pair via
+        ``offset=k`` on the same event slots, so the sequence is a pure
+        function of the ray id and never depends on how many other rays
+        are still rejecting in the same batch.
+
         Args:
-            num_rays: Number of samples required.
-            rng: NumPy random generator.
+            ray_id: Unique identifiers for the rays to generate, shape (N,).
+            bounce0: Zero bounce array, shape (N,).
+            rng: Keyed PCG32 RNG.
 
         Returns:
-            Tuple (x, y) of position arrays, each shape (num_rays,).
+            Tuple (x, y) of position arrays, each shape (N,).
         """
-        x_list: list[np.ndarray] = []
-        y_list: list[np.ndarray] = []
-        num_collected = 0
+        num_rays = len(ray_id)
         max_r2 = self.aperture_radius**2
+        lx = np.zeros(num_rays)
+        ly = np.zeros(num_rays)
+        pending = np.ones(num_rays, dtype=bool)
 
-        while num_collected < num_rays:
-            num_sample = max(num_rays * 2, 1000)
-            x = rng.normal(0.0, self.gaussian_sigma, num_sample)
-            y = rng.normal(0.0, self.gaussian_sigma, num_sample)
-            mask = x**2 + y**2 <= max_r2
-            x_list.append(x[mask])
-            y_list.append(y[mask])
-            num_collected += mask.sum()
+        for attempt in range(_MAX_GAUSSIAN_ATTEMPTS):
+            if not pending.any():
+                break
+            u1 = rng.uniform(ray_id, bounce0, EventSlot.SOURCE_U1, offset=attempt)
+            u2 = rng.uniform(ray_id, bounce0, EventSlot.SOURCE_U2, offset=attempt)
+            # Box-Muller transform: (u1, u2) -> independent standard normals.
+            r_bm = np.sqrt(-2.0 * np.log(np.maximum(u1, 1e-300)))
+            theta_bm = 2.0 * np.pi * u2
+            x = self.gaussian_sigma * r_bm * np.cos(theta_bm)
+            y = self.gaussian_sigma * r_bm * np.sin(theta_bm)
+            accept = pending & (x**2 + y**2 <= max_r2)
+            lx = np.where(accept, x, lx)
+            ly = np.where(accept, y, ly)
+            pending = pending & ~accept
 
-        lx = np.concatenate(x_list)[:num_rays]
-        ly = np.concatenate(y_list)[:num_rays]
+        if pending.any():
+            # Exhausted the attempt budget (astronomically unlikely): clamp
+            # to the boundary along the last-drawn direction rather than
+            # looping unboundedly or silently keeping an out-of-aperture
+            # sample.
+            theta_fallback = (
+                2.0
+                * np.pi
+                * rng.uniform(
+                    ray_id, bounce0, EventSlot.SOURCE_U2, offset=_MAX_GAUSSIAN_ATTEMPTS
+                )
+            )
+            r_fallback = self.aperture_radius
+            lx = np.where(pending, r_fallback * np.cos(theta_fallback), lx)
+            ly = np.where(pending, r_fallback * np.sin(theta_fallback), ly)
+
         return lx, ly

@@ -22,6 +22,7 @@ from optiland.nonsequential import (
     IrradianceDetector,
     IrradianceDetectorConfig,
     LensConfig,
+    NSQRng,
     NSQScene,
     NSQTracer,
     PointSource,
@@ -52,16 +53,18 @@ def numpy_backend():
 class TestSpectrum:
     def test_monochromatic(self):
         spec = Spectrum.monochromatic(0.55)
-        rng = np.random.default_rng(0)
-        wl = spec.sample(100, rng)
+        rng = NSQRng(0)
+        ray_id = np.arange(100)
+        wl = spec.sample(ray_id, np.zeros_like(ray_id), rng)
         assert np.all(wl == 0.55)
 
     def test_broadband_sampling(self):
         wls = np.array([0.4, 0.5, 0.6, 0.7])
         wts = np.array([1.0, 2.0, 2.0, 1.0])
         spec = Spectrum(wls, wts)
-        rng = np.random.default_rng(42)
-        samples = spec.sample(10000, rng)
+        rng = NSQRng(42)
+        ray_id = np.arange(10000)
+        samples = spec.sample(ray_id, np.zeros_like(ray_id), rng)
         assert set(np.round(samples, 5)).issubset(set(np.round(wls, 5)))
         # 0.5 and 0.6 µm should be sampled more than 0.4 and 0.7 µm
         counts = {w: int((np.isclose(samples, w)).sum()) for w in wls}
@@ -89,8 +92,8 @@ class TestPointSource:
         cs = CoordinateSystem(x=0, y=0, z=0)
         spec = Spectrum.monochromatic(0.55)
         src = PointSource(cs=cs, spectrum=spec, total_flux=1.0, half_angle_deg=90.0)
-        rng = np.random.default_rng(0)
-        rays = src.generate(1000, rng)
+        rng = NSQRng(0)
+        rays = src.generate(np.arange(1000), rng)
         assert rays.num_rays == 1000
         assert rays.num_rays_alive == 1000
 
@@ -99,16 +102,16 @@ class TestPointSource:
         spec = Spectrum.monochromatic(0.55)
         total = 2.5
         src = PointSource(cs=cs, spectrum=spec, total_flux=total, half_angle_deg=90.0)
-        rng = np.random.default_rng(0)
-        rays = src.generate(10000, rng)
+        rng = NSQRng(0)
+        rays = src.generate(np.arange(10000), rng)
         assert np.isclose(rays.flux.sum(), total, rtol=1e-6)
 
     def test_directions_normalized(self):
         cs = CoordinateSystem(x=0, y=0, z=0)
         spec = Spectrum.monochromatic(0.55)
         src = PointSource(cs=cs, spectrum=spec, total_flux=1.0)
-        rng = np.random.default_rng(0)
-        rays = src.generate(500, rng)
+        rng = NSQRng(0)
+        rays = src.generate(np.arange(500), rng)
         dirs = np.stack([rays.L, rays.M, rays.N], axis=1)
         norms = np.linalg.norm(dirs, axis=1)
         np.testing.assert_allclose(norms, 1.0, atol=1e-12)
@@ -118,8 +121,8 @@ class TestPointSource:
         cs = CoordinateSystem(x=0, y=0, z=0)
         spec = Spectrum.monochromatic(0.55)
         src = PointSource(cs=cs, spectrum=spec, total_flux=1.0, half_angle_deg=30.0)
-        rng = np.random.default_rng(0)
-        rays = src.generate(1000, rng)
+        rng = NSQRng(0)
+        rays = src.generate(np.arange(1000), rng)
         cos_theta = rays.N  # +z axis
         min_cos = np.cos(np.radians(30.0))
         assert np.all(cos_theta >= min_cos - 1e-10)
@@ -452,8 +455,8 @@ class TestCollimatedSource:
         src = CollimatedSource(
             cs=cs, spectrum=spec, total_flux=1.0, aperture_radius=5.0
         )
-        rng = np.random.default_rng(0)
-        rays = src.generate(200, rng)
+        rng = NSQRng(0)
+        rays = src.generate(np.arange(200), rng)
         # All rays point in +z direction (no tilt in this CS)
         np.testing.assert_allclose(rays.L, 0.0, atol=1e-12)
         np.testing.assert_allclose(rays.M, 0.0, atol=1e-12)
@@ -464,8 +467,8 @@ class TestCollimatedSource:
         spec = Spectrum.monochromatic(0.55)
         r = 5.0
         src = CollimatedSource(cs=cs, spectrum=spec, total_flux=1.0, aperture_radius=r)
-        rng = np.random.default_rng(0)
-        rays = src.generate(500, rng)
+        rng = NSQRng(0)
+        rays = src.generate(np.arange(500), rng)
         radii = (rays.x**2 + rays.y**2) ** 0.5
         assert np.all(radii <= r + 1e-9)
 
@@ -523,8 +526,10 @@ class TestBSDFs:
         dirs = np.array([[0.0, 0.0, -1.0]])  # incoming downward
         normals = np.array([[0.0, 0.0, 1.0]])  # normal upward
         wl = np.array([0.55])
-        rng = np.random.default_rng(0)
-        scattered, weights = bsdf.sample(N, dirs, normals, wl, rng)
+        rng = NSQRng(0)
+        ray_id = np.arange(N)
+        bounce = np.zeros(N, dtype=np.int32)
+        scattered, weights = bsdf.sample(N, dirs, normals, wl, rng, ray_id, bounce)
         np.testing.assert_allclose(scattered, [[0.0, 0.0, 1.0]], atol=1e-10)
 
     def test_lambertian_reflectance(self):
@@ -550,8 +555,10 @@ class TestBSDFs:
         dirs = np.tile([0.0, 0.0, -1.0], (N, 1)).astype(float)
         normals = np.tile([0.0, 0.0, 1.0], (N, 1)).astype(float)
         wl = np.full(N, 0.55)
-        rng = np.random.default_rng(42)
-        scattered, weights = bsdf.sample(N, dirs, normals, wl, rng)
+        rng = NSQRng(42)
+        ray_id = np.arange(N)
+        bounce = np.zeros(N, dtype=np.int32)
+        scattered, weights = bsdf.sample(N, dirs, normals, wl, rng, ray_id, bounce)
         # All scattered rays should be on the +z hemisphere
         assert np.all(scattered[:, 2] >= -1e-6)
         # Check normalization
@@ -649,8 +656,8 @@ class TestWavelengthUm:
         src = CollimatedSource(
             cs=cs, spectrum=spec, total_flux=1.0, aperture_radius=1.0
         )
-        rng = np.random.default_rng(0)
-        rays = src.generate(100, rng)
+        rng = NSQRng(0)
+        rays = src.generate(np.arange(100), rng)
         # Wavelength should be ~0.55 µm (not 550 nm)
         assert np.all(rays.wavelength < 10.0), "Wavelengths appear to be in nm, not µm"
         np.testing.assert_allclose(rays.wavelength, 0.55, rtol=1e-10)
@@ -880,8 +887,8 @@ class TestConicSurfaceNormals:
 class TestBatchingFluxInvariance:
     """Splitting a trace into batches must not change the launched energy.
 
-    ``source.generate(n)`` spreads the source's whole ``total_flux`` over the
-    ``n`` rays it is asked for. When the tracer processes a source in several
+    ``source.generate(ray_id)`` spreads the source's whole ``total_flux``
+    over the rays it is asked for. When the tracer processes a source in several
     batches, each batch therefore has to be rescaled to its share of the ray
     budget; otherwise every batch re-emits the full flux and the simulation
     manufactures energy in proportion to the batch count. This affects any run

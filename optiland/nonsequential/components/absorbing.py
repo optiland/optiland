@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from optiland.nonsequential.components.geometry.base import ComponentGeometry
     from optiland.nonsequential.materials.nsq_material import NSQMaterial
     from optiland.nonsequential.ray_bundle import NSQRayBundle
+    from optiland.nonsequential.rng import NSQRng
 
 
 class AbsorbingComponent(BaseComponent):
@@ -58,7 +59,7 @@ class AbsorbingComponent(BaseComponent):
         t: np.ndarray,
         normals: np.ndarray,
         hit_mask: np.ndarray,
-        rng: np.random.Generator,
+        rng: NSQRng,
     ) -> None:
         """Kill all rays that hit this component (in-place).
 
@@ -67,7 +68,7 @@ class AbsorbingComponent(BaseComponent):
             t: Hit distances [mm], shape (N,).
             normals: Surface normals in global frame, shape (N, 3).
             hit_mask: True for rays hitting this component, shape (N,).
-            rng: Random number generator (unused).
+            rng: Keyed PCG32 RNG (unused).
         """
         # Missed rays carry t = inf; zero it before the position update so the
         # masked-out be.where branch cannot backpropagate 0 * inf = NaN into

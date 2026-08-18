@@ -8,7 +8,6 @@ Kramer Harrison, 2026
 from __future__ import annotations
 
 import time
-from abc import abstractmethod
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -65,10 +64,6 @@ class ArrayBackend(TracerBackend):
         """
         return rays
 
-    @abstractmethod
-    def random_uniform(self, shape: tuple[int, ...]) -> np.ndarray:
-        """Generate uniform random numbers on the backend device."""
-
     def trace(
         self,
         scene: NSQScene,
@@ -97,9 +92,13 @@ class ArrayBackend(TracerBackend):
         from optiland.nonsequential.components.absorbing import (
             AbsorbingComponent,  # noqa: PLC0415
         )
+        from optiland.nonsequential.rng import NSQRng  # noqa: PLC0415
         from optiland.nonsequential.tracer import (
             SimulationResult,  # noqa: PLC0415, I001
         )
+
+        if seed is not None:
+            self.rng = NSQRng(seed)
 
         # Reset detectors and absorber stats
         for det in scene.detectors:
@@ -138,10 +137,7 @@ class ArrayBackend(TracerBackend):
         def _log_birth(rays: NSQRayBundle, source_name: str) -> None:
             if event_log is None:
                 return
-            n = rays.num_rays
-            ids = np.arange(_next_ray_id[0], _next_ray_id[0] + n, dtype=np.int64)
-            rays.ray_id = ids
-            _next_ray_id[0] += n
+            ids = to_numpy(rays.ray_id)
             x_np = to_numpy(rays.x)
             y_np = to_numpy(rays.y)
             z_np = to_numpy(rays.z)
@@ -151,7 +147,7 @@ class ArrayBackend(TracerBackend):
             flux_np = to_numpy(rays.flux)
             wl_np = to_numpy(rays.wavelength)
             bounce_np = to_numpy(rays.bounce)
-            for k in range(n):
+            for k in range(rays.num_rays):
                 event_log.append(
                     {
                         "ray_id": int(ids[k]),
@@ -258,7 +254,11 @@ class ArrayBackend(TracerBackend):
 
             while source_remaining > 0:
                 batch = min(batch_size, source_remaining)
-                rays = source.generate(batch, self.rng)
+                ray_id = np.arange(
+                    _next_ray_id[0], _next_ray_id[0] + batch, dtype=np.int64
+                )
+                _next_ray_id[0] += batch
+                rays = source.generate(ray_id, self.rng)
                 # source.generate() spreads the source's whole total_flux over
                 # the rays it is asked for, so a batched source would re-emit
                 # the full flux once per batch. Rescale to this batch's share

@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import numpy as np
 
+    from optiland.nonsequential.rng import NSQRng
+
 
 class BaseBSDF(ABC):
     """Abstract base class for bidirectional scattering distribution functions.
@@ -26,7 +28,9 @@ class BaseBSDF(ABC):
         incident_dirs: np.ndarray,
         normals: np.ndarray,
         wavelengths: np.ndarray,
-        rng: np.random.Generator | None = None,
+        rng: NSQRng,
+        ray_id: np.ndarray,
+        bounce: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Sample scattered ray directions and relative flux weights.
 
@@ -36,7 +40,10 @@ class BaseBSDF(ABC):
             normals: Surface normals at hit points, shape (N, 3), unit vectors
                 pointing toward the incoming ray side.
             wavelengths: Per-ray wavelengths [nm], shape (N,).
-            rng: Optional NumPy random generator for reproducibility.
+            rng: Keyed PCG32 RNG.
+            ray_id: Per-ray identifiers, shape (N,), for keying the draw.
+            bounce: Per-ray bounce/step index, shape (N,), for keying the
+                draw.
 
         Returns:
             A tuple (scattered_dirs, flux_weights) where:

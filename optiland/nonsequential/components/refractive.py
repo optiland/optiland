@@ -15,6 +15,7 @@ import numpy as np
 import optiland.backend as be
 from optiland.backend.utils import to_numpy
 from optiland.nonsequential.components.base import BaseComponent
+from optiland.nonsequential.rng import EventSlot
 
 if TYPE_CHECKING:
     from optiland.coordinate_system import CoordinateSystem
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
     from optiland.nonsequential.components.geometry.base import ComponentGeometry
     from optiland.nonsequential.materials.nsq_material import NSQMaterial
     from optiland.nonsequential.ray_bundle import NSQRayBundle
+    from optiland.nonsequential.rng import NSQRng
 
 
 class RefractiveComponent(BaseComponent):
@@ -86,7 +88,7 @@ class RefractiveComponent(BaseComponent):
         t: np.ndarray,
         normals: np.ndarray,
         hit_mask: np.ndarray,
-        rng: np.random.Generator,
+        rng: NSQRng,
     ) -> None:
         """Apply Fresnel refraction/reflection at hit points (in-place).
 
@@ -100,8 +102,18 @@ class RefractiveComponent(BaseComponent):
             t: Hit distances [mm], shape (N,).
             normals: Surface normals in global frame, shape (N, 3).
             hit_mask: True for rays hitting this component, shape (N,).
-            rng: Random number generator (used for detached sampling only).
+            rng: Keyed PCG32 RNG (used for detached sampling only). Draws
+                are keyed by this ray's own id and its bounce count as of
+                this interaction, so they are independent of batch_size,
+                compaction, and every other ray in the bundle.
         """
+        # Every RNG draw in this call is keyed to the ray's identity as of
+        # this specific interaction event -- captured before any of the
+        # in-place mutations below (including the bounce increment) change
+        # rays.bounce out from under us.
+        ray_id_key = to_numpy(rays.ray_id)
+        bounce_key = to_numpy(rays.bounce)
+
         # Missed rays carry t = inf; zero it for the differentiable position
         # update so the masked-out be.where branch cannot inject a
         # 0 * inf = NaN into the backward pass.
@@ -160,7 +172,7 @@ class RefractiveComponent(BaseComponent):
         # --- Detached-sample / attached-weight ---
         # Sampling decision uses detached R so the branch doesn't block grad.
         R_np = to_numpy(R_fresnel).astype(np.float64)
-        u = rng.random(rays.num_rays)
+        u = rng.uniform(ray_id_key, bounce_key, EventSlot.FRESNEL_BRANCH)
         do_reflect_np = (u < R_np) | to_numpy(tir).astype(bool)
         do_reflect = be.array(do_reflect_np)
 
@@ -220,13 +232,16 @@ class RefractiveComponent(BaseComponent):
                 normals,
                 rays.wavelength,
                 rng,
+                ray_id_key,
+                bounce_key,
             )
             # Route only a scatter_fraction of the hit rays through the BSDF;
             # the rest keep the refracted direction computed above. The branch
             # is drawn from a detached probability, matching the Fresnel
             # split, so the surface can be partially diffusing.
             scatters = hit_mask & be.array(
-                rng.random(rays.num_rays) < self.scatter_fraction
+                rng.uniform(ray_id_key, bounce_key, EventSlot.SCATTER_BRANCH)
+                < self.scatter_fraction
             )
             scatter_col = scatters[:, None]
             cur_dirs = be.stack([rays.L, rays.M, rays.N], axis=1)

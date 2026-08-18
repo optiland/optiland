@@ -217,6 +217,9 @@ from optiland.nonsequential.results import (
     SpectralResult,
 )
 
+# RNG
+from optiland.nonsequential.rng import EventSlot, NSQRng
+
 # Scene and tracer
 from optiland.nonsequential.scene import NSQScene
 
@@ -300,6 +303,9 @@ __all__ = [
     "IrradianceMap",
     "RayDatabase",
     "SpectralResult",
+    # RNG
+    "EventSlot",
+    "NSQRng",
     # Backends
     "NumpyBackend",
     "TracerBackend",

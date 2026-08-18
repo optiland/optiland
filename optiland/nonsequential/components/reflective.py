@@ -10,8 +10,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import optiland.backend as be
+from optiland.backend.utils import to_numpy
 from optiland.nonsequential.components.base import BaseComponent
 from optiland.nonsequential.materials.nsq_material import VACUUM
+from optiland.nonsequential.rng import EventSlot
 
 if TYPE_CHECKING:
     import numpy as np
@@ -21,6 +23,7 @@ if TYPE_CHECKING:
     from optiland.nonsequential.components.geometry.base import ComponentGeometry
     from optiland.nonsequential.materials.nsq_material import NSQMaterial
     from optiland.nonsequential.ray_bundle import NSQRayBundle
+    from optiland.nonsequential.rng import NSQRng
 
 
 class ReflectiveComponent(BaseComponent):
@@ -71,7 +74,7 @@ class ReflectiveComponent(BaseComponent):
         t: np.ndarray,
         normals: np.ndarray,
         hit_mask: np.ndarray,
-        rng: np.random.Generator,
+        rng: NSQRng,
     ) -> None:
         """Apply specular (or BSDF) reflection at hit points (in-place).
 
@@ -80,8 +83,14 @@ class ReflectiveComponent(BaseComponent):
             t: Hit distances [mm], shape (N,).
             normals: Surface normals in global frame, shape (N, 3).
             hit_mask: True for rays hitting this component, shape (N,).
-            rng: Random number generator.
+            rng: Keyed PCG32 RNG. Draws are keyed by this ray's own id and
+                its bounce count as of this interaction.
         """
+        # Captured before any mutation below (including the bounce
+        # increment at the end of this method) changes rays.bounce.
+        ray_id_key = to_numpy(rays.ray_id)
+        bounce_key = to_numpy(rays.bounce)
+
         # Missed rays carry t = inf; zero it before the position update so the
         # masked-out be.where branch cannot backpropagate 0 * inf = NaN into
         # the ray directions.
@@ -112,12 +121,15 @@ class ReflectiveComponent(BaseComponent):
                 normals,
                 rays.wavelength,
                 rng,
+                ray_id_key,
+                bounce_key,
             )
             # Route only a scatter_fraction of the hit rays into the lobe; the
             # rest reflect specularly. The branch is drawn from a detached
             # probability, matching the Fresnel split.
             scatters = hit_mask & be.array(
-                rng.random(rays.num_rays) < self.scatter_fraction
+                rng.uniform(ray_id_key, bounce_key, EventSlot.SCATTER_BRANCH)
+                < self.scatter_fraction
             )
             new_dirs = be.where(scatters[:, None], bsdf_dirs, new_dirs)
             rays.flux = rays.flux * be.where(

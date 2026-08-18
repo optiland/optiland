@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 
 import optiland.backend as be
-from optiland.nonsequential import HarveyShackBSDF, LambertianBSDF
+from optiland.nonsequential import HarveyShackBSDF, LambertianBSDF, NSQRng
 from optiland.nonsequential.bsdf.lambertian import _orthonormal_basis
 
 
@@ -89,7 +89,9 @@ class TestLambertianSampling:
                 np.tile([0.0, 0.0, 1.0], (n, 1)),
                 np.zeros((n, 3)),
                 np.full(n, 0.55),
-                np.random.default_rng(0),
+                NSQRng(0),
+                np.arange(n),
+                np.zeros(n, dtype=np.int32),
             )
         assert np.isfinite(np.asarray(dirs)).all()
 
@@ -105,7 +107,9 @@ class TestLambertianSampling:
             np.tile([0.0, 0.0, 1.0], (n_rays, 1)),
             np.tile(normal, (n_rays, 1)),
             np.full(n_rays, 0.55),
-            np.random.default_rng(1),
+            NSQRng(1),
+            np.arange(n_rays),
+            np.zeros(n_rays, dtype=np.int32),
         )
         dirs = np.asarray(dirs)
 
@@ -128,7 +132,9 @@ class TestLambertianSampling:
             np.tile([0.0, 0.0, 1.0], (n_rays, 1)),
             np.tile(normal, (n_rays, 1)),
             np.full(n_rays, 0.55),
-            np.random.default_rng(2),
+            NSQRng(2),
+            np.arange(n_rays),
+            np.zeros(n_rays, dtype=np.int32),
         )
         cos_theta = np.asarray(dirs) @ normal
 
@@ -150,7 +156,9 @@ class TestLambertianSampling:
             np.tile([0.0, 0.0, 1.0], (n_rays, 1)),
             np.tile([0.0, 0.0, 1.0], (n_rays, 1)),
             np.full(n_rays, 0.55),
-            np.random.default_rng(3),
+            NSQRng(3),
+            np.arange(n_rays),
+            np.zeros(n_rays, dtype=np.int32),
         )
         assert np.allclose(np.asarray(weights), 0.35)
 
@@ -169,7 +177,9 @@ class TestHarveyShackSampling:
             np.tile([0.0, 0.0, 1.0], (n_rays, 1)),
             np.tile([0.0, 0.0, -1.0], (n_rays, 1)),
             np.full(n_rays, 0.55),
-            np.random.default_rng(seed),
+            NSQRng(seed),
+            np.arange(n_rays),
+            np.zeros(n_rays, dtype=np.int32),
         )
         return np.asarray(dirs), np.asarray(weights)
 
@@ -182,7 +192,9 @@ class TestHarveyShackSampling:
             np.zeros((n, 3)),
             np.zeros((n, 3)),
             np.full(n, 0.55),
-            np.random.default_rng(0),
+            NSQRng(0),
+            np.arange(n),
+            np.zeros(n, dtype=np.int32),
         )
         assert np.isfinite(np.asarray(dirs)).all()
         assert np.isfinite(np.asarray(weights)).all()

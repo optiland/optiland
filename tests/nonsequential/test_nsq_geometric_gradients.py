@@ -184,8 +184,15 @@ class TestLensRadiusGradient:
         assert r1.grad.item() != 0.0
 
     def test_spatial_loss_matches_fd_slow_lens(self):
-        """Second-moment gradient vs FD for a slow lens, normal detector."""
-        _assert_matches_fd(lambda r: self._trace(r), value=120.0, h=2.0)
+        """Second-moment gradient vs FD for a slow lens, normal detector.
+
+        h=0.5: at h>=1.0 the +-h detector images cross enough bilinear-splat
+        pixel boundaries to bias the finite-difference estimate by several
+        percent (a discretization effect, not noise -- it persists from
+        20k to 500k rays). h=0.5 keeps both FD evaluations inside the same
+        smooth region of the splat kernel.
+        """
+        _assert_matches_fd(lambda r: self._trace(r), value=120.0, h=0.5)
 
     def test_spatial_loss_matches_fd_fast_lens(self):
         """Faster lens: larger ray angles at the detector."""
