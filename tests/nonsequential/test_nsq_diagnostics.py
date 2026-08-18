@@ -38,7 +38,11 @@ from optiland.nonsequential.components.lens import (
 )
 from optiland.nonsequential.components.mirror import Mirror
 from optiland.nonsequential.diagnostics import DetectorDiagnostic, Diagnostics
-from optiland.nonsequential.scene import _build_detector, _build_source
+from optiland.nonsequential.scene import (
+    _build_detector,
+    _build_source,
+    _resolve_total_flux,
+)
 from optiland.nonsequential.sources.configs import (
     ExtendedSourceConfig,
     PointSourceConfig,
@@ -55,9 +59,9 @@ _CONFIG_CONSUMERS: list[tuple[type, list[object]]] = [
     (LensConfig, [Lens._build]),
     (DoubletConfig, [Doublet._build]),
     (MirrorConfig, [Mirror._build]),
-    (PointSourceConfig, [_build_source]),
-    (CollimatedSourceConfig, [_build_source]),
-    (ExtendedSourceConfig, [_build_source]),
+    (PointSourceConfig, [_build_source, _resolve_total_flux]),
+    (CollimatedSourceConfig, [_build_source, _resolve_total_flux]),
+    (ExtendedSourceConfig, [_build_source, _resolve_total_flux]),
     (IrradianceDetectorConfig, [_build_detector]),
     (SpectralDetectorConfig, [_build_detector]),
     (FarFieldDetectorConfig, [_build_detector]),

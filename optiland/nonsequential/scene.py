@@ -397,6 +397,45 @@ class NSQScene:
             raise ValueError("Scene has no detectors. Add at least one detector.")
 
 
+def _resolve_total_flux(config) -> float:
+    """Resolve a source config's radiometric flux [W] (D13, §4.9).
+
+    ``total_flux_lumens``, when set, takes precedence over ``total_flux``
+    and is converted to watts via
+    :func:`optiland.nonsequential.units.lumens_to_watts` using the config's
+    own spectrum -- NSQ's trace loop is radiometric throughout (§4.9), so
+    this conversion happens once, here, at scene-construction time.
+
+    Args:
+        config: A source config with ``total_flux``, ``total_flux_lumens``,
+            and ``spectrum`` attributes.
+
+    Returns:
+        Radiometric flux [W].
+
+    Raises:
+        ValueError: If ``total_flux_lumens`` is set and ``spectrum`` has
+            negligible overlap with the visible band (guardrail).
+    """
+    lumens = getattr(config, "total_flux_lumens", None)
+    if lumens is None:
+        return config.total_flux
+
+    if config.total_flux != 1.0:
+        import warnings  # noqa: PLC0415
+
+        warnings.warn(
+            f"{type(config).__name__} was given both total_flux="
+            f"{config.total_flux!r} and total_flux_lumens={lumens!r}; "
+            "total_flux_lumens takes precedence and total_flux is ignored.",
+            stacklevel=3,
+        )
+
+    from optiland.nonsequential.units import lumens_to_watts  # noqa: PLC0415
+
+    return lumens_to_watts(lumens, config.spectrum)
+
+
 def _build_source(cs: CoordinateSystem, config) -> object:
     """Instantiate a BaseNSQSource from a config dataclass.
 
@@ -426,7 +465,7 @@ def _build_source(cs: CoordinateSystem, config) -> object:
         return PointSource(
             cs=cs,
             spectrum=config.spectrum,
-            total_flux=config.total_flux,
+            total_flux=_resolve_total_flux(config),
             half_angle_deg=config.half_angle_deg,
             medium=getattr(config, "medium", None),
         )
@@ -434,7 +473,7 @@ def _build_source(cs: CoordinateSystem, config) -> object:
         return CollimatedSource(
             cs=cs,
             spectrum=config.spectrum,
-            total_flux=config.total_flux,
+            total_flux=_resolve_total_flux(config),
             aperture_radius=config.aperture_radius,
             profile=config.profile,
             gaussian_sigma=config.gaussian_sigma,
@@ -444,7 +483,7 @@ def _build_source(cs: CoordinateSystem, config) -> object:
         return ExtendedSource(
             cs=cs,
             spectrum=config.spectrum,
-            total_flux=config.total_flux,
+            total_flux=_resolve_total_flux(config),
             width=config.width,
             height=config.height,
             aperture_radius=config.aperture_radius,
