@@ -63,6 +63,15 @@ class NSQScene:
         self.component_registry = ComponentRegistry()
         self.source_registry = SourceRegistry()
         self.detector_registry = DetectorRegistry()
+        # Rare-path sampling policy (D2, PR11): importance biasing, bounded
+        # splitting (NumPy forward engine only), and Russian roulette. The
+        # default reproduces the engine's pre-PR11 behaviour exactly -- see
+        # optiland.nonsequential.ir.scene_ir.SamplingPolicy.
+        from optiland.nonsequential.ir.scene_ir import (  # noqa: PLC0415
+            SamplingPolicy,
+        )
+
+        self.sampling_policy = SamplingPolicy()
 
     @property
     def surfaces(self) -> list[BaseComponent]:
@@ -252,7 +261,12 @@ class NSQScene:
         Args:
             num_rays: Total rays to launch.
             max_depth: Maximum surface hits per ray.
-            min_flux_fraction: Kill threshold relative to per-ray initial flux.
+            min_flux_fraction: Russian-roulette threshold (D-9), relative to
+                per-ray initial flux -- combined with the scene's
+                ``sampling_policy.rr_start_flux`` (the larger of the two
+                wins). Below threshold, rays are killed with an unbiased
+                probability and survivors' flux is boosted accordingly,
+                rather than truncated outright.
             batch_size: Rays per processing batch. Does not change the result,
                 only the speed; see ``DEFAULT_BATCH_SIZE``.
             seed: RNG seed.

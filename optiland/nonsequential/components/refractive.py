@@ -19,6 +19,7 @@ from optiland.nonsequential.components.coating_support import (
     reject_polarized_coating,
 )
 from optiland.nonsequential.rng import EventSlot
+from optiland.nonsequential.sampling import resolve_reflect_prob
 
 if TYPE_CHECKING:
     from optiland.coatings import BaseCoating
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
     from optiland.nonsequential.bsdf.base import BaseBSDF
     from optiland.nonsequential.components.geometry.base import ComponentGeometry
     from optiland.nonsequential.ir.bsdf_ir import BsdfIR
+    from optiland.nonsequential.ir.scene_ir import SamplingPolicy
     from optiland.nonsequential.materials.nsq_material import NSQMaterial
     from optiland.nonsequential.ray_bundle import NSQRayBundle
     from optiland.nonsequential.rng import NSQRng
@@ -115,6 +117,8 @@ class RefractiveComponent(BaseComponent):
         rng: NSQRng,
         bsdf_ir: BsdfIR,
         n_geom: np.ndarray,
+        sampling: SamplingPolicy | None = None,
+        forced_branch: str | None = None,
     ) -> None:
         """Apply Fresnel refraction/reflection at hit points (in-place).
 
@@ -143,6 +147,16 @@ class RefractiveComponent(BaseComponent):
                 fixed per surface point and pointing from ``material_front``
                 toward ``material_back`` (D-1). Used, not ``rays.n_current``,
                 to determine which material a ray is entering.
+            sampling: The scene's rare-path sampling policy (D2, PR11).
+                Resolves the reflect-branch sampling probability -- see
+                :func:`optiland.nonsequential.sampling.resolve_reflect_prob`.
+                ``None`` defaults to ``reflect_prob="fresnel"`` (today's
+                behaviour). Ignored when ``forced_branch`` is set.
+            forced_branch: ``"reflect"`` or ``"transmit"`` to deterministically
+                force the branch (weight = R or T exactly, no importance
+                division) instead of drawing it stochastically. Used only by
+                the NumPy forward engine's bounded-splitting orchestration
+                (PR11) to build both children of a split ray.
         """
         # Every RNG draw in this call is keyed to the ray's identity as of
         # this specific interaction event -- captured before any of the
@@ -231,27 +245,49 @@ class RefractiveComponent(BaseComponent):
         T_used = be.where(tir, be.zeros_like(T_used), T_used)
 
         # --- Detached-sample / attached-weight ---
-        # Sampling decision uses detached R so the branch doesn't block grad.
         R_np = to_numpy(R_used).astype(np.float64)
-        u = rng.uniform(ray_id_key, bounce_key, EventSlot.FRESNEL_BRANCH)
-        do_reflect_np = (u < R_np) | to_numpy(tir).astype(bool)
-        do_reflect = be.array(do_reflect_np)
 
-        # Throughput weight: forward value is 1.0 (R_used == R_used/1); carries
-        # gradients through R/T. Generalizes the plain-Fresnel
-        # weight_transmit = (1-R)/(1-R_det) to allow T != 1-R (coating
-        # absorption): the branch is still a single reflect-vs-transmit draw
-        # with P(reflect) = R_det, so E[weight] = R on the reflect branch and
-        # T on the transmit branch -- exact flux conservation in expectation,
-        # with the shortfall R+T<1 taken up by the deterministic T weight
-        # rather than a separate absorption draw.
-        # For TIR rays weight stays 1.0 (full reflection is deterministic).
-        R_det = be.array(R_np)  # detached copy used as denominator
-        weight_reflect = R_used / (R_det + 1e-30)
-        weight_transmit = T_used / (1.0 - R_det + 1e-30)
-        weight = be.where(do_reflect, weight_reflect, weight_transmit)
-        # TIR: weight is exactly 1
-        weight = be.where(tir, be.ones_like(weight), weight)
+        if forced_branch is not None:
+            # Bounded-splitting orchestration (PR11, NumPy forward engine
+            # only): the branch is fixed, not drawn, and the weight is the
+            # exact deterministic R or T -- no importance division, since
+            # there is no probability being compensated for. TIR rays are
+            # unaffected: T_used is already forced to 0 there, so a forced
+            # "transmit" branch on a TIR ray correctly carries zero flux
+            # rather than raising or fabricating a wave that cannot exist.
+            do_reflect_np = np.full_like(R_np, forced_branch == "reflect", dtype=bool)
+            do_reflect = be.array(do_reflect_np)
+            weight = be.where(do_reflect, R_used, T_used)
+        else:
+            # Importance-biased branch probability (D2, PR11): generalises
+            # the plain-Fresnel estimator (p == R) to any detached
+            # probability p, dividing by p rather than R_det so the
+            # estimator stays unbiased for any p in (0, 1) -- only the
+            # variance changes. reflect_prob="fresnel" reproduces the
+            # original weight formula exactly.
+            r_det = be.array(R_np)
+            p_be = resolve_reflect_prob(sampling, r_det) if sampling else r_det
+            p_np = np.clip(to_numpy(p_be).astype(np.float64), 1e-12, 1.0 - 1e-12)
+            u = rng.uniform(ray_id_key, bounce_key, EventSlot.FRESNEL_BRANCH)
+            do_reflect_np = (u < p_np) | to_numpy(tir).astype(bool)
+            do_reflect = be.array(do_reflect_np)
+
+            # Throughput weight: forward value is 1.0 in expectation; carries
+            # gradients through R/T. Generalizes the plain-Fresnel
+            # weight_transmit = (1-R)/(1-R_det) to allow T != 1-R (coating
+            # absorption) *and* p != R (importance biasing): the branch is
+            # still a single reflect-vs-transmit draw with P(reflect) = p,
+            # so E[weight] = R on the reflect branch and T on the transmit
+            # branch regardless of p -- exact flux conservation in
+            # expectation, with the shortfall R+T<1 taken up by the
+            # deterministic T weight rather than a separate absorption draw.
+            # For TIR rays weight stays 1.0 (full reflection is deterministic).
+            p_det = be.array(p_np)  # detached copy used as denominator
+            weight_reflect = R_used / (p_det + 1e-30)
+            weight_transmit = T_used / (1.0 - p_det + 1e-30)
+            weight = be.where(do_reflect, weight_reflect, weight_transmit)
+            # TIR: weight is exactly 1
+            weight = be.where(tir, be.ones_like(weight), weight)
 
         # Apply weight to flux for hit rays
         rays.flux = rays.flux * be.where(hit_mask, weight, be.ones_like(weight))

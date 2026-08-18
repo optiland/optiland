@@ -36,17 +36,18 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 import optiland.backend as be
 
 if TYPE_CHECKING:
-    import numpy as np
-
     from optiland.nonsequential.components.base import BaseComponent
     from optiland.nonsequential.ir.scene_ir import BsdfIR, PrimitiveIR, SceneIR
     from optiland.nonsequential.ray_bundle import NSQRayBundle
     from optiland.nonsequential.rng import NSQRng
 
 LogHitFn = Callable[["NSQRayBundle", "np.ndarray", str, object], None]
+RayIdAllocator = Callable[[int], "np.ndarray"]
 
 
 def _component_kind_of(component: BaseComponent) -> str:
@@ -143,7 +144,8 @@ def apply_primitive_interactions(
     comp_first_np: np.ndarray,
     rng: NSQRng,
     log_hit_fn: LogHitFn | None = None,
-) -> None:
+    ray_id_allocator: RayIdAllocator | None = None,
+) -> NSQRayBundle | None:
     """Apply each hit primitive's interaction to ``rays``, in-place.
 
     This is the shared per-bounce "which surface did each ray hit, and what
@@ -178,7 +180,22 @@ def apply_primitive_interactions(
         log_hit_fn: Optional ``(rays, mask, primitive_name, t_offset)``
             callback for path recording, matching each backend's
             ``_log_hits`` closure.
+        ray_id_allocator: ``(n) -> int64 ndarray`` of ``n`` fresh, previously
+            -unused ray ids. Required to enable bounded splitting (D2, PR11,
+            ``ir.sampling.split_depth > 0``) -- omit (the default) on the
+            Torch backend, which forces ``split_depth=0`` and never spawns
+            rays (fixed tensor shapes are required for the autograd graph).
+
+    Returns:
+        A new :class:`NSQRayBundle` of transmit-branch children spawned by
+        bounded splitting this bounce, or ``None`` if none were spawned
+        (splitting disabled, no eligible hits, or ``ray_id_allocator`` was
+        not given). The caller is responsible for merging this into the
+        live bundle -- see
+        :meth:`optiland.nonsequential.backends.array_backend.ArrayBackend.trace`.
     """
+    spawned_chunks: list[NSQRayBundle] = []
+
     for i, primitive in enumerate(ir.primitives):
         mask_i_np = comp_first_np & (comp_idx == i)
         if not mask_i_np.any():
@@ -191,7 +208,88 @@ def apply_primitive_interactions(
         if log_hit_fn is not None:
             log_hit_fn(rays, mask_i_np, primitive.name, t_min)
 
-        mask_i = be.array(mask_i_np)
+        split_eligible_np = np.zeros_like(mask_i_np)
+        if (
+            ray_id_allocator is not None
+            and ir.sampling.split_depth > 0
+            and primitive.component_kind == "refractive"
+        ):
+            bounce_np = np.asarray(rays.bounce)
+            split_eligible_np = mask_i_np & (bounce_np < ir.sampling.split_depth)
+
+        split_idx = np.where(split_eligible_np)[0]
+        if split_idx.size == 0:
+            mask_i = be.array(mask_i_np)
+            component.interact(
+                rays,
+                t_min,
+                hit_normals,
+                mask_i,
+                rng,
+                primitive.bsdf,
+                hit_n_geom,
+                sampling=ir.sampling,
+            )
+            continue
+
+        # Bounded splitting (D2, PR11): a hit ray below split_depth spawns
+        # *both* Fresnel children instead of drawing one stochastically.
+        # 1) Snapshot the pre-interaction state of the splitting subset
+        #    (fresh ray ids, so its RNG stream is independent of the sibling
+        #    that keeps the original id) before either branch mutates
+        #    anything.
+        new_ids = ray_id_allocator(split_idx.size)
+        transmit_snapshot = rays.select(split_idx, ray_id=new_ids)
+        snap_t = np.asarray(t_min)[split_idx]
+        snap_normals = np.asarray(hit_normals)[split_idx]
+        snap_n_geom = np.asarray(hit_n_geom)[split_idx]
+        snap_mask = be.array(np.ones(split_idx.size, dtype=bool))
+
+        # 2) Non-splitting remainder of this primitive's hits (if any):
+        #    normal single-branch draw.
+        remainder_np = mask_i_np & ~split_eligible_np
+        if remainder_np.any():
+            component.interact(
+                rays,
+                t_min,
+                hit_normals,
+                be.array(remainder_np),
+                rng,
+                primitive.bsdf,
+                hit_n_geom,
+                sampling=ir.sampling,
+            )
+
+        # 3) Reflect child: force the branch in place on the original rays.
         component.interact(
-            rays, t_min, hit_normals, mask_i, rng, primitive.bsdf, hit_n_geom
+            rays,
+            t_min,
+            hit_normals,
+            be.array(split_eligible_np),
+            rng,
+            primitive.bsdf,
+            hit_n_geom,
+            sampling=ir.sampling,
+            forced_branch="reflect",
         )
+
+        # 4) Transmit child: force the other branch on the snapshot, which
+        #    becomes a newly spawned ray in the live bundle.
+        component.interact(
+            transmit_snapshot,
+            snap_t,
+            snap_normals,
+            snap_mask,
+            rng,
+            primitive.bsdf,
+            snap_n_geom,
+            sampling=ir.sampling,
+            forced_branch="transmit",
+        )
+        spawned_chunks.append(transmit_snapshot)
+
+    if not spawned_chunks:
+        return None
+    from optiland.nonsequential.ray_bundle import NSQRayBundle  # noqa: PLC0415
+
+    return NSQRayBundle.concat(spawned_chunks)

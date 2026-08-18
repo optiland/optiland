@@ -119,3 +119,78 @@ class NSQRayBundle:
         self.x = self.x + t * self.L
         self.y = self.y + t * self.M
         self.z = self.z + t * self.N
+
+    def select(self, idx: np.ndarray, ray_id: np.ndarray | None = None) -> NSQRayBundle:
+        """Return a new, independent bundle containing rays at ``idx``.
+
+        NumPy-only (fancy indexing on plain ndarrays): used by the bounded
+        -splitting orchestration (D2, PR11;
+        :mod:`optiland.nonsequential.ir.interpreter`) to snapshot the
+        pre-interaction state of a set of rays before mutating the original
+        bundle in place, so the transmit child of a split can be built from
+        the same starting point as the reflect child.
+
+        Args:
+            idx: Integer index array selecting rows to copy.
+            ray_id: If given, overrides ``self.ray_id[idx]`` in the returned
+                bundle -- used to assign the spawned rays fresh identities
+                so their RNG stream (keyed by ``ray_id``) is independent of
+                the sibling ray that stayed at the original id.
+
+        Returns:
+            A new :class:`NSQRayBundle`, alive on every row (splitting only
+            ever snapshots rays that are alive and mid-interaction).
+        """
+        kwargs: dict = dict(
+            x=self.x[idx].copy(),
+            y=self.y[idx].copy(),
+            z=self.z[idx].copy(),
+            L=self.L[idx].copy(),
+            M=self.M[idx].copy(),
+            N=self.N[idx].copy(),
+            flux=self.flux[idx].copy(),
+            wavelength=self.wavelength[idx].copy(),
+            n_current=self.n_current[idx].copy(),
+            bounce=self.bounce[idx].copy(),
+            alive=np.ones(len(idx), dtype=bool),
+            k_current=self.k_current[idx].copy(),
+        )
+        if ray_id is not None:
+            kwargs["ray_id"] = ray_id
+        elif self.ray_id is not None:
+            kwargs["ray_id"] = self.ray_id[idx].copy()
+        return NSQRayBundle(**kwargs)
+
+    @staticmethod
+    def concat(bundles: list[NSQRayBundle]) -> NSQRayBundle:
+        """Concatenate several bundles into one (NumPy-only).
+
+        Used by the bounded-splitting orchestration (D2, PR11) to merge
+        spawned transmit-branch children back into the live bundle at the
+        end of a bounce, and to merge per-primitive spawn batches within a
+        single bounce.
+
+        Args:
+            bundles: Non-empty list of bundles to concatenate, in order.
+
+        Returns:
+            A new :class:`NSQRayBundle` with every field concatenated along
+            axis 0.
+        """
+        kwargs: dict = dict(
+            x=np.concatenate([b.x for b in bundles]),
+            y=np.concatenate([b.y for b in bundles]),
+            z=np.concatenate([b.z for b in bundles]),
+            L=np.concatenate([b.L for b in bundles]),
+            M=np.concatenate([b.M for b in bundles]),
+            N=np.concatenate([b.N for b in bundles]),
+            flux=np.concatenate([b.flux for b in bundles]),
+            wavelength=np.concatenate([b.wavelength for b in bundles]),
+            n_current=np.concatenate([b.n_current for b in bundles]),
+            bounce=np.concatenate([b.bounce for b in bundles]),
+            alive=np.concatenate([b.alive for b in bundles]),
+            k_current=np.concatenate([b.k_current for b in bundles]),
+        )
+        if all(b.ray_id is not None for b in bundles):
+            kwargs["ray_id"] = np.concatenate([b.ray_id for b in bundles])
+        return NSQRayBundle(**kwargs)

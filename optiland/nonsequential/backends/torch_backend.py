@@ -13,6 +13,7 @@ Kramer Harrison, 2026
 from __future__ import annotations
 
 import time
+import warnings
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
@@ -33,6 +34,7 @@ from optiland.nonsequential.detectors.dispatch import (
 from optiland.nonsequential.ir.interpreter import apply_primitive_interactions
 from optiland.nonsequential.ir.lower import lower
 from optiland.nonsequential.rng import NSQRng
+from optiland.nonsequential.sampling import russian_roulette
 
 if TYPE_CHECKING:
     from optiland.nonsequential.components.base import BaseComponent
@@ -138,7 +140,12 @@ class TorchBackend(TracerBackend):
             num_rays: Total rays to launch.
             max_depth: Fixed number of bounces. Rays exceeding this are
                 depth-killed. Memory scales O(num_rays × max_depth).
-            min_flux_fraction: Kill threshold relative to per-ray initial flux.
+            min_flux_fraction: Russian-roulette threshold (D-9), relative to
+                per-ray initial flux -- combined with the scene's
+                ``sampling_policy.rr_start_flux`` (the larger of the two
+                wins). Below threshold, rays are killed with an unbiased
+                probability and survivors' flux is boosted accordingly,
+                rather than truncated outright.
             batch_size: Rays per processing batch (forward pass only). Does not
                 change the result, only the speed; see ``DEFAULT_BATCH_SIZE``.
             seed: RNG seed override (overrides constructor seed if provided).
@@ -168,6 +175,23 @@ class TorchBackend(TracerBackend):
         # iterating scene.surfaces and branching on Python class identity.
         ir = lower(scene, strict=False)
 
+        # Bounded splitting (D2, PR11) is the NumPy forward engine only: it
+        # grows the live ray bundle, which conflicts with the fixed tensor
+        # shapes this backend's autograd graph requires. Never silently
+        # ignored (D-14-class failure mode) -- warn and fall back to
+        # importance-biased single-branch sampling, which this backend
+        # always uses regardless of split_depth.
+        if ir.sampling.split_depth > 0:
+            warnings.warn(
+                f"TorchBackend does not support bounded splitting "
+                f"(sampling_policy.split_depth={ir.sampling.split_depth}); "
+                "fixed tensor shapes are required for the autograd graph. "
+                "Falling back to importance-biased single-branch sampling "
+                "(split_depth is ignored). Use NumpyBackend for bounded "
+                "splitting.",
+                stacklevel=2,
+            )
+
         t_start = time.perf_counter()
 
         sources = scene.sources
@@ -177,7 +201,6 @@ class TorchBackend(TracerBackend):
         num_rays_total = int(num_rays)
 
         flux_per_ray = total_flux_in / num_rays_total if num_rays_total > 0 else 1.0
-        min_flux = min_flux_fraction * flux_per_ray
 
         num_rays_absorbed = 0
         num_rays_escaped = 0
@@ -360,26 +383,49 @@ class TorchBackend(TracerBackend):
                         rays.z = be.where(escaped, rays.z + bs * rays.N, rays.z)
                     rays.alive = rays.alive & ~be.array(no_hit_np)
 
-                    # Kill by flux threshold or depth
+                    # Depth truncation: hard kill (inherent, reported bias --
+                    # unlike the flux threshold below, not replaced by
+                    # roulette; there is no unbiased way to "continue" a ray
+                    # past a hard bounce-count cap).
                     alive_np_now = to_numpy(rays.alive).astype(bool)
-                    flux_np = to_numpy(rays.flux)
                     bounce_np = to_numpy(rays.bounce)
-
-                    alive_flux_np = flux_np >= min_flux
                     alive_depth_np = bounce_np < max_depth
-
-                    newly_flux_killed = alive_np_now & ~alive_flux_np
-                    newly_depth_killed = alive_np_now & alive_flux_np & ~alive_depth_np
-
-                    if newly_flux_killed.any():
-                        num_rays_flux_killed += int(newly_flux_killed.sum())
-                        total_flux_lost += float(flux_np[newly_flux_killed].sum())
+                    newly_depth_killed = alive_np_now & ~alive_depth_np
                     if newly_depth_killed.any():
                         num_rays_depth_killed += int(newly_depth_killed.sum())
-                        total_flux_lost += float(flux_np[newly_depth_killed].sum())
+                        total_flux_lost += float(
+                            to_numpy(rays.flux)[newly_depth_killed].sum()
+                        )
+                    rays.alive = rays.alive & be.array(alive_depth_np)
 
-                    kill_np = ~alive_flux_np | ~alive_depth_np
-                    rays.alive = rays.alive & ~be.array(kill_np)
+                    # Russian roulette (D-9) replaces the old biased hard
+                    # kill below min_flux: unbiased stochastic termination
+                    # (kill with probability p, boost survivors by
+                    # 1/(1-p)), so total_flux_lost reports a genuine
+                    # diagnostic (~0 for a well-configured scene) instead of
+                    # an expected bookkeeping entry. Same mechanism as the
+                    # NumPy backend (optiland.nonsequential.sampling) -- no
+                    # shape change is needed here, since a killed ray simply
+                    # gets alive=False like any other kill on this
+                    # fixed-shape backend.
+                    rr_threshold_fraction = max(
+                        min_flux_fraction, ir.sampling.rr_start_flux
+                    )
+                    flux_before_rr = rays.flux
+                    rays.flux, rays.alive, rr_killed_np = russian_roulette(
+                        rays.flux,
+                        rays.alive,
+                        rr_threshold_fraction,
+                        flux_per_ray,
+                        self.rng,
+                        to_numpy(rays.ray_id),
+                        to_numpy(rays.bounce),
+                    )
+                    if rr_killed_np.any():
+                        num_rays_flux_killed += int(rr_killed_np.sum())
+                        total_flux_lost += float(
+                            to_numpy(flux_before_rr)[rr_killed_np].sum()
+                        )
 
                 source_remaining -= batch
 

@@ -523,5 +523,5 @@ def lower(scene: NSQScene, *, strict: bool = True) -> SceneIR:
         emitters=tuple(emitters),
         sensors=tuple(sensors),
         rng=RngContract(),
-        sampling=SamplingPolicy(),
+        sampling=getattr(scene, "sampling_policy", None) or SamplingPolicy(),
     )

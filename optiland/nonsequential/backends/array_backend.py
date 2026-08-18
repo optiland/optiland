@@ -27,9 +27,11 @@ from optiland.nonsequential.detectors.dispatch import (
 )
 from optiland.nonsequential.ir.interpreter import apply_primitive_interactions
 from optiland.nonsequential.ir.lower import lower
+from optiland.nonsequential.ray_bundle import NSQRayBundle
+from optiland.nonsequential.rng import EventSlot
+from optiland.nonsequential.sampling import russian_roulette
 
 if TYPE_CHECKING:
-    from optiland.nonsequential.ray_bundle import NSQRayBundle
     from optiland.nonsequential.scene import NSQScene
     from optiland.nonsequential.tracer import SimulationResult
 
@@ -50,6 +52,55 @@ _EVENT_DTYPE = np.dtype(
         ("component_name", "U64"),
     ]
 )
+
+
+# Floor on the split-budget culling survival probability, mirroring
+# sampling._RR_SURVIVE_FLOOR: bounds the worst-case flux boost so a nearly
+# -saturated budget cannot produce an arbitrarily large boosted flux.
+_BUDGET_CULL_SURVIVE_FLOOR = 0.02
+
+
+def _cull_to_budget(
+    spawned: NSQRayBundle, headroom: int, rng
+) -> tuple[NSQRayBundle, np.ndarray, np.ndarray]:
+    """Russian-roulette a spawned batch down to ``headroom`` rays (D2, PR11).
+
+    Bounded splitting (``ir.sampling.split_depth > 0``) caps live rays at
+    ``split_budget * batch_size``; a batch of spawned transmit children that
+    would exceed the remaining headroom is culled by roulette rather than
+    truncated, so the excess is an unbiased kill + boost (like
+    :func:`optiland.nonsequential.sampling.russian_roulette`) instead of a
+    silent flux-truncation bias.
+
+    Args:
+        spawned: The spawned-ray batch to cull (already smaller-than
+            -headroom batches must not be passed in -- callers check
+            ``spawned.num_rays > headroom`` first).
+        headroom: Number of additional live rays the budget can still admit.
+            May be 0 (budget already saturated).
+        rng: Keyed PCG32 RNG.
+
+    Returns:
+        ``(kept, culled_flux, culled_mask)``: the surviving (boosted-flux)
+        subset as a new bundle, the pre-cull flux of the rays that were
+        killed (for ``total_flux_lost`` bookkeeping), and the NumPy bool
+        mask of which input rows were culled.
+    """
+    n = spawned.num_rays
+    keep_prob = max(headroom / n, _BUDGET_CULL_SURVIVE_FLOOR) if n > 0 else 1.0
+    ray_id_np = to_numpy(spawned.ray_id)
+    bounce_np = to_numpy(spawned.bounce)
+    u = rng.uniform(ray_id_np, bounce_np, EventSlot.RR, offset=1)
+    keep_np = u < keep_prob
+    culled_np = ~keep_np
+
+    flux_np = to_numpy(spawned.flux)
+    culled_flux = flux_np[culled_np].copy()
+
+    idx = np.where(keep_np)[0]
+    kept = spawned.select(idx)
+    kept.flux = kept.flux / keep_prob  # unbiased boost
+    return kept, culled_flux, culled_np
 
 
 class ArrayBackend(TracerBackend):
@@ -86,7 +137,12 @@ class ArrayBackend(TracerBackend):
             scene: The NSQScene to simulate.
             num_rays: Total rays to launch.
             max_depth: Maximum surface hits per ray.
-            min_flux_fraction: Kill threshold relative to per-ray initial flux.
+            min_flux_fraction: Russian-roulette threshold (D-9), relative to
+                per-ray initial flux -- combined with the scene's
+                ``sampling_policy.rr_start_flux`` (the larger of the two
+                wins). Below threshold, rays are killed with an unbiased
+                probability and survivors' flux is boosted accordingly,
+                rather than truncated outright.
             batch_size: Rays per processing batch. Does not change the result,
                 only the speed; see ``DEFAULT_BATCH_SIZE``.
             seed: RNG seed for reproducibility.
@@ -126,7 +182,6 @@ class ArrayBackend(TracerBackend):
         num_rays_total = int(num_rays)
 
         flux_per_ray = total_flux_in / num_rays_total if num_rays_total > 0 else 1.0
-        min_flux = min_flux_fraction * flux_per_ray
 
         num_rays_absorbed = 0
         num_rays_escaped = 0
@@ -144,6 +199,17 @@ class ArrayBackend(TracerBackend):
         # Per-ray event log (numpy-only, for display/visualization)
         event_log: list[dict] | None = [] if record_paths else None
         _next_ray_id: list[int] = [0]
+
+        def _alloc_ray_ids(n: int) -> np.ndarray:
+            """Allocate ``n`` fresh ray ids for bounded splitting (D2, PR11).
+
+            Shares the same monotonic counter as source-birth ray ids, so
+            a spawned ray's id never collides with any other ray's -- its
+            PCG32 stream (keyed by ray_id) is therefore independent (D-8).
+            """
+            start = _next_ray_id[0]
+            _next_ray_id[0] += n
+            return np.arange(start, start + n, dtype=np.int64)
 
         def _log_birth(rays: NSQRayBundle, source_name: str) -> None:
             if event_log is None:
@@ -360,7 +426,13 @@ class ArrayBackend(TracerBackend):
                     # Apply component interactions, dispatched from the IR
                     # (ir.primitives[i].component_kind / .bsdf.kind) rather
                     # than by iterating scene.surfaces and checking isinstance.
-                    apply_primitive_interactions(
+                    # ray_id_allocator enables bounded splitting (D2, PR11,
+                    # NumPy forward engine only): a hit ray below
+                    # ir.sampling.split_depth spawns both Fresnel children
+                    # instead of drawing one, and the transmit child comes
+                    # back as spawned (merged into `rays` below, after this
+                    # bounce's own kill checks -- see the merge comment).
+                    spawned = apply_primitive_interactions(
                         rays,
                         ir,
                         scene.surfaces,
@@ -371,6 +443,7 @@ class ArrayBackend(TracerBackend):
                         comp_first,
                         self.rng,
                         log_hit_fn=_log_hits,
+                        ray_id_allocator=_alloc_ray_ids,
                     )
 
                     # Kill rays with no hit (escaped)
@@ -391,28 +464,64 @@ class ArrayBackend(TracerBackend):
                         rays.z = be.where(escaped_now, rays.z + ez, rays.z)
                     rays.alive = rays.alive & ~no_hit
 
-                    # Kill rays below flux threshold or exceeding max depth
-                    alive_flux = rays.flux >= min_flux
+                    # Depth truncation: hard kill. Inherent, reported bias
+                    # (unlike the old flux truncation below, this is not
+                    # replaced by roulette -- there is no unbiased way to
+                    # "continue" a ray past a hard bounce-count cap).
                     alive_depth = rays.bounce < max_depth
-
-                    newly_flux_killed = rays.alive & ~alive_flux
-                    newly_depth_killed = rays.alive & alive_flux & ~alive_depth
-
-                    if newly_flux_killed.any():
-                        num_rays_flux_killed += int(newly_flux_killed.sum())
-                        total_flux_lost += float(
-                            to_numpy(rays.flux[newly_flux_killed]).sum()
-                        )
-                        _log_deaths(rays, newly_flux_killed, "flux_killed")
-
+                    newly_depth_killed = rays.alive & ~alive_depth
                     if newly_depth_killed.any():
                         num_rays_depth_killed += int(newly_depth_killed.sum())
                         total_flux_lost += float(
                             to_numpy(rays.flux[newly_depth_killed]).sum()
                         )
                         _log_deaths(rays, newly_depth_killed, "depth_killed")
+                    rays.alive = rays.alive & alive_depth
 
-                    rays.alive = rays.alive & alive_flux & alive_depth
+                    # Russian roulette (D-9) replaces the old biased hard
+                    # kill below min_flux: unbiased stochastic termination
+                    # of low-flux rays (kill with probability p, boost
+                    # survivors by 1/(1-p)), so total_flux_lost now reports
+                    # a genuine diagnostic -- ~0 for a well-configured scene
+                    # -- rather than an expected bookkeeping entry.
+                    rr_threshold_fraction = max(
+                        min_flux_fraction, ir.sampling.rr_start_flux
+                    )
+                    flux_before_rr = rays.flux
+                    rays.flux, rays.alive, rr_killed_np = russian_roulette(
+                        rays.flux,
+                        rays.alive,
+                        rr_threshold_fraction,
+                        flux_per_ray,
+                        self.rng,
+                        to_numpy(rays.ray_id),
+                        to_numpy(rays.bounce),
+                    )
+                    if rr_killed_np.any():
+                        num_rays_flux_killed += int(rr_killed_np.sum())
+                        total_flux_lost += float(
+                            to_numpy(flux_before_rr)[rr_killed_np].sum()
+                        )
+                        _log_deaths(rays, rr_killed_np, "flux_killed")
+
+                    # Merge bounded-splitting (D2, PR11) spawned transmit
+                    # children into the live bundle, now that this bounce's
+                    # own escape/depth/RR kill checks (all sized to the
+                    # pre-spawn ray count) are done. Spawned rays start
+                    # fresh at the next while-loop iteration's
+                    # intersect_scene call, same as any other live ray.
+                    if spawned is not None and spawned.num_rays > 0:
+                        budget = int(ir.sampling.split_budget * batch_size)
+                        headroom = max(0, budget - rays.num_rays_alive)
+                        if spawned.num_rays > headroom:
+                            spawned, culled_flux_np, culled_np = _cull_to_budget(
+                                spawned, headroom, self.rng
+                            )
+                            if culled_np.any():
+                                num_rays_flux_killed += int(culled_np.sum())
+                                total_flux_lost += float(culled_flux_np.sum())
+                        if spawned.num_rays > 0:
+                            rays = NSQRayBundle.concat([rays, spawned])
 
                     rays = self._maybe_compact(rays)
                     if rays.num_rays == 0:

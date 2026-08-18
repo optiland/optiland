@@ -186,27 +186,39 @@ class RngContract:
 
 @dataclass(frozen=True)
 class SamplingPolicy:
-    """Rare-path sampling policy, implemented in PR11.
+    """Rare-path sampling policy (D2, PR11).
 
-    Defined now so the IR's shape is stable across PR11; every default here
-    reproduces the engine's current (pre-PR11) forward behaviour exactly:
-    ``reflect_prob="fresnel"`` is today's unconditional Fresnel-probability
-    branch, and ``split_depth=0`` means "never split," which is the only
-    mode that exists today.
+    Every default reproduces the engine's pre-PR11 forward behaviour
+    exactly: ``reflect_prob="fresnel"`` is the unconditional
+    Fresnel-probability branch that always existed, and ``split_depth=0``
+    means "never split," which was the only mode that existed before PR11.
+    Set on a scene via ``NSQScene.sampling_policy``.
 
     Attributes:
         reflect_prob: Importance-sampling probability for the reflect
-            branch. ``"fresnel"`` uses the Fresnel reflectance itself
-            (today's behaviour); ``"auto"`` and an explicit float are
-            reserved for PR11.
+            branch (see
+            :func:`optiland.nonsequential.sampling.resolve_reflect_prob`).
+            ``"fresnel"`` uses the Fresnel reflectance itself (today's
+            behaviour); ``"auto"`` clamps it into ``[0.25, 0.75]``; an
+            explicit float fixes the probability. Works on both backends
+            and under autograd -- the branch decision is always drawn from
+            a detached probability with a compensating attached weight, so
+            only the *variance* changes, never the expectation.
         split_depth: NumPy forward engine only; bounded bounce-splitting
-            depth. ``0`` = never split (today's only behaviour). The Torch
-            backend must reject a nonzero value (PR11).
+            depth (see
+            :mod:`optiland.nonsequential.backends.array_backend`). ``0`` =
+            never split (the only mode the Torch backend supports -- it
+            forces ``split_depth=0`` and warns if the scene sets a nonzero
+            value, since fixed tensor shapes are required for the autograd
+            graph).
         split_budget: Cap on live rays during splitting, as a multiple of
-            ``batch_size``. Unused while ``split_depth=0``.
+            ``batch_size``. Unused while ``split_depth=0``. Rays spawned
+            beyond the cap are Russian-rouletted, not dropped.
         rr_start_flux: Russian-roulette threshold, as a fraction of
-            per-ray initial flux. Unused until PR11 replaces flux
-            truncation (D-9).
+            per-ray initial flux (see
+            :func:`optiland.nonsequential.sampling.russian_roulette`).
+            Replaces the old biased hard kill below ``min_flux`` (D-9) on
+            both backends.
     """
 
     reflect_prob: float | Literal["fresnel", "auto"] = "fresnel"

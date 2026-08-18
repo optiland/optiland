@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from optiland.nonsequential.bsdf.base import BaseBSDF
     from optiland.nonsequential.components.geometry.base import ComponentGeometry
     from optiland.nonsequential.ir.bsdf_ir import BsdfIR
+    from optiland.nonsequential.ir.scene_ir import SamplingPolicy
     from optiland.nonsequential.materials.nsq_material import NSQMaterial
     from optiland.nonsequential.ray_bundle import NSQRayBundle
     from optiland.nonsequential.rng import NSQRng
@@ -99,6 +100,8 @@ class ReflectiveComponent(BaseComponent):
         rng: NSQRng,
         bsdf_ir: BsdfIR,
         n_geom: np.ndarray,
+        sampling: SamplingPolicy | None = None,
+        forced_branch: str | None = None,
     ) -> None:
         """Apply specular (or BSDF) reflection at hit points (in-place).
 
@@ -115,6 +118,12 @@ class ReflectiveComponent(BaseComponent):
                 ``self.bsdf``), not from ``self.bsdf is not None``.
             n_geom: Unused -- a mirror never transmits, so it never needs
                 to determine which medium a ray is entering.
+            sampling: Unused -- a mirror has no Fresnel reflect/transmit
+                branch to importance-bias (D2, PR11); its reflectance is
+                applied as a deterministic flux weight, not a stochastic
+                draw.
+            forced_branch: Unused -- bounded splitting (PR11) only applies
+                to ``RefractiveComponent``'s Fresnel branch.
         """
         # Captured before any mutation below (including the bounce
         # increment at the end of this method) changes rays.bounce.

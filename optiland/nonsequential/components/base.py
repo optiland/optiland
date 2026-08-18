@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from optiland.nonsequential.bsdf.base import BaseBSDF
     from optiland.nonsequential.components.geometry.base import AABB, ComponentGeometry
     from optiland.nonsequential.ir.bsdf_ir import BsdfIR
+    from optiland.nonsequential.ir.scene_ir import SamplingPolicy
     from optiland.nonsequential.materials.nsq_material import NSQMaterial
     from optiland.nonsequential.ray_bundle import NSQRayBundle
     from optiland.nonsequential.rng import NSQRng
@@ -130,6 +131,8 @@ class BaseComponent(ABC):
         rng: NSQRng,
         bsdf_ir: BsdfIR,
         n_geom: np.ndarray,
+        sampling: SamplingPolicy | None = None,
+        forced_branch: str | None = None,
     ) -> None:
         """Apply optical interaction at hit points (in-place).
 
@@ -159,6 +162,18 @@ class BaseComponent(ABC):
                 ``material_back`` (D-1). ``RefractiveComponent`` uses this,
                 not index proximity, to determine which material a ray is
                 entering.
+            sampling: The scene's rare-path sampling policy (D2, PR11).
+                Only ``RefractiveComponent`` consults it, to resolve the
+                Fresnel reflect/transmit branch probability; ``None`` is
+                treated as the default (unbiased, ``reflect_prob="fresnel"``)
+                policy.
+            forced_branch: ``"reflect"`` or ``"transmit"`` to deterministically
+                force the branch instead of drawing it, or ``None`` for the
+                normal stochastic draw. Used only by the NumPy forward
+                engine's bounded-splitting orchestration (PR11;
+                :mod:`optiland.nonsequential.ir.interpreter`) to build both
+                children of a split ray; ignored by every component except
+                ``RefractiveComponent``.
         """
 
     @property
