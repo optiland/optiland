@@ -35,7 +35,7 @@ class SpecularBRDF(BaseBSDF):
         rng: NSQRng | None = None,
         ray_id: np.ndarray | None = None,
         bounce: np.ndarray | None = None,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Sample specular reflection directions.
 
         Args:
@@ -48,13 +48,19 @@ class SpecularBRDF(BaseBSDF):
             bounce: Unused for specular BRDF.
 
         Returns:
-            (reflected_dirs, ones) -- reflected unit vectors and unit weights.
+            (reflected_dirs, ones, all_false) -- reflected unit vectors, unit
+            weights, and an all-False transmitted mask (a mirror lobe has no
+            far side).
         """
         cos_theta = (incident_dirs * normals).sum(axis=1, keepdims=True)
         reflected = incident_dirs - 2.0 * cos_theta * normals
         norms = (reflected * reflected).sum(axis=1, keepdims=True) ** 0.5
         reflected = reflected / norms
-        return reflected, be.ones(num_rays, dtype=incident_dirs.dtype)
+        return (
+            reflected,
+            be.ones(num_rays, dtype=incident_dirs.dtype),
+            be.zeros(num_rays, dtype=bool),
+        )
 
     def reflectance(
         self,

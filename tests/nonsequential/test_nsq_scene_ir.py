@@ -200,13 +200,19 @@ class TestLowerCorrectness:
         ir = lower(scene)
         diffuser = next(p for p in ir.primitives if p.name == "diffuser")
         assert diffuser.bsdf == BsdfIR(
-            kind="lambertian", params={"reflectance_value": 0.7}
+            kind="lambertian",
+            params={"reflectance_value": 0.7, "transmissive_fraction": 0.0},
         )
         assert diffuser.scatter_fraction == pytest.approx(0.3)
 
         scatterer = next(p for p in ir.primitives if p.name == "scatterer")
         assert scatterer.bsdf.kind == "harvey_shack"
-        assert scatterer.bsdf.params == {"b0": 1e-3, "l0": 0.01, "s": 2.0}
+        assert scatterer.bsdf.params == {
+            "b0": 1e-3,
+            "l0": 0.01,
+            "s": 2.0,
+            "transmissive_fraction": 0.0,
+        }
 
     def test_bare_surface_has_none_bsdf(self):
         scene = _rich_scene()

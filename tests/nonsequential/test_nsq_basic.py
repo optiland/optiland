@@ -532,8 +532,11 @@ class TestBSDFs:
         rng = NSQRng(0)
         ray_id = np.arange(N)
         bounce = np.zeros(N, dtype=np.int32)
-        scattered, weights = bsdf.sample(N, dirs, normals, wl, rng, ray_id, bounce)
+        scattered, weights, transmitted = bsdf.sample(
+            N, dirs, normals, wl, rng, ray_id, bounce
+        )
         np.testing.assert_allclose(scattered, [[0.0, 0.0, 1.0]], atol=1e-10)
+        assert not np.any(transmitted)
 
     def test_lambertian_reflectance(self):
         from optiland.nonsequential.bsdf.lambertian import (
@@ -561,7 +564,10 @@ class TestBSDFs:
         rng = NSQRng(42)
         ray_id = np.arange(N)
         bounce = np.zeros(N, dtype=np.int32)
-        scattered, weights = bsdf.sample(N, dirs, normals, wl, rng, ray_id, bounce)
+        scattered, weights, transmitted = bsdf.sample(
+            N, dirs, normals, wl, rng, ray_id, bounce
+        )
+        assert not np.any(transmitted)
         # All scattered rays should be on the +z hemisphere
         assert np.all(scattered[:, 2] >= -1e-6)
         # Check normalization

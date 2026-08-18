@@ -230,15 +230,30 @@ def _lower_bsdf(bsdf: object | None) -> BsdfIR:
         return BsdfIR(kind="none")
     if isinstance(bsdf, LambertianBSDF):
         return BsdfIR(
-            kind="lambertian", params={"reflectance_value": bsdf.reflectance_value}
+            kind="lambertian",
+            params={
+                "reflectance_value": bsdf.reflectance_value,
+                "transmissive_fraction": bsdf.transmissive_fraction,
+            },
         )
     if isinstance(bsdf, HarveyShackBSDF):
         return BsdfIR(
             kind="harvey_shack",
-            params={"b0": bsdf.b0, "l0": bsdf.l0, "s": bsdf.s},
+            params={
+                "b0": bsdf.b0,
+                "l0": bsdf.l0,
+                "s": bsdf.s,
+                "transmissive_fraction": bsdf.transmissive_fraction,
+            },
         )
     if isinstance(bsdf, TabulatedBSDF):
-        return BsdfIR(kind="tabulated", params={"path": str(bsdf.path)})
+        return BsdfIR(
+            kind="tabulated",
+            params={
+                "path": str(bsdf.path),
+                "transmissive_fraction": bsdf.transmissive_fraction,
+            },
+        )
     if isinstance(bsdf, SpecularBRDF):
         return BsdfIR(kind="specular")
     raise TypeError(

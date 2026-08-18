@@ -15,7 +15,13 @@ import numpy as np
 import pytest
 
 import optiland.backend as be
-from optiland.nonsequential import HarveyShackBSDF, LambertianBSDF, NSQRng
+from optiland.nonsequential import (
+    HarveyShackBSDF,
+    LambertianBSDF,
+    NSQRng,
+    SpecularBRDF,
+    TabulatedBSDF,
+)
 from optiland.nonsequential.bsdf.lambertian import _orthonormal_basis
 
 
@@ -84,7 +90,7 @@ class TestLambertianSampling:
         bsdf = LambertianBSDF(reflectance_value=1.0)
         n = 256
         with np.errstate(all="raise"):
-            dirs, _ = bsdf.sample(
+            dirs, _, _ = bsdf.sample(
                 n,
                 np.tile([0.0, 0.0, 1.0], (n, 1)),
                 np.zeros((n, 3)),
@@ -102,7 +108,7 @@ class TestLambertianSampling:
         normal = np.array([0.3, -0.5, 0.8])
         normal /= np.linalg.norm(normal)
 
-        dirs, _ = bsdf.sample(
+        dirs, _, _ = bsdf.sample(
             n_rays,
             np.tile([0.0, 0.0, 1.0], (n_rays, 1)),
             np.tile(normal, (n_rays, 1)),
@@ -127,7 +133,7 @@ class TestLambertianSampling:
         normal = np.array([0.3, -0.5, 0.8])
         normal /= np.linalg.norm(normal)
 
-        dirs, _ = bsdf.sample(
+        dirs, _, _ = bsdf.sample(
             n_rays,
             np.tile([0.0, 0.0, 1.0], (n_rays, 1)),
             np.tile(normal, (n_rays, 1)),
@@ -151,7 +157,7 @@ class TestLambertianSampling:
         """The weight returned is the hemispherical reflectance."""
         bsdf = LambertianBSDF(reflectance_value=0.35)
         n_rays = 128
-        _, weights = bsdf.sample(
+        _, weights, _ = bsdf.sample(
             n_rays,
             np.tile([0.0, 0.0, 1.0], (n_rays, 1)),
             np.tile([0.0, 0.0, 1.0], (n_rays, 1)),
@@ -172,7 +178,7 @@ class TestHarveyShackSampling:
     @staticmethod
     def _sample(bsdf, n_rays=200_000, seed=4):
         """Reflect +z off a -z facing plane, so specular is -z."""
-        dirs, weights = bsdf.sample(
+        dirs, weights, _ = bsdf.sample(
             n_rays,
             np.tile([0.0, 0.0, 1.0], (n_rays, 1)),
             np.tile([0.0, 0.0, -1.0], (n_rays, 1)),
@@ -187,7 +193,7 @@ class TestHarveyShackSampling:
         """Degenerate rows must not produce NaN directions or weights."""
         bsdf = HarveyShackBSDF(b0=1e-3, l0=0.01, s=2.0)
         n = 128
-        dirs, weights = bsdf.sample(
+        dirs, weights, _ = bsdf.sample(
             n,
             np.zeros((n, 3)),
             np.zeros((n, 3)),
@@ -343,10 +349,11 @@ class TestScatterFraction:
         direction and n_geom alone, which correctly identifies many steeply
         Lambertian-scattered rays as exceeding the front face's critical
         angle and traps them by TIR -- a real effect the index heuristic
-        was masking. (D-4, BSDF-vs-medium-state disagreement, is still
-        open and is what lets a scattered ray reach the front face marked
-        "in glass" or "in vacuum" depending on the Fresnel branch's own die
-        roll at the back face in the first place; PR9 closes that.)
+        was masking. This depends on D-4 (BSDF-vs-medium-state disagreement)
+        being fixed: a scattered ray at the back face must reach the front
+        face bookkept as "in glass" every time, not depending on whichever
+        way the back face's own, unrelated Fresnel branch die roll happened
+        to land (see TestBsdfLobeMediumTracking for a direct test of that).
         """
         forward, backward = self._trace(1.0)
         assert forward == pytest.approx(0.0, abs=1e-9)
@@ -362,3 +369,186 @@ class TestScatterFraction:
         assert backward == sorted(backward), backward
         # A tenth of the way in, most light still gets through.
         assert 0.6 < forward[1] < 0.85
+
+
+class TestTransmissiveLobes:
+    """D-5: BSDF lobes can sample the transmissive (far-side) hemisphere."""
+
+    def setup_method(self):
+        be.set_backend("numpy")
+
+    def test_zero_fraction_is_all_reflective(self):
+        bsdf = LambertianBSDF(reflectance_value=1.0, transmissive_fraction=0.0)
+        n_rays = 5_000
+        _, _, transmitted = bsdf.sample(
+            n_rays,
+            np.tile([0.0, 0.0, -1.0], (n_rays, 1)),
+            np.tile([0.0, 0.0, 1.0], (n_rays, 1)),
+            np.full(n_rays, 0.55),
+            NSQRng(0),
+            np.arange(n_rays),
+            np.zeros(n_rays, dtype=np.int32),
+        )
+        assert not np.any(np.asarray(transmitted))
+
+    def test_lambertian_transmissive_fraction_splits_hemispheres(self):
+        """~half the rays land in each hemisphere at fraction=0.5, and the
+        returned ``transmitted`` mask agrees with which hemisphere each
+        scattered ray actually landed in."""
+        bsdf = LambertianBSDF(reflectance_value=1.0, transmissive_fraction=0.5)
+        n_rays = 20_000
+        normal = np.array([0.0, 0.0, 1.0])
+        dirs, _, transmitted = bsdf.sample(
+            n_rays,
+            np.tile([0.0, 0.0, -1.0], (n_rays, 1)),
+            np.tile(normal, (n_rays, 1)),
+            np.full(n_rays, 0.55),
+            NSQRng(1),
+            np.arange(n_rays),
+            np.zeros(n_rays, dtype=np.int32),
+        )
+        dirs = np.asarray(dirs)
+        transmitted = np.asarray(transmitted)
+
+        frac = transmitted.mean()
+        assert frac == pytest.approx(0.5, abs=0.02)
+        # transmitted rays are in the -normal hemisphere, reflected in +normal
+        assert np.all(dirs[transmitted] @ normal < 1e-9)
+        assert np.all(dirs[~transmitted] @ normal > -1e-9)
+
+    def test_harvey_shack_transmissive_lobe_blurs_the_straight_through_ray(self):
+        """At transmissive_fraction=1.0, the lobe blurs the undeviated
+        (straight-through) ray rather than the specular reflection."""
+        bsdf = HarveyShackBSDF(b0=1e-4, l0=0.01, s=2.0, transmissive_fraction=1.0)
+        n_rays = 2_000
+        incident = np.tile([0.0, 0.0, 1.0], (n_rays, 1))  # travelling +z
+        normal = np.tile([0.0, 0.0, -1.0], (n_rays, 1))  # facing the ray
+        dirs, weights, transmitted = bsdf.sample(
+            n_rays,
+            incident,
+            normal,
+            np.full(n_rays, 0.55),
+            NSQRng(4),
+            np.arange(n_rays),
+            np.zeros(n_rays, dtype=np.int32),
+        )
+        dirs = np.asarray(dirs)
+        assert np.all(np.asarray(transmitted))
+        # Blurred around +z (straight through), not -z (specular reflection).
+        assert np.median(dirs[:, 2]) > 0.9
+
+    def test_specular_brdf_never_transmits(self):
+        bsdf = SpecularBRDF()
+        n_rays = 100
+        _, _, transmitted = bsdf.sample(
+            n_rays,
+            np.tile([0.0, 0.0, -1.0], (n_rays, 1)),
+            np.tile([0.0, 0.0, 1.0], (n_rays, 1)),
+            np.full(n_rays, 0.55),
+        )
+        assert not np.any(np.asarray(transmitted))
+
+    def test_tabulated_transmissive_fraction_splits_hemispheres(self, tmp_path):
+        data = tmp_path / "scatter.csv"
+        data.write_text(
+            "0,0,0.3\n0,45,0.2\n0,90,0.05\n"
+            "45,0,0.25\n45,45,0.2\n45,90,0.05\n"
+            "90,0,0.1\n90,45,0.08\n90,90,0.02\n"
+        )
+        bsdf = TabulatedBSDF(data, transmissive_fraction=0.5)
+        n_rays = 20_000
+        normal = np.array([0.0, 0.0, 1.0])
+        dirs, _, transmitted = bsdf.sample(
+            n_rays,
+            np.tile([0.0, 0.0, -1.0], (n_rays, 1)),
+            np.tile(normal, (n_rays, 1)),
+            np.full(n_rays, 0.55),
+            NSQRng(2),
+            np.arange(n_rays),
+            np.zeros(n_rays, dtype=np.int32),
+        )
+        dirs = np.asarray(dirs)
+        transmitted = np.asarray(transmitted)
+        assert transmitted.mean() == pytest.approx(0.5, abs=0.02)
+        assert np.all(dirs[transmitted] @ normal < 1e-9)
+        assert np.all(dirs[~transmitted] @ normal > -1e-9)
+
+
+class TestBsdfLobeMediumTracking:
+    """D-4: a scattered ray's medium is decided by the BSDF lobe's own
+    reflect/transmit side, not by the independent Fresnel branch draw."""
+
+    def setup_method(self):
+        be.set_backend("numpy")
+
+    @staticmethod
+    def _hit_glass_interface(bsdf):
+        """A flat VACUUM|N-BK7 interface hit by a normal-incidence beam.
+
+        Every ray scatters (scatter_fraction=1.0), so with D-4 fixed
+        ``rays.n_current`` after ``interact()`` is fully determined by the
+        BSDF's own reflect/transmit draw, never by the Fresnel branch.
+        """
+        from optiland.coordinate_system import CoordinateSystem
+        from optiland.nonsequential import VACUUM, NSQMaterial, RefractiveComponent
+        from optiland.nonsequential.components.geometry.analytic.plane import (
+            PlaneGeometry,
+        )
+        from optiland.nonsequential.ir.bsdf_ir import BsdfIR
+        from optiland.nonsequential.ray_bundle import NSQRayBundle
+
+        glass = NSQMaterial.from_glass("N-BK7")
+        comp = RefractiveComponent(
+            cs=CoordinateSystem(z=0.0),
+            geometry=PlaneGeometry(),
+            material_front=VACUUM,
+            material_back=glass,
+            bsdf=bsdf,
+            scatter_fraction=1.0,
+            name="I",
+        )
+        n = 4_000
+        rays = NSQRayBundle(
+            x=np.zeros(n),
+            y=np.zeros(n),
+            z=np.full(n, -1.0),
+            L=np.zeros(n),
+            M=np.zeros(n),
+            N=np.ones(n),
+            flux=np.ones(n),
+            wavelength=np.full(n, 0.55),
+            n_current=np.ones(n),
+            bounce=np.zeros(n, dtype=np.int32),
+            alive=np.ones(n, dtype=bool),
+            ray_id=np.arange(n, dtype=np.int64),
+        )
+        t = np.ones(n)
+        normals = np.tile([0.0, 0.0, -1.0], (n, 1))
+        n_geom = np.tile([0.0, 0.0, 1.0], (n, 1))
+        hit_mask = np.ones(n, dtype=bool)
+        bsdf_ir = BsdfIR(kind="lambertian", params={})
+        comp.interact(rays, t, normals, hit_mask, NSQRng(5), bsdf_ir, n_geom)
+        glass_n = float(np.asarray(glass.n(np.array([0.55]))).ravel()[0])
+        return rays, glass_n
+
+    def test_pure_reflective_lobe_always_stays_in_incident_medium(self):
+        """Every ray scatters into the reflective (incident-side) hemisphere,
+        so n_current must be vacuum for every single one -- before D-4, the
+        independent Fresnel branch could leave roughly half of them
+        incorrectly bookkept as having entered the glass."""
+        bsdf = LambertianBSDF(reflectance_value=1.0, transmissive_fraction=0.0)
+        rays, _glass_n = self._hit_glass_interface(bsdf)
+        np.testing.assert_allclose(rays.n_current, 1.0)
+        np.testing.assert_allclose(rays.k_current, 0.0)
+
+    def test_transmissive_lobe_updates_medium_to_the_far_side(self):
+        """A mixed reflect/transmit lobe: n_current must exactly match each
+        ray's own lobe choice, not an independent coin flip."""
+        bsdf = LambertianBSDF(reflectance_value=1.0, transmissive_fraction=0.5)
+        rays, glass_n = self._hit_glass_interface(bsdf)
+
+        entered_glass = rays.n_current > 1.0 + 1e-9
+        frac = entered_glass.mean()
+        assert 0.3 < frac < 0.7, "Expected a genuine ~50/50 split"
+        np.testing.assert_allclose(rays.n_current[entered_glass], glass_n)
+        np.testing.assert_allclose(rays.n_current[~entered_glass], 1.0)

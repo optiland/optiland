@@ -298,7 +298,7 @@ class RefractiveComponent(BaseComponent):
         # Apply BSDF scatter if present (compute for all rays, use where to select)
         if bsdf_ir.kind != "none":
             # Compute BSDF for all N rays; where-select only hit rays
-            bsdf_dirs, bsdf_weights = self.bsdf.sample(
+            bsdf_dirs, bsdf_weights, bsdf_transmitted = self.bsdf.sample(
                 rays.num_rays,
                 be.stack([rays.L, rays.M, rays.N], axis=1),
                 normals,
@@ -323,3 +323,16 @@ class RefractiveComponent(BaseComponent):
             rays.N = new_dirs[:, 2]
             bsdf_gate = be.where(scatters, bsdf_weights, be.ones_like(bsdf_weights))
             rays.flux = rays.flux * bsdf_gate
+
+            # D-4: a scattered ray's medium is decided by its own lobe's
+            # reflect/transmit side, not by the Fresnel branch draw above --
+            # that draw only describes what happens to a ray that does NOT
+            # enter the BSDF lobe. Re-resolves n_current/k_current for
+            # exactly the scattered rays.
+            bsdf_in_medium2 = be.array(bsdf_transmitted)
+            rays.n_current = be.where(
+                scatters, be.where(bsdf_in_medium2, n2, n1), rays.n_current
+            )
+            rays.k_current = be.where(
+                scatters, be.where(bsdf_in_medium2, k2, k1), rays.k_current
+            )

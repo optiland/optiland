@@ -149,8 +149,12 @@ class ReflectiveComponent(BaseComponent):
         rays.flux = rays.flux * be.where(hit_mask, R, be.ones_like(R))
 
         if bsdf_ir.kind != "none":
-            # Compute BSDF for all N rays; where-select only scattering rays
-            bsdf_dirs, bsdf_weights = self.bsdf.sample(
+            # Compute BSDF for all N rays; where-select only scattering rays.
+            # A mirror has no far side to transmit into (material_front ==
+            # material_back), so the lobe's reflect/transmit side is unused
+            # here -- unlike RefractiveComponent, there is no second medium
+            # for a "transmitted" scattered ray to have entered.
+            bsdf_dirs, bsdf_weights, _bsdf_transmitted = self.bsdf.sample(
                 rays.num_rays,
                 dirs,
                 normals,

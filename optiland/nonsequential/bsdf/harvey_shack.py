@@ -41,19 +41,30 @@ class HarveyShackBSDF(BaseBSDF):
         b0: Scatter amplitude at zero angle [sr^-1].
         l0: Break-point spatial frequency (dimensionless direction cosine).
         s: Power-law roll-off slope (positive).
+        transmissive_fraction: Probability in [0, 1] that a given scatter
+            event blurs the undeviated straight-through ray (the
+            transmissive lobe, e.g. a diffuser sheet) instead of the
+            specular reflection (D-5). Defaults to 0.0: a purely reflective
+            blur, identical to this class's behaviour before D-5.
     """
 
-    def __init__(self, b0: float, l0: float, s: float) -> None:
+    def __init__(
+        self, b0: float, l0: float, s: float, transmissive_fraction: float = 0.0
+    ) -> None:
         """Initialize HarveyShackBSDF.
 
         Args:
             b0: Scatter amplitude at zero angle [sr^-1].
             l0: Break-point spatial frequency in direction-cosine space.
             s: Power-law roll-off exponent (positive).
+            transmissive_fraction: Probability in [0, 1] that a scatter
+                event blurs the straight-through ray instead of the
+                specular reflection.
         """
         self.b0 = float(b0)
         self.l0 = float(l0)
         self.s = float(s)
+        self.transmissive_fraction = float(transmissive_fraction)
         self._beta_grid: np.ndarray | None = None
         self._cdf_grid: np.ndarray | None = None
         self._tis: float | None = None
@@ -115,15 +126,25 @@ class HarveyShackBSDF(BaseBSDF):
         rng: NSQRng,
         ray_id: np.ndarray,
         bounce: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Sample scattered directions from the ABg lobe about the specular ray.
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Sample scattered directions from the ABg lobe about a reference ray.
 
         The scatter offset is drawn directly from the ABg distribution in
         direction-cosine space: the radial magnitude ``|beta - beta0|`` comes
         from a tabulated inverse CDF of ``BSDF(beta) * 2 * pi * beta`` and the
         azimuth is uniform. Rays keep their full flux, so the surface acts as
-        a mirror whose reflection is blurred by the ABg lobe: a polished
-        surface (small ``l0``) stays near-specular, a rough one spreads.
+        a mirror (or diffuser sheet) whose reflection (or straight-through
+        transmission) is blurred by the ABg lobe: a polished surface (small
+        ``l0``) stays near-specular/near-collimated, a rough one spreads.
+
+        A per-ray draw against :attr:`transmissive_fraction` (D-5) picks the
+        reference ray the lobe is centred on: the specular reflection for a
+        reflective draw, or the undeviated straight-through ray (the
+        incident direction itself, unrefracted) for a transmissive one. Both
+        references are expressed in the same tangent frame about ``normals``,
+        so the existing ``spec_normal_sign`` (the reference ray's own sign
+        against ``normals``) places the reconstructed sample on the correct
+        side automatically -- no separate branch is needed downstream.
 
         To model the physically scaled picture instead, a bright specular beam
         plus a faint scatter halo, set the surface's ``scatter_fraction`` to
@@ -148,7 +169,7 @@ class HarveyShackBSDF(BaseBSDF):
             bounce: Per-ray bounce/step index, shape (N,).
 
         Returns:
-            (scattered_dirs, flux_weights).
+            (scattered_dirs, flux_weights, transmitted).
         """
         if self._beta_grid is None:
             self._build_tables()
@@ -156,16 +177,27 @@ class HarveyShackBSDF(BaseBSDF):
         n_np = np.asarray(to_numpy(normals), dtype=np.float64)
         d_np = np.asarray(to_numpy(incident_dirs), dtype=np.float64)
 
-        # Specular direction: d - 2(d.n)n
+        # Specular reflection: d - 2(d.n)n
         cos_i = (d_np * n_np).sum(axis=1, keepdims=True)
         d_spec = d_np - 2.0 * cos_i * n_np
+
+        # Per-ray reflective-vs-transmissive lobe draw (D-5): the reference
+        # ray the ABg blur is centred on. d_np itself (unrefracted) is
+        # already a unit vector; only d_spec needs the below norm-guard.
+        if self.transmissive_fraction > 0.0:
+            u_lobe = rng.uniform(ray_id, bounce, EventSlot.BSDF_LOBE_BRANCH)
+            transmitted_np = u_lobe < self.transmissive_fraction
+        else:
+            transmitted_np = np.zeros(n_np.shape[0], dtype=bool)
+        d_ref = np.where(transmitted_np[:, None], d_np, d_spec)
+
         # Rays that hit nothing carry zero direction and normal, so the
-        # specular vector is zero. Guard the normalisation: a NaN here
+        # reference vector is zero. Guard the normalisation: a NaN here
         # propagates into the returned weights for every ray.
-        d_spec_norm = (d_spec * d_spec).sum(axis=1, keepdims=True) ** 0.5
-        valid = d_spec_norm[:, 0] > 1e-12
-        d_spec = np.divide(
-            d_spec, d_spec_norm, out=np.zeros_like(d_spec), where=d_spec_norm > 1e-12
+        d_ref_norm = (d_ref * d_ref).sum(axis=1, keepdims=True) ** 0.5
+        valid = d_ref_norm[:, 0] > 1e-12
+        d_ref = np.divide(
+            d_ref, d_ref_norm, out=np.zeros_like(d_ref), where=d_ref_norm > 1e-12
         )
 
         from optiland.nonsequential.bsdf.lambertian import (  # noqa: PLC0415
@@ -174,11 +206,11 @@ class HarveyShackBSDF(BaseBSDF):
 
         t_vec, b_vec = _orthonormal_basis(n_np)
 
-        # Specular direction expressed in the local tangent frame.
-        beta0_x = (d_spec * t_vec).sum(axis=1)
-        beta0_y = (d_spec * b_vec).sum(axis=1)
-        spec_normal_sign = np.sign((d_spec * n_np).sum(axis=1))
-        spec_normal_sign[spec_normal_sign == 0.0] = 1.0
+        # Reference direction expressed in the local tangent frame.
+        beta0_x = (d_ref * t_vec).sum(axis=1)
+        beta0_y = (d_ref * b_vec).sum(axis=1)
+        ref_normal_sign = np.sign((d_ref * n_np).sum(axis=1))
+        ref_normal_sign[ref_normal_sign == 0.0] = 1.0
 
         # Radial offset from the tabulated inverse CDF; azimuth uniform.
         u_radial = rng.uniform(ray_id, bounce, EventSlot.BSDF_U1)
@@ -189,10 +221,11 @@ class HarveyShackBSDF(BaseBSDF):
         beta_x = beta0_x + delta * np.cos(psi)
         beta_y = beta0_y + delta * np.sin(psi)
 
-        # An offset can land outside the unit disk, i.e. below the surface.
-        # Those samples are not physically reachable: keep the specular
-        # direction and give them zero weight rather than folding them back,
-        # which would distort the lobe.
+        # An offset can land outside the unit disk, i.e. on the wrong side of
+        # the reference ray's own hemisphere. Those samples are not
+        # physically reachable: keep the reference direction and give them
+        # zero weight rather than folding them back, which would distort the
+        # lobe.
         beta_sq = beta_x**2 + beta_y**2
         reachable = (beta_sq < 1.0) & valid
         normal_comp = np.sqrt(np.clip(1.0 - beta_sq, 0.0, None))
@@ -200,9 +233,9 @@ class HarveyShackBSDF(BaseBSDF):
         scattered = (
             beta_x[:, None] * t_vec
             + beta_y[:, None] * b_vec
-            + (spec_normal_sign * normal_comp)[:, None] * n_np
+            + (ref_normal_sign * normal_comp)[:, None] * n_np
         )
-        scattered = np.where(reachable[:, None], scattered, d_spec)
+        scattered = np.where(reachable[:, None], scattered, d_ref)
 
         norms = (scattered * scattered).sum(axis=1, keepdims=True) ** 0.5
         scattered = np.divide(
@@ -214,7 +247,11 @@ class HarveyShackBSDF(BaseBSDF):
         # for which :attr:`total_integrated_scatter` is the natural value.
         flux_weights = np.where(reachable, 1.0, 0.0)
 
-        return be.array(scattered.astype(np.float64)), be.array(flux_weights)
+        return (
+            be.array(scattered.astype(np.float64)),
+            be.array(flux_weights),
+            be.array(transmitted_np),
+        )
 
     def reflectance(
         self,

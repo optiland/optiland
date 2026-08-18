@@ -30,15 +30,26 @@ class TabulatedBSDF(BaseBSDF):
 
     Attributes:
         path: Path to the scatter data file.
+        transmissive_fraction: Probability in [0, 1] that a given scatter
+            event samples the transmissive hemisphere (the far side of the
+            surface) instead of the reflective one (D-5). Defaults to 0.0:
+            a purely reflective scatter, identical to this class's
+            behaviour before D-5. The tabulated data itself is treated as
+            hemisphere-relative (``theta_s`` measured from whichever normal
+            the draw lands on), not as a combined BRDF+BTDF table.
     """
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, transmissive_fraction: float = 0.0) -> None:
         """Load tabulated BSDF from file.
 
         Args:
             path: Path to CSV file with columns [theta_i, theta_s, bsdf].
+            transmissive_fraction: Probability in [0, 1] that a scatter
+                event lands in the transmissive hemisphere rather than the
+                reflective one.
         """
         self.path = Path(path)
+        self.transmissive_fraction = float(transmissive_fraction)
         self._load(self.path)
 
     def _load(self, path: Path) -> None:
@@ -70,11 +81,15 @@ class TabulatedBSDF(BaseBSDF):
         rng: NSQRng,
         ray_id: np.ndarray,
         bounce: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Sample scattered directions from the tabulated BSDF.
 
         Uses importance sampling via Lambertian hemisphere + BSDF weighting.
-        Sampling is detached (keyed PCG32).
+        A per-ray draw against :attr:`transmissive_fraction` (D-5) picks
+        whether that hemisphere is centred on ``normals`` (reflective) or
+        ``-normals`` (transmissive); ``theta_i``/``theta_s`` are measured
+        from whichever normal the ray's draw landed on. Sampling is detached
+        (keyed PCG32).
 
         Args:
             num_rays: Number of rays.
@@ -86,13 +101,21 @@ class TabulatedBSDF(BaseBSDF):
             bounce: Per-ray bounce/step index, shape (N,).
 
         Returns:
-            (scattered_dirs, flux_weights).
+            (scattered_dirs, flux_weights, transmitted).
         """
         n_np = np.asarray(to_numpy(normals), dtype=np.float64)
         d_np = np.asarray(to_numpy(incident_dirs), dtype=np.float64)
 
-        # Compute angle of incidence
-        cos_i = np.clip((-d_np * n_np).sum(axis=1), 0.0, 1.0)
+        if self.transmissive_fraction > 0.0:
+            u_lobe = rng.uniform(ray_id, bounce, EventSlot.BSDF_LOBE_BRANCH)
+            transmitted_np = u_lobe < self.transmissive_fraction
+            hemisphere_np = np.where(transmitted_np[:, None], -n_np, n_np)
+        else:
+            transmitted_np = np.zeros(n_np.shape[0], dtype=bool)
+            hemisphere_np = n_np
+
+        # Compute angle of incidence relative to the chosen hemisphere.
+        cos_i = np.clip((-d_np * hemisphere_np).sum(axis=1), 0.0, 1.0)
         theta_i = np.degrees(np.arccos(cos_i))
 
         from optiland.nonsequential.bsdf.lambertian import (  # noqa: PLC0415
@@ -110,8 +133,10 @@ class TabulatedBSDF(BaseBSDF):
         ly = sin_theta * np.sin(phi)
         lz = cos_theta
 
-        t_vec, b_vec = _orthonormal_basis(n_np)
-        scattered = lx[:, None] * t_vec + ly[:, None] * b_vec + lz[:, None] * n_np
+        t_vec, b_vec = _orthonormal_basis(hemisphere_np)
+        scattered = (
+            lx[:, None] * t_vec + ly[:, None] * b_vec + lz[:, None] * hemisphere_np
+        )
         norms = (scattered * scattered).sum(axis=1, keepdims=True) ** 0.5
         scattered = scattered / norms
 
@@ -120,7 +145,11 @@ class TabulatedBSDF(BaseBSDF):
         bsdf_vals = self._interp(query)
         flux_weights = np.clip(np.pi * bsdf_vals, 0.0, 1.0)
 
-        return be.array(scattered.astype(np.float64)), be.array(flux_weights)
+        return (
+            be.array(scattered.astype(np.float64)),
+            be.array(flux_weights),
+            be.array(transmitted_np),
+        )
 
     def reflectance(
         self,
