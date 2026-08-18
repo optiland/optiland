@@ -37,7 +37,7 @@ class PrimitiveIR:
     Attributes:
         id: Index into ``SceneIR.primitives``; also referenced by
             ``interior_medium_id``/``exterior_medium_id`` of neighbouring
-            volumes once PR5 lands.
+            volumes once PR6 builds ``Volume`` objects from these ids.
         kind: Geometry family; ``params`` is interpreted according to it.
         to_world: ``(4, 4)`` homogeneous local -> global transform.
         params: Kind-specific geometry parameters, e.g. for ``"conic"``:
@@ -49,13 +49,16 @@ class PrimitiveIR:
         bsdf: Attached scatter model, if any (``BsdfIR(kind="none")`` when
             the surface is bare specular/refractive/absorbing).
         interior_medium_id: Index into ``SceneIR.media`` for the medium this
-            surface bounds on its back side. Naming-only until PR5's
-            geometric (``n_geom``-based) sidedness replaces the current
-            index-proximity heuristic (D-1); no volume topology exists yet.
+            surface bounds on its back side. Descriptive metadata only: the
+            actual D-1 sidedness fix lives in each geometry's ``n_geom``
+            (see ``ComponentGeometry.ray_intersect`` and
+            ``RefractiveComponent.interact``), not in these ids -- the
+            interpreter still reads the medium directly off the live
+            component. No volume topology exists yet (PR6).
         exterior_medium_id: As above, for the front side.
         volume_id: Index into ``SceneIR.volumes``, or ``None`` when this
             primitive is not (yet) a volume boundary. Always ``None`` until
-            PR5.
+            PR6.
         component_kind: Which physical interaction this primitive's hit
             dispatches to (see :data:`ComponentKind`).
         scatter_fraction: Probability that a hit ray is routed through
@@ -78,12 +81,16 @@ class PrimitiveIR:
 
 @dataclass(frozen=True)
 class VolumeIR:
-    """A closed, outward-oriented set of boundary primitives (reserved, PR5).
+    """A closed, outward-oriented set of boundary primitives (reserved).
 
     Not populated by this revamp's :func:`~optiland.nonsequential.ir.lower.lower`
-    -- ``SceneIR.volumes`` is always ``()`` until PR5 builds ``Volume``
-    objects from compound components. The dataclass is defined now so the
-    IR's shape does not change again when PR5 lands.
+    -- ``SceneIR.volumes`` is always ``()``. D-1 (medium sidedness) is fixed
+    without needing a ``Volume`` registry: each geometry's ``n_geom`` fixes
+    the front/back determination directly (see
+    ``RefractiveComponent.interact``). ``Volume`` itself -- watertightness
+    validation, CSG composition, and rebuilding ``Lens``/``Doublet``/
+    ``Mirror`` on top of it -- is not yet implemented; this dataclass is
+    defined now so the IR's shape will not need to change again when it is.
 
     Attributes:
         id: Index into ``SceneIR.volumes``.
@@ -208,7 +215,7 @@ class SceneIR:
     Attributes:
         primitives: All surfaces (from every compound component's flat
             ``.surfaces`` list), in ``scene.surfaces`` order.
-        volumes: Always ``()`` until PR5.
+        volumes: Always ``()`` (see :class:`VolumeIR`).
         media: Every distinct medium referenced by a primitive or emitter,
             deduplicated by catalog name (or the single shared vacuum
             entry).

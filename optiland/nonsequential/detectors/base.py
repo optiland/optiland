@@ -76,7 +76,7 @@ class BaseDetector(ABC):
         positions_l = (positions_g - t_arr) @ R_arr
         directions_l = directions_g @ R_arr
 
-        t_hit, normals_l, hit_mask = self.geometry.ray_intersect(
+        t_hit, normals_l, hit_mask, _n_geom_l = self.geometry.ray_intersect(
             positions_l, directions_l
         )
 

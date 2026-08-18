@@ -119,6 +119,7 @@ class TestDriftGuard:
         )
         t_min = np.full(n, 5.0)
         hit_normals = np.tile([0.0, 0.0, -1.0], (n, 1))
+        hit_n_geom = np.tile([0.0, 0.0, 1.0], (n, 1))
         comp_idx = np.zeros(n, dtype=np.int32)  # every ray "hits" primitive 0
         comp_first = np.ones(n, dtype=bool)
 
@@ -129,7 +130,15 @@ class TestDriftGuard:
 
         with pytest.raises(RuntimeError, match="drift"):
             apply_primitive_interactions(
-                rays, ir, reordered, t_min, hit_normals, comp_idx, comp_first, rng
+                rays,
+                ir,
+                reordered,
+                t_min,
+                hit_normals,
+                hit_n_geom,
+                comp_idx,
+                comp_first,
+                rng,
             )
 
 
@@ -168,7 +177,8 @@ class TestBsdfDispatchIsIrDriven:
         hit_mask = np.ones(n, dtype=bool)
         rng = NSQRng(0)
 
-        mirror.interact(rays, t, normals, hit_mask, rng, BsdfIR(kind="none"))
+        n_geom = np.tile([0.0, 0.0, 1.0], (n, 1))
+        mirror.interact(rays, t, normals, hit_mask, rng, BsdfIR(kind="none"), n_geom)
 
         # A +z beam hitting a z=-1-facing-normal mirror reflects to -z.
         # If the (attached) Lambertian lobe had fired, directions would be
@@ -207,6 +217,7 @@ class TestBsdfDispatchIsIrDriven:
         hit_mask = np.ones(n, dtype=bool)
         rng = NSQRng(0)
 
+        n_geom = np.tile([0.0, 0.0, 1.0], (n, 1))
         mirror.interact(
             rays,
             t,
@@ -214,6 +225,7 @@ class TestBsdfDispatchIsIrDriven:
             hit_mask,
             rng,
             BsdfIR(kind="lambertian", params={"reflectance_value": 1.0}),
+            n_geom,
         )
 
         assert not np.allclose(rays.N, -1.0, atol=1e-3)

@@ -45,7 +45,7 @@ class NumpyBackend(ArrayBackend):
         self,
         rays: NSQRayBundle,
         components: list[BaseComponent],
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Find nearest intersection of each ray with all scene components.
 
         Args:
@@ -53,21 +53,23 @@ class NumpyBackend(ArrayBackend):
             components: List of scene components.
 
         Returns:
-            ``(t_min, hit_normals, component_indices)``.
+            ``(t_min, hit_normals, component_indices, hit_n_geom)``.
         """
         N = rays.num_rays
         t_min = np.full(N, np.inf)
         hit_normals = np.zeros((N, 3))
+        hit_n_geom = np.zeros((N, 3))
         comp_indices = np.full(N, -1, dtype=np.int32)
 
         for i, comp in enumerate(components):
-            t_c, normals_c, hit_c = comp.intersect(rays)
+            t_c, normals_c, hit_c, n_geom_c = comp.intersect(rays)
             better = hit_c & (t_c < t_min)
             t_min = np.where(better, t_c, t_min)
             hit_normals = np.where(better[:, None], normals_c, hit_normals)
+            hit_n_geom = np.where(better[:, None], n_geom_c, hit_n_geom)
             comp_indices = np.where(better, i, comp_indices)
 
-        return t_min, hit_normals, comp_indices
+        return t_min, hit_normals, comp_indices, hit_n_geom
 
     def _maybe_compact(self, rays: NSQRayBundle) -> NSQRayBundle:
         """Compact dead rays after every bounce for the NumPy fast path.

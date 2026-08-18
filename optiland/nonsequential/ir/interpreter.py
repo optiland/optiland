@@ -138,6 +138,7 @@ def apply_primitive_interactions(
     components: list[BaseComponent],
     t_min: object,
     hit_normals: object,
+    hit_n_geom: object,
     comp_idx: np.ndarray,
     comp_first_np: np.ndarray,
     rng: NSQRng,
@@ -166,6 +167,8 @@ def apply_primitive_interactions(
             ``ir.primitives[i]`` was lowered from.
         t_min: Per-ray nearest-primitive hit distance, shape (N,).
         hit_normals: Per-ray nearest-primitive hit normal, shape (N, 3).
+        hit_n_geom: Per-ray nearest-primitive geometric (unflipped) normal,
+            shape (N, 3); see ``ComponentGeometry.ray_intersect``.
         comp_idx: Per-ray index into ``ir.primitives``/``components`` of the
             nearest-hit primitive, or -1. NumPy int array.
         comp_first_np: Per-ray mask: True where a primitive (not a
@@ -189,4 +192,6 @@ def apply_primitive_interactions(
             log_hit_fn(rays, mask_i_np, primitive.name, t_min)
 
         mask_i = be.array(mask_i_np)
-        component.interact(rays, t_min, hit_normals, mask_i, rng, primitive.bsdf)
+        component.interact(
+            rays, t_min, hit_normals, mask_i, rng, primitive.bsdf, hit_n_geom
+        )

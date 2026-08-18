@@ -162,7 +162,7 @@ class ConicGeometry(AnalyticGeometry):
 
     def ray_intersect(
         self, origins: np.ndarray, directions: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Intersect rays with the conic surface.
 
         Solved in closed form: the sag form in the module docstring is
@@ -182,7 +182,9 @@ class ConicGeometry(AnalyticGeometry):
             directions: Ray directions in local frame, shape (N, 3).
 
         Returns:
-            (t, normals, hit_mask).
+            (t, normals, hit_mask, n_geom). n_geom points toward local +z
+            (the ``material_back`` side by contract; see
+            :meth:`ComponentGeometry.ray_intersect`).
         """
         ox, oy, oz = origins[:, 0], origins[:, 1], origins[:, 2]
         dx, dy, dz = directions[:, 0], directions[:, 1], directions[:, 2]
@@ -237,13 +239,13 @@ class ConicGeometry(AnalyticGeometry):
         py = be.where(pick1, py1, be.where(pick2, py2, be.zeros_like(py1)))
         n_raw = self._normal_local(px, py)
         n_len = (n_raw * n_raw).sum(axis=1, keepdims=True) ** 0.5
-        normals = n_raw / (n_len + 1e-30)
+        n_geom = n_raw / (n_len + 1e-30)
 
         # Flip to face incoming ray
-        dot = (directions * normals).sum(axis=1, keepdims=True)
-        normals = be.where(dot > 0, -normals, normals)
+        dot = (directions * n_geom).sum(axis=1, keepdims=True)
+        normals = be.where(dot > 0, -n_geom, n_geom)
 
-        return t_out, normals, hit_mask
+        return t_out, normals, hit_mask, n_geom
 
     def bounding_box(self, transform: tuple[np.ndarray, np.ndarray]) -> AABB:
         """Return AABB in global coordinates.

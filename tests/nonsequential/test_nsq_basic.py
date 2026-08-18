@@ -146,7 +146,7 @@ class TestPlaneGeometry:
         directions = np.zeros((N, 3))
         directions[:, 2] = 1.0  # pointing +z
 
-        t, normals, hit_mask = geom.ray_intersect(origins, directions)
+        t, normals, hit_mask, n_geom = geom.ray_intersect(origins, directions)
         assert hit_mask.all()
         np.testing.assert_allclose(t, 1.0, atol=1e-9)
 
@@ -158,7 +158,7 @@ class TestPlaneGeometry:
         geom = PlaneGeometry()
         origins = np.array([[0.0, 0.0, -1.0]])
         directions = np.array([[1.0, 0.0, 0.0]])  # parallel to plane
-        t, normals, hit_mask = geom.ray_intersect(origins, directions)
+        t, normals, hit_mask, n_geom = geom.ray_intersect(origins, directions)
         assert not hit_mask[0]
         assert t[0] == np.inf
 
@@ -171,12 +171,12 @@ class TestPlaneGeometry:
         # Ray hitting inside aperture
         o_in = np.array([[0.0, 0.0, -1.0]])
         d_in = np.array([[0.0, 0.0, 1.0]])
-        t, _, hit = geom.ray_intersect(o_in, d_in)
+        t, _, hit, _ = geom.ray_intersect(o_in, d_in)
         assert hit[0]
 
         # Ray hitting outside aperture
         o_out = np.array([[6.0, 0.0, -1.0]])
-        t, _, hit = geom.ray_intersect(o_out, d_in)
+        t, _, hit, _ = geom.ray_intersect(o_out, d_in)
         assert not hit[0]
 
 
@@ -196,7 +196,7 @@ class TestSphereGeometry:
         # Ray from outside along -z hitting sphere
         origins = np.array([[0.0, 0.0, -20.0]])
         directions = np.array([[0.0, 0.0, 1.0]])
-        t, normals, hit = geom.ray_intersect(origins, directions)
+        t, normals, hit, n_geom = geom.ray_intersect(origins, directions)
         assert hit[0]
         np.testing.assert_allclose(t[0], 10.0, atol=1e-9)  # hits at z=-10
 
@@ -208,7 +208,7 @@ class TestSphereGeometry:
         geom = SphereGeometry(radius=5.0)
         origins = np.array([[0.0, 0.0, -10.0]])
         directions = np.array([[0.0, 0.0, 1.0]])
-        t, normals, hit = geom.ray_intersect(origins, directions)
+        t, normals, hit, n_geom = geom.ray_intersect(origins, directions)
         # Normal at (0, 0, -5) should point toward incoming ray (in -z direction)
         assert normals[0, 2] < 0  # points toward origin (incoming side)
 
@@ -601,7 +601,7 @@ class TestSelfIntersectionGuard:
             alive=np.array([True]),
         )
 
-        t, normals, hit_mask = comp.intersect(rays)
+        t, normals, hit_mask, n_geom = comp.intersect(rays)
         # With T_EPSILON guard, a ray at the surface should NOT register as a hit
         assert not hit_mask[0], "Ray at surface should not self-intersect"
         assert t[0] == np.inf
@@ -702,7 +702,8 @@ class TestAbsorbedCount:
         from optiland.nonsequential.ir.bsdf_ir import BsdfIR  # noqa: PLC0415
 
         rng = np.random.default_rng(0)
-        absorber.interact(rays, t, normals, hit_mask, rng, BsdfIR(kind="none"))
+        n_geom = np.zeros((N, 3))
+        absorber.interact(rays, t, normals, hit_mask, rng, BsdfIR(kind="none"), n_geom)
 
         assert absorber._absorbed_count == 3
         assert absorber._absorbed_flux == pytest.approx(3.0)

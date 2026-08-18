@@ -434,7 +434,9 @@ class TestVisibilityGradientZero:
         rays = scene.sources[0].generate(np.arange(64), backend.rng)
         rays = backend._ensure_torch_bundle(rays)
 
-        t_min, normals, comp_indices = backend.intersect_scene(rays, scene.surfaces)
+        t_min, normals, comp_indices, n_geom = backend.intersect_scene(
+            rays, scene.surfaces
+        )
 
         # The dispatch index is a plain integer array: no grad_fn, so no
         # gradient can flow through the choice of surface.
@@ -661,7 +663,7 @@ class TestAnalyticForward:
         geom = FinitePlaneGeometry(width=100.0, height=100.0)
         origins = _np.array([[0.0, 0.0, -10.0]])
         directions = _np.array([[0.0, 0.0, 1.0]])
-        t, normals, hit = geom.ray_intersect(origins, directions)
+        t, normals, hit, n_geom = geom.ray_intersect(origins, directions)
 
         _np.testing.assert_allclose(t[0], 10.0, atol=1e-10)
         assert hit[0]

@@ -77,6 +77,7 @@ class ReflectiveComponent(BaseComponent):
         hit_mask: np.ndarray,
         rng: NSQRng,
         bsdf_ir: BsdfIR,
+        n_geom: np.ndarray,
     ) -> None:
         """Apply specular (or BSDF) reflection at hit points (in-place).
 
@@ -91,6 +92,8 @@ class ReflectiveComponent(BaseComponent):
                 scatter branch below runs at all is decided from
                 ``bsdf_ir.kind != "none"`` (verified by the caller to match
                 ``self.bsdf``), not from ``self.bsdf is not None``.
+            n_geom: Unused -- a mirror never transmits, so it never needs
+                to determine which medium a ray is entering.
         """
         # Captured before any mutation below (including the bounce
         # increment at the end of this method) changes rays.bounce.

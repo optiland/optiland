@@ -40,7 +40,7 @@ class SphereGeometry(AnalyticGeometry):
 
     def ray_intersect(
         self, origins: np.ndarray, directions: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Intersect rays with the sphere.
 
         Uses the analytic quadratic solution. Returns the nearest positive hit.
@@ -50,7 +50,13 @@ class SphereGeometry(AnalyticGeometry):
             directions: Ray directions in local frame, shape (N, 3), unit.
 
         Returns:
-            (t, normals, hit_mask).
+            (t, normals, hit_mask, n_geom). n_geom points *inward*, toward
+            the sphere centre -- the ``material_back`` side by contract
+            (see :meth:`ComponentGeometry.ray_intersect`): a standalone
+            sphere used as a refractive surface (e.g. a ball lens) should
+            be built with the exterior medium as ``material_front`` and the
+            interior as ``material_back``, matching the convention every
+            compound builder (``Lens``, ``Doublet``) already uses.
         """
         ox, oy, oz = origins[:, 0], origins[:, 1], origins[:, 2]
         dx, dy, dz = directions[:, 0], directions[:, 1], directions[:, 2]
@@ -83,10 +89,12 @@ class SphereGeometry(AnalyticGeometry):
         hy = oy + t * dy
         hz = oz + t * dz
 
-        # Normal: outward from sphere centre, flipped to face incoming ray
+        # n_geom: inward, toward the sphere centre, fixed regardless of ray
+        # direction (see the material_back contract in the docstring above).
         nx = be.where(t < be.inf, hx / self.radius, be.zeros_like(hx))
         ny = be.where(t < be.inf, hy / self.radius, be.zeros_like(hy))
         nz = be.where(t < be.inf, hz / self.radius, be.zeros_like(hz))
+        n_geom = be.stack([-nx, -ny, -nz], axis=1)
 
         # Flip to face incoming ray
         dot = dx * nx + dy * ny + dz * nz
@@ -102,7 +110,7 @@ class SphereGeometry(AnalyticGeometry):
             hit_mask = hit_mask & in_aperture
             t = be.where(hit_mask, t, inf_arr)
 
-        return t, normals, hit_mask
+        return t, normals, hit_mask, n_geom
 
     def bounding_box(self, transform: tuple[np.ndarray, np.ndarray]) -> AABB:
         """Return AABB for the sphere in global coordinates.

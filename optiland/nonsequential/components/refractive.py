@@ -36,11 +36,15 @@ class RefractiveComponent(BaseComponent):
     the attached reflectance so gradients flow through material parameters.
 
     The two materials name the media on either side of the surface, and the
-    component works out which one a ray is leaving from the index it is
-    already travelling in. Crossing direction therefore does not matter: the
-    same surface refracts correctly for a ray on its way in, for a ghost or
-    retro-reflection coming back through, and for the far side of a closed
-    solid modelled as a single geometry.
+    component works out which one a ray is leaving by comparing the ray
+    direction against the surface's geometric normal (``n_geom``, fixed per
+    surface point, pointing from ``material_front`` toward ``material_back``)
+    -- never by comparing refractive index values. Crossing direction
+    therefore does not matter: the same surface refracts correctly for a ray
+    on its way in, for a ghost or retro-reflection coming back through, and
+    for the far side of a closed solid modelled as a single geometry, even
+    when the two adjacent media have nearly identical indices (a cemented
+    doublet, oil immersion).
 
     Attributes:
         cs: Coordinate system.
@@ -66,8 +70,13 @@ class RefractiveComponent(BaseComponent):
         Args:
             cs: Coordinate system.
             geometry: Surface geometry.
-            material_front: Front-side medium.
-            material_back: Back-side medium.
+            material_front: Front-side medium. By contract (see
+                ``ComponentGeometry.ray_intersect``), this is the medium on
+                the side the geometry's *unflipped* normal points away
+                from -- for the analytic geometries, the local -z side.
+            material_back: Back-side medium -- the side the geometry's
+                unflipped normal points toward (local +z, for the analytic
+                geometries).
             bsdf: Optional BSDF scatter model.
             name: Optional label.
             scatter_fraction: Probability that a hit ray is routed through
@@ -91,6 +100,7 @@ class RefractiveComponent(BaseComponent):
         hit_mask: np.ndarray,
         rng: NSQRng,
         bsdf_ir: BsdfIR,
+        n_geom: np.ndarray,
     ) -> None:
         """Apply Fresnel refraction/reflection at hit points (in-place).
 
@@ -112,6 +122,10 @@ class RefractiveComponent(BaseComponent):
                 scatter branch below runs at all is decided from
                 ``bsdf_ir.kind != "none"`` (verified by the caller to match
                 ``self.bsdf``), not from ``self.bsdf is not None``.
+            n_geom: Geometric surface normal in global frame, shape (N, 3),
+                fixed per surface point and pointing from ``material_front``
+                toward ``material_back`` (D-1). Used, not ``rays.n_current``,
+                to determine which material a ray is entering.
         """
         # Every RNG draw in this call is keyed to the ray's identity as of
         # this specific interaction event -- captured before any of the
@@ -137,22 +151,26 @@ class RefractiveComponent(BaseComponent):
         dot = (dirs * normals).sum(axis=1)  # signed cos_theta
         cos_theta_i = be.abs(dot)
 
-        n1 = rays.n_current  # shape (N,)
+        # Evaluate the front/back indices at each wavelength -- attached
+        # (differentiable).
+        n_front = self.material_front.n(wl)
+        n_back = self.material_back.n(wl)
 
-        # Evaluate n2 at each wavelength -- attached (differentiable)
-        n2_front = self.material_front.n(wl)
-        n2_back = self.material_back.n(wl)
-
-        # Which side the ray is on cannot be read off `normals`: every geometry
-        # flips its normal to face the incoming ray, so `dot` is always
-        # negative. Use the medium the ray is actually travelling in instead --
-        # `n_current` is maintained across every interaction, so a ray leaves
-        # whichever of the two media it currently matches and enters the other.
-        # This is direction-agnostic, so a surface crossed in reverse (a ghost
-        # path, a retro-reflection, or the far side of a closed solid) refracts
-        # correctly.
-        in_back = be.abs(n1 - n2_back) < be.abs(n1 - n2_front)
-        n2 = be.where(in_back, n2_front, n2_back)
+        # n_geom is fixed per surface point and points from material_front
+        # toward material_back (D-1; see ComponentGeometry.ray_intersect),
+        # independent of which side the ray approaches from. This replaces
+        # the old index-proximity heuristic
+        # (`abs(n1 - n2_back) < abs(n1 - n2_front)` against rays.n_current),
+        # which silently mis-resolved whenever the two adjacent media had
+        # similar indices (a cemented doublet, oil immersion) or the ray
+        # took an unexpected path (a ghost re-entering a solid). Comparing
+        # ray direction against n_geom is direction-agnostic *and*
+        # index-value-agnostic: correct for a ray on its way in, a
+        # retro-reflection, or the far side of a closed solid.
+        dot_geom = (dirs * n_geom).sum(axis=1)
+        entering_back = dot_geom > 0.0
+        n1 = be.where(entering_back, n_front, n_back)
+        n2 = be.where(entering_back, n_back, n_front)
 
         # Fresnel reflectance (unpolarized, attached)
         n_ratio = n1 / (n2 + 1e-30)

@@ -332,10 +332,25 @@ class TestScatterFraction:
         assert forward > 0.85, f"Expected near-full transmission, got {forward:.3f}"
 
     def test_unit_fraction_is_a_pure_diffuser(self):
-        """The default of 1.0 keeps the original behaviour: everything scatters."""
+        """The default of 1.0 keeps the original behaviour: everything scatters.
+
+        The exact backward fraction shifted down with the D-1 geometric
+        sidedness fix: index-proximity sidedness happened to keep a
+        back-scattered ray's bookkept medium at glass (n1 == n2, since
+        n_current already equalled material_front exactly), so the front
+        face saw a ray "in glass" and mostly refracted it straight out.
+        Geometric sidedness instead determines the front face's n1/n2 from
+        direction and n_geom alone, which correctly identifies many steeply
+        Lambertian-scattered rays as exceeding the front face's critical
+        angle and traps them by TIR -- a real effect the index heuristic
+        was masking. (D-4, BSDF-vs-medium-state disagreement, is still
+        open and is what lets a scattered ray reach the front face marked
+        "in glass" or "in vacuum" depending on the Fresnel branch's own die
+        roll at the back face in the first place; PR9 closes that.)
+        """
         forward, backward = self._trace(1.0)
         assert forward == pytest.approx(0.0, abs=1e-9)
-        assert backward > 0.5
+        assert backward > 0.3
 
     def test_partial_fraction_splits_the_beam(self):
         """Forward flux falls and back-scatter rises monotonically."""

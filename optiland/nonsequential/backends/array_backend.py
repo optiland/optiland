@@ -111,7 +111,7 @@ class ArrayBackend(TracerBackend):
 
         # The per-bounce interaction loop below is driven by this IR, not by
         # iterating scene.surfaces and branching on Python class identity.
-        ir = lower(scene)
+        ir = lower(scene, strict=False)
 
         t_start = time.perf_counter()
 
@@ -276,7 +276,7 @@ class ArrayBackend(TracerBackend):
 
                 while rays.num_rays_alive > 0:
                     # Component intersections
-                    t_min, hit_normals, comp_idx = self.intersect_scene(
+                    t_min, hit_normals, comp_idx, hit_n_geom = self.intersect_scene(
                         rays, scene.surfaces
                     )
 
@@ -326,6 +326,7 @@ class ArrayBackend(TracerBackend):
                         scene.surfaces,
                         t_min,
                         hit_normals,
+                        hit_n_geom,
                         comp_idx,
                         comp_first,
                         self.rng,

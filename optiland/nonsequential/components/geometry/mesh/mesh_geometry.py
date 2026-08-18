@@ -44,7 +44,7 @@ class MeshGeometry(AnalyticGeometry):
 
     def ray_intersect(
         self, origins: np.ndarray, directions: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Intersect rays with the mesh using trimesh BVH.
 
         Arrays are converted to NumPy for trimesh, then results are
@@ -55,7 +55,12 @@ class MeshGeometry(AnalyticGeometry):
             directions: Ray directions in local frame, shape (N, 3).
 
         Returns:
-            (t, normals, hit_mask).
+            (t, normals, hit_mask, n_geom). n_geom is trimesh's raw
+            ``face_normals`` value, i.e. the ``material_back`` side by
+            contract (see :meth:`ComponentGeometry.ray_intersect`) is
+            whichever side the mesh's face winding points away from --
+            consistently outward for a properly wound (CCW, right-hand
+            rule) closed mesh.
         """
         xp = _get_xp(origins)
         # Bring to CPU for trimesh
@@ -72,6 +77,7 @@ class MeshGeometry(AnalyticGeometry):
 
         t_out = np.full(N, np.inf, dtype=np.float64)
         normals_out = np.zeros((N, 3), dtype=np.float64)
+        n_geom_out = np.zeros((N, 3), dtype=np.float64)
 
         if len(ray_indices) > 0:
             # Compute t for each hit
@@ -86,6 +92,7 @@ class MeshGeometry(AnalyticGeometry):
                     t_out[ri] = tv
                     tri_idx = triangle_indices[order[idx]]
                     face_normal = self.mesh.face_normals[tri_idx]
+                    n_geom_out[ri] = face_normal
                     # Flip to face incoming ray
                     if np.dot(d_np[ri], face_normal) > 0:
                         face_normal = -face_normal
@@ -97,8 +104,9 @@ class MeshGeometry(AnalyticGeometry):
             t_out = xp.array(t_out)
             normals_out = xp.array(normals_out)
             hit_mask_np = xp.array(hit_mask_np)
+            n_geom_out = xp.array(n_geom_out)
 
-        return t_out, normals_out, hit_mask_np
+        return t_out, normals_out, hit_mask_np, n_geom_out
 
     def bounding_box(self, transform: tuple[np.ndarray, np.ndarray]) -> AABB:
         """Return AABB for the mesh in global coordinates.

@@ -50,7 +50,7 @@ class AnnularPlaneGeometry(AnalyticGeometry):
 
     def ray_intersect(
         self, origins: np.ndarray, directions: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Intersect rays with the annular plane.
 
         Uses the standard plane intersection: t = (z_offset - oz) / dz,
@@ -61,7 +61,9 @@ class AnnularPlaneGeometry(AnalyticGeometry):
             directions: Ray directions in local frame, shape (N, 3).
 
         Returns:
-            (t, normals, hit_mask) all in local frame.
+            (t, normals, hit_mask, n_geom) all in local frame. n_geom is
+            the fixed local +z (the ``material_back`` side by contract; see
+            :meth:`ComponentGeometry.ray_intersect`).
         """
         N = origins.shape[0]
 
@@ -88,11 +90,12 @@ class AnnularPlaneGeometry(AnalyticGeometry):
 
         t_out = be.where(hit_mask, t, inf_arr)
 
+        n_geom = be.stack([be.zeros(N), be.zeros(N), be.ones(N)], axis=1)
         # Normal is (0, 0, +/-1) -- flip to face incoming ray
         nz_sign = be.where(dz > 0, -1.0, 1.0)
         normals = be.stack([be.zeros(N), be.zeros(N), nz_sign * be.ones(N)], axis=1)
 
-        return t_out, normals, hit_mask
+        return t_out, normals, hit_mask, n_geom
 
     def bounding_box(self, transform: tuple[np.ndarray, np.ndarray]) -> AABB:
         """Return AABB of the annulus in global coordinates.

@@ -54,18 +54,31 @@ class _MediumRegistry:
         self._index: dict[tuple, int] = {}
         self.media: list[MediumIR] = []
 
-    def get_id(self, material: NSQMaterial | None) -> int:
+    def get_id(self, material: NSQMaterial | None, *, strict: bool = True) -> int:
         """Return the ``MediumIR`` id for ``material``, adding it if new.
 
         Args:
             material: An ``NSQMaterial`` (or ``None``, treated as vacuum).
+            strict: If True (the default -- used when the IR must be
+                losslessly serializable, e.g. for JSON export or the
+                translatability checklist tests), a material that is
+                neither vacuum nor catalog-backed raises. If False (used by
+                the backends' internal ``lower(scene)`` call before every
+                trace, where the IR only needs to drive dispatch, not
+                round-trip through JSON), such a material is still assigned
+                a distinct id -- keyed by Python object identity, tagged
+                ``n_model={"kind": "opaque"}`` -- rather than blocking the
+                trace. Its ``n(wavelength)`` is never evaluated from the IR
+                (the interpreter reads it from the live component instead;
+                see :mod:`optiland.nonsequential.ir.interpreter`), so this
+                only affects introspection/serialization, never physics.
 
         Returns:
             Index into ``self.media``.
 
         Raises:
-            ValueError: If ``material`` is neither vacuum nor catalog-backed
-                -- mirrors the same limitation in
+            ValueError: If ``strict`` and ``material`` is neither vacuum nor
+                catalog-backed -- mirrors the same limitation in
                 :func:`optiland.nonsequential.serialization._serialize_material`.
         """
         underlying = None if material is None else material.optiland_material
@@ -76,19 +89,26 @@ class _MediumRegistry:
                 underlying, "_name", None
             )
             if glass_name is None:
-                raise ValueError(
-                    f"Cannot lower material {underlying!r} to the scene IR: "
-                    "only vacuum and catalog-backed materials (exposing a "
-                    "'name' attribute) round-trip losslessly. This mirrors "
-                    "NSQScene.to_json()'s existing material limitation."
-                )
-            key = ("catalog", glass_name)
+                if strict:
+                    raise ValueError(
+                        f"Cannot lower material {underlying!r} to the scene IR: "
+                        "only vacuum and catalog-backed materials (exposing a "
+                        "'name' attribute) round-trip losslessly. This mirrors "
+                        "NSQScene.to_json()'s existing material limitation."
+                    )
+                key = ("opaque", id(underlying))
+            else:
+                key = ("catalog", glass_name)
 
         if key not in self._index:
             idx = len(self.media)
             if key[0] == "vacuum":
                 medium = MediumIR(
                     id=idx, name="vacuum", n_model={"kind": "constant", "n": 1.0}
+                )
+            elif key[0] == "opaque":
+                medium = MediumIR(
+                    id=idx, name=f"opaque_{idx}", n_model={"kind": "opaque"}
                 )
             else:
                 medium = MediumIR(
@@ -267,13 +287,16 @@ def _lower_spectrum(spectrum: object) -> dict[str, Any]:
     }
 
 
-def _lower_source(idx: int, source: object, media: _MediumRegistry) -> EmitterIR:
+def _lower_source(
+    idx: int, source: object, media: _MediumRegistry, *, strict: bool = True
+) -> EmitterIR:
     """Map a live source to an :class:`EmitterIR`.
 
     Args:
         idx: Index to assign in ``SceneIR.emitters``.
         source: A ``BaseNSQSource`` instance.
         media: Shared medium registry to resolve/add the source's medium.
+        strict: Forwarded to :meth:`_MediumRegistry.get_id`.
 
     Returns:
         The corresponding :class:`EmitterIR`.
@@ -317,7 +340,7 @@ def _lower_source(idx: int, source: object, media: _MediumRegistry) -> EmitterIR
         )
 
     medium = getattr(source, "medium", None)
-    medium_id = media.get_id(medium) if medium is not None else None
+    medium_id = media.get_id(medium, strict=strict) if medium is not None else None
     return EmitterIR(
         id=idx,
         kind=kind,
@@ -407,11 +430,22 @@ def _lower_detector(idx: int, detector: object) -> SensorIR:
     )
 
 
-def lower(scene: NSQScene) -> SceneIR:
+def lower(scene: NSQScene, *, strict: bool = True) -> SceneIR:
     """Lower a live :class:`NSQScene` to a data-only :class:`SceneIR`.
 
     Args:
         scene: The scene to lower. Not mutated.
+        strict: Forwarded to :meth:`_MediumRegistry.get_id` for every
+            material referenced by a surface or a source. Defaults to True
+            (every ``MediumIR`` must be losslessly identifiable -- vacuum or
+            catalog-backed), which is what JSON export and the
+            translatability checklist require. The backends pass
+            ``strict=False`` for the ``lower()`` call they make before every
+            ``trace()``: that IR only needs to drive dispatch (D-1
+            sidedness is resolved from geometry, not from a medium id --
+            see :mod:`optiland.nonsequential.components.refractive`), so a
+            custom, non-catalog material must not block tracing the way it
+            would block serialization.
 
     Returns:
         The scene, described as plain data.
@@ -419,8 +453,9 @@ def lower(scene: NSQScene) -> SceneIR:
     Raises:
         TypeError: If the scene contains a component, BSDF, source, or
             detector type this revamp does not yet know how to lower.
-        ValueError: If a material cannot be losslessly identified (mirrors
-            :meth:`NSQScene.to_json`'s existing limitation).
+        ValueError: If ``strict`` and a material cannot be losslessly
+            identified (mirrors :meth:`NSQScene.to_json`'s existing
+            limitation).
     """
     media = _MediumRegistry()
 
@@ -434,11 +469,14 @@ def lower(scene: NSQScene) -> SceneIR:
                 to_world=_to_world_matrix(component.cs),
                 params=params,
                 bsdf=_lower_bsdf(component.bsdf),
-                # "front" faces the incoming ray by convention; mapped to
-                # exterior/interior in name only until PR5 makes sidedness
-                # geometric (D-1).
-                exterior_medium_id=media.get_id(component.material_front),
-                interior_medium_id=media.get_id(component.material_back),
+                # Descriptive metadata only -- not consumed by the
+                # interpreter. The actual D-1 fix (geometric sidedness) is
+                # in each geometry's n_geom, not in these ids; see
+                # RefractiveComponent.interact().
+                exterior_medium_id=media.get_id(
+                    component.material_front, strict=strict
+                ),
+                interior_medium_id=media.get_id(component.material_back, strict=strict),
                 volume_id=None,
                 component_kind=_component_kind(component),
                 scatter_fraction=component.scatter_fraction,
@@ -447,7 +485,8 @@ def lower(scene: NSQScene) -> SceneIR:
         )
 
     emitters = [
-        _lower_source(i, source, media) for i, source in enumerate(scene.sources)
+        _lower_source(i, source, media, strict=strict)
+        for i, source in enumerate(scene.sources)
     ]
     sensors = [
         _lower_detector(i, detector) for i, detector in enumerate(scene.detectors)

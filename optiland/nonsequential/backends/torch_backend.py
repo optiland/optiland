@@ -80,26 +80,31 @@ class TorchBackend(TracerBackend):
         self,
         rays: NSQRayBundle,
         components: list[BaseComponent],
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Find nearest intersection of each ray with all scene components.
 
         t_min and hit_normals stay in the torch graph (attached to geometry
-        parameters). comp_indices are numpy ints (no grad needed).
+        parameters). comp_indices are numpy ints (no grad needed). n_geom is
+        purely geometric (never a function of a differentiable material
+        parameter), but is still built via be.where to stay consistent with
+        the rest of this method and to support a differentiable geometry
+        (radius, conic, ...) tilting n_geom itself.
 
         Args:
             rays: Current ray bundle.
             components: List of scene components.
 
         Returns:
-            ``(t_min, hit_normals, component_indices)``.
+            ``(t_min, hit_normals, component_indices, hit_n_geom)``.
         """
         N = rays.num_rays
         t_min = be.ones(N) * be.inf
         hit_normals = be.zeros((N, 3))
+        hit_n_geom = be.zeros((N, 3))
         comp_indices = np.full(N, -1, dtype=np.int32)
 
         for i, comp in enumerate(components):
-            t_c, normals_c, hit_c = comp.intersect(rays)
+            t_c, normals_c, hit_c, n_geom_c = comp.intersect(rays)
             hit_c_np = to_numpy(hit_c).astype(bool)
             t_c_np = to_numpy(t_c)
             better_np = hit_c_np & (t_c_np < to_numpy(t_min))
@@ -107,9 +112,10 @@ class TorchBackend(TracerBackend):
             better = be.array(better_np)
             t_min = be.where(better, t_c, t_min)
             hit_normals = be.where(better[:, None], normals_c, hit_normals)
+            hit_n_geom = be.where(better[:, None], n_geom_c, hit_n_geom)
             comp_indices = np.where(better_np, i, comp_indices)
 
-        return t_min, hit_normals, comp_indices
+        return t_min, hit_normals, comp_indices, hit_n_geom
 
     def trace(
         self,
@@ -156,7 +162,7 @@ class TorchBackend(TracerBackend):
 
         # The per-bounce interaction loop below is driven by this IR, not by
         # iterating scene.surfaces and branching on Python class identity.
-        ir = lower(scene)
+        ir = lower(scene, strict=False)
 
         t_start = time.perf_counter()
 
@@ -240,7 +246,7 @@ class TorchBackend(TracerBackend):
                         break
 
                     # Component intersections
-                    t_min, hit_normals, comp_idx = self.intersect_scene(
+                    t_min, hit_normals, comp_idx, hit_n_geom = self.intersect_scene(
                         rays, scene.surfaces
                     )
 
@@ -294,6 +300,7 @@ class TorchBackend(TracerBackend):
                         scene.surfaces,
                         t_min,
                         hit_normals,
+                        hit_n_geom,
                         comp_idx,
                         comp_first_np,
                         self.rng,

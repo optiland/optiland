@@ -62,6 +62,7 @@ class AbsorbingComponent(BaseComponent):
         hit_mask: np.ndarray,
         rng: NSQRng,
         bsdf_ir: BsdfIR,
+        n_geom: np.ndarray,
     ) -> None:
         """Kill all rays that hit this component (in-place).
 
@@ -72,6 +73,7 @@ class AbsorbingComponent(BaseComponent):
             hit_mask: True for rays hitting this component, shape (N,).
             rng: Keyed PCG32 RNG (unused).
             bsdf_ir: Unused -- absorbing surfaces never scatter.
+            n_geom: Unused -- absorbing surfaces never determine sidedness.
         """
         # Missed rays carry t = inf; zero it before the position update so the
         # masked-out be.where branch cannot backpropagate 0 * inf = NaN into

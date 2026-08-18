@@ -103,7 +103,7 @@ class ComponentGeometry(ABC):
     @abstractmethod
     def ray_intersect(
         self, origins: np.ndarray, directions: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Find ray intersections with this geometry in local coordinates.
 
         Args:
@@ -111,11 +111,22 @@ class ComponentGeometry(ABC):
             directions: Ray directions in local frame, shape (N, 3), unit vectors.
 
         Returns:
-            A tuple (t, normals, hit_mask) where:
+            A tuple (t, normals, hit_mask, n_geom) where:
                 - t: Distance to nearest hit, shape (N,). inf if no hit.
                 - normals: Hit surface normals in local frame, shape (N, 3).
-                    Normals point toward the ray origin side (outward).
+                    Normals point toward the ray origin side (outward) --
+                    used for shading/reflection/refraction math.
                 - hit_mask: True where ray actually hits, shape (N,) bool.
+                - n_geom: The same surface normal *before* the "flip to face
+                    the incoming ray" step, shape (N, 3). Fixed per surface
+                    point, independent of which side the ray approached
+                    from (D-1, D11 4.7): every geometry orients this so it
+                    points from the ``material_front`` side toward the
+                    ``material_back`` side -- the contract
+                    ``RefractiveComponent`` relies on to determine which
+                    material a ray is entering without comparing refractive
+                    index values. Components that never need sidedness
+                    (reflective, absorbing) ignore it.
         """
 
     @abstractmethod

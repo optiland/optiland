@@ -69,7 +69,7 @@ class BaseComponent(ABC):
 
     def intersect(
         self, rays: NSQRayBundle
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Find the nearest intersection of alive rays with this component.
 
         Transforms rays to local frame, delegates to geometry, then
@@ -79,10 +79,13 @@ class BaseComponent(ABC):
             rays: The ray bundle in global coordinates.
 
         Returns:
-            Tuple (t, normals, hit_mask) in global frame:
+            Tuple (t, normals, hit_mask, n_geom) in global frame:
                 - t: Per-ray distances [mm], shape (N,). inf if no hit.
                 - normals: Surface normals in global frame, shape (N, 3).
                 - hit_mask: Boolean hit mask, shape (N,).
+                - n_geom: Geometric (unflipped, direction-independent)
+                    surface normal in global frame, shape (N, 3). See
+                    :meth:`ComponentGeometry.ray_intersect`.
         """
         translation, rot = _get_transform(self.cs)
 
@@ -97,7 +100,7 @@ class BaseComponent(ABC):
         positions_l = (positions_g - t_be) @ R_be
         directions_l = directions_g @ R_be
 
-        t_hit, normals_l, hit_mask = self.geometry.ray_intersect(
+        t_hit, normals_l, hit_mask, n_geom_l = self.geometry.ray_intersect(
             positions_l, directions_l
         )
 
@@ -113,8 +116,9 @@ class BaseComponent(ABC):
 
         # Transform normals back to global: n_global_row = n_local_row @ R^T
         normals_g = normals_l @ R_be.T
+        n_geom_g = n_geom_l @ R_be.T
 
-        return t_hit, normals_g, hit_mask
+        return t_hit, normals_g, hit_mask, n_geom_g
 
     @abstractmethod
     def interact(
@@ -125,6 +129,7 @@ class BaseComponent(ABC):
         hit_mask: np.ndarray,
         rng: NSQRng,
         bsdf_ir: BsdfIR,
+        n_geom: np.ndarray,
     ) -> None:
         """Apply optical interaction at hit points (in-place).
 
@@ -149,6 +154,11 @@ class BaseComponent(ABC):
             bsdf_ir: This surface's lowered BSDF descriptor (``BsdfIR(kind=
                 "none")`` when no scatter model is attached), matching
                 ``self.bsdf``.
+            n_geom: Geometric (unflipped) surface normal in global frame,
+                shape (N, 3): points from ``material_front`` toward
+                ``material_back`` (D-1). ``RefractiveComponent`` uses this,
+                not index proximity, to determine which material a ray is
+                entering.
         """
 
     @property

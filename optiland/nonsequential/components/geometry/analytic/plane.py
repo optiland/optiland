@@ -23,7 +23,7 @@ class PlaneGeometry(AnalyticGeometry):
 
     def ray_intersect(
         self, origins: np.ndarray, directions: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Intersect rays with the infinite plane z=0.
 
         Args:
@@ -31,7 +31,9 @@ class PlaneGeometry(AnalyticGeometry):
             directions: Ray directions in local frame, shape (N, 3).
 
         Returns:
-            (t, normals, hit_mask).
+            (t, normals, hit_mask, n_geom). n_geom is the fixed local +z
+            (the ``material_back`` side by contract; see
+            :meth:`ComponentGeometry.ray_intersect`).
         """
         dz = directions[:, 2]
         oz = origins[:, 2]
@@ -43,13 +45,17 @@ class PlaneGeometry(AnalyticGeometry):
         hit_mask = valid & (t > 1e-9)
         t = be.where(hit_mask, t, be.ones_like(t) * be.inf)
 
+        # n_geom: fixed +z, independent of ray direction.
         # Normal: +z or -z depending on ray direction
         # Built with stack (not in-place assignment): an in-place write into
         # a leaf tensor raises under be.grad_mode.enable().
+        n_geom = be.stack(
+            [be.zeros_like(dz), be.zeros_like(dz), be.ones_like(dz)], axis=1
+        )
         nz = be.where(dz < 0, be.ones_like(dz), -be.ones_like(dz))
         normals = be.stack([be.zeros_like(dz), be.zeros_like(dz), nz], axis=1)
 
-        return t, normals, hit_mask
+        return t, normals, hit_mask, n_geom
 
     def bounding_box(self, transform: tuple[np.ndarray, np.ndarray]) -> AABB:
         """Return infinite AABB (plane is unbounded).
@@ -100,7 +106,7 @@ class FinitePlaneGeometry(AnalyticGeometry):
 
     def ray_intersect(
         self, origins: np.ndarray, directions: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Intersect rays with the finite plane.
 
         Args:
@@ -108,7 +114,9 @@ class FinitePlaneGeometry(AnalyticGeometry):
             directions: Ray directions in local frame, shape (N, 3).
 
         Returns:
-            (t, normals, hit_mask).
+            (t, normals, hit_mask, n_geom). n_geom is the fixed local +z
+            (the ``material_back`` side by contract; see
+            :meth:`ComponentGeometry.ray_intersect`).
         """
         dz = directions[:, 2]
         oz = origins[:, 2]
@@ -136,12 +144,15 @@ class FinitePlaneGeometry(AnalyticGeometry):
         hit_mask = plane_valid & (t < be.inf) & in_aperture
 
         t = be.where(hit_mask, t, inf_arr)
+        n_geom = be.stack(
+            [be.zeros_like(dz), be.zeros_like(dz), be.ones_like(dz)], axis=1
+        )
         # Built with stack (not in-place assignment): an in-place write into
         # a leaf tensor raises under be.grad_mode.enable().
         nz = be.where(dz < 0, be.ones_like(dz), -be.ones_like(dz))
         normals = be.stack([be.zeros_like(dz), be.zeros_like(dz), nz], axis=1)
 
-        return t, normals, hit_mask
+        return t, normals, hit_mask, n_geom
 
     def bounding_box(self, transform: tuple[np.ndarray, np.ndarray]) -> AABB:
         """Return AABB for this finite plane in global coordinates.

@@ -54,7 +54,7 @@ class CylindricalFrustumGeometry(AnalyticGeometry):
 
     def ray_intersect(
         self, origins: np.ndarray, directions: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Intersect rays with the frustum lateral surface.
 
         The frustum surface satisfies:
@@ -71,7 +71,11 @@ class CylindricalFrustumGeometry(AnalyticGeometry):
             directions: Ray directions in local frame, shape (N, 3).
 
         Returns:
-            (t, normals, hit_mask) all in local frame.
+            (t, normals, hit_mask, n_geom) all in local frame. n_geom points
+            radially outward from the frustum axis -- this geometry is only
+            ever used for edge/barrel surfaces with the same material on
+            both sides, so it never needs to satisfy the ``material_back``
+            sidedness contract in :meth:`ComponentGeometry.ray_intersect`.
         """
         ox, oy, oz = origins[:, 0], origins[:, 1], origins[:, 2]
         dx, dy, dz = directions[:, 0], directions[:, 1], directions[:, 2]
@@ -84,6 +88,7 @@ class CylindricalFrustumGeometry(AnalyticGeometry):
                 be.ones(N) * be.inf,
                 be.zeros((N, 3)),
                 be.zeros(N, dtype=bool),
+                be.zeros((N, 3)),
             )
 
         slope = (self.r_back - self.r_front) / h
@@ -141,14 +146,14 @@ class CylindricalFrustumGeometry(AnalyticGeometry):
         ny = hy
         nz = -rz_hit * slope * be.ones_like(hx)
         n_len = be.sqrt(nx * nx + ny * ny + nz * nz + 1e-30)
-        normals = be.stack([nx / n_len, ny / n_len, nz / n_len], axis=1)
+        n_geom = be.stack([nx / n_len, ny / n_len, nz / n_len], axis=1)
 
         # Flip to face incoming ray
-        dot = (directions * normals).sum(axis=1, keepdims=True)
-        normals = be.where(dot > 0, -normals, normals)
+        dot = (directions * n_geom).sum(axis=1, keepdims=True)
+        normals = be.where(dot > 0, -n_geom, n_geom)
 
         t_out = be.where(hit_mask, t_best, inf_val)
-        return t_out, normals, hit_mask
+        return t_out, normals, hit_mask, n_geom
 
     def bounding_box(self, transform: tuple[np.ndarray, np.ndarray]) -> AABB:
         """Return AABB of the frustum in global coordinates.
