@@ -27,6 +27,11 @@ class Mirror(CompoundComponent):
     :class:`ReflectiveComponent`.  The user can attach a custom BSDF via
     ``MirrorConfig.surface.bsdf``.
 
+    Unlike ``Lens``/``Doublet``, this is not wrapped in a
+    :class:`~optiland.nonsequential.components.volume.Volume`: a mirror is a
+    single open reflective surface with vacuum on both sides, not a closed
+    solid with an interior medium, so watertightness has nothing to check.
+
     Attributes:
         _name: Registry name.
         _cs: Surface coordinate system.

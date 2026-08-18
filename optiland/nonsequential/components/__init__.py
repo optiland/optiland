@@ -18,6 +18,7 @@ from .mirror import Mirror
 from .reflective import ReflectiveComponent
 from .refractive import RefractiveComponent
 from .registry import ComponentRegistry
+from .volume import NonWatertightVolumeError, Volume
 
 __all__ = [
     "AbsorbingComponent",
@@ -31,7 +32,9 @@ __all__ = [
     "LensConfig",
     "Mirror",
     "MirrorConfig",
+    "NonWatertightVolumeError",
     "RefractiveComponent",
     "ReflectiveComponent",
     "SurfaceConfig",
+    "Volume",
 ]

@@ -170,9 +170,11 @@ from optiland.nonsequential.components import (
     LensConfig,
     Mirror,
     MirrorConfig,
+    NonWatertightVolumeError,
     ReflectiveComponent,
     RefractiveComponent,
     SurfaceConfig,
+    Volume,
 )
 
 # Geometry
@@ -269,7 +271,9 @@ __all__ = [
     "LensConfig",
     "Mirror",
     "MirrorConfig",
+    "NonWatertightVolumeError",
     "SurfaceConfig",
+    "Volume",
     # Geometry
     "AnnularPlaneGeometry",
     "ConicGeometry",

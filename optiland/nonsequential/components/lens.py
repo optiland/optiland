@@ -27,6 +27,7 @@ from optiland.nonsequential.components.geometry.analytic.frustum import (
 )
 from optiland.nonsequential.components.reflective import ReflectiveComponent
 from optiland.nonsequential.components.refractive import RefractiveComponent
+from optiland.nonsequential.components.volume import Volume
 from optiland.nonsequential.materials.nsq_material import VACUUM, NSQMaterial
 
 if TYPE_CHECKING:
@@ -45,11 +46,18 @@ class Lens(CompoundComponent):
     4. **Rim** -- annular plane, absorbing; only when
        ``front_aperture_radius != back_aperture_radius``.
 
+    The built surfaces are validated as a single closed :class:`Volume`
+    (watertight, consistently outward-oriented) at construction time --
+    a lens whose faces and edge do not actually close up raises
+    :class:`~optiland.nonsequential.components.volume.NonWatertightVolumeError`
+    immediately rather than producing silently wrong flux accounting later.
+
     Attributes:
         _name: Registry name.
         _cs: Front-vertex coordinate system.
         _config: LensConfig describing the lens geometry.
         _surfaces: Built list of sub-surfaces.
+        _volume: The validated :class:`Volume` these surfaces form.
     """
 
     def __init__(
@@ -64,11 +72,17 @@ class Lens(CompoundComponent):
             name: Unique identifier for this lens in the registry.
             cs: Coordinate system for the front vertex.
             config: Lens geometry and material configuration.
+
+        Raises:
+            NonWatertightVolumeError: If the built surfaces do not form a
+                closed, consistently outward-oriented solid.
         """
         self._name = name
         self._cs = cs
         self._config = config
+        mat = _resolve_material(config.material)
         self._surfaces: list[BaseComponent] = self._build()
+        self._volume = Volume(name=name, boundary=self._surfaces, interior=mat)
 
     @property
     def name(self) -> str:
