@@ -29,6 +29,8 @@ designs drop straight into NSQ for stray-light and ghost analysis::
    **Beta.** NSQ is a beta feature stabilizing toward a frozen 1.0. See
    :ref:`nsq_limitations_and_roadmap` (canonical) for the v1 envelope, known
    limitations (notably zero visibility gradients), and the development roadmap.
+   See :ref:`nsq_validation_report` for the closed-form benchmarks and
+   invariants the engine is checked against in CI.
 
 .. rubric:: When to use the NSQ engine
 
@@ -227,3 +229,4 @@ Examples
    :hidden:
 
    nonsequential/limitations_and_roadmap
+   nonsequential/validation_report

@@ -8,7 +8,8 @@ This page is the **canonical, single source of truth** for the non-sequential
 and the development roadmap. The README, the package ``__init__`` docstring, the
 :ref:`gallery overview <gallery_nonsequential>`, and the
 :ref:`developer guide <nonsequential_raytracing>` all link here rather than
-keeping their own copies.
+keeping their own copies. See :ref:`nsq_validation_report` for what the engine
+is actually checked against in CI (closed-form benchmarks and invariants).
 
 Beta status
 -----------

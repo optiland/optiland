@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 import optiland.backend as be
 from optiland.backend.utils import to_numpy
 from optiland.nonsequential.components.base import BaseComponent
@@ -21,8 +23,6 @@ from optiland.nonsequential.rng import EventSlot
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-    import numpy as np
 
     from optiland.coatings import BaseCoating
     from optiland.coordinate_system import CoordinateSystem
@@ -174,11 +174,24 @@ class ReflectiveComponent(BaseComponent):
             )
             # Route only a scatter_fraction of the hit rays into the lobe; the
             # rest reflect specularly. The branch is drawn from a detached
-            # probability, matching the Fresnel split.
-            scatters = hit_mask & be.array(
-                rng.uniform(ray_id_key, bounce_key, EventSlot.SCATTER_BRANCH)
-                < self.scatter_fraction
+            # probability, matching the Fresnel split -- and, like it,
+            # carries a compensating attached weight (D-5) so
+            # d(flux)/d(scatter_fraction) is correct rather than silently
+            # zero. See RefractiveComponent.interact for the epsilon-clamp
+            # rationale.
+            sf_det = float(np.clip(to_numpy(self.scatter_fraction), 1e-6, 1.0 - 1e-6))
+            u_scatter = rng.uniform(ray_id_key, bounce_key, EventSlot.SCATTER_BRANCH)
+            scatters_np = to_numpy(hit_mask).astype(bool) & (u_scatter < sf_det)
+            scatters = be.array(scatters_np)
+
+            sf = self.scatter_fraction
+            weight_scatter_branch = sf / sf_det
+            weight_nonscatter_branch = (1.0 - sf) / (1.0 - sf_det)
+            sf_gate = be.where(
+                scatters, weight_scatter_branch, weight_nonscatter_branch
             )
+            rays.flux = rays.flux * be.where(hit_mask, sf_gate, be.ones_like(sf_gate))
+
             new_dirs = be.where(scatters[:, None], bsdf_dirs, new_dirs)
             rays.flux = rays.flux * be.where(
                 scatters, bsdf_weights, be.ones_like(bsdf_weights)

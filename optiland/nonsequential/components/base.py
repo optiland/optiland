@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 import optiland.backend as be
+from optiland.nonsequential._utils import as_param
 
 if TYPE_CHECKING:
     from optiland.coordinate_system import CoordinateSystem
@@ -59,6 +60,12 @@ class BaseComponent(ABC):
             name: Optional label for this component.
             scatter_fraction: Probability that a ray striking this surface is
                 routed through ``bsdf`` instead of the specular path.
+                Differentiable (D-5): a ``torch.Tensor`` with
+                ``requires_grad=True`` stays attached to the autograd graph
+                -- see ``RefractiveComponent.interact``/
+                ``ReflectiveComponent.interact`` for the detached-sample /
+                attached-weight estimator that makes
+                ``d(flux)/d(scatter_fraction)`` correct rather than zero.
         """
         self.cs = cs
         self.geometry = geometry
@@ -66,7 +73,7 @@ class BaseComponent(ABC):
         self.material_back = material_back
         self.bsdf = bsdf
         self.name = name
-        self.scatter_fraction = float(scatter_fraction)
+        self.scatter_fraction = as_param(scatter_fraction)
 
     def intersect(
         self, rays: NSQRayBundle

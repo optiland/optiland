@@ -344,13 +344,27 @@ class RefractiveComponent(BaseComponent):
                 bounce_key,
             )
             # Route only a scatter_fraction of the hit rays through the BSDF;
-            # the rest keep the refracted direction computed above. The branch
-            # is drawn from a detached probability, matching the Fresnel
-            # split, so the surface can be partially diffusing.
-            scatters = hit_mask & be.array(
-                rng.uniform(ray_id_key, bounce_key, EventSlot.SCATTER_BRANCH)
-                < self.scatter_fraction
+            # the rest keep the refracted direction computed above. The
+            # branch is drawn from a detached probability, matching the
+            # Fresnel split -- and, like the Fresnel split (D-5), carries a
+            # compensating attached weight so d(flux)/d(scatter_fraction) is
+            # correct rather than silently zero. Epsilon-clamped denominator
+            # for the same reason as the Fresnel branch: scatter_fraction=1
+            # (or 0) exactly would otherwise divide by zero for the ~1e-6
+            # fraction of draws the clamp itself puts on the "wrong" side.
+            sf_det = float(np.clip(to_numpy(self.scatter_fraction), 1e-6, 1.0 - 1e-6))
+            u_scatter = rng.uniform(ray_id_key, bounce_key, EventSlot.SCATTER_BRANCH)
+            scatters_np = to_numpy(hit_mask).astype(bool) & (u_scatter < sf_det)
+            scatters = be.array(scatters_np)
+
+            sf = self.scatter_fraction
+            weight_scatter_branch = sf / sf_det
+            weight_nonscatter_branch = (1.0 - sf) / (1.0 - sf_det)
+            sf_gate = be.where(
+                scatters, weight_scatter_branch, weight_nonscatter_branch
             )
+            rays.flux = rays.flux * be.where(hit_mask, sf_gate, be.ones_like(sf_gate))
+
             scatter_col = scatters[:, None]
             cur_dirs = be.stack([rays.L, rays.M, rays.N], axis=1)
             new_dirs = be.where(scatter_col, bsdf_dirs, cur_dirs)
