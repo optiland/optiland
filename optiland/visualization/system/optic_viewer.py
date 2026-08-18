@@ -209,15 +209,23 @@ class OpticViewer(BaseViewer):
             # A single cross-section at one z -- no object-segment issue.
             return None, None
 
-        # Axis limits are drawn in the global frame, so use global z rather
-        # than the unfolded axial coordinate ``positions`` reports.
-        positions = be.to_numpy(self.optic.surfaces.global_z_positions).reshape(-1)
+        # Axis limits are drawn in the global frame, so use the full 3-D
+        # vertex chain rather than the unfolded axial coordinate
+        # ``positions`` reports. A folded path can double back in z (first/
+        # last surface do not bound the span) and walk off-axis
+        # transversely (the vertical axis is not centered on 0), so both
+        # axes are sized from the min/max vertex coordinates. For a
+        # straight +z system every vertex has x = y = 0 and z increases
+        # monotonically, which reduces to the previous first-to-last-z,
+        # symmetric-about-the-axis behavior exactly.
+        vertices = be.to_numpy(self.optic.surfaces.vertices_gcs)
         start_idx = 1 if self.optic.object_surface.is_infinite else 0
-        if start_idx >= len(positions) - 1:
+        if start_idx >= vertices.shape[0] - 1:
             return None, None
+        vertices = vertices[start_idx:]
 
-        z_min = float(positions[start_idx])
-        z_max = float(positions[-1])
+        z_min = float(vertices[:, 2].min())
+        z_max = float(vertices[:, 2].max())
         z_margin = max(0.15 * (z_max - z_min), 1e-6)
         auto_xlim = (z_min - z_margin, z_max + z_margin)
 
@@ -229,7 +237,12 @@ class OpticViewer(BaseViewer):
         r_max = float(r_extent.max())
         if r_max <= 0:
             return auto_xlim, None
-        r_margin = max(0.15 * r_max, 1e-6)
-        auto_ylim = (-(r_max + r_margin), r_max + r_margin)
+
+        # Vertical axis: transverse component of the drawn projection.
+        t_comp = 0 if projection == "XZ" else 1
+        t_min = float(vertices[:, t_comp].min())
+        t_max = float(vertices[:, t_comp].max())
+        r_margin = max(0.15 * max(r_max, t_max - t_min), 1e-6)
+        auto_ylim = (t_min - r_max - r_margin, t_max + r_max + r_margin)
 
         return auto_xlim, auto_ylim
