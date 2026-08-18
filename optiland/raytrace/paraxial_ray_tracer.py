@@ -18,6 +18,7 @@ from optiland.surfaces import ObjectSurface
 if TYPE_CHECKING:
     from optiland._types import BEArray, ScalarOrArray
     from optiland.optic import Optic
+    from optiland.paraxial_path import ParaxialPath
 
 
 class ParaxialRayTracer(BaseRayTracer):
@@ -41,7 +42,8 @@ class ParaxialRayTracer(BaseRayTracer):
             wavelength: Wavelength of the light.
 
         """
-        EPL = self.optic.paraxial.EPL()
+        path = self.optic.surfaces.build_paraxial_path()
+        EPL = self.optic.paraxial.EPL(path=path)
         EPD = self.optic.paraxial.EPD()
 
         y1 = Py * EPD / 2
@@ -52,7 +54,7 @@ class ParaxialRayTracer(BaseRayTracer):
         # z0 is a global z (object frame); use the global entrance-pupil z so
         # both terms share a frame. EPL above stays relative — that is what
         # get_paraxial_object_position expects.
-        epl_global = self.optic.paraxial.entrance_pupil_z()
+        epl_global = self.optic.paraxial.entrance_pupil_axial_position(path=path)
         u0 = (y1 - y0) / (epl_global - z0)
         rays = ParaxialRays(y0, u0, z0, wavelength)
 
@@ -66,6 +68,7 @@ class ParaxialRayTracer(BaseRayTracer):
         wavelength: float,
         reverse: bool = False,
         skip: int = 0,
+        path: ParaxialPath | None = None,
     ) -> tuple[BEArray, BEArray]:
         """
         Trace generically-defined paraxial rays through the optical system.
@@ -79,6 +82,11 @@ class ParaxialRayTracer(BaseRayTracer):
                 direction. Defaults to False.
             skip: The number of surfaces to skip during
                 tracing. Defaults to 0.
+            path: Optional prebuilt :class:`ParaxialPath` for the current
+                geometry, so a high-level operation making several traces
+                pays the path construction once. Must be a fresh snapshot
+                of the surfaces being traced -- never one built before a
+                geometry mutation.
 
         Returns:
             tuple: A tuple containing the final height(s) and slope(s) of the
@@ -88,7 +96,8 @@ class ParaxialRayTracer(BaseRayTracer):
         u_ = self._process_input(u)
         z_ = self._process_input(z)
 
-        path = self.optic.surfaces.build_paraxial_path()
+        if path is None:
+            path = self.optic.surfaces.build_paraxial_path()
 
         R = self.optic.surfaces.radii
         n = self.optic.surfaces.n(wavelength)

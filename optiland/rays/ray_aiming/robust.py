@@ -60,9 +60,11 @@ def _cached_paraxial_constants(optic: Optic):
             cache["epd"] = orig_epd()
         return cache["epd"]
 
-    def cached_epl():
+    def cached_epl(path=None):
+        # ``path`` only avoids a rebuild inside the wrapped call; the cached
+        # value is the same either way (geometry is fixed within this scope).
         if "epl" not in cache:
-            cache["epl"] = orig_epl()
+            cache["epl"] = orig_epl(path=path)
         return cache["epl"]
 
     para.EPD = cached_epd
@@ -479,9 +481,7 @@ class RobustRayAimer(BaseRayAimer):
         # Candidates sit on the transverse line through the origin of the
         # sweep: bind the parameterization at the swept-axis origin so the
         # xi/eta displacements stay in the transverse plane for any entry.
-        bound = param.bind(
-            be.zeros(n), be.zeros(n), z0, L0, M0, N0
-        )
+        bound = param.bind(be.zeros(n), be.zeros(n), z0, L0, M0, N0)
         x0, y0, z0, L0, M0, N0 = bound.launch(dir_xi * r, dir_eta * r)
 
         x, y, z, L, M, N, converged, _, _r = self._iterative._solve_core(
@@ -562,7 +562,17 @@ class RobustRayAimer(BaseRayAimer):
                 M0 = be.array([launch[4]])
                 N0 = be.array([launch[5]])
                 x, y, z, L, M, N, converged, _, _r = self._iterative._solve_core(
-                    x0, y0, z0, L0, M0, N0, wl_a, stop_idx, is_inf, tx, ty,
+                    x0,
+                    y0,
+                    z0,
+                    L0,
+                    M0,
+                    N0,
+                    wl_a,
+                    stop_idx,
+                    is_inf,
+                    tx,
+                    ty,
                     param=param,
                 )
                 if be.any(converged):
@@ -601,7 +611,17 @@ class RobustRayAimer(BaseRayAimer):
 
             with _relaxed_tolerance(self._iterative, relaxed_tol):
                 x, y, z, L, M, N, converged, _, _r = self._iterative._solve_core(
-                    x0, y0, z0, L0, M0, N0, wl_a, stop_idx, is_inf, tx, ty,
+                    x0,
+                    y0,
+                    z0,
+                    L0,
+                    M0,
+                    N0,
+                    wl_a,
+                    stop_idx,
+                    is_inf,
+                    tx,
+                    ty,
                     param=param,
                 )
 
@@ -612,11 +632,19 @@ class RobustRayAimer(BaseRayAimer):
                 # takes a large stride); retry once from the fresh guess
                 # before giving up and shrinking the step.
                 with _relaxed_tolerance(self._iterative, relaxed_tol):
-                    x, y, z, L, M, N, converged, _, _r = (
-                        self._iterative._solve_core(
-                            px0, py0, pz0, pL0, pM0, pN0, wl_a, stop_idx,
-                            is_inf, tx, ty, param=param,
-                        )
+                    x, y, z, L, M, N, converged, _, _r = self._iterative._solve_core(
+                        px0,
+                        py0,
+                        pz0,
+                        pL0,
+                        pM0,
+                        pN0,
+                        wl_a,
+                        stop_idx,
+                        is_inf,
+                        tx,
+                        ty,
+                        param=param,
                     )
 
             if be.any(converged):

@@ -81,9 +81,10 @@ class Paraxial:
 
         """
         # start tracing 1 lens unit before first surface
-        z_start = self.surfaces.positions[1] - 1
+        path = self.surfaces.build_paraxial_path()
+        z_start = path.axial_positions.reshape(-1, 1)[1] - 1
         wavelength = self.optic.primary_wavelength
-        y, u = self.trace_generic(1.0, 0.0, z_start, wavelength)
+        y, u = self.trace_generic(1.0, 0.0, z_start, wavelength, path=path)
         f2 = -y[0] / u[-1]
         return f2[0]
 
@@ -113,9 +114,10 @@ class Paraxial:
 
         """
         # start tracing 1 lens unit before first surface
-        z_start = self.surfaces.positions[1] - 1
+        path = self.surfaces.build_paraxial_path()
+        z_start = path.axial_positions.reshape(-1, 1)[1] - 1
         wavelength = self.optic.primary_wavelength
-        y, u = self.trace_generic(1.0, 0.0, z_start, wavelength)
+        y, u = self.trace_generic(1.0, 0.0, z_start, wavelength, path=path)
         F2 = -y[-1] / u[-1]
         return F2[0]
 
@@ -205,7 +207,7 @@ class Paraxial:
         """
         return self.F2() - self.f1()
 
-    def EPL(self) -> ScalarOrArray:
+    def EPL(self, path: ParaxialPath | None = None) -> ScalarOrArray:
         """Calculate the entrance pupil location (EPL).
 
         This value is relative to the first physical surface (index 1),
@@ -216,6 +218,9 @@ class Paraxial:
         surface this value as-is. Call sites that need a global z (object
         space, surface positions, ray launch points) should call
         :meth:`entrance_pupil_z` instead.
+
+        Args:
+            path: Optional prebuilt :class:`ParaxialPath` to reuse.
 
         Returns:
             Entrance pupil position relative to the first surface
@@ -232,18 +237,24 @@ class Paraxial:
 
         y0 = 0
         u0 = 0.1
-        pos = self.surfaces.positions
+        if path is None:
+            path = self.surfaces.build_paraxial_path()
+        pos = path.axial_positions.reshape(-1, 1)
         z0 = pos[-1] - pos[stop_index]
         wavelength = self.optic.primary_wavelength
 
         # trace from center of stop on axis
         skip = self.surfaces.num_surfaces - stop_index
-        y, u = self.trace_generic(y0, u0, z0[0], wavelength, reverse=True, skip=skip)
+        y, u = self.trace_generic(
+            y0, u0, z0[0], wavelength, reverse=True, skip=skip, path=path
+        )
 
         loc_relative = y[-1] / u[-1]
         return loc_relative[0]
 
-    def entrance_pupil_axial_position(self) -> ScalarOrArray:
+    def entrance_pupil_axial_position(
+        self, path: ParaxialPath | None = None
+    ) -> ScalarOrArray:
         """Entrance pupil location on the unfolded signed axial coordinate.
 
         This is ``EPL()`` re-anchored to the same axial coordinate that
@@ -251,10 +262,15 @@ class Paraxial:
         against surface positions. It is a 1-D unfolded axial scalar, never
         a Cartesian coordinate; use :meth:`entrance_pupil_point_gcs` for the
         pupil's real-space location.
-        """
-        return self.EPL() + self.surfaces.positions[1, 0]
 
-    def entrance_pupil_z(self) -> ScalarOrArray:
+        Args:
+            path: Optional prebuilt :class:`ParaxialPath` to reuse.
+        """
+        if path is None:
+            path = self.surfaces.build_paraxial_path()
+        return self.EPL(path=path) + path.axial_positions.reshape(-1, 1)[1, 0]
+
+    def entrance_pupil_z(self, path: ParaxialPath | None = None) -> ScalarOrArray:
         """Entrance pupil location as an axial scalar (legacy name).
 
         ``EPL()`` returns a value relative to the first physical surface (per
@@ -273,8 +289,11 @@ class Paraxial:
         :meth:`entrance_pupil_point_gcs` for that point, and prefer
         :meth:`entrance_pupil_axial_position` (same value, honest name) in
         new code.
+
+        Args:
+            path: Optional prebuilt :class:`ParaxialPath` to reuse.
         """
-        return self.entrance_pupil_axial_position()
+        return self.entrance_pupil_axial_position(path=path)
 
     def entrance_pupil_point_gcs(self, path: ParaxialPath | None = None) -> tuple:
         """Entrance pupil position as a 3-D point in global coordinates.
@@ -292,7 +311,7 @@ class Paraxial:
         """
         if path is None:
             path = self.surfaces.build_paraxial_path()
-        epl = self.EPL()
+        epl = self.EPL(path=path)
         anchor = path.vertices_gcs[1]
         d0 = path.entry_direction
         return tuple(anchor[i] + epl * d0[i] for i in range(3))
@@ -313,7 +332,7 @@ class Paraxial:
         """
         if path is None:
             path = self.surfaces.build_paraxial_path()
-        xpl = self.XPL()
+        xpl = self.XPL(path=path)
         return path.point_from_axial_offset(-1, xpl, side="incoming")
 
     def EPD(self) -> ScalarOrArray:
@@ -333,17 +352,24 @@ class Paraxial:
         wavelength = self.optic.primary_wavelength
         return self.optic.aperture.compute_epd(self, wavelength)
 
-    def XPL(self) -> ScalarOrArray:
+    def XPL(self, path: ParaxialPath | None = None) -> ScalarOrArray:
         """Calculate the exit pupil location (XPL).
+
+        Args:
+            path: Optional prebuilt :class:`ParaxialPath` to reuse.
 
         Returns:
             Exit pupil location relative to the image surface.
 
         """
         stop_index = self.surfaces.stop_index
-        z_start = self.surfaces.positions[stop_index]
+        if path is None:
+            path = self.surfaces.build_paraxial_path()
+        z_start = path.axial_positions.reshape(-1, 1)[stop_index]
         wavelength = self.optic.primary_wavelength
-        y, u = self.trace_generic(0.0, 0.1, z_start, wavelength, skip=stop_index + 1)
+        y, u = self.trace_generic(
+            0.0, 0.1, z_start, wavelength, skip=stop_index + 1, path=path
+        )
         loc_relative = -y[-1] / u[-1]
         return loc_relative[0]
 
@@ -422,7 +448,9 @@ class Paraxial:
 
         """
         EPD = self.EPD()
-        obj_z = self.surfaces.positions[1] - 10  # 10 mm before first surface
+        path = self.surfaces.build_paraxial_path()
+        pos = path.axial_positions.reshape(-1, 1)
+        obj_z = pos[1] - 10  # 10 mm before first surface
 
         if self.optic.object_surface is None:
             raise ValueError(
@@ -436,12 +464,12 @@ class Paraxial:
             ua = 0
         else:
             obj_z = self.optic.object_surface.geometry.cs.z
-            z = self.entrance_pupil_z() - obj_z
+            z = self.entrance_pupil_axial_position(path=path) - obj_z
             ya = 0
             ua = EPD / (2 * z)
 
         wavelength = self.optic.primary_wavelength
-        return self.trace_generic(ya, ua, obj_z, wavelength)
+        return self.trace_generic(ya, ua, obj_z, wavelength, path=path)
 
     def chief_ray(self) -> tuple[BEArray, BEArray]:
         """Calculates the chief ray heights and angles at each surface.
@@ -456,7 +484,8 @@ class Paraxial:
 
         """
         stop_index = self.optic.surfaces.stop_index
-        pos = self.optic.surfaces.positions
+        path = self.surfaces.build_paraxial_path()
+        pos = path.axial_positions.reshape(-1, 1)
         wavelength = self.optic.primary_wavelength
         num_surf = self.surfaces.num_surfaces
         y0 = 0.0
@@ -465,14 +494,16 @@ class Paraxial:
         # Trace a unit ray forward from stop to image
         z_fwd = pos[stop_index]
         skip_fwd = stop_index
-        y_fwd_unit, _ = self.trace_generic(y0, u0, z_fwd, wavelength, skip=skip_fwd)
+        y_fwd_unit, _ = self.trace_generic(
+            y0, u0, z_fwd, wavelength, skip=skip_fwd, path=path
+        )
         y_img_unit = y_fwd_unit[-1]
 
         # Trace the same unit ray backward from stop to object
         z_rev = pos[-1] - pos[stop_index]
         skip_rev = num_surf - stop_index
         y_rev_unit, u_rev_unit = self.trace_generic(
-            y0, u0, z_rev, wavelength, reverse=True, skip=skip_rev
+            y0, u0, z_rev, wavelength, reverse=True, skip=skip_rev, path=path
         )
         y_obj_unit = y_rev_unit[-1]
         u_obj_unit = u_rev_unit[-1]
@@ -481,7 +512,7 @@ class Paraxial:
         if not self.optic.object_surface.is_infinite and isinstance(
             field_definition, ObjectHeightField
         ):
-            first_surface_z = self.surfaces.positions[1, 0]
+            first_surface_z = pos[1, 0]
             object_z = self.optic.object_surface.geometry.cs.z
             y_obj_unit = y_obj_unit + (first_surface_z - object_z) * u_obj_unit
 
@@ -508,15 +539,21 @@ class Paraxial:
             # For infinite conjugates, chief ray is defined by angle in object space.
             # We find its height at the first surface by propagating from the EPL,
             # where its height is zero.
-            z_surf1 = self.surfaces.positions[1, 0]
-            y1_start = u_obj_start * (z_surf1 - self.entrance_pupil_z())
+            z_surf1 = pos[1, 0]
+            y1_start = u_obj_start * (
+                z_surf1 - self.entrance_pupil_axial_position(path=path)
+            )
             u1_start = u_obj_start
             z1_start = z_surf1
-            return self.trace_generic(y1_start, u1_start, z1_start, wavelength)
+            return self.trace_generic(
+                y1_start, u1_start, z1_start, wavelength, path=path
+            )
         else:  # Finite conjugate
             # For finite conjugates, ray starts at y_obj_start on the object plane.
             z_start = self.optic.object_surface.geometry.cs.z
-            return self.trace_generic(y_obj_start, u_obj_start, z_start, wavelength)
+            return self.trace_generic(
+                y_obj_start, u_obj_start, z_start, wavelength, path=path
+            )
 
     def trace(self, Hy: ArrayLike, Py: ArrayLike, wavelength: float):
         """Trace paraxial ray through the optical system based on specified field
@@ -542,6 +579,7 @@ class Paraxial:
         wavelength: float,
         reverse: bool = False,
         skip: int = 0,
+        path: ParaxialPath | None = None,
     ) -> tuple[BEArray, BEArray]:
         """Trace generically-defined paraxial rays through the optical system.
 
@@ -556,10 +594,13 @@ class Paraxial:
                 direction (from image to object space). Defaults to False.
             skip: The number of surfaces to skip from the
                 beginning of the trace (or end if reverse). Defaults to 0.
+            path: Optional prebuilt :class:`ParaxialPath` for the current
+                geometry (built once per high-level operation). Must be a
+                fresh snapshot of the surfaces being traced.
 
         Returns:
             A tuple containing the height(s)
                 and slope(s) of the rays at each surface interface after tracing.
 
         """
-        return self._ray_tracer.trace_generic(y, u, z, wavelength, reverse, skip)
+        return self._ray_tracer.trace_generic(y, u, z, wavelength, reverse, skip, path)
