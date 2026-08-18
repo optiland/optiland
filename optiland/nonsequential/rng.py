@@ -8,7 +8,7 @@ across any two conforming backends: a ray's random numbers depend only on
 its own identity, never on which other rays happen to be alive in the same
 batch or in what order components were visited.
 
-Algorithm (D11)
+Algorithm
 ----------------
 This is the standard O'Neill PCG32 (XSH-RR 64/32), the same generator used
 by Mitsuba 3 (``pcg32.h``) and satisfied by the per-launch-index

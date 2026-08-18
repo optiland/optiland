@@ -79,7 +79,7 @@ class AbsorbingComponent(BaseComponent):
             n_geom: Unused -- absorbing surfaces never determine sidedness.
             sampling: Unused -- an absorber has no stochastic branch (D2,
                 PR11).
-            forced_branch: Unused -- bounded splitting (PR11) only applies
+            forced_branch: Unused -- bounded splitting only applies
                 to ``RefractiveComponent``.
         """
         # Missed rays carry t = inf; zero it before the position update so the

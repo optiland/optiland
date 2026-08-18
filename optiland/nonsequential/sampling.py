@@ -1,4 +1,4 @@
-"""Rare-path sampling helpers for Non-Sequential Raytracing (D2, PR11).
+"""Rare-path sampling helpers for Non-Sequential Raytracing.
 
 Two independent mechanisms, both keyed off ``SceneIR.sampling``
 (:class:`~optiland.nonsequential.ir.scene_ir.SamplingPolicy`):
@@ -11,7 +11,7 @@ Two independent mechanisms, both keyed off ``SceneIR.sampling``
   autograd -- it only changes which detached probability the branch is
   drawn from and the compensating weight, not the estimator's structure.
 - **Russian roulette** (:func:`russian_roulette`): replaces the old biased
-  hard kill below ``min_flux`` (D-9) with an unbiased stochastic kill +
+  hard kill below ``min_flux`` with an unbiased stochastic kill +
   boost, on both backends.
 
 Bounded splitting (also part of D2/PR11) is NumPy-forward-engine-only and
@@ -37,8 +37,8 @@ if TYPE_CHECKING:
     from optiland.nonsequential.ir.scene_ir import SamplingPolicy
     from optiland.nonsequential.rng import NSQRng
 
-# Clamp range for SamplingPolicy.reflect_prob="auto" ( open item: a
-# starting point, to be tuned against the ghost benchmarks in ).
+# Clamp range for SamplingPolicy.reflect_prob="auto" -- a starting point,
+# not yet tuned against the ghost benchmarks in tests/nonsequential/validation/.
 _AUTO_CLAMP_LO = 0.25
 _AUTO_CLAMP_HI = 0.75
 
@@ -83,7 +83,7 @@ def russian_roulette(
     ray_id: np.ndarray,
     bounce: np.ndarray,
 ) -> tuple[object, object, object]:
-    """Unbiased stochastic termination of low-flux rays (D-9).
+    """Unbiased stochastic termination of low-flux rays.
 
     Replaces the old hard kill below ``min_flux`` -- which discards exactly
     the low-flux, multiply-scattered paths that make up stray light, biasing

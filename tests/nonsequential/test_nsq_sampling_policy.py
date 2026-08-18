@@ -198,7 +198,7 @@ class TestDefaultPolicyUnchanged:
 
 
 # ---------------------------------------------------------------------------
-# Importance biasing -- estimator unbiasedness invariant 
+# Importance biasing -- estimator unbiasedness invariant
 # ---------------------------------------------------------------------------
 
 

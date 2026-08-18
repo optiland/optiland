@@ -39,7 +39,7 @@ class ConversionError(Exception):
 
 @dataclass
 class ConversionReport:
-    """Structured record of what a conversion dropped or approximated (PR15).
+    """Structured record of what a conversion dropped or approximated.
 
     Attached to the returned scene as ``scene.conversion_report`` rather
     than requiring the caller to parse warning text -- the whole point of
@@ -56,7 +56,7 @@ class ConversionReport:
             applies (transmission is always 100% there).
         mirror_reflectance_defaulted: Names of mirrors with no usable scalar
             reflectance in the sequential system, defaulted to a perfect
-            reflector (R=1.0) -- NSQ has no implicit-mirror default (D-3),
+            reflector (R=1.0) -- NSQ has no implicit-mirror default,
             so the converter must supply *something*, and a perfect
             reflector is the most visible (least silently-wrong) choice.
         estimated_apertures: Names of surfaces whose aperture radius was not
@@ -179,7 +179,7 @@ def sequential_to_nonsequential(
     Returns:
         NSQScene populated with lens/mirror components, sources, and a
         detector. ``scene.conversion_report`` is a :class:`ConversionReport`
-        (PR15) listing everything the converter dropped or had to
+        listing everything the converter dropped or had to
         approximate -- coatings, apertures, mirror reflectance, polarization
         -- as structured data rather than only warning text.
 
@@ -447,7 +447,7 @@ def _surface_semi_diameter(
         the value could not be read directly from an explicit aperture/
         semi_aperture on the surface and had to be inferred (paraxial ray
         heights, or -- worst case -- a fixed 10 mm fallback), for
-        :class:`ConversionReport` (PR15).
+        :class:`ConversionReport`.
     """
     ap = surf.aperture
     if ap is not None and hasattr(ap, "radius"):
@@ -543,7 +543,7 @@ def _mirror_reflectance(surf, elem_idx: int, report: ConversionReport) -> float:
     An unpolarized ``SimpleCoating``-like coating's ``.reflectance``
     attribute is used directly; anything else (no coating attached, or a
     coating without a plain ``.reflectance`` attribute) falls back to a
-    perfect mirror, since NSQ requires an explicit reflectance (D-3) and the
+    perfect mirror, since NSQ requires an explicit reflectance and the
     sequential engine has no equivalent implicit default to defer to.
 
     Args:

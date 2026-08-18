@@ -145,9 +145,9 @@ class RefractiveComponent(BaseComponent):
                 ``self.bsdf``), not from ``self.bsdf is not None``.
             n_geom: Geometric surface normal in global frame, shape (N, 3),
                 fixed per surface point and pointing from ``material_front``
-                toward ``material_back`` (D-1). Used, not ``rays.n_current``,
+                toward ``material_back``. Used, not ``rays.n_current``,
                 to determine which material a ray is entering.
-            sampling: The scene's rare-path sampling policy (D2, PR11).
+            sampling: The scene's rare-path sampling policy.
                 Resolves the reflect-branch sampling probability -- see
                 :func:`optiland.nonsequential.sampling.resolve_reflect_prob`.
                 ``None`` defaults to ``reflect_prob="fresnel"`` (today's
@@ -156,7 +156,7 @@ class RefractiveComponent(BaseComponent):
                 force the branch (weight = R or T exactly, no importance
                 division) instead of drawing it stochastically. Used only by
                 the NumPy forward engine's bounded-splitting orchestration
-                (PR11) to build both children of a split ray.
+                to build both children of a split ray.
         """
         # Every RNG draw in this call is keyed to the ray's identity as of
         # this specific interaction event -- captured before any of the
@@ -186,7 +186,7 @@ class RefractiveComponent(BaseComponent):
         # (differentiable).
         n_front = self.material_front.n(wl)
         n_back = self.material_back.n(wl)
-        # Extinction coefficients (D-13): tracked the same way as n1/n2 below
+        # Extinction coefficients: tracked the same way as n1/n2 below
         # so rays.k_current always reflects the medium a ray is currently
         # travelling through, for Beer-Lambert attenuation on its next hop.
         k_front = self.material_front.k(wl)
@@ -259,7 +259,7 @@ class RefractiveComponent(BaseComponent):
             do_reflect = be.array(do_reflect_np)
             weight = be.where(do_reflect, R_used, T_used)
         else:
-            # Importance-biased branch probability (D2, PR11): generalises
+            # Importance-biased branch probability: generalises
             # the plain-Fresnel estimator (p == R) to any detached
             # probability p, dividing by p rather than R_det so the
             # estimator stays unbiased for any p in (0, 1) -- only the
@@ -346,7 +346,7 @@ class RefractiveComponent(BaseComponent):
             # Route only a scatter_fraction of the hit rays through the BSDF;
             # the rest keep the refracted direction computed above. The
             # branch is drawn from a detached probability, matching the
-            # Fresnel split -- and, like the Fresnel split (D-5), carries a
+            # Fresnel split -- and, like the Fresnel split, carries a
             # compensating attached weight so d(flux)/d(scatter_fraction) is
             # correct rather than silently zero. Epsilon-clamped denominator
             # for the same reason as the Fresnel branch: scatter_fraction=1

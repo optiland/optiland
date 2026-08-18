@@ -312,7 +312,7 @@ from optiland.nonsequential.sources import (
 )
 from optiland.nonsequential.tracer import NSQTracer, SimulationResult
 
-# Photometric conversion layer (D13)
+# Photometric conversion layer
 from optiland.nonsequential.units import (
     PhotometricMap,
     PhotometricScalar,
@@ -401,7 +401,7 @@ __all__ = [
     # Converter
     "ConversionError",
     "sequential_to_nonsequential",
-    # Photometric conversion layer (D13)
+    # Photometric conversion layer
     "PhotometricMap",
     "PhotometricScalar",
     "lumens_to_watts",

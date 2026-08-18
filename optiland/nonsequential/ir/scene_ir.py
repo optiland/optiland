@@ -20,9 +20,9 @@ from optiland.nonsequential.ir.medium_ir import MediumIR
 PrimitiveKind = Literal["conic", "plane", "annulus", "frustum", "sphere", "mesh"]
 
 # Which physical interaction a primitive's hit dispatches to, independent of
-# any BsdfIR scatter overlay. This is a v1-era field: PR9's BSDF-lobe rework
-# is expected to fold refractive/reflective/absorbing into BsdfIR itself, at
-# which point this field becomes redundant and can be dropped.
+# any BsdfIR scatter overlay. A future BSDF-lobe rework could fold
+# refractive/reflective/absorbing into BsdfIR itself, at which point this
+# field would become redundant -- it has not been folded in yet.
 ComponentKind = Literal["refractive", "reflective", "absorbing"]
 
 EmitterKind = Literal["point", "collimated", "extended"]
@@ -37,7 +37,9 @@ class PrimitiveIR:
     Attributes:
         id: Index into ``SceneIR.primitives``; also referenced by
             ``interior_medium_id``/``exterior_medium_id`` of neighbouring
-            volumes once PR6 builds ``Volume`` objects from these ids.
+            volumes once ``Volume`` objects are wired into the IR from
+            these ids (``Volume`` itself already exists in
+            ``components/volume.py``; the IR-level wiring does not yet).
         kind: Geometry family; ``params`` is interpreted according to it.
         to_world: ``(4, 4)`` homogeneous local -> global transform.
         params: Kind-specific geometry parameters, e.g. for ``"conic"``:
@@ -50,15 +52,15 @@ class PrimitiveIR:
             the surface is bare specular/refractive/absorbing).
         interior_medium_id: Index into ``SceneIR.media`` for the medium this
             surface bounds on its back side. Descriptive metadata only: the
-            actual D-1 sidedness fix lives in each geometry's ``n_geom``
-            (see ``ComponentGeometry.ray_intersect`` and
+            authoritative sidedness determination lives in each geometry's
+            ``n_geom`` (see ``ComponentGeometry.ray_intersect`` and
             ``RefractiveComponent.interact``), not in these ids -- the
             interpreter still reads the medium directly off the live
-            component. No volume topology exists yet (PR6).
+            component. No volume topology is wired through the IR yet.
         exterior_medium_id: As above, for the front side.
         volume_id: Index into ``SceneIR.volumes``, or ``None`` when this
             primitive is not (yet) a volume boundary. Always ``None`` until
-            PR6.
+            volumes are wired into the IR.
         component_kind: Which physical interaction this primitive's hit
             dispatches to (see :data:`ComponentKind`).
         scatter_fraction: Probability that a hit ray is routed through
@@ -83,14 +85,16 @@ class PrimitiveIR:
 class VolumeIR:
     """A closed, outward-oriented set of boundary primitives (reserved).
 
-    Not populated by this revamp's :func:`~optiland.nonsequential.ir.lower.lower`
-    -- ``SceneIR.volumes`` is always ``()``. D-1 (medium sidedness) is fixed
-    without needing a ``Volume`` registry: each geometry's ``n_geom`` fixes
-    the front/back determination directly (see
-    ``RefractiveComponent.interact``). ``Volume`` itself -- watertightness
-    validation, CSG composition, and rebuilding ``Lens``/``Doublet``/
-    ``Mirror`` on top of it -- is not yet implemented; this dataclass is
-    defined now so the IR's shape will not need to change again when it is.
+    Not populated by :func:`~optiland.nonsequential.ir.lower.lower` --
+    ``SceneIR.volumes`` is always ``()``. Medium sidedness does not need a
+    ``Volume`` registry to be correct: each geometry's ``n_geom`` fixes the
+    front/back determination directly (see ``RefractiveComponent.interact``).
+    ``Volume`` itself -- watertightness validation, CSG composition, and
+    ``Lens``/``Doublet``/``Mirror`` built on top of it -- already exists in
+    ``optiland.nonsequential.components.volume``; only the IR-level wiring
+    (populating this dataclass from a live scene's volumes) remains. This
+    dataclass is defined now so the IR's shape will not need to change again
+    when that wiring is added.
 
     Attributes:
         id: Index into ``SceneIR.volumes``.
@@ -169,7 +173,7 @@ class RngContract:
     """Which RNG algorithm the scene's random draws are contracted to.
 
     Not a trace seed -- ``trace(seed=...)`` stays a per-call argument. This
-    documents the *algorithm* every conforming backend must implement (D11):
+    documents the *algorithm* every conforming backend must implement:
     PCG32, keyed by ``(seed, ray_id, bounce, event_slot)``. See
     :mod:`optiland.nonsequential.rng`.
 
@@ -186,7 +190,7 @@ class RngContract:
 
 @dataclass(frozen=True)
 class SamplingPolicy:
-    """Rare-path sampling policy (D2, PR11).
+    """Rare-path sampling policy.
 
     Every default reproduces the engine's pre-PR11 forward behaviour
     exactly: ``reflect_prob="fresnel"`` is the unconditional
@@ -217,7 +221,7 @@ class SamplingPolicy:
         rr_start_flux: Russian-roulette threshold, as a fraction of
             per-ray initial flux (see
             :func:`optiland.nonsequential.sampling.russian_roulette`).
-            Replaces the old biased hard kill below ``min_flux`` (D-9) on
+            Replaces the old biased hard kill below ``min_flux`` on
             both backends.
     """
 

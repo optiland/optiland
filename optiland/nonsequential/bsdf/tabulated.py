@@ -32,7 +32,7 @@ class TabulatedBSDF(BaseBSDF):
         path: Path to the scatter data file.
         transmissive_fraction: Probability in [0, 1] that a given scatter
             event samples the transmissive hemisphere (the far side of the
-            surface) instead of the reflective one (D-5). Defaults to 0.0:
+            surface) instead of the reflective one. Defaults to 0.0:
             a purely reflective scatter, identical to this class's
             behaviour before D-5. The tabulated data itself is treated as
             hemisphere-relative (``theta_s`` measured from whichever normal
@@ -85,7 +85,7 @@ class TabulatedBSDF(BaseBSDF):
         """Sample scattered directions from the tabulated BSDF.
 
         Uses importance sampling via Lambertian hemisphere + BSDF weighting.
-        A per-ray draw against :attr:`transmissive_fraction` (D-5) picks
+        A per-ray draw against :attr:`transmissive_fraction` picks
         whether that hemisphere is centred on ``normals`` (reflective) or
         ``-normals`` (transmissive); ``theta_i``/``theta_s`` are measured
         from whichever normal the ray's draw landed on. Sampling is detached

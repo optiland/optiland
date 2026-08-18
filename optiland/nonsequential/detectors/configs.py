@@ -22,7 +22,7 @@ class IrradianceDetectorConfig:
         splat_sigma: Gaussian splat sigma in pixels (used when splat='gaussian').
         absorb: Whether a hit terminates the ray. False makes the detector
             transmissive: the hit is recorded and the ray continues on its
-            unchanged direction, enabling mid-system beam sampling (D-10).
+            unchanged direction, enabling mid-system beam sampling.
     """
 
     width: float
@@ -49,7 +49,7 @@ class SpectralDetectorConfig:
         splat: Splatting mode — 'bilinear', 'gaussian', or 'hard'.
             Note: only 'hard' is currently implemented for SpectralDetector.
         splat_sigma: Gaussian splat sigma in pixels (reserved for future use).
-        absorb: Whether a hit terminates the ray (D-10).
+        absorb: Whether a hit terminates the ray.
 
     Note:
         Wavelengths are in **micrometres**, matching ``Spectrum`` and every
@@ -76,7 +76,7 @@ class FarFieldDetectorConfig:
     Attributes:
         num_theta: Number of polar angle bins.
         num_phi: Number of azimuthal angle bins.
-        absorb: Whether a hit terminates the ray (D-10).
+        absorb: Whether a hit terminates the ray.
     """
 
     num_theta: int = 90
@@ -92,7 +92,7 @@ class RayDatabaseConfig:
         width: Detector width [mm].
         height: Detector height [mm].
         max_rays: Maximum number of rays to store (0 = unlimited).
-        absorb: Whether a hit terminates the ray (D-10).
+        absorb: Whether a hit terminates the ray.
     """
 
     width: float

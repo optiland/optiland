@@ -232,7 +232,7 @@ def apply_primitive_interactions(
             )
             continue
 
-        # Bounded splitting (D2, PR11): a hit ray below split_depth spawns
+        # Bounded splitting: a hit ray below split_depth spawns
         # *both* Fresnel children instead of drawing one stochastically.
         # 1) Snapshot the pre-interaction state of the splitting subset
         #    (fresh ray ids, so its RNG stream is independent of the sibling

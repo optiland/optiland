@@ -37,7 +37,7 @@ class NSQRayBundle:
         k_current: Extinction coefficient of the current medium at each
             ray's wavelength, shape (N,). 0 for a non-absorbing medium
             (vacuum, or any material with no measured extinction data).
-            Feeds Beer-Lambert bulk absorption (D-13) over the distance a
+            Feeds Beer-Lambert bulk absorption over the distance a
             ray travels before its next hit; updated alongside ``n_current``
             wherever a ray crosses into a new medium.
     """
@@ -165,7 +165,7 @@ class NSQRayBundle:
     def concat(bundles: list[NSQRayBundle]) -> NSQRayBundle:
         """Concatenate several bundles into one (NumPy-only).
 
-        Used by the bounded-splitting orchestration (D2, PR11) to merge
+        Used by the bounded-splitting orchestration to merge
         spawned transmit-branch children back into the live bundle at the
         end of a bounce, and to merge per-primitive spawn batches within a
         single bounce.

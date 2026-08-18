@@ -1,4 +1,4 @@
-"""Self-diagnosing simulation results (PR13).
+"""Self-diagnosing simulation results.
 
 ``SimulationResult.diagnostics`` turns several silent failure modes the NSQ
 engine could previously produce -- a scene that depth-truncates most of its
@@ -32,7 +32,7 @@ _DEPTH_TRUNCATION_WARN = 1e-3
 # to tolerate that while still catching a genuine energy leak.
 _FLUX_CONSERVATION_WARN = 0.05
 
-# Warn when Russian-roulette-killed flux (D-9) exceeds this fraction of
+# Warn when Russian-roulette-killed flux exceeds this fraction of
 # total launched flux. Roulette is unbiased in expectation, so a nonzero
 # value is not itself wrong, but a large one means rr_start_flux is
 # aggressive relative to this scene and the per-trace estimator is noisy.
@@ -93,7 +93,7 @@ class Diagnostics:
             nonzero value is a direct signal to raise ``max_depth`` if the
             deep paths matter.
         rr_killed_flux_fraction: Fraction of ``total_flux_in`` killed by
-            Russian roulette (D-9), including bounded-splitting budget
+            Russian roulette, including bounded-splitting budget
             culling. Unbiased in expectation; large values mean the
             per-trace estimator is noisy, not necessarily wrong.
         flux_conservation_error: Copied from
@@ -112,7 +112,7 @@ class Diagnostics:
             structurally no stack to underflow yet. Kept as a field so a
             future medium-stack backend does not need a new diagnostics
             field.
-        split_budget_saturated: True if bounded splitting (D2, PR11) ever
+        split_budget_saturated: True if bounded splitting ever
             hit its ``split_budget`` cap during this trace, meaning some
             spawned ghost-path rays were roulette-terminated rather than
             all being kept. NumPy backend only; always False otherwise.

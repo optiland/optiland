@@ -172,7 +172,7 @@ class MirrorConfig:
             wavelength-dependent ``callable(wavelength_um) -> reflectance``,
             or an unpolarized ``optiland.coatings.BaseCoating`` (e.g.
             ``SimpleCoating``). Required -- there is no implicit
-            perfect-mirror default (D-3): a mirror built without specifying
+            perfect-mirror default: a mirror built without specifying
             how much light it reflects is a modelling bug, not a 100%
             reflector. Overridden per-surface by ``surface.reflectance``.
         conic: Conic constant (0 = sphere, -1 = paraboloid, etc.).

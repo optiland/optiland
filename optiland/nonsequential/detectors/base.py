@@ -28,7 +28,7 @@ class BaseDetector(ABC):
     Detectors are **absorbing by default**: a ray that reaches a detector is
     recorded and then terminated. Setting ``absorb=False`` records the ray
     but lets it continue unchanged, so a detector can be tilted into a
-    converging beam to sample it mid-system without terminating it (D-10).
+    converging beam to sample it mid-system without terminating it.
     Several detectors may share one scene; among the detectors a ray would
     still reach, only the nearest one sees it, so stacking *absorbing*
     detectors down a beam records the beam at the nearest plane and nothing

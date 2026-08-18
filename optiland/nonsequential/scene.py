@@ -63,7 +63,7 @@ class NSQScene:
         self.component_registry = ComponentRegistry()
         self.source_registry = SourceRegistry()
         self.detector_registry = DetectorRegistry()
-        # Rare-path sampling policy (D2, PR11): importance biasing, bounded
+        # Rare-path sampling policy: importance biasing, bounded
         # splitting (NumPy forward engine only), and Russian roulette. The
         # default reproduces the engine's pre-PR11 behaviour exactly -- see
         # optiland.nonsequential.ir.scene_ir.SamplingPolicy.
@@ -261,7 +261,7 @@ class NSQScene:
         Args:
             num_rays: Total rays to launch.
             max_depth: Maximum surface hits per ray.
-            min_flux_fraction: Russian-roulette threshold (D-9), relative to
+            min_flux_fraction: Russian-roulette threshold, relative to
                 per-ray initial flux -- combined with the scene's
                 ``sampling_policy.rr_start_flux`` (the larger of the two
                 wins). Below threshold, rays are killed with an unbiased
@@ -275,7 +275,7 @@ class NSQScene:
             record_paths: ``False`` (default) records nothing. ``True``
                 records every ray's full path. A positive ``int`` records
                 an approximately that-many-ray subset, selected
-                deterministically by ``ray_id`` hash (D-7), so a
+                deterministically by ``ray_id`` hash, so a
                 large trace stays cheap while still yielding a bounded
                 sample for visualization/diagnosis, e.g.
                 ``scene.trace(num_rays=10_000_000, record_paths=1_000)``.
@@ -398,7 +398,7 @@ class NSQScene:
 
 
 def _resolve_total_flux(config) -> float:
-    """Resolve a source config's radiometric flux [W] (D13).
+    """Resolve a source config's radiometric flux [W].
 
     ``total_flux_lumens``, when set, takes precedence over ``total_flux``
     and is converted to watts via

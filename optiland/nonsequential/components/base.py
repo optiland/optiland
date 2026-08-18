@@ -60,7 +60,7 @@ class BaseComponent(ABC):
             name: Optional label for this component.
             scatter_fraction: Probability that a ray striking this surface is
                 routed through ``bsdf`` instead of the specular path.
-                Differentiable (D-5): a ``torch.Tensor`` with
+                Differentiable: a ``torch.Tensor`` with
                 ``requires_grad=True`` stays attached to the autograd graph
                 -- see ``RefractiveComponent.interact``/
                 ``ReflectiveComponent.interact`` for the detached-sample /
@@ -166,10 +166,10 @@ class BaseComponent(ABC):
                 ``self.bsdf``.
             n_geom: Geometric (unflipped) surface normal in global frame,
                 shape (N, 3): points from ``material_front`` toward
-                ``material_back`` (D-1). ``RefractiveComponent`` uses this,
+                ``material_back``. ``RefractiveComponent`` uses this,
                 not index proximity, to determine which material a ray is
                 entering.
-            sampling: The scene's rare-path sampling policy (D2, PR11).
+            sampling: The scene's rare-path sampling policy.
                 Only ``RefractiveComponent`` consults it, to resolve the
                 Fresnel reflect/transmit branch probability; ``None`` is
                 treated as the default (unbiased, ``reflect_prob="fresnel"``)

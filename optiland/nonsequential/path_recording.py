@@ -1,11 +1,11 @@
-"""Vectorised columnar path recording (D-7, D10, PR12).
+"""Vectorised columnar path recording.
 
 The pre-PR12 implementation built one Python ``dict`` per event in a
 ``for k in range(n)`` loop, appended it to a list, then copied it
 field-by-field into a structured array a second time -- plus nine separate
 ``to_numpy()`` round trips per log call. At 10^6 rays x 4 events this took
 minutes and gigabytes of RAM, on exactly the code path a user reaches for
-when they need to know where stray light came from (D-7).
+when they need to know where stray light came from.
 
 This module replaces that with :class:`ColumnarPathLog`: preallocated,
 amortised-growth NumPy arrays, appended via a single fancy-index write per
@@ -121,7 +121,7 @@ def resolve_path_sample_mask(
 
 
 class ColumnarPathLog:
-    """Preallocated, amortised-growth columnar event log (D-7).
+    """Preallocated, amortised-growth columnar event log.
 
     Every ``log_event()`` call is one vectorised fancy-index write into
     preallocated NumPy arrays -- no Python loop over rays, no per-event

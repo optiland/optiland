@@ -90,7 +90,7 @@ class NSQMaterial:
         return self.optiland_material.n(wavelength_um)
 
     def k(self, wavelength_um: WavelengthInput) -> WavelengthInput:
-        """Extinction coefficient at the given wavelength(s) (D-13).
+        """Extinction coefficient at the given wavelength(s).
 
         Feeds Beer-Lambert bulk absorption: ``alpha = 4*pi*k/wavelength_um``
         [1/um], matching ``optiland.propagation.homogeneous

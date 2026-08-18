@@ -1,4 +1,4 @@
-"""Photometric conversion layer (D13, PR14).
+"""Photometric conversion layer.
 
 The NSQ radiometric core is unchanged: everything inside the trace stays in
 watts, W/mm^2, and micrometres. This module is a *read-only* conversion
@@ -401,7 +401,7 @@ def to_photometric(
     weighting: Weighting = "photopic",
     wavelength_um: float | None = None,
 ) -> PhotometricMap | PhotometricScalar:
-    """Convert a detector result to a photometric quantity (D13).
+    """Convert a detector result to a photometric quantity.
 
     The radiometric result is unaffected; this returns a new object.
 

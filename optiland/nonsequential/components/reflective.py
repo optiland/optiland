@@ -65,7 +65,7 @@ class ReflectiveComponent(BaseComponent):
             cs: Coordinate system.
             geometry: Surface geometry.
             reflectance: Fraction of incident flux reflected. Required --
-                unlike ``bsdf``, there is no "perfect mirror" default (D-3):
+                unlike ``bsdf``, there is no "perfect mirror" default:
                 a mirror built without saying how reflective it is would
                 otherwise silently reflect 100% of incoming flux. Accepts a
                 constant in [0, 1], a ``callable(wavelength_um) ->
@@ -119,10 +119,10 @@ class ReflectiveComponent(BaseComponent):
             n_geom: Unused -- a mirror never transmits, so it never needs
                 to determine which medium a ray is entering.
             sampling: Unused -- a mirror has no Fresnel reflect/transmit
-                branch to importance-bias (D2, PR11); its reflectance is
+                branch to importance-bias; its reflectance is
                 applied as a deterministic flux weight, not a stochastic
                 draw.
-            forced_branch: Unused -- bounded splitting (PR11) only applies
+            forced_branch: Unused -- bounded splitting only applies
                 to ``RefractiveComponent``'s Fresnel branch.
         """
         # Captured before any mutation below (including the bounce
@@ -175,7 +175,7 @@ class ReflectiveComponent(BaseComponent):
             # Route only a scatter_fraction of the hit rays into the lobe; the
             # rest reflect specularly. The branch is drawn from a detached
             # probability, matching the Fresnel split -- and, like it,
-            # carries a compensating attached weight (D-5) so
+            # carries a compensating attached weight so
             # d(flux)/d(scatter_fraction) is correct rather than silently
             # zero. See RefractiveComponent.interact for the epsilon-clamp
             # rationale.

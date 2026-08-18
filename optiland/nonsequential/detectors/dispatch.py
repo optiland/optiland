@@ -1,4 +1,4 @@
-"""Shared nearest-detector dispatch for Non-Sequential Raytracing (D-10).
+"""Shared nearest-detector dispatch for Non-Sequential Raytracing.
 
 Both reference backends need to find, for every ray, the nearest detector it
 hits (if any) among ``scene.detectors``. Before PR10 this routine was

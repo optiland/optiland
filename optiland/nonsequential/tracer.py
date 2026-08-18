@@ -34,7 +34,7 @@ class SimulationResult:
         total_flux_detected: Total flux recorded on all detectors [W].
         total_flux_absorbed: Flux absorbed by AbsorbingComponents [W].
         total_flux_bulk_absorbed: Flux lost to Beer-Lambert bulk absorption
-            (D-13) while travelling through an absorbing medium (k > 0),
+            while travelling through an absorbing medium (k > 0),
             e.g. tinted glass -- distinct from ``total_flux_absorbed``,
             which is surface (AbsorbingComponent) absorption only [W].
         total_flux_escaped: Flux carried by escaped rays [W].
@@ -46,7 +46,7 @@ class SimulationResult:
         ray_paths: Optional per-ray event log dict (``{"events":
             structured_array}``), populated when ``record_paths`` is
             truthy -- see :mod:`optiland.nonsequential.path_recording`.
-        diagnostics: Self-diagnosing summary of this trace (PR13) --
+        diagnostics: Self-diagnosing summary of this trace --
             depth truncation, roulette loss, unreached geometry, per
             -detector sampling quality, and a threshold-based warning list.
             See :meth:`report` and :mod:`optiland.nonsequential.diagnostics`.
@@ -156,7 +156,7 @@ class NSQTracer:
             record_paths: ``False`` records nothing, ``True`` records every
                 ray's path, and a positive ``int`` records an approximately
                 that-many-ray subset selected deterministically by
-                ``ray_id`` hash (D-7) -- see
+                ``ray_id`` hash -- see
                 :mod:`optiland.nonsequential.path_recording`.
 
         Returns:

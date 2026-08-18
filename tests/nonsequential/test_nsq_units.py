@@ -311,7 +311,7 @@ class TestPhotometricMapPlot:
 
 
 # ---------------------------------------------------------------------------
-# Sources specified in lumens 
+# Sources specified in lumens
 # ---------------------------------------------------------------------------
 
 

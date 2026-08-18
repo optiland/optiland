@@ -249,7 +249,7 @@ class IrradianceDetector(BaseDetector):
         dx: float,
         dy: float,
     ) -> None:
-        """Gaussian splat — differentiable, energy-conserving (D-11).
+        """Gaussian splat — differentiable, energy-conserving.
 
         Distributes each ray's flux over a ``(2*radius+1) x (2*radius+1)``
         neighbourhood using a separable Gaussian kernel of width
@@ -355,7 +355,7 @@ class IrradianceDetector(BaseDetector):
             irradiance=to_numpy(data_2d),
             x_coords=x_centres,
             y_coords=y_centres,
-            # Attached (D-14): be.sum keeps this on the autograd graph, so
+            # Attached: be.sum keeps this on the autograd graph, so
             # `result.detectors["D1"].total_flux.backward()` carries a
             # gradient. Use `.total_flux_float` for printing/formatting.
             total_flux=be.sum(self._data),

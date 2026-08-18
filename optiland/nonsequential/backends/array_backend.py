@@ -50,7 +50,7 @@ _BUDGET_CULL_SURVIVE_FLOOR = 0.02
 def _cull_to_budget(
     spawned: NSQRayBundle, headroom: int, rng
 ) -> tuple[NSQRayBundle, np.ndarray, np.ndarray]:
-    """Russian-roulette a spawned batch down to ``headroom`` rays (D2, PR11).
+    """Russian-roulette a spawned batch down to ``headroom`` rays.
 
     Bounded splitting (``ir.sampling.split_depth > 0``) caps live rays at
     ``split_budget * batch_size``; a batch of spawned transmit children that
@@ -124,7 +124,7 @@ class ArrayBackend(TracerBackend):
             scene: The NSQScene to simulate.
             num_rays: Total rays to launch.
             max_depth: Maximum surface hits per ray.
-            min_flux_fraction: Russian-roulette threshold (D-9), relative to
+            min_flux_fraction: Russian-roulette threshold, relative to
                 per-ray initial flux -- combined with the scene's
                 ``sampling_policy.rr_start_flux`` (the larger of the two
                 wins). Below threshold, rays are killed with an unbiased
@@ -137,7 +137,7 @@ class ArrayBackend(TracerBackend):
                 records every ray's full path -- fine for small traces, but
                 O(rays x bounces) memory for large ones. A positive ``int``
                 records an approximately that-many-ray subset, selected by a
-                PCG32 hash of ``ray_id`` (D-7) so the trace stays
+                PCG32 hash of ``ray_id`` so the trace stays
                 full-size and cheap while a bounded, deterministic sample is
                 available for visualization/diagnosis -- e.g.
                 ``scene.trace(num_rays=10_000_000, record_paths=1_000)``.
@@ -183,7 +183,7 @@ class ArrayBackend(TracerBackend):
         num_rays_depth_killed = 0
         total_flux_escaped = 0.0
         total_flux_bulk_absorbed = 0.0
-        # Tracked separately for Diagnostics (PR13): depth truncation
+        # Tracked separately for Diagnostics: depth truncation
         # is an inherent, reported bias, while RR/split-budget culling is
         # unbiased in expectation -- conflating them into one total_flux_lost
         # would hide which mechanism a large loss actually came from.
@@ -197,7 +197,7 @@ class ArrayBackend(TracerBackend):
             num_rays_total, [float(s.total_flux) for s in sources]
         )
 
-        # Vectorised columnar path recording (D-7, PR12): PathRecorder
+        # Vectorised columnar path recording: PathRecorder
         # replaces the old per-event Python dict + repeated to_numpy()
         # closures with preallocated array writes, and implements the
         # record_paths: int subset contract.
@@ -206,11 +206,11 @@ class ArrayBackend(TracerBackend):
         _next_ray_id: list[int] = [0]
 
         def _alloc_ray_ids(n: int) -> np.ndarray:
-            """Allocate ``n`` fresh ray ids for bounded splitting (D2, PR11).
+            """Allocate ``n`` fresh ray ids for bounded splitting.
 
             Shares the same monotonic counter as source-birth ray ids, so
             a spawned ray's id never collides with any other ray's -- its
-            PCG32 stream (keyed by ray_id) is therefore independent (D-8).
+            PCG32 stream (keyed by ray_id) is therefore independent.
             """
             start = _next_ray_id[0]
             _next_ray_id[0] += n
@@ -258,7 +258,7 @@ class ArrayBackend(TracerBackend):
                     det_first = any_det_hit & (~comp_closer | ~any_comp_hit)
                     comp_first = any_comp_hit & (~det_first)
 
-                    # unreached_geometry (PR13): cheap running set of
+                    # unreached_geometry: cheap running set of
                     # every primitive that was ever the nearest hit.
                     if comp_first.any():
                         hit_component_ids.update(
@@ -270,7 +270,7 @@ class ArrayBackend(TracerBackend):
                     # the be.where below discards but not before NumPy warns.
                     det_t_safe = np.where(det_first, det_t_min, 0.0)
 
-                    # Beer-Lambert bulk absorption (D-13): attenuate flux over
+                    # Beer-Lambert bulk absorption: attenuate flux over
                     # the segment each ray just travelled through its
                     # *current* medium (rays.k_current, set at its last
                     # crossing or its source's ambient medium) before this
@@ -310,7 +310,7 @@ class ArrayBackend(TracerBackend):
                             det.record(rays, det_t_safe, mask_di)
 
                     # Advance detector-hit rays. Absorbing detectors
-                    # terminate the ray; absorb=False detectors (D-10) are
+                    # terminate the ray; absorb=False detectors are
                     # transmissive: the hit is recorded (above) and the ray
                     # continues on its unchanged direction.
                     if det_first.any():
@@ -383,7 +383,7 @@ class ArrayBackend(TracerBackend):
                         )
                     rays.alive = rays.alive & alive_depth
 
-                    # Russian roulette (D-9) replaces the old biased hard
+                    # Russian roulette replaces the old biased hard
                     # kill below min_flux: unbiased stochastic termination
                     # of low-flux rays (kill with probability p, boost
                     # survivors by 1/(1-p)), so total_flux_lost now reports
@@ -409,7 +409,7 @@ class ArrayBackend(TracerBackend):
                         )
                         path_recorder.log_deaths(rays, rr_killed_np, "flux_killed")
 
-                    # Merge bounded-splitting (D2, PR11) spawned transmit
+                    # Merge bounded-splitting spawned transmit
                     # children into the live bundle, now that this bounce's
                     # own escape/depth/RR kill checks (all sized to the
                     # pre-spawn ray count) are done. Spawned rays start
@@ -456,8 +456,8 @@ class ArrayBackend(TracerBackend):
             result = det.get_result()
             detector_results[name] = result
             if hasattr(result, "total_flux"):
-                # IrradianceMap.total_flux may be an attached backend array
-                # (D-14); SimulationResult's aggregate stays a plain float.
+                # IrradianceMap.total_flux may be an attached backend array;
+                # SimulationResult's aggregate stays a plain float.
                 total_flux_detected += float(to_numpy(result.total_flux))
 
         total_flux_lost = total_flux_depth_killed + total_flux_rr_killed
@@ -480,7 +480,7 @@ class ArrayBackend(TracerBackend):
             else 0.0
         )
 
-        # Vectorised (D-7, PR12): single conversion of the columnar buffers
+        # Vectorised: single conversion of the columnar buffers
         # to the structured-array format, done once here rather than
         # incrementally per event.
         ray_paths = path_recorder.finalize()

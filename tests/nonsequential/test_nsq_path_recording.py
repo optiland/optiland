@@ -216,7 +216,7 @@ class TestPathRecorder:
 
 
 # ---------------------------------------------------------------------------
-# End-to-end: NSQScene.trace(record_paths=...) contract 
+# End-to-end: NSQScene.trace(record_paths=...) contract
 # ---------------------------------------------------------------------------
 
 

@@ -25,7 +25,7 @@ class IrradianceMap:
         x_coords: Bin centre x-coordinates [mm], shape (nx,).
         y_coords: Bin centre y-coordinates [mm], shape (ny,).
         total_flux: Total flux recorded [W]. Attached to the active
-            backend's autograd graph (D-14) -- a torch.Tensor when the
+            backend's autograd graph -- a torch.Tensor when the
             underlying data is, so ``result.total_flux.backward()``
             propagates a gradient. Use :attr:`total_flux_float` for
             printing or any consumer that expects a plain Python float.
@@ -48,7 +48,7 @@ class IrradianceMap:
             x_coords: Bin centre x-coordinates [mm], shape (nx,).
             y_coords: Bin centre y-coordinates [mm], shape (ny,).
             total_flux: Total detected flux [W]. May be a plain float or a
-                backend array/tensor; kept attached if the latter (D-14).
+                backend array/tensor; kept attached if the latter.
             num_rays_hit: Number of rays that contributed.
             data: Flat accumulated flux be-array (shape ny*nx), optional.
                 When provided, this is the attached differentiable buffer

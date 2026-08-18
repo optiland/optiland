@@ -44,7 +44,7 @@ class HarveyShackBSDF(BaseBSDF):
         transmissive_fraction: Probability in [0, 1] that a given scatter
             event blurs the undeviated straight-through ray (the
             transmissive lobe, e.g. a diffuser sheet) instead of the
-            specular reflection (D-5). Defaults to 0.0: a purely reflective
+            specular reflection. Defaults to 0.0: a purely reflective
             blur, identical to this class's behaviour before D-5.
     """
 
@@ -137,7 +137,7 @@ class HarveyShackBSDF(BaseBSDF):
         transmission) is blurred by the ABg lobe: a polished surface (small
         ``l0``) stays near-specular/near-collimated, a rough one spreads.
 
-        A per-ray draw against :attr:`transmissive_fraction` (D-5) picks the
+        A per-ray draw against :attr:`transmissive_fraction` picks the
         reference ray the lobe is centred on: the specular reflection for a
         reflective draw, or the undeviated straight-through ray (the
         incident direction itself, unrefracted) for a transmissive one. Both
@@ -181,7 +181,7 @@ class HarveyShackBSDF(BaseBSDF):
         cos_i = (d_np * n_np).sum(axis=1, keepdims=True)
         d_spec = d_np - 2.0 * cos_i * n_np
 
-        # Per-ray reflective-vs-transmissive lobe draw (D-5): the reference
+        # Per-ray reflective-vs-transmissive lobe draw: the reference
         # ray the ABg blur is centred on. d_np itself (unrefracted) is
         # already a unit vector; only d_spec needs the below norm-guard.
         if self.transmissive_fraction > 0.0:

@@ -61,7 +61,7 @@ class LambertianBSDF(BaseBSDF):
         """Sample cosine-weighted hemisphere directions around +/- normals.
 
         Uses Malley's method: sample uniform disk, project to hemisphere.
-        A per-ray draw against :attr:`transmissive_fraction` (D-5) picks
+        A per-ray draw against :attr:`transmissive_fraction` picks
         whether that hemisphere is centred on ``normals`` (reflective) or
         ``-normals`` (transmissive). Sampling is detached (keyed PCG32);
         weights are plain scalars.

@@ -142,7 +142,7 @@ class TorchBackend(TracerBackend):
             num_rays: Total rays to launch.
             max_depth: Fixed number of bounces. Rays exceeding this are
                 depth-killed. Memory scales O(num_rays × max_depth).
-            min_flux_fraction: Russian-roulette threshold (D-9), relative to
+            min_flux_fraction: Russian-roulette threshold, relative to
                 per-ray initial flux -- combined with the scene's
                 ``sampling_policy.rr_start_flux`` (the larger of the two
                 wins). Below threshold, rays are killed with an unbiased
@@ -154,7 +154,7 @@ class TorchBackend(TracerBackend):
             record_paths: ``False`` records nothing, ``True`` records every
                 ray's path (numpy, detached), and a positive ``int`` records
                 an approximately that-many-ray subset selected
-                deterministically by ``ray_id`` hash (D-7) -- see
+                deterministically by ``ray_id`` hash -- see
                 :mod:`optiland.nonsequential.path_recording`.
 
         Returns:
@@ -181,7 +181,7 @@ class TorchBackend(TracerBackend):
         # iterating scene.surfaces and branching on Python class identity.
         ir = lower(scene, strict=False)
 
-        # Bounded splitting (D2, PR11) is the NumPy forward engine only: it
+        # Bounded splitting is the NumPy forward engine only: it
         # grows the live ray bundle, which conflicts with the fixed tensor
         # shapes this backend's autograd graph requires. Never silently
         # ignored (D-14-class failure mode) -- warn and fall back to
@@ -214,7 +214,7 @@ class TorchBackend(TracerBackend):
         num_rays_depth_killed = 0
         total_flux_escaped = 0.0
         total_flux_bulk_absorbed = 0.0
-        # Tracked separately for Diagnostics (PR13) -- see the
+        # Tracked separately for Diagnostics -- see the
         # matching comment in ArrayBackend.trace().
         total_flux_depth_killed = 0.0
         total_flux_rr_killed = 0.0
@@ -225,7 +225,7 @@ class TorchBackend(TracerBackend):
             num_rays_total, [float(s.total_flux) for s in sources]
         )
 
-        # Vectorised columnar path recording (D-7, PR12): PathRecorder
+        # Vectorised columnar path recording: PathRecorder
         # replaces the old birth-only per-event Python dict closure with
         # preallocated array writes, and adds hit/death recording (the
         # array backend already had both; this backend previously recorded
@@ -287,7 +287,7 @@ class TorchBackend(TracerBackend):
                     det_first_np = any_det_hit_np & (~comp_closer_np | ~any_comp_hit_np)
                     comp_first_np = any_comp_hit_np & (~det_first_np)
 
-                    # unreached_geometry (PR13): cheap running set of
+                    # unreached_geometry: cheap running set of
                     # every primitive that was ever the nearest hit.
                     if comp_first_np.any():
                         hit_component_ids.update(
@@ -302,7 +302,7 @@ class TorchBackend(TracerBackend):
                         det_first, det_t_min, be.zeros_like(det_t_min)
                     )
 
-                    # Beer-Lambert bulk absorption (D-13): attenuate flux over
+                    # Beer-Lambert bulk absorption: attenuate flux over
                     # the segment each ray just travelled through its
                     # *current* medium (rays.k_current, set at its last
                     # crossing or its source's ambient medium) before this
@@ -341,7 +341,7 @@ class TorchBackend(TracerBackend):
                             det.record(rays, det_t_safe, mask_di)
 
                     # Advance detector-hit rays. Absorbing detectors
-                    # terminate the ray; absorb=False detectors (D-10) are
+                    # terminate the ray; absorb=False detectors are
                     # transmissive: the hit is recorded (above) and the ray
                     # continues on its unchanged direction.
                     if det_first_np.any():
@@ -407,7 +407,7 @@ class TorchBackend(TracerBackend):
                         )
                     rays.alive = rays.alive & be.array(alive_depth_np)
 
-                    # Russian roulette (D-9) replaces the old biased hard
+                    # Russian roulette replaces the old biased hard
                     # kill below min_flux: unbiased stochastic termination
                     # (kill with probability p, boost survivors by
                     # 1/(1-p)), so total_flux_lost reports a genuine
@@ -460,8 +460,8 @@ class TorchBackend(TracerBackend):
             result = det.get_result()
             detector_results[name] = result
             if hasattr(result, "total_flux"):
-                # IrradianceMap.total_flux may be an attached backend array
-                # (D-14); SimulationResult's aggregate stays a plain float.
+                # IrradianceMap.total_flux may be an attached backend array;
+                # SimulationResult's aggregate stays a plain float.
                 total_flux_detected += float(to_numpy(result.total_flux))
 
         total_flux_lost = total_flux_depth_killed + total_flux_rr_killed
@@ -484,13 +484,13 @@ class TorchBackend(TracerBackend):
             else 0.0
         )
 
-        # Vectorised (D-7, PR12): single conversion of the columnar buffers
+        # Vectorised: single conversion of the columnar buffers
         # to the structured-array format (numpy, detached), done once here
         # rather than incrementally per event.
         ray_paths = path_recorder.finalize()
 
         # split_budget_saturated is always False here: bounded splitting
-        # (D2, PR11) is the NumPy forward engine only.
+        # is the NumPy forward engine only.
         diagnostics = build_diagnostics(
             scene,
             hit_component_ids,

@@ -20,14 +20,14 @@ class BaseBSDF(ABC):
     All BSDF implementations must support vectorized operation over N rays.
     Array operations must be compatible with both NumPy and CuPy arrays.
 
-    Lobes are explicitly REFLECT or TRANSMIT (D-5): ``sample()`` returns,
+    Lobes are explicitly REFLECT or TRANSMIT: ``sample()`` returns,
     alongside each scattered direction, whether that particular ray's draw
     landed in the reflective hemisphere (same side as the incident ray) or
     the transmissive one (far side). A surface's own optical topology
     decides what that means physically -- a mirror has no far side to
     transmit into, so ``ReflectiveComponent`` ignores the flag, while
     ``RefractiveComponent`` uses it to pick which of its two adjacent media
-    (``material_front``/``material_back``) a scattered ray is now in (D-4):
+    (``material_front``/``material_back``) a scattered ray is now in:
     the medium a scattered ray ends up in is decided by its own lobe choice,
     never by the independent Fresnel branch draw that only applies to
     unscattered rays.
