@@ -7,7 +7,11 @@ from __future__ import annotations
 
 import pytest
 
-from optiland.nonsequential.convert import ConversionError, sequential_to_nonsequential
+from optiland.nonsequential.convert import (
+    ConversionError,
+    ConversionReport,
+    sequential_to_nonsequential,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers — build sequential optics
@@ -251,6 +255,126 @@ def test_has_polarization_no_deprecation_warning():
         # Must not raise DeprecationWarning
         result = _has_polarization_surfaces(optic)
     assert result is False  # plain singlet has no polarization coatings
+
+
+# ---------------------------------------------------------------------------
+# §5.3, PR15 -- ConversionReport
+# ---------------------------------------------------------------------------
+
+
+def test_conversion_report_attached_to_scene():
+    optic = _singlet_optic()
+    with pytest.warns(UserWarning, match="Fresnel"):
+        scene = sequential_to_nonsequential(optic)
+
+    assert isinstance(scene.conversion_report, ConversionReport)
+
+
+def test_uncoated_surfaces_reported_for_plain_optic():
+    """A plain (uncoated) singlet's surfaces must show up as uncoated."""
+    optic = _singlet_optic()
+    with pytest.warns(UserWarning, match="Fresnel"):
+        scene = sequential_to_nonsequential(optic)
+
+    report = scene.conversion_report
+    assert "L1.front" in report.uncoated_surfaces
+    assert "L1.back" in report.uncoated_surfaces
+    assert report.coated_surfaces == []
+
+
+def test_coated_surface_carried_over():
+    """An AR-coated sequential surface's coating must reach SurfaceConfig."""
+    from optiland.coatings import SimpleCoating
+    from optiland.optic import Optic
+
+    optic = Optic()
+    optic.add_surface(index=0, thickness=float("inf"))
+    optic.add_surface(
+        index=1,
+        radius=50.0,
+        thickness=5.0,
+        material="N-BK7",
+        is_stop=True,
+        coating=SimpleCoating(reflectance=0.005, transmittance=0.995),
+    )
+    optic.add_surface(index=2, radius=-50.0, thickness=50.0)
+    optic.add_surface(index=3)
+    optic.set_aperture(aperture_type="EPD", value=10.0)
+    optic.set_field_type(field_type="angle")
+    optic.add_field(y=0.0)
+    optic.add_wavelength(value=0.55, is_primary=True)
+
+    with pytest.warns(UserWarning, match="Fresnel"):
+        scene = sequential_to_nonsequential(optic)
+
+    report = scene.conversion_report
+    assert report.coated_surfaces == ["L1.front"]
+    assert "L1.back" in report.uncoated_surfaces
+
+    compound = scene.component_registry.compounds[0]
+    front_cfg = compound._config.front
+    assert front_cfg is not None
+    assert front_cfg.coating.reflectance == pytest.approx(0.005)
+    assert compound._config.back is None
+
+
+def test_estimated_apertures_reported_when_not_set_explicitly():
+    """Neither aperture nor semi_aperture is set on this optic's surfaces,
+    so both lens faces must be flagged as estimated.
+    """
+    optic = _singlet_optic()
+    with pytest.warns(UserWarning, match="Fresnel"):
+        scene = sequential_to_nonsequential(optic)
+
+    report = scene.conversion_report
+    assert "L1.front" in report.estimated_apertures
+    assert "L1.back" in report.estimated_apertures
+
+
+def test_mirror_reflectance_defaulted_reported():
+    from optiland.optic import Optic
+
+    optic = Optic()
+    optic.add_surface(index=0, thickness=float("inf"))
+    optic.add_surface(
+        index=1,
+        radius=-100.0,
+        thickness=-50.0,
+        is_stop=True,
+        material="mirror",
+    )
+    optic.add_surface(index=2)
+    optic.set_aperture(aperture_type="EPD", value=10.0)
+    optic.set_field_type(field_type="angle")
+    optic.add_field(y=0.0)
+    optic.add_wavelength(value=0.55, is_primary=True)
+
+    with pytest.warns(UserWarning, match="perfect reflector"):
+        scene = sequential_to_nonsequential(optic)
+
+    report = scene.conversion_report
+    assert "M1" in report.mirror_reflectance_defaulted
+
+
+def test_report_summary_lists_everything():
+    optic = _singlet_optic()
+    with pytest.warns(UserWarning, match="Fresnel"):
+        scene = sequential_to_nonsequential(optic)
+
+    summary = scene.conversion_report.summary()
+    assert "L1.front" in summary
+    assert "L1.back" in summary
+
+
+def test_report_summary_clean_when_nothing_dropped():
+    report = ConversionReport()
+    assert "fully faithful" in report.summary()
+
+
+def test_fresnel_warning_mentions_uncoated_count():
+    optic = _singlet_optic()
+    with pytest.warns(UserWarning, match=r"2 refractive surface\(s\)"):
+        sequential_to_nonsequential(optic)
 
 
 def test_image_height_field_raises():

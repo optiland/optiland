@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import math
 import warnings
+from dataclasses import dataclass
+from dataclasses import field as _dc_field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -33,6 +35,85 @@ if TYPE_CHECKING:
 
 class ConversionError(Exception):
     """Raised when a sequential surface or element cannot be converted to NSQ."""
+
+
+@dataclass
+class ConversionReport:
+    """Structured record of what a conversion dropped or approximated (§5.3, PR15).
+
+    Attached to the returned scene as ``scene.conversion_report`` rather
+    than requiring the caller to parse warning text -- the whole point of
+    this class is that "what did the converter have to guess or drop" is
+    inspectable data, not something a user has to have watched the log for.
+
+    Attributes:
+        coated_surfaces: Names of refractive surfaces whose sequential
+            unpolarized coating was carried over to ``SurfaceConfig.coating``
+            (so NSQ and the sequential engine agree on R -- §4.3).
+        uncoated_surfaces: Names of refractive surfaces with no usable
+            coating in the sequential system; these get bare Fresnel
+            reflection/refraction in NSQ, which the sequential engine never
+            applies (transmission is always 100% there).
+        mirror_reflectance_defaulted: Names of mirrors with no usable scalar
+            reflectance in the sequential system, defaulted to a perfect
+            reflector (R=1.0) -- NSQ has no implicit-mirror default (D-3),
+            so the converter must supply *something*, and a perfect
+            reflector is the most visible (least silently-wrong) choice.
+        estimated_apertures: Names of surfaces whose aperture radius was not
+            explicitly set in the sequential system and had to be estimated
+            from paraxial ray heights (or, failing that, a fixed 10 mm
+            fallback) rather than read directly.
+        polarization_dropped: True if any sequential surface had a
+            polarization-sensitive (Jones-matrix) coating -- NSQ rays carry
+            no polarization state, so these are dropped entirely, not
+            approximated.
+    """
+
+    coated_surfaces: list[str] = _dc_field(default_factory=list)
+    uncoated_surfaces: list[str] = _dc_field(default_factory=list)
+    mirror_reflectance_defaulted: list[str] = _dc_field(default_factory=list)
+    estimated_apertures: list[str] = _dc_field(default_factory=list)
+    polarization_dropped: bool = False
+
+    def summary(self) -> str:
+        """Human-readable multi-line summary of everything dropped/approximated.
+
+        Returns:
+            A multi-line string, or a single "nothing dropped" line if the
+            conversion was fully faithful.
+        """
+        lines: list[str] = []
+        if self.coated_surfaces:
+            lines.append(
+                f"Coatings carried over ({len(self.coated_surfaces)}): "
+                f"{', '.join(self.coated_surfaces)}"
+            )
+        if self.uncoated_surfaces:
+            lines.append(
+                f"Bare Fresnel, no sequential coating found "
+                f"({len(self.uncoated_surfaces)}): "
+                f"{', '.join(self.uncoated_surfaces)}"
+            )
+        if self.mirror_reflectance_defaulted:
+            lines.append(
+                f"Mirror reflectance defaulted to 1.0, no usable coating "
+                f"found ({len(self.mirror_reflectance_defaulted)}): "
+                f"{', '.join(self.mirror_reflectance_defaulted)}"
+            )
+        if self.estimated_apertures:
+            lines.append(
+                f"Apertures estimated (not explicitly set) "
+                f"({len(self.estimated_apertures)}): "
+                f"{', '.join(self.estimated_apertures)}"
+            )
+        if self.polarization_dropped:
+            lines.append(
+                "Polarization-sensitive coatings were dropped entirely "
+                "(NSQ rays carry no polarization state)."
+            )
+        if not lines:
+            return "Conversion was fully faithful: nothing was dropped or approximated."
+        return "\n".join(lines)
 
 
 def _has_polarization_surfaces(optic) -> bool:
@@ -96,7 +177,11 @@ def sequential_to_nonsequential(
             Defaults to paraxial marginal-ray angle at the object plane.
 
     Returns:
-        NSQScene populated with lens/mirror components, sources, and a detector.
+        NSQScene populated with lens/mirror components, sources, and a
+        detector. ``scene.conversion_report`` is a :class:`ConversionReport`
+        (§5.3, PR15) listing everything the converter dropped or had to
+        approximate -- coatings, apertures, mirror reflectance, polarization
+        -- as structured data rather than only warning text.
 
     Raises:
         ConversionError: If any surface has an unsupported geometry type
@@ -104,13 +189,15 @@ def sequential_to_nonsequential(
             or lens elements with more than 3 surfaces).
 
     Warns:
-        UserWarning: NSQ uncoated surfaces apply Fresnel reflection/refraction;
-            sequential surfaces always transmit. Add coatings after conversion
-            if reflection losses are undesirable.
+        UserWarning: NSQ surfaces with no carried-over coating apply bare
+            Fresnel reflection/refraction; sequential surfaces always
+            transmit. See ``scene.conversion_report.uncoated_surfaces`` for
+            exactly which surfaces this applies to.
     """
     from optiland.nonsequential.scene import NSQScene  # noqa: PLC0415
 
     scene = NSQScene()
+    report = ConversionReport()
 
     surfs = optic.surfaces.surfaces  # list of all surfaces including obj and img
     n = len(surfs)
@@ -122,7 +209,7 @@ def sequential_to_nonsequential(
         _check_geometry(surf, i)
 
         if _is_reflective(surf):
-            _add_mirror(scene, optic, surf, i)
+            _add_mirror(scene, optic, surf, i, report)
             elem_idx += 1
             i += 1
             continue
@@ -146,9 +233,9 @@ def sequential_to_nonsequential(
                 element_indices.append(j)
 
             if len(element_surfaces) == 2:
-                _add_lens(scene, optic, element_surfaces, element_indices)
+                _add_lens(scene, optic, element_surfaces, element_indices, report)
             elif len(element_surfaces) == 3:
-                _add_doublet(scene, optic, element_surfaces, element_indices)
+                _add_doublet(scene, optic, element_surfaces, element_indices, report)
             else:
                 raise ConversionError(
                     f"Lens element starting at surface index {i} has "
@@ -173,6 +260,7 @@ def sequential_to_nonsequential(
     _add_detector(scene, optic, detector_width, detector_height, detector_pixels)
 
     if _has_polarization_surfaces(optic):
+        report.polarization_dropped = True
         warnings.warn(
             "Polarization coatings and Jones matrices on sequential surfaces are not "
             "carried over to the NSQ scene. Polarization tracking in NSQ is deferred.",
@@ -180,15 +268,27 @@ def sequential_to_nonsequential(
             stacklevel=2,
         )
 
-    warnings.warn(
-        "The converted NSQ scene uses Fresnel reflections at all uncoated interfaces. "
-        "In sequential mode, uncoated surfaces always transmit. "
-        "Ghost reflections may appear in NSQ ray traces. "
-        "Add AR coatings via SurfaceConfig.coating after conversion to suppress this.",
-        UserWarning,
-        stacklevel=2,
-    )
+    if report.uncoated_surfaces:
+        coated_note = (
+            f" ({len(report.coated_surfaces)} surface(s) had a coating carried "
+            "over and agree with the sequential engine on R.)"
+            if report.coated_surfaces
+            else ""
+        )
+        warnings.warn(
+            f"{len(report.uncoated_surfaces)} refractive surface(s) had no "
+            "usable coating in the sequential system and use bare Fresnel "
+            "reflection/refraction in NSQ; the sequential engine always "
+            "transmits 100% at an uncoated surface, so ghost reflections may "
+            "appear in NSQ ray traces that don't exist in the sequential "
+            "trace. See scene.conversion_report.uncoated_surfaces for which "
+            "ones, or attach SurfaceConfig.coating after conversion to "
+            f"suppress this.{coated_note}",
+            UserWarning,
+            stacklevel=2,
+        )
 
+    scene.conversion_report = report
     return scene
 
 
@@ -332,27 +432,35 @@ def _surface_conic(surf) -> float:
         return 0.0
 
 
-def _surface_semi_diameter(surf, optic=None, idx: int | None = None) -> float:
+def _surface_semi_diameter(
+    surf, optic=None, idx: int | None = None
+) -> tuple[float, bool]:
     """Return the semi-diameter (aperture radius) of a surface.
 
     Args:
         surf: Sequential Surface object.
+        optic: Sequential Optic (for the paraxial-ray fallback).
+        idx: Surface index within ``optic`` (for the paraxial-ray fallback).
 
     Returns:
-        Semi-diameter [mm].
+        ``(semi_diameter [mm], estimated)`` -- ``estimated`` is True when
+        the value could not be read directly from an explicit aperture/
+        semi_aperture on the surface and had to be inferred (paraxial ray
+        heights, or -- worst case -- a fixed 10 mm fallback), for
+        :class:`ConversionReport` (§5.3, PR15).
     """
     ap = surf.aperture
     if ap is not None and hasattr(ap, "radius"):
         try:
-            return float(ap.radius.item())
+            return float(ap.radius.item()), False
         except AttributeError:
-            return float(ap.radius)
+            return float(ap.radius), False
     # Fall back to semi_aperture if set
     if surf.semi_aperture is not None:
         try:
-            return float(surf.semi_aperture.item())
+            return float(surf.semi_aperture.item()), False
         except AttributeError:
-            return float(surf.semi_aperture)
+            return float(surf.semi_aperture), False
 
     # Use paraxial rays from optic if available
     if optic is not None and idx is not None:
@@ -367,38 +475,68 @@ def _surface_semi_diameter(surf, optic=None, idx: int | None = None) -> float:
             r_ext = abs(ybi) + abs(yci)
 
             if r_ext > 0.0:
-                return float(r_ext)
+                return float(r_ext), True
         except Exception:
             pass
 
-    return 10.0  # Default if not set
+    return 10.0, True  # Default if not set
 
 
-def _add_mirror(scene, optic, surf, elem_idx: int) -> None:
+def _surface_coating(surf) -> object | None:
+    """Extract a usable unpolarized coating from a sequential surface.
+
+    Reads ``surf.interaction_model.coating`` (the non-deprecated accessor).
+    A polarized coating is not returned here -- ``_has_polarization_surfaces``
+    already surfaces that case globally (§4.3: polarized coatings must
+    never be silently degraded to a scalar average).
+
+    Args:
+        surf: Sequential Surface object.
+
+    Returns:
+        The coating object (an ``optiland.coatings.BaseCoating``, e.g.
+        ``SimpleCoating``) if present and unpolarized, else ``None``.
+    """
+    from optiland.coatings import BaseCoating, BaseCoatingPolarized  # noqa: PLC0415
+
+    model = getattr(surf, "interaction_model", None)
+    coating = getattr(model, "coating", None) if model is not None else None
+    if coating is None or isinstance(coating, BaseCoatingPolarized):
+        return None
+    if isinstance(coating, BaseCoating):
+        return coating
+    return None
+
+
+def _add_mirror(scene, optic, surf, elem_idx: int, report: ConversionReport) -> None:
     """Add a Mirror component to the scene.
 
     Args:
         scene: NSQScene to add to.
         surf: Sequential Surface object for the mirror.
         elem_idx: Element index (used for naming).
+        report: ConversionReport to record fidelity notes into (§5.3).
     """
     from optiland.coordinate_system import CoordinateSystem  # noqa: PLC0415
     from optiland.nonsequential.components.configs import MirrorConfig  # noqa: PLC0415
 
+    name = f"M{elem_idx}"
     z = _surface_z(surf)
     radius = _surface_radius(surf)
     conic = _surface_conic(surf)
-    ap_r = _surface_semi_diameter(surf, optic, elem_idx)
-    reflectance = _mirror_reflectance(surf, elem_idx)
+    ap_r, ap_estimated = _surface_semi_diameter(surf, optic, elem_idx)
+    if ap_estimated:
+        report.estimated_apertures.append(name)
+    reflectance = _mirror_reflectance(surf, elem_idx, report)
 
     cs = CoordinateSystem(z=z)
     config = MirrorConfig(
         radius=radius, reflectance=reflectance, conic=conic, aperture_radius=ap_r
     )
-    scene.add_mirror(f"M{elem_idx}", cs, config)
+    scene.add_mirror(name, cs, config)
 
 
-def _mirror_reflectance(surf, elem_idx: int) -> float:
+def _mirror_reflectance(surf, elem_idx: int, report: ConversionReport) -> float:
     """Extract a scalar reflectance for a mirror surface being converted.
 
     Reads ``surf.interaction_model.coating`` (the non-deprecated accessor).
@@ -411,6 +549,7 @@ def _mirror_reflectance(surf, elem_idx: int) -> float:
     Args:
         surf: Sequential Surface object for the mirror.
         elem_idx: Element index (for the warning message).
+        report: ConversionReport to record the default into (§5.3).
 
     Returns:
         Scalar reflectance in [0, 1].
@@ -425,6 +564,7 @@ def _mirror_reflectance(surf, elem_idx: int) -> float:
     if reflectance is not None:
         return float(reflectance)
 
+    report.mirror_reflectance_defaulted.append(f"M{elem_idx}")
     warnings.warn(
         f"Mirror M{elem_idx} has no coating with a scalar .reflectance "
         "attached in the sequential system; defaulting to a perfect "
@@ -436,14 +576,17 @@ def _mirror_reflectance(surf, elem_idx: int) -> float:
     return 1.0
 
 
-def _add_lens(scene, optic, element_surfaces: list, elem_indices: list) -> None:
+def _add_lens(
+    scene, optic, element_surfaces: list, elem_indices: list, report: ConversionReport
+) -> None:
     """Add a singlet Lens component to the scene.
 
     Args:
         scene: NSQScene to add to.
         element_surfaces: [front_surf, back_surf] -- front is glass entry,
             back exits to air.
-        elem_idx: Element index (used for naming).
+        elem_indices: Sequential surface indices matching ``element_surfaces``.
+        report: ConversionReport to record fidelity notes into (§5.3).
     """
     from optiland.coordinate_system import CoordinateSystem  # noqa: PLC0415
     from optiland.nonsequential.components.configs import LensConfig  # noqa: PLC0415
@@ -454,27 +597,68 @@ def _add_lens(scene, optic, element_surfaces: list, elem_indices: list) -> None:
     z_back = _surface_z(s_back)
     thickness = z_back - z_front
 
+    front_ap, front_estimated = _surface_semi_diameter(s_front, optic, idx_front)
+    back_ap, back_estimated = _surface_semi_diameter(s_back, optic, idx_back)
+    front_name = f"L{idx_front}.front"
+    back_name = f"L{idx_front}.back"
+    if front_estimated:
+        report.estimated_apertures.append(front_name)
+    if back_estimated:
+        report.estimated_apertures.append(back_name)
+
     cs = CoordinateSystem(z=z_front)
     config = LensConfig(
         r1=_surface_radius(s_front),
         r2=_surface_radius(s_back),
         thickness=thickness,
         material=_material_name(s_front),
-        front_aperture_radius=_surface_semi_diameter(s_front, optic, idx_front),
-        back_aperture_radius=_surface_semi_diameter(s_back, optic, idx_back),
+        front_aperture_radius=front_ap,
+        back_aperture_radius=back_ap,
         conic1=_surface_conic(s_front),
         conic2=_surface_conic(s_back),
+        front=_surface_config_with_coating(s_front, front_name, report),
+        back=_surface_config_with_coating(s_back, back_name, report),
     )
     scene.add_lens(f"L{idx_front}", cs, config)
 
 
-def _add_doublet(scene, optic, element_surfaces: list, elem_indices: list) -> None:
+def _surface_config_with_coating(
+    surf, name: str, report: ConversionReport
+) -> object | None:
+    """Build a ``SurfaceConfig`` carrying a surface's coating, if any (§4.3).
+
+    Args:
+        surf: Sequential Surface object.
+        name: This surface's name, for the report.
+        report: ConversionReport to record coated/uncoated into (§5.3).
+
+    Returns:
+        A ``SurfaceConfig(coating=...)`` if the sequential surface had a
+        usable unpolarized coating, else ``None`` (bare Fresnel -- NSQ's
+        default, and the sequential engine's transmission behaviour, will
+        disagree on reflectance in that case; see
+        ``ConversionReport.uncoated_surfaces``).
+    """
+    from optiland.nonsequential.components.configs import SurfaceConfig  # noqa: PLC0415
+
+    coating = _surface_coating(surf)
+    if coating is not None:
+        report.coated_surfaces.append(name)
+        return SurfaceConfig(coating=coating)
+    report.uncoated_surfaces.append(name)
+    return None
+
+
+def _add_doublet(
+    scene, optic, element_surfaces: list, elem_indices: list, report: ConversionReport
+) -> None:
     """Add a cemented Doublet component to the scene.
 
     Args:
         scene: NSQScene to add to.
         element_surfaces: [front, cement, back] surfaces.
-        elem_idx: Element index (used for naming).
+        elem_indices: Sequential surface indices matching ``element_surfaces``.
+        report: ConversionReport to record fidelity notes into (§5.3).
     """
     from optiland.coordinate_system import CoordinateSystem  # noqa: PLC0415
     from optiland.nonsequential.components.configs import DoubletConfig  # noqa: PLC0415
@@ -488,11 +672,22 @@ def _add_doublet(scene, optic, element_surfaces: list, elem_indices: list) -> No
     thickness1 = z_cement - z_front
     thickness2 = z_back - z_cement
 
-    ap_r = max(
-        _surface_semi_diameter(s_front, optic, idx_front),
-        _surface_semi_diameter(s_cement, optic, idx_cement),
-        _surface_semi_diameter(s_back, optic, idx_back),
-    )
+    front_ap, front_est = _surface_semi_diameter(s_front, optic, idx_front)
+    cement_ap, cement_est = _surface_semi_diameter(s_cement, optic, idx_cement)
+    back_ap, back_est = _surface_semi_diameter(s_back, optic, idx_back)
+    base_name = f"D{elem_indices[0]}"
+    front_name = f"{base_name}.front"
+    cement_name = f"{base_name}.cemented"
+    back_name = f"{base_name}.back"
+    for estimated, name in (
+        (front_est, front_name),
+        (cement_est, cement_name),
+        (back_est, back_name),
+    ):
+        if estimated:
+            report.estimated_apertures.append(name)
+
+    ap_r = max(front_ap, cement_ap, back_ap)
 
     cs = CoordinateSystem(z=z_front)
     config = DoubletConfig(
@@ -507,8 +702,11 @@ def _add_doublet(scene, optic, element_surfaces: list, elem_indices: list) -> No
         conic1=_surface_conic(s_front),
         conic2=_surface_conic(s_cement),
         conic3=_surface_conic(s_back),
+        front=_surface_config_with_coating(s_front, front_name, report),
+        cemented=_surface_config_with_coating(s_cement, cement_name, report),
+        back=_surface_config_with_coating(s_back, back_name, report),
     )
-    scene.add_doublet(f"D{elem_indices[0]}", cs, config)
+    scene.add_doublet(base_name, cs, config)
 
 
 def _build_spectrum(optic) -> object:
