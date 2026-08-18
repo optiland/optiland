@@ -8,12 +8,10 @@ Kramer Harrison, 2026
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+
+import numpy as np
 
 import optiland.backend as be
-
-if TYPE_CHECKING:
-    import numpy as np
 
 
 @dataclass
@@ -36,6 +34,12 @@ class NSQRayBundle:
         bounce: Number of surface hits, shape (N,).
         alive: Boolean mask -- False for dead/terminated rays, shape (N,).
         ray_id: Unique ray identifier, shape (N,). None if not assigned.
+        k_current: Extinction coefficient of the current medium at each
+            ray's wavelength, shape (N,). 0 for a non-absorbing medium
+            (vacuum, or any material with no measured extinction data).
+            Feeds Beer-Lambert bulk absorption (D-13) over the distance a
+            ray travels before its next hit; updated alongside ``n_current``
+            wherever a ray crosses into a new medium.
     """
 
     x: np.ndarray
@@ -50,6 +54,15 @@ class NSQRayBundle:
     bounce: np.ndarray
     alive: np.ndarray
     ray_id: np.ndarray | None = None
+    k_current: np.ndarray | None = None
+
+    def __post_init__(self) -> None:
+        if self.k_current is None:
+            # n_current is plain NumPy at construction time (sources always
+            # build a NumPy bundle; TorchBackend promotes every field to a
+            # tensor afterward via _ensure_torch_bundle), so this stays
+            # NumPy too rather than dispatching through the active backend.
+            self.k_current = np.zeros_like(self.n_current)
 
     @property
     def num_rays(self) -> int:
@@ -91,6 +104,7 @@ class NSQRayBundle:
             n_current=self.n_current[mask],
             bounce=self.bounce[mask],
             alive=self.alive[mask],
+            k_current=self.k_current[mask],
         )
         if self.ray_id is not None:
             kwargs["ray_id"] = self.ray_id[mask]

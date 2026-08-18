@@ -32,10 +32,15 @@ class SimulationResult:
         total_flux_in: Total flux launched by all sources [W].
         total_flux_detected: Total flux recorded on all detectors [W].
         total_flux_absorbed: Flux absorbed by AbsorbingComponents [W].
+        total_flux_bulk_absorbed: Flux lost to Beer-Lambert bulk absorption
+            (D-13) while travelling through an absorbing medium (k > 0),
+            e.g. tinted glass -- distinct from ``total_flux_absorbed``,
+            which is surface (AbsorbingComponent) absorption only [W].
         total_flux_escaped: Flux carried by escaped rays [W].
         total_flux_lost: Flux lost to flux/depth kill [W].
         flux_conservation_error:
-            ``|flux_in - detected - absorbed - escaped| / flux_in``.
+            ``|flux_in - detected - absorbed - bulk_absorbed - escaped
+            - lost| / flux_in``.
         trace_time_sec: Wall-clock time for the trace [s].
         ray_paths: Optional per-ray event log dict (if record_paths=True).
     """
@@ -49,6 +54,7 @@ class SimulationResult:
     total_flux_in: float = 0.0
     total_flux_detected: float = 0.0
     total_flux_absorbed: float = 0.0
+    total_flux_bulk_absorbed: float = 0.0
     total_flux_escaped: float = 0.0
     total_flux_lost: float = 0.0
     flux_conservation_error: float = 0.0

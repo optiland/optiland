@@ -172,6 +172,11 @@ class RefractiveComponent(BaseComponent):
         # (differentiable).
         n_front = self.material_front.n(wl)
         n_back = self.material_back.n(wl)
+        # Extinction coefficients (D-13): tracked the same way as n1/n2 below
+        # so rays.k_current always reflects the medium a ray is currently
+        # travelling through, for Beer-Lambert attenuation on its next hop.
+        k_front = self.material_front.k(wl)
+        k_back = self.material_back.k(wl)
 
         # n_geom is fixed per surface point and points from material_front
         # toward material_back (D-1; see ComponentGeometry.ray_intersect),
@@ -188,6 +193,8 @@ class RefractiveComponent(BaseComponent):
         entering_back = dot_geom > 0.0
         n1 = be.where(entering_back, n_front, n_back)
         n2 = be.where(entering_back, n_back, n_front)
+        k1 = be.where(entering_back, k_front, k_back)
+        k2 = be.where(entering_back, k_back, k_front)
 
         # Fresnel reflectance (unpolarized, attached)
         n_ratio = n1 / (n2 + 1e-30)
@@ -276,9 +283,13 @@ class RefractiveComponent(BaseComponent):
         rays.M = be.where(hit_col[:, 0], new_d[:, 1], rays.M)
         rays.N = be.where(hit_col[:, 0], new_d[:, 2], rays.N)
 
-        # Update n_current: stays n1 on reflect, becomes n2 on refract
+        # Update n_current/k_current: stays medium 1 on reflect, becomes
+        # medium 2 on refract.
         rays.n_current = be.where(
             hit_mask, be.where(do_reflect, n1, n2), rays.n_current
+        )
+        rays.k_current = be.where(
+            hit_mask, be.where(do_reflect, k1, k2), rays.k_current
         )
 
         # Update bounce count

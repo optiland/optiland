@@ -89,6 +89,30 @@ class NSQMaterial:
         # Pass wavelength directly -- preserves the grad graph
         return self.optiland_material.n(wavelength_um)
 
+    def k(self, wavelength_um: WavelengthInput) -> WavelengthInput:
+        """Extinction coefficient at the given wavelength(s) (D-13).
+
+        Feeds Beer-Lambert bulk absorption: ``alpha = 4*pi*k/wavelength_um``
+        [1/um], matching ``optiland.propagation.homogeneous
+        .HomogeneousPropagation`` so NSQ and the sequential engine attenuate
+        a glass path by the same amount.
+
+        Args:
+            wavelength_um: Wavelength(s) in micrometres [µm].
+
+        Returns:
+            Extinction coefficient (dimensionless). Returns ``0.0`` (scalar)
+            for vacuum when input is a scalar, or a zeros-like array/tensor
+            matching the input shape for array inputs.
+        """
+        if self.optiland_material is None:
+            # Vacuum: non-absorbing.
+            try:
+                return be.zeros_like(wavelength_um)
+            except (TypeError, AttributeError):
+                return 0.0
+        return self.optiland_material.k(wavelength_um)
+
 
 # Module-level vacuum constant
 VACUUM: NSQMaterial = NSQMaterial(optiland_material=None)

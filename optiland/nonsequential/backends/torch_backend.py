@@ -181,6 +181,7 @@ class TorchBackend(TracerBackend):
         num_rays_depth_killed = 0
         total_flux_escaped = 0.0
         total_flux_lost = 0.0
+        total_flux_bulk_absorbed = 0.0
 
         # Distribute ray budget across sources proportional to flux
         rays_per_source = distribute_ray_budget(
@@ -272,6 +273,33 @@ class TorchBackend(TracerBackend):
                     det_t_safe = be.where(
                         det_first, det_t_min, be.zeros_like(det_t_min)
                     )
+
+                    # Beer-Lambert bulk absorption (D-13): attenuate flux over
+                    # the segment each ray just travelled through its
+                    # *current* medium (rays.k_current, set at its last
+                    # crossing or its source's ambient medium) before this
+                    # bounce's nearest hit -- component or detector,
+                    # whichever is closer. Applied before interact()/detector
+                    # recording touch flux or k_current so both see the
+                    # already-attenuated value; k_current itself is only
+                    # updated afterwards, by RefractiveComponent.interact(),
+                    # for the medium the ray is now entering.
+                    hit_first_np = comp_first_np | det_first_np
+                    if hit_first_np.any():
+                        hit_first = be.array(hit_first_np)
+                        comp_first = be.array(comp_first_np)
+                        comp_t_safe = be.where(comp_first, t_min, be.zeros_like(t_min))
+                        hit_t = be.where(comp_first, comp_t_safe, det_t_safe)
+                        alpha = 4.0 * be.pi * rays.k_current / rays.wavelength
+                        # hit_t is in mm; alpha is in 1/um -> convert to um.
+                        transmittance = be.exp(-alpha * hit_t * 1e3)
+                        flux_before = rays.flux
+                        rays.flux = flux_before * be.where(
+                            hit_first, transmittance, be.ones_like(rays.flux)
+                        )
+                        total_flux_bulk_absorbed += float(
+                            to_numpy(flux_before - rays.flux).sum()
+                        )
 
                     # Record detector hits
                     for di, det in enumerate(scene.detectors):
@@ -376,6 +404,7 @@ class TorchBackend(TracerBackend):
                 total_flux_in
                 - total_flux_detected
                 - total_flux_absorbed
+                - total_flux_bulk_absorbed
                 - total_flux_escaped
                 - total_flux_lost
             )
@@ -407,6 +436,7 @@ class TorchBackend(TracerBackend):
             total_flux_in=total_flux_in,
             total_flux_detected=total_flux_detected,
             total_flux_absorbed=total_flux_absorbed,
+            total_flux_bulk_absorbed=total_flux_bulk_absorbed,
             total_flux_escaped=total_flux_escaped,
             total_flux_lost=total_flux_lost,
             flux_conservation_error=flux_err,
@@ -494,6 +524,7 @@ class TorchBackend(TracerBackend):
         rays.flux = _to_float(rays.flux)
         rays.wavelength = _to_float(rays.wavelength)
         rays.n_current = _to_float(rays.n_current)
+        rays.k_current = _to_float(rays.k_current)
         rays.alive = _to_bool(rays.alive)
         # bounce: keep as int32 tensor (used for depth comparisons)
         if not isinstance(rays.bounce, _torch.Tensor):

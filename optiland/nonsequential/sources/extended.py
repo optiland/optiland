@@ -141,14 +141,18 @@ class ExtendedSource(BaseNSQSource):
         wavelengths = self.spectrum.sample(ray_id, bounce0, rng)
         flux_per_ray = self.total_flux / num_rays
 
-        # Initialize n_current from medium if provided
+        # Initialize n_current/k_current from medium if provided
         medium = getattr(self, "medium", None)
         if medium is not None:
             n_init = np.asarray(medium.n(wavelengths), dtype=float)
             if np.ndim(n_init) == 0:
                 n_init = np.full(num_rays, float(n_init))
+            k_init = np.asarray(medium.k(wavelengths), dtype=float)
+            if np.ndim(k_init) == 0:
+                k_init = np.full(num_rays, float(k_init))
         else:
             n_init = np.ones(num_rays)
+            k_init = np.zeros(num_rays)
 
         return NSQRayBundle(
             x=pos_global[:, 0].copy(),
@@ -163,4 +167,5 @@ class ExtendedSource(BaseNSQSource):
             bounce=bounce0,
             alive=np.ones(num_rays, dtype=bool),
             ray_id=ray_id,
+            k_current=k_init,
         )

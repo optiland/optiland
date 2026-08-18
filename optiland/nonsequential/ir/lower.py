@@ -104,15 +104,24 @@ class _MediumRegistry:
             idx = len(self.media)
             if key[0] == "vacuum":
                 medium = MediumIR(
-                    id=idx, name="vacuum", n_model={"kind": "constant", "n": 1.0}
+                    id=idx,
+                    name="vacuum",
+                    n_model={"kind": "constant", "n": 1.0},
+                    k_model={"kind": "constant", "k": 0.0},
                 )
             elif key[0] == "opaque":
                 medium = MediumIR(
-                    id=idx, name=f"opaque_{idx}", n_model={"kind": "opaque"}
+                    id=idx,
+                    name=f"opaque_{idx}",
+                    n_model={"kind": "opaque"},
+                    k_model={"kind": "opaque"},
                 )
             else:
                 medium = MediumIR(
-                    id=idx, name=key[1], n_model={"kind": "catalog", "name": key[1]}
+                    id=idx,
+                    name=key[1],
+                    n_model={"kind": "catalog", "name": key[1]},
+                    k_model={"kind": "catalog", "name": key[1]},
                 )
             self.media.append(medium)
             self._index[key] = idx

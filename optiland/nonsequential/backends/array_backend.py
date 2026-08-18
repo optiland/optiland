@@ -130,6 +130,7 @@ class ArrayBackend(TracerBackend):
         num_rays_depth_killed = 0
         total_flux_escaped = 0.0
         total_flux_lost = 0.0
+        total_flux_bulk_absorbed = 0.0
 
         # Distribute ray budget across sources proportional to flux
         rays_per_source = distribute_ray_budget(
@@ -298,6 +299,35 @@ class ArrayBackend(TracerBackend):
                     # the be.where below discards but not before NumPy warns.
                     det_t_safe = np.where(det_first, det_t_min, 0.0)
 
+                    # Beer-Lambert bulk absorption (D-13): attenuate flux over
+                    # the segment each ray just travelled through its
+                    # *current* medium (rays.k_current, set at its last
+                    # crossing or its source's ambient medium) before this
+                    # bounce's nearest hit -- component or detector,
+                    # whichever is closer. Applied before interact()/detector
+                    # recording touch flux or k_current so both see the
+                    # already-attenuated value; k_current itself is only
+                    # updated afterwards, by RefractiveComponent.interact(),
+                    # for the medium the ray is now entering.
+                    hit_first = comp_first | det_first
+                    if hit_first.any():
+                        comp_t_safe = be.where(
+                            be.array(comp_first), t_min, be.zeros_like(t_min)
+                        )
+                        hit_t = be.where(
+                            be.array(comp_first), comp_t_safe, be.array(det_t_safe)
+                        )
+                        alpha = 4.0 * be.pi * rays.k_current / rays.wavelength
+                        # hit_t is in mm; alpha is in 1/um -> convert to um.
+                        transmittance = be.exp(-alpha * hit_t * 1e3)
+                        flux_before = rays.flux
+                        rays.flux = flux_before * be.where(
+                            be.array(hit_first), transmittance, be.ones_like(rays.flux)
+                        )
+                        total_flux_bulk_absorbed += float(
+                            to_numpy(flux_before - rays.flux).sum()
+                        )
+
                     # Record detector hits
                     for di, det in enumerate(scene.detectors):
                         mask_di = det_first & (det_idx == di)
@@ -412,6 +442,7 @@ class ArrayBackend(TracerBackend):
                 total_flux_in
                 - total_flux_detected
                 - total_flux_absorbed
+                - total_flux_bulk_absorbed
                 - total_flux_escaped
                 - total_flux_lost
             )
@@ -439,6 +470,7 @@ class ArrayBackend(TracerBackend):
             total_flux_in=total_flux_in,
             total_flux_detected=total_flux_detected,
             total_flux_absorbed=total_flux_absorbed,
+            total_flux_bulk_absorbed=total_flux_bulk_absorbed,
             total_flux_escaped=total_flux_escaped,
             total_flux_lost=total_flux_lost,
             flux_conservation_error=flux_err,

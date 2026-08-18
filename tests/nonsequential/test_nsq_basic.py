@@ -822,12 +822,19 @@ class TestFluxBookkeeping:
         return scene
 
     def test_ledger_closes(self):
-        """detected + absorbed + escaped + lost must equal the launched flux."""
+        """detected + absorbed + bulk_absorbed + escaped + lost == launched.
+
+        N-BK7 has a small but nonzero extinction coefficient at 0.55 um, so
+        the lens's Beer-Lambert bulk absorption (D-13) is a real, nonzero
+        term in this ledger, not just a defensive zero-check.
+        """
         result = self._scene().trace(num_rays=20_000, seed=3)
+        assert result.total_flux_bulk_absorbed > 0.0
         balance = (
             result.total_flux_in
             - result.total_flux_detected
             - result.total_flux_absorbed
+            - result.total_flux_bulk_absorbed
             - result.total_flux_escaped
             - result.total_flux_lost
         )
