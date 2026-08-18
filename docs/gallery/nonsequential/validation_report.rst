@@ -7,9 +7,7 @@ This page summarizes the non-sequential (NSQ) engine's validation suite
 (``tests/nonsequential/validation/``), run in CI alongside the rest of the
 test suite. It exists so a user integrating NSQ into their own QA process
 has a single place pointing at exactly what is checked, how, and to what
-tolerance -- rather than having to read test source to find out. See
-:ref:`nsq_whats_changed_v2` if you are comparing against a pre-revamp (v1)
-baseline.
+tolerance -- rather than having to read test source to find out.
 
 Closed-form analytic benchmarks
 --------------------------------

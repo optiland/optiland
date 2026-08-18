@@ -1,4 +1,4 @@
-"""§6.2 -- Reciprocity: swapping a source and detector of matched extent
+"""Reciprocity: swapping a source and detector of matched extent
 gives the same transferred flux.
 
 Two identically-sized Lambertian-emitting patches face each other; one

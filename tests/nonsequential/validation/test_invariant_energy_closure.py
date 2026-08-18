@@ -1,4 +1,4 @@
-"""§6.2 -- Energy closure: in = detected + absorbed + escaped + roulette-lost.
+"""Energy closure: in = detected + absorbed + escaped + roulette-lost.
 
 Consolidated, scene-parametrized version of the ledger-closure checks
 scattered across test_nsq_basic.py / test_nsq_absorption.py -- every

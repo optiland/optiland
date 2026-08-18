@@ -23,9 +23,9 @@ class PointSourceConfig:
             ``total_flux_lumens`` is also set.
         total_flux_lumens: Total emitted flux [lm], converted to watts using
             ``spectrum`` via
-            :func:`optiland.nonsequential.units.lumens_to_watts` (D13,
-            §4.9). Takes precedence over ``total_flux`` when set. Raises if
-            ``spectrum`` has negligible overlap with the visible band.
+            :func:`optiland.nonsequential.units.lumens_to_watts` (D13). Takes
+            precedence over ``total_flux`` when set. Raises if ``spectrum``
+            has negligible overlap with the visible band.
         half_angle_deg: Half-angle of the emission cone [deg].
             90 = hemisphere, 180 = full sphere (isotropic).
         medium: Medium the source is embedded in (default: vacuum).
@@ -47,7 +47,7 @@ class CollimatedSourceConfig:
         total_flux: Total emitted flux [W]. Ignored (with a warning) when
             ``total_flux_lumens`` is also set.
         total_flux_lumens: Total emitted flux [lm], converted to watts via
-            ``spectrum`` (D13, §4.9) -- see
+            ``spectrum`` (D13) -- see
             :attr:`PointSourceConfig.total_flux_lumens`.
         aperture_radius: Beam semi-diameter [mm].
         profile: Spatial profile -- ``'tophat'`` or ``'gaussian'``.
@@ -73,7 +73,7 @@ class ExtendedSourceConfig:
         total_flux: Total emitted flux [W]. Ignored (with a warning) when
             ``total_flux_lumens`` is also set.
         total_flux_lumens: Total emitted flux [lm], converted to watts via
-            ``spectrum`` (D13, §4.9) -- see
+            ``spectrum`` (D13) -- see
             :attr:`PointSourceConfig.total_flux_lumens`.
         width: Source width [mm].
         height: Source height [mm].

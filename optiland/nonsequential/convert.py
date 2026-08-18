@@ -39,7 +39,7 @@ class ConversionError(Exception):
 
 @dataclass
 class ConversionReport:
-    """Structured record of what a conversion dropped or approximated (§5.3, PR15).
+    """Structured record of what a conversion dropped or approximated (PR15).
 
     Attached to the returned scene as ``scene.conversion_report`` rather
     than requiring the caller to parse warning text -- the whole point of
@@ -49,7 +49,7 @@ class ConversionReport:
     Attributes:
         coated_surfaces: Names of refractive surfaces whose sequential
             unpolarized coating was carried over to ``SurfaceConfig.coating``
-            (so NSQ and the sequential engine agree on R -- §4.3).
+            (so NSQ and the sequential engine agree on R).
         uncoated_surfaces: Names of refractive surfaces with no usable
             coating in the sequential system; these get bare Fresnel
             reflection/refraction in NSQ, which the sequential engine never
@@ -179,7 +179,7 @@ def sequential_to_nonsequential(
     Returns:
         NSQScene populated with lens/mirror components, sources, and a
         detector. ``scene.conversion_report`` is a :class:`ConversionReport`
-        (§5.3, PR15) listing everything the converter dropped or had to
+        (PR15) listing everything the converter dropped or had to
         approximate -- coatings, apertures, mirror reflectance, polarization
         -- as structured data rather than only warning text.
 
@@ -447,7 +447,7 @@ def _surface_semi_diameter(
         the value could not be read directly from an explicit aperture/
         semi_aperture on the surface and had to be inferred (paraxial ray
         heights, or -- worst case -- a fixed 10 mm fallback), for
-        :class:`ConversionReport` (§5.3, PR15).
+        :class:`ConversionReport` (PR15).
     """
     ap = surf.aperture
     if ap is not None and hasattr(ap, "radius"):
@@ -487,8 +487,8 @@ def _surface_coating(surf) -> object | None:
 
     Reads ``surf.interaction_model.coating`` (the non-deprecated accessor).
     A polarized coating is not returned here -- ``_has_polarization_surfaces``
-    already surfaces that case globally (§4.3: polarized coatings must
-    never be silently degraded to a scalar average).
+    already surfaces that case globally: polarized coatings must never be
+    silently degraded to a scalar average.
 
     Args:
         surf: Sequential Surface object.
@@ -515,7 +515,7 @@ def _add_mirror(scene, optic, surf, elem_idx: int, report: ConversionReport) -> 
         scene: NSQScene to add to.
         surf: Sequential Surface object for the mirror.
         elem_idx: Element index (used for naming).
-        report: ConversionReport to record fidelity notes into (§5.3).
+        report: ConversionReport to record fidelity notes into.
     """
     from optiland.coordinate_system import CoordinateSystem  # noqa: PLC0415
     from optiland.nonsequential.components.configs import MirrorConfig  # noqa: PLC0415
@@ -549,7 +549,7 @@ def _mirror_reflectance(surf, elem_idx: int, report: ConversionReport) -> float:
     Args:
         surf: Sequential Surface object for the mirror.
         elem_idx: Element index (for the warning message).
-        report: ConversionReport to record the default into (§5.3).
+        report: ConversionReport to record the default into.
 
     Returns:
         Scalar reflectance in [0, 1].
@@ -586,7 +586,7 @@ def _add_lens(
         element_surfaces: [front_surf, back_surf] -- front is glass entry,
             back exits to air.
         elem_indices: Sequential surface indices matching ``element_surfaces``.
-        report: ConversionReport to record fidelity notes into (§5.3).
+        report: ConversionReport to record fidelity notes into.
     """
     from optiland.coordinate_system import CoordinateSystem  # noqa: PLC0415
     from optiland.nonsequential.components.configs import LensConfig  # noqa: PLC0415
@@ -625,12 +625,12 @@ def _add_lens(
 def _surface_config_with_coating(
     surf, name: str, report: ConversionReport
 ) -> object | None:
-    """Build a ``SurfaceConfig`` carrying a surface's coating, if any (§4.3).
+    """Build a ``SurfaceConfig`` carrying a surface's coating, if any.
 
     Args:
         surf: Sequential Surface object.
         name: This surface's name, for the report.
-        report: ConversionReport to record coated/uncoated into (§5.3).
+        report: ConversionReport to record coated/uncoated into.
 
     Returns:
         A ``SurfaceConfig(coating=...)`` if the sequential surface had a
@@ -658,7 +658,7 @@ def _add_doublet(
         scene: NSQScene to add to.
         element_surfaces: [front, cement, back] surfaces.
         elem_indices: Sequential surface indices matching ``element_surfaces``.
-        report: ConversionReport to record fidelity notes into (§5.3).
+        report: ConversionReport to record fidelity notes into.
     """
     from optiland.coordinate_system import CoordinateSystem  # noqa: PLC0415
     from optiland.nonsequential.components.configs import DoubletConfig  # noqa: PLC0415

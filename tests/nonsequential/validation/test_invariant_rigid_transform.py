@@ -1,4 +1,4 @@
-"""§6.2 -- Rigid invariance: a global rotation+translation of the whole
+"""Rigid invariance: a global rotation+translation of the whole
 scene leaves detector results unchanged, in the detector's own frame.
 
 Every component's ``CoordinateSystem`` is built relative to a shared

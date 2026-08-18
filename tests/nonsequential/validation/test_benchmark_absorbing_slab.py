@@ -1,4 +1,4 @@
-"""§6.1 -- Absorbing slab: Beer-Lambert transmittance, sweeping k and L.
+"""Absorbing slab: Beer-Lambert transmittance, sweeping k and L.
 
 ``exp(-4*pi*k*L/lambda)`` for the flux surviving a path length L through a
 medium with extinction coefficient k, at wavelength lambda -- swept over

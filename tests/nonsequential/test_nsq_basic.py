@@ -1,7 +1,6 @@
 """Basic non-sequential raytracing tests.
 
-Covers analytic reference cases from the spec (§16.1) and flux
-conservation (§16.2).
+Covers analytic reference cases and flux conservation.
 
 Kramer Harrison, 2026
 """
@@ -46,7 +45,7 @@ def numpy_backend():
 
 
 # ---------------------------------------------------------------------------
-# § Test: Spectrum sampling
+# Test: Spectrum sampling
 # ---------------------------------------------------------------------------
 
 
@@ -83,7 +82,7 @@ class TestSpectrum:
 
 
 # ---------------------------------------------------------------------------
-# § Test: Point source generation
+# Test: Point source generation
 # ---------------------------------------------------------------------------
 
 
@@ -129,7 +128,7 @@ class TestPointSource:
 
 
 # ---------------------------------------------------------------------------
-# § Test: Plane geometry intersection
+# Test: Plane geometry intersection
 # ---------------------------------------------------------------------------
 
 
@@ -181,7 +180,7 @@ class TestPlaneGeometry:
 
 
 # ---------------------------------------------------------------------------
-# § Test: Sphere geometry intersection
+# Test: Sphere geometry intersection
 # ---------------------------------------------------------------------------
 
 
@@ -214,7 +213,7 @@ class TestSphereGeometry:
 
 
 # ---------------------------------------------------------------------------
-# § Test: Flat mirror normal incidence (analytic reference case)
+# Test: Flat mirror normal incidence (analytic reference case)
 # ---------------------------------------------------------------------------
 
 
@@ -285,7 +284,7 @@ class TestFlatMirrorReflection:
 
 
 # ---------------------------------------------------------------------------
-# § Test: Flux conservation
+# Test: Flux conservation
 # ---------------------------------------------------------------------------
 
 
@@ -447,7 +446,7 @@ class TestFluxConservation:
 
 
 # ---------------------------------------------------------------------------
-# § Test: Collimated source generation
+# Test: Collimated source generation
 # ---------------------------------------------------------------------------
 
 
@@ -477,7 +476,7 @@ class TestCollimatedSource:
 
 
 # ---------------------------------------------------------------------------
-# § Test: NSQScene validation
+# Test: NSQScene validation
 # ---------------------------------------------------------------------------
 
 
@@ -505,7 +504,7 @@ class TestNSQScene:
 
 
 # ---------------------------------------------------------------------------
-# § Test: BSDF
+# Test: BSDF
 # ---------------------------------------------------------------------------
 
 
@@ -576,7 +575,7 @@ class TestBSDFs:
 
 
 # ---------------------------------------------------------------------------
-# § Test: New required tests per spec §11.2
+# Test: New required tests per spec 
 # ---------------------------------------------------------------------------
 
 

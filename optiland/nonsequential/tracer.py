@@ -46,7 +46,7 @@ class SimulationResult:
         ray_paths: Optional per-ray event log dict (``{"events":
             structured_array}``), populated when ``record_paths`` is
             truthy -- see :mod:`optiland.nonsequential.path_recording`.
-        diagnostics: Self-diagnosing summary of this trace (§5.2, PR13) --
+        diagnostics: Self-diagnosing summary of this trace (PR13) --
             depth truncation, roulette loss, unreached geometry, per
             -detector sampling quality, and a threshold-based warning list.
             See :meth:`report` and :mod:`optiland.nonsequential.diagnostics`.
@@ -156,7 +156,7 @@ class NSQTracer:
             record_paths: ``False`` records nothing, ``True`` records every
                 ray's path, and a positive ``int`` records an approximately
                 that-many-ray subset selected deterministically by
-                ``ray_id`` hash (D-7, §5.4) -- see
+                ``ray_id`` hash (D-7) -- see
                 :mod:`optiland.nonsequential.path_recording`.
 
         Returns:

@@ -1,4 +1,4 @@
-"""§6.1 -- Thin lens focus: focal spot position vs the paraxial prediction.
+"""Thin lens focus: focal spot position vs the paraxial prediction.
 
 A thin symmetric biconvex lens' focal distance (measured from its centre)
 is, to first order, the thin-lens form of the lensmaker's equation::

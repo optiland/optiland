@@ -1,4 +1,4 @@
-"""§6.1 -- Single interface, swept incidence angle: unpolarized Fresnel R.
+"""Single interface, swept incidence angle: unpolarized Fresnel R.
 
 A bare vacuum/glass ``RefractiveComponent`` built directly on an infinite
 ``PlaneGeometry`` (no lens barrel, no second surface) isolates exactly one

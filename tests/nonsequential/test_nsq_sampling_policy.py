@@ -198,7 +198,7 @@ class TestDefaultPolicyUnchanged:
 
 
 # ---------------------------------------------------------------------------
-# Importance biasing -- estimator unbiasedness invariant (§6.2)
+# Importance biasing -- estimator unbiasedness invariant 
 # ---------------------------------------------------------------------------
 
 
@@ -246,7 +246,7 @@ class TestImportanceBiasing:
         assert abs(balance) / result.total_flux_in < 0.1
 
     def test_reflect_prob_variants_converge_to_same_answer(self):
-        """§6.2: reflect_prob in {fresnel, 0.25, 0.5, 0.9, auto} must all
+        """reflect_prob in {fresnel, 0.25, 0.5, 0.9, auto} must all
         converge to the same detected flux -- direct unbiasedness check.
         """
         target = None
@@ -293,7 +293,7 @@ class TestBoundedSplitting:
         assert abs(balance) / result.total_flux_in < 1e-8
 
     def test_splitting_agrees_with_unsplit_and_reduces_variance(self):
-        """§6.2: split_depth in {0, 1, 2} converge to the same answer, and
+        """split_depth in {0, 1, 2} converge to the same answer, and
         splitting reduces variance -- that is the entire point of D2.
         """
 

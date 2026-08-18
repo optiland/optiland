@@ -25,7 +25,7 @@ from optiland.nonsequential.rng import (
 )
 
 # ---------------------------------------------------------------------------
-# § Core PCG32 algorithm vs. the canonical O'Neill reference
+# Core PCG32 algorithm vs. the canonical O'Neill reference
 # ---------------------------------------------------------------------------
 
 # From the public-domain PCG reference implementation (pcg-c-basic
@@ -60,7 +60,7 @@ def test_core_pcg32_matches_oneill_reference():
 
 
 # ---------------------------------------------------------------------------
-# § Fixed-vector table for the NSQ key layout
+# Fixed-vector table for the NSQ key layout
 # ---------------------------------------------------------------------------
 
 # Generated once from this module's own reference implementation. A
@@ -108,7 +108,7 @@ def test_key_layout_fixed_vectors(event_slot):
 
 
 # ---------------------------------------------------------------------------
-# § Invariants required by §6.2 / §4.7
+# Invariants required by the PCG32 conformance suite
 # ---------------------------------------------------------------------------
 
 
@@ -200,7 +200,7 @@ class TestKeyedDrawInvariants:
 
 
 # ---------------------------------------------------------------------------
-# § Cross-backend agreement (the honest scope of the guarantee, §4.7)
+# Cross-backend agreement (the honest scope of the guarantee)
 # ---------------------------------------------------------------------------
 
 
@@ -272,5 +272,5 @@ class TestCrossBackendAgreement:
         np_data = to_numpy(np_result.detectors["D"].data)
         torch_data = to_numpy(torch_result.detectors["D"].data)
         # Identical random decisions -> identical irradiance map, up to the
-        # documented float-arithmetic tolerance between backends (§4.7).
+        # documented float-arithmetic tolerance between backends.
         np.testing.assert_allclose(np_data, torch_data, rtol=1e-6, atol=1e-12)

@@ -60,7 +60,7 @@ class TracerBackend(ABC):
             record_paths: ``False`` records nothing, ``True`` records every
                 ray's full phase-space path bounce-by-bounce, and a positive
                 ``int`` records an approximately that-many-ray subset
-                selected deterministically by ``ray_id`` hash (D-7, §5.4) --
+                selected deterministically by ``ray_id`` hash (D-7) --
                 see :mod:`optiland.nonsequential.path_recording`.
 
         Returns:

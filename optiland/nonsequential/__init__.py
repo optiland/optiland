@@ -1,23 +1,27 @@
 r"""Non-Sequential Raytracing for Optiland.
 
-.. warning:: **Beta release — API stabilizing toward a frozen 1.0.**
+.. warning:: **Pre-release — not yet part of a tagged Optiland version.**
 
-   The public symbols listed below are stable and will not be removed without a
-   deprecation cycle.  Internal implementation details (backend classes,
-   geometry helper methods) may still change.  Differentiability is
-   interior-correct for refractive/reflective surfaces; *visibility gradients*
-   are not yet supported (see Limitations and Roadmap below).
+   NSQ has never shipped in an official release, so the public API may still
+   change without a deprecation cycle. Once it ships in a tagged release the
+   usual Optiland API-stability guarantee applies. Differentiability is
+   interior-correct for refractive/reflective surfaces; *visibility
+   gradients* are not yet supported (see Limitations and Roadmap below).
 
 Overview
 --------
 Monte Carlo non-sequential ray tracer for illumination design, stray-light
-analysis, and non-imaging optics.  Architecturally independent from the
-sequential tracer.  Rays propagate freely through a scene and interact with
-surfaces in any order, making it suitable for:
+analysis, and non-imaging optics. Architecturally independent from the
+sequential tracer. Rays propagate freely through a scene and interact with
+surfaces (and, for AR coatings and bulk-absorbing glass, media) in any
+order, making it suitable for:
 
-- Illumination uniformity and flux budget analysis
-- Stray-light and ghost-image characterisation
-- Scatter and diffuse-surface modelling
+- Illumination uniformity and flux budget analysis, in radiometric (W) or
+  photometric (lm, lux) units
+- Stray-light and ghost-image characterisation, with coatings and mirror
+  reflectance so NSQ and the sequential engine agree on R
+- Scatter and diffuse-surface modelling (Lambertian, Harvey-Shack, tabulated
+  BRDF/BTDF)
 - Non-imaging optics (concentrators, light pipes)
 - **Differentiable illumination design** — optimize scene parameters via
   ``loss.backward()`` using the PyTorch backend (see "Differentiability"
@@ -45,9 +49,10 @@ Quick-start::
         width=20, height=20, num_pixels_x=64, num_pixels_y=64))
 
     result = scene.trace(num_rays=50_000, seed=42)
+    print(result.report())       # self-diagnosing summary -- read this first
     result.detectors["D1"].plot()
 
-Public API::
+Public API (selected)::
 
     from optiland.nonsequential import (
         # Scene & tracer
@@ -60,8 +65,10 @@ Public API::
         # Compound components
         Lens, Mirror, Doublet,
         LensConfig, MirrorConfig, DoubletConfig, SurfaceConfig, InteractionType,
+        Volume, NonWatertightVolumeError,
         # Geometry
-        ConicGeometry, FinitePlaneGeometry, MeshGeometry,
+        ConicGeometry, FinitePlaneGeometry, MeshGeometry, SphereGeometry,
+        ParaboloidGeometry, PlaneGeometry,
         CylindricalFrustumGeometry, AnnularPlaneGeometry,
         # BSDF
         SpecularBRDF, LambertianBSDF, HarveyShackBSDF, TabulatedBSDF,
@@ -72,14 +79,76 @@ Public API::
         SpectralDetectorConfig, RayDatabaseConfig,
         # Materials
         NSQMaterial, VACUUM,
+        # Conversion from a sequential Optic
+        sequential_to_nonsequential, ConversionError,
+        # Photometric units
+        to_photometric, lumens_to_watts, v_lambda,
+        PhotometricMap, PhotometricScalar,
         # Visualization
         NSQViewer2D, NSQViewer3D,
     )
 
+See :mod:`optiland.nonsequential.scene`, :mod:`optiland.nonsequential.units`,
+and :mod:`optiland.nonsequential.convert` for the rest, or the
+:ref:`API reference <api_nonsequential>` for the complete, generated symbol
+list.
+
+Coatings, mirrors, and absorption
+----------------------------------
+Reflectance comes from the same ``optiland.coatings`` models the sequential
+engine uses, so the two engines agree on R for a given coating::
+
+    from optiland.coatings import SimpleCoating
+    from optiland.nonsequential import SurfaceConfig
+
+    ar_coat = SimpleCoating(reflectance=0.005, transmittance=0.995)
+    scene.add_lens("L1", cs, LensConfig(
+        r1=100.0, r2=-100.0, thickness=5.0, material="N-BK7",
+        front_aperture_radius=12.5,
+        front=SurfaceConfig(coating=ar_coat),
+    ))
+
+A mirror's ``reflectance`` is **required** — a constant, a
+``callable(wavelength_um) -> reflectance``, or a coating. There is no
+implicit perfect-mirror default, so a mirror built without one raises rather
+than silently reflecting 100%. Bulk (Beer-Lambert) absorption through a
+glass path is automatic whenever the material's extinction coefficient
+``k`` is nonzero — no configuration needed.
+
+Diagnostics
+-----------
+Every :class:`~optiland.nonsequential.tracer.SimulationResult` carries a
+``diagnostics`` object (depth-truncated flux, Russian-roulette loss,
+unreached geometry, per-detector undersampling, flux-conservation error)
+with a threshold-based warning list. ``result.report()`` prints it;
+``__repr__`` shows a one-line warning count so a problem is visible even in
+a REPL. Read this before trusting a trace's numbers.
+
+Rare-path sampling
+-------------------
+``scene.sampling_policy`` (a
+:class:`~optiland.nonsequential.ir.scene_ir.SamplingPolicy`) controls how
+rare paths (faint ghosts, high-order reflections) are sampled: importance
+biasing (``reflect_prob``) works on both backends, bounded bounce-splitting
+(``split_depth``) is NumPy-forward-only, and Russian roulette
+(``rr_start_flux``) replaces flux truncation as an unbiased low-flux kill.
+Defaults reproduce plain single-branch sampling.
+
+Reproducibility
+----------------
+Random numbers are drawn from a counter-based PCG32 keyed by
+``(seed, ray_id, bounce, event_slot)`` — see
+:mod:`optiland.nonsequential.rng`. Results are bit-identical across
+``batch_size``, ray-bundle compaction, and — for the *random decisions*
+specifically — the NumPy and Torch backends. Final floating-point results
+agree only to documented tolerance across backends (arithmetic order,
+FMA, and transcendental implementations differ); same random decisions,
+same code path, is the actual guarantee.
+
 Differentiability
 -----------------
 When ``optiland.backend`` is configured to ``"torch"`` the tracer builds a
-full PyTorch autograd graph through the Monte Carlo loop.  Pass a
+full PyTorch autograd graph through the Monte Carlo loop. Pass a
 ``torch.Tensor`` with ``requires_grad=True`` directly into the ordinary
 config objects and call ``loss.backward()``::
 
@@ -94,9 +163,13 @@ config objects and call ``loss.backward()``::
 
 - Component geometry — conic ``radius`` and ``conic``, ``aperture_radius``,
   sphere/plane/annulus/frustum extents
-- ``IrradianceDetector`` ``width`` and ``height``
+- ``IrradianceDetector`` ``width``, ``height``, and the (now attached)
+  ``total_flux`` on every detector result
 - Source ``total_flux``
-- Material refractive index, and BSDF reflectance
+- Material refractive index and extinction coefficient ``k`` (Beer-Lambert
+  absorption), and BSDF reflectance/transmittance, including
+  ``scatter_fraction`` (the detached-sample/attached-weight branch, not a
+  silently dead variable)
 
 **Not differentiable in this release** (these *raise* rather than silently
 detaching, so a dead design variable is never mistaken for a live one):
@@ -110,35 +183,35 @@ detaching, so a dead design variable is never mistaken for a live one):
 Use ``float64`` (``be.set_precision("float64")``) for gradient work; the
 Monte Carlo trace is numerically delicate near surface edges.
 
-**v1 envelope:**
+**Current envelope:**
 
 - *Gradient mode (autograd)*: ~1 × 10\ :sup:`5` rays × depth 16 on a single
-  GPU.  Memory scales as O(num_rays × max_depth) because compaction is
+  GPU. Memory scales as O(num_rays × max_depth) because compaction is
   disabled to keep fixed tensor shapes for the autograd graph.
 - *Forward mode (no-grad / NumPy backend)*: 1 × 10\ :sup:`7`\+ rays, depth
   16, fully batched.
 
 Limitations & Roadmap
 ---------------------
-The biggest v1 limitation is that **visibility gradients are zero** (silhouette,
+The biggest limitation is that **visibility gradients are zero** (silhouette,
 vignetting, and which-surface-hit boundaries do not contribute gradients);
 mesh geometry is forward-only, there is no polarisation, and gradient mode is
-capped at ~1e5 rays. These gaps and the full 7-item roadmap
-(reparameterization → optimization integration → PRB → GUI → volumetric media →
-polarisation → Dr.Jit/Mitsuba) are tracked on the canonical
+capped at ~1e5 rays. These gaps and the full roadmap
+(reparameterization → optimization integration → PRB → GUI → volumetric
+scattering → polarisation → Dr.Jit/Mitsuba) are tracked on the canonical
 **NSQ Limitations & Roadmap** documentation page:
 https://optiland.readthedocs.io/en/latest/gallery/nonsequential/limitations_and_roadmap.html
 
 Call to Action
 --------------
-**Try it and tell us what you build.**  If you use the NSQ module for
+**Try it and tell us what you build.** If you use the NSQ module for
 illumination design, stray-light analysis, or differentiable optics, open a
 GitHub issue and describe your use case — your feedback directly shapes the
 roadmap.
 
-**Contribute.**  The roadmap items above (especially reparameterization, PRB,
-and GUI integration) are open for contributors.  The Limitations and Roadmap
-page linked above is the canonical reference.  Join the discussion at
+**Contribute.** The roadmap items above (especially reparameterization, PRB,
+and GUI integration) are open for contributors. The Limitations and Roadmap
+page linked above is the canonical reference. Join the discussion at
 https://github.com/HarrisonKramer/optiland/issues.
 
 Kramer Harrison, 2026
@@ -239,7 +312,7 @@ from optiland.nonsequential.sources import (
 )
 from optiland.nonsequential.tracer import NSQTracer, SimulationResult
 
-# Photometric conversion layer (D13, §4.9)
+# Photometric conversion layer (D13)
 from optiland.nonsequential.units import (
     PhotometricMap,
     PhotometricScalar,
@@ -328,7 +401,7 @@ __all__ = [
     # Converter
     "ConversionError",
     "sequential_to_nonsequential",
-    # Photometric conversion layer (D13, §4.9)
+    # Photometric conversion layer (D13)
     "PhotometricMap",
     "PhotometricScalar",
     "lumens_to_watts",

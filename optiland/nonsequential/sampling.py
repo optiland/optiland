@@ -37,8 +37,8 @@ if TYPE_CHECKING:
     from optiland.nonsequential.ir.scene_ir import SamplingPolicy
     from optiland.nonsequential.rng import NSQRng
 
-# Clamp range for SamplingPolicy.reflect_prob="auto" (§11 open item: a
-# starting point, to be tuned against the ghost benchmarks in §6.1).
+# Clamp range for SamplingPolicy.reflect_prob="auto" ( open item: a
+# starting point, to be tuned against the ghost benchmarks in ).
 _AUTO_CLAMP_LO = 0.25
 _AUTO_CLAMP_HI = 0.75
 

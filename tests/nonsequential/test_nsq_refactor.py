@@ -1,6 +1,6 @@
 """Tests for the NSQ refactor: compound components, registries, and visualization.
 
-Covers spec §9 testing requirements:
+Covers:
 - ComponentRegistry (add, remove, get, surfaces flat-list)
 - Lens._build(): sub-surfaces, CS offsets, rim creation, SurfaceConfig overrides
 - CylindricalFrustumGeometry and AnnularPlaneGeometry intersection
@@ -34,7 +34,7 @@ from optiland.nonsequential.components.configs import InteractionType
 from optiland.nonsequential.components.registry import ComponentRegistry
 
 # ---------------------------------------------------------------------------
-# § ComponentRegistry
+# ComponentRegistry
 # ---------------------------------------------------------------------------
 
 
@@ -125,7 +125,7 @@ class TestComponentRegistry:
 
 
 # ---------------------------------------------------------------------------
-# § Lens._build()
+# Lens._build()
 # ---------------------------------------------------------------------------
 
 
@@ -222,7 +222,7 @@ class TestLensBuild:
 
 
 # ---------------------------------------------------------------------------
-# § CylindricalFrustumGeometry intersection
+# CylindricalFrustumGeometry intersection
 # ---------------------------------------------------------------------------
 
 
@@ -270,7 +270,7 @@ class TestCylindricalFrustumGeometry:
 
 
 # ---------------------------------------------------------------------------
-# § AnnularPlaneGeometry intersection
+# AnnularPlaneGeometry intersection
 # ---------------------------------------------------------------------------
 
 
@@ -318,7 +318,7 @@ class TestAnnularPlaneGeometry:
 
 
 # ---------------------------------------------------------------------------
-# § NSQScene new API
+# NSQScene new API
 # ---------------------------------------------------------------------------
 
 
@@ -373,7 +373,7 @@ class TestNSQSceneNewAPI:
 
 
 # ---------------------------------------------------------------------------
-# § Backward-compatibility: old flat-list API
+# Backward-compatibility: old flat-list API
 # ---------------------------------------------------------------------------
 
 
@@ -419,7 +419,7 @@ class TestBackwardCompat:
 
 
 # ---------------------------------------------------------------------------
-# § Integration test: biconvex lens scene
+# Integration test: biconvex lens scene
 # ---------------------------------------------------------------------------
 
 
@@ -472,7 +472,7 @@ class TestLensIntegration:
 
 
 # ---------------------------------------------------------------------------
-# § Visualization smoke tests
+# Visualization smoke tests
 # ---------------------------------------------------------------------------
 
 

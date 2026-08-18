@@ -1,4 +1,4 @@
-"""§6.2 -- Batch invariance: bit-identical results across batch_size (D11).
+"""Batch invariance: bit-identical results across batch_size (D11).
 
 PCG32 draws are keyed by ``(seed, ray_id, bounce, event_slot)`` -- never by
 position within a batch or which other rays happen to be alive alongside a

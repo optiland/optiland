@@ -1,8 +1,8 @@
-"""§6.1 -- AR-coated surface: NSQ reflectance vs optiland.coatings directly.
+"""AR-coated surface: NSQ reflectance vs optiland.coatings directly.
 
 An ``optiland.coatings.SimpleCoating`` attached to a refractive interface
 replaces the bare Fresnel reflectance with the coating's own ``.reflectance``
-(D-2, §4.3) -- the same number ``optiland.coatings`` reports, so the
+(D-2) -- the same number ``optiland.coatings`` reports, so the
 sequential and non-sequential engines agree. This traces the reflected and
 transmitted flux off an AR-coated interface and checks both against the
 coating object's own values directly (not a re-derived Fresnel formula --

@@ -137,7 +137,7 @@ class ArrayBackend(TracerBackend):
                 records every ray's full path -- fine for small traces, but
                 O(rays x bounces) memory for large ones. A positive ``int``
                 records an approximately that-many-ray subset, selected by a
-                PCG32 hash of ``ray_id`` (D-7, §5.4) so the trace stays
+                PCG32 hash of ``ray_id`` (D-7) so the trace stays
                 full-size and cheap while a bounded, deterministic sample is
                 available for visualization/diagnosis -- e.g.
                 ``scene.trace(num_rays=10_000_000, record_paths=1_000)``.
@@ -183,7 +183,7 @@ class ArrayBackend(TracerBackend):
         num_rays_depth_killed = 0
         total_flux_escaped = 0.0
         total_flux_bulk_absorbed = 0.0
-        # Tracked separately for Diagnostics (§5.2, PR13): depth truncation
+        # Tracked separately for Diagnostics (PR13): depth truncation
         # is an inherent, reported bias, while RR/split-budget culling is
         # unbiased in expectation -- conflating them into one total_flux_lost
         # would hide which mechanism a large loss actually came from.
@@ -200,7 +200,7 @@ class ArrayBackend(TracerBackend):
         # Vectorised columnar path recording (D-7, PR12): PathRecorder
         # replaces the old per-event Python dict + repeated to_numpy()
         # closures with preallocated array writes, and implements the
-        # record_paths: int subset contract (§5.4).
+        # record_paths: int subset contract.
         path_recorder = PathRecorder(record_paths, num_rays_total, self.rng.seed)
 
         _next_ray_id: list[int] = [0]
@@ -258,7 +258,7 @@ class ArrayBackend(TracerBackend):
                     det_first = any_det_hit & (~comp_closer | ~any_comp_hit)
                     comp_first = any_comp_hit & (~det_first)
 
-                    # unreached_geometry (§5.2, PR13): cheap running set of
+                    # unreached_geometry (PR13): cheap running set of
                     # every primitive that was ever the nearest hit.
                     if comp_first.any():
                         hit_component_ids.update(

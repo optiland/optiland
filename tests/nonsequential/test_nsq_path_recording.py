@@ -1,4 +1,4 @@
-"""Tests for PR12: vectorised columnar path recording (D-7, §5.4).
+"""Tests for PR12: vectorised columnar path recording (D-7).
 
 Kramer Harrison, 2026
 """
@@ -216,7 +216,7 @@ class TestPathRecorder:
 
 
 # ---------------------------------------------------------------------------
-# End-to-end: NSQScene.trace(record_paths=...) contract (§5.4)
+# End-to-end: NSQScene.trace(record_paths=...) contract 
 # ---------------------------------------------------------------------------
 
 
@@ -278,7 +278,7 @@ class TestRecordPathsContract:
         assert result.ray_paths["events"].dtype == _EVENT_DTYPE
 
     def test_full_trace_stays_full_size_with_small_subset(self):
-        """The whole point of record_paths: int (§5.4): a huge trace stays
+        """The whole point of record_paths: int -- a huge trace stays
         full-size and fast; only a bounded subset is recorded.
         """
         scene = _lens_scene()

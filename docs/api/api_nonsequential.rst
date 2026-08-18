@@ -5,15 +5,17 @@ Nonsequential Ray Tracing API
 
 Public API reference for the non-sequential (NSQ) engine. For the conceptual
 overview and tutorials see the :ref:`NSQ gallery <gallery_nonsequential>`; for
-the v1 envelope and known limitations see :ref:`nsq_limitations_and_roadmap`;
-for the architecture and differentiability contract see the
+the capability envelope and known limitations see
+:ref:`nsq_limitations_and_roadmap`; for the architecture and
+differentiability contract see the
 :ref:`developer guide <nonsequential_raytracing>`.
 
 .. note::
 
-   **Beta.** NSQ symbols are stable but the API is stabilizing toward a frozen
-   1.0. Scenes are built almost entirely through the ``*Config`` dataclasses —
-   the :ref:`Configuration reference <nsq_config_reference>` below gives a
+   **Pre-release.** NSQ has never shipped in a tagged Optiland release, so
+   the API may still change without a deprecation cycle. Scenes are built
+   almost entirely through the ``*Config`` dataclasses — the
+   :ref:`Configuration reference <nsq_config_reference>` below gives a
    parameter table for each.
 
 .. contents:: On this page
@@ -96,6 +98,22 @@ Results
    :undoc-members:
    :show-inheritance:
 
+Diagnostics
+-----------
+
+.. automodule:: optiland.nonsequential.diagnostics
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Photometric units
+------------------
+
+.. automodule:: optiland.nonsequential.units
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Materials
 ---------
 
@@ -108,6 +126,23 @@ Backends
 --------
 
 .. automodule:: optiland.nonsequential.backends
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Scene IR, sampling policy, and RNG
+-------------------------------------
+
+The declarative, backend-portable scene description (see the
+:ref:`developer guide <nsq_arch>`), the rare-path sampling policy, and the
+counter-based PCG32 RNG.
+
+.. automodule:: optiland.nonsequential.ir
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: optiland.nonsequential.rng
    :members:
    :undoc-members:
    :show-inheritance:
@@ -373,6 +408,13 @@ Components
      - float | Tensor
      - *(required)*
      - Vertex radius of curvature [mm]; − = concave (normal toward +z).
+   * - ``reflectance``
+     - float | Callable | ``BaseCoating``
+     - *(required)*
+     - Mirror reflectance: a constant in [0, 1], a
+       ``callable(wavelength_um) -> reflectance``, or an unpolarized
+       ``optiland.coatings`` coating. **No implicit default** — a mirror
+       built without one raises rather than reflecting 100%.
    * - ``conic``
      - float | Tensor
      - ``0.0``
@@ -384,7 +426,8 @@ Components
    * - ``surface``
      - ``SurfaceConfig`` | None
      - ``None``
-     - Per-surface override (e.g. attach a scatter BSDF).
+     - Per-surface override (e.g. attach a scatter BSDF or override
+       ``reflectance``).
 
 **SurfaceConfig** — optional per-surface overrides within a compound component.
 All fields default to ``None`` (use the compound-level default).
@@ -411,9 +454,14 @@ All fields default to ``None`` (use the compound-level default).
        value for a partially scattering surface. Ignored when ``bsdf``
        is ``None``.
    * - ``coating``
-     - object | None
+     - ``BaseCoating`` | None
      - ``None``
-     - Thin-film coating model (deferred — not yet implemented).
+     - An ``optiland.coatings`` coating (e.g. an AR coating) for a refractive
+       surface; its reflectance/transmittance replace bare Fresnel, so NSQ
+       and the sequential engine agree on R. Must be unpolarized
+       (``SimpleCoating``) — a polarization-sensitive coating
+       (``BaseCoatingPolarized``) raises rather than being silently
+       degraded to its scalar average. Ignored on absorbing surfaces.
    * - ``aperture_radius``
      - float | None
      - ``None``
@@ -422,6 +470,12 @@ All fields default to ``None`` (use the compound-level default).
      - ``InteractionType`` | None
      - ``None``
      - Force a specific interaction (REFRACTIVE / REFLECTIVE / ABSORBING).
+   * - ``reflectance``
+     - float | Callable | ``BaseCoating`` | None
+     - ``None``
+     - Required when ``interaction`` selects ``InteractionType.REFLECTIVE``:
+       overrides the compound's ``MirrorConfig.reflectance`` for this
+       surface only.
 
 Detectors
 ~~~~~~~~~
@@ -448,11 +502,19 @@ Detectors
      - ``"bilinear"`` | ``"gaussian"`` | ``"hard"``
      - ``"bilinear"``
      - Splatting mode. ``bilinear`` is differentiable in landing position;
-       ``hard`` is nearest-pixel; ``gaussian`` currently falls back to bilinear.
+       ``hard`` is nearest-pixel (not differentiable in landing position);
+       ``gaussian`` is a true, differentiable Gaussian splat of width
+       ``splat_sigma``.
    * - ``splat_sigma``
      - float
      - ``0.5``
      - Gaussian splat sigma in pixels (used when ``splat="gaussian"``).
+   * - ``absorb``
+     - bool
+     - ``True``
+     - Whether a hit terminates the ray. ``False`` makes the detector
+       transmissive: the hit is recorded and the ray continues unchanged,
+       enabling mid-system beam sampling.
 
 **SpectralDetectorConfig** — per-wavelength irradiance.
 
@@ -474,8 +536,9 @@ Detectors
      - Pixel grid resolution.
    * - ``wl_min`` / ``wl_max``
      - float
-     - ``400.0`` / ``700.0``
-     - Spectral binning range [nm].
+     - ``0.4`` / ``0.7``
+     - Spectral binning range [µm] (same convention as ``Spectrum`` —
+       visible light is ``0.4``-``0.7``).
    * - ``num_bins``
      - int
      - ``100``
@@ -488,6 +551,10 @@ Detectors
      - float
      - ``0.5``
      - Reserved for future use.
+   * - ``absorb``
+     - bool
+     - ``True``
+     - Whether a hit terminates the ray.
 
 **FarFieldDetectorConfig** — angular intensity pattern.
 
@@ -507,6 +574,10 @@ Detectors
      - int
      - ``360``
      - Number of azimuthal-angle bins.
+   * - ``absorb``
+     - bool
+     - ``True``
+     - Whether a hit terminates the ray.
 
 **RayDatabaseConfig** — full phase-space record.
 
@@ -526,3 +597,7 @@ Detectors
      - int
      - ``0``
      - Maximum rays to store (0 = unlimited).
+   * - ``absorb``
+     - bool
+     - ``True``
+     - Whether a hit terminates the ray.

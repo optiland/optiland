@@ -1,6 +1,6 @@
-"""NSQ validation suite (§6, D8, PR16).
+"""NSQ validation suite (D8, PR16).
 
-Closed-form analytic benchmarks (§6.1) and cross-cutting invariants (§6.2)
+Closed-form analytic benchmarks and cross-cutting invariants
 for the non-sequential engine, run in CI alongside the rest of
 ``tests/nonsequential/``. See
 ``docs/gallery/nonsequential/validation_report.rst`` for the narrative

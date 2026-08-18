@@ -275,7 +275,7 @@ class NSQScene:
             record_paths: ``False`` (default) records nothing. ``True``
                 records every ray's full path. A positive ``int`` records
                 an approximately that-many-ray subset, selected
-                deterministically by ``ray_id`` hash (D-7, §5.4), so a
+                deterministically by ``ray_id`` hash (D-7), so a
                 large trace stays cheap while still yielding a bounded
                 sample for visualization/diagnosis, e.g.
                 ``scene.trace(num_rays=10_000_000, record_paths=1_000)``.
@@ -398,13 +398,13 @@ class NSQScene:
 
 
 def _resolve_total_flux(config) -> float:
-    """Resolve a source config's radiometric flux [W] (D13, §4.9).
+    """Resolve a source config's radiometric flux [W] (D13).
 
     ``total_flux_lumens``, when set, takes precedence over ``total_flux``
     and is converted to watts via
     :func:`optiland.nonsequential.units.lumens_to_watts` using the config's
-    own spectrum -- NSQ's trace loop is radiometric throughout (§4.9), so
-    this conversion happens once, here, at scene-construction time.
+    own spectrum -- NSQ's trace loop is radiometric throughout, so this
+    conversion happens once, here, at scene-construction time.
 
     Args:
         config: A source config with ``total_flux``, ``total_flux_lumens``,
@@ -571,7 +571,7 @@ def _build_detector(cs: CoordinateSystem, config) -> object:
             cs=cs,
             geometry=geometry,
             # 0 ("unlimited", the config default) maps to RayDatabaseDetector's
-            # own None-means-unlimited convention (§5.1 audit, PR13: this was
+            # own None-means-unlimited convention (this was
             # previously accepted and silently dropped -- the circular-buffer
             # limit never took effect).
             max_rays=config.max_rays if config.max_rays > 0 else None,

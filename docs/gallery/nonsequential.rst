@@ -26,14 +26,12 @@ designs drop straight into NSQ for stray-light and ghost analysis::
 
 .. note::
 
-   **Beta.** NSQ is a beta feature stabilizing toward a frozen 1.0. See
-   :ref:`nsq_limitations_and_roadmap` (canonical) for the v1 envelope, known
-   limitations (notably zero visibility gradients), and the development roadmap.
-   See :ref:`nsq_validation_report` for the closed-form benchmarks and
-   invariants the engine is checked against in CI. See
-   :ref:`nsq_whats_changed_v2` if you are comparing results against an older
-   NSQ scene file -- schema v1 files are refused on load and cannot be
-   auto-migrated.
+   **Pre-release.** NSQ has never shipped in a tagged Optiland release, so the
+   API may still change without a deprecation cycle. See
+   :ref:`nsq_limitations_and_roadmap` (canonical) for the capability envelope,
+   known limitations (notably zero visibility gradients), and the development
+   roadmap. See :ref:`nsq_validation_report` for the closed-form benchmarks and
+   invariants the engine is checked against in CI.
 
 .. rubric:: When to use the NSQ engine
 
@@ -125,7 +123,9 @@ not fixed or when you care about where stray light lands.
      - Cemented achromatic doublet; crown + flint elements
    * - ``Mirror``
      - ``MirrorConfig``
-     - Conic reflective surface; conic=0 (sphere), -1 (paraboloid)
+     - Conic reflective surface; conic=0 (sphere), -1 (paraboloid).
+       ``reflectance`` is **required** — a constant, a wavelength-dependent
+       callable, or a coating; there is no implicit perfect-mirror default.
 
 **Detectors**
 
@@ -174,18 +174,44 @@ diffuser. Use ``SurfaceConfig(bsdf=..., scatter_fraction=f)`` to send only a
 fraction ``f`` of the light through the scatter model and keep the rest
 specular, which is how a real partially scattering surface behaves.
 
+**Coatings, mirror reflectance & absorption**
+
+Reflectance comes from the same ``optiland.coatings`` models the sequential
+engine uses, so the two engines agree on R. Attach one via
+``SurfaceConfig(coating=...)`` on a lens/doublet face; with no coating, a
+refractive surface falls back to bare Fresnel. A glass with a nonzero
+extinction coefficient ``k`` attenuates flux automatically via Beer-Lambert
+absorption over its path length — no extra configuration needed. See
+:doc:`notebook 5 <nonsequential/05_surface_scattering>`.
+
+**Diagnostics**
+
+Every trace's ``result.diagnostics`` flags depth-truncated flux, Russian-
+roulette loss, unreached geometry, and undersampled detectors. Call
+``print(result.report())`` after every trace — it is the fastest way to
+catch a misconfigured scene before trusting its numbers. See
+:doc:`notebook 6 <nonsequential/06_simulation_diagnostics>`.
+
+**Photometric units**
+
+The trace loop is radiometric (watts) throughout;
+``optiland.nonsequential.units.to_photometric()`` converts a traced detector
+result to lux/lumens for illumination-engineering workflows, and sources
+accept ``total_flux_lumens`` directly.
+
 **Sequential conversion**
 
 ``sequential_to_nonsequential(optic)`` converts an existing sequential
 :class:`~optiland.optic.optic.Optic` design to an ``NSQScene`` automatically,
 mapping singlets → ``Lens``, cemented doublets → ``Doublet``, and the image
-surface → ``IrradianceDetector``.
+surface → ``IrradianceDetector``. Coatings and mirror reflectance are carried
+over where possible; ``scene.conversion_report`` lists exactly what was
+carried over, defaulted, estimated, or dropped.
 
 .. rubric:: Quick-start example
 
 .. code-block:: python
 
-    import numpy as np
     from optiland.coordinate_system import CoordinateSystem
     from optiland.nonsequential import (
         NSQScene, Spectrum,
@@ -204,6 +230,7 @@ surface → ``IrradianceDetector``.
                        IrradianceDetectorConfig(width=20, height=20))
 
     result = scene.trace(num_rays=100_000, seed=42)
+    print(result.report())      # catch a misconfigured scene before trusting it
     result.detectors['D'].plot()
 
 This quickstart runs on the NumPy forward engine. To get gradients, call
@@ -233,4 +260,3 @@ Examples
 
    nonsequential/limitations_and_roadmap
    nonsequential/validation_report
-   nonsequential/whats_changed_v2

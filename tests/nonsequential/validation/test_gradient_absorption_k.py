@@ -1,6 +1,6 @@
-"""§6.3 -- Beer-Lambert extinction coefficient (k) gradient, FD validated.
+"""Beer-Lambert extinction coefficient (k) gradient, FD validated.
 
-``k`` is documented as differentiable (§6.3's list: "material index, ...,
+``k`` is documented as differentiable (the list: "material index, ...,
 k, ..."): a ``torch.Tensor`` ``k`` on a custom material should carry a
 correct ``d(flux)/dk`` through the Beer-Lambert bulk-absorption term
 (D-13, ``alpha = 4*pi*k/wavelength``) all the way to a detector's flux.

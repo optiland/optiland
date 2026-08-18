@@ -274,7 +274,7 @@ class TestGaussianSplat:
 
 
 # ---------------------------------------------------------------------------
-# SensorIR.absorb (D-10, §4.8) reflects the live detector
+# SensorIR.absorb (D-10) reflects the live detector
 # ---------------------------------------------------------------------------
 
 

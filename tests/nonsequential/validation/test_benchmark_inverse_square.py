@@ -1,4 +1,4 @@
-"""§6.1 -- Point source -> small flat patch: exact inverse-square law.
+"""Point source -> small flat patch: exact inverse-square law.
 
 An isotropic point source (``half_angle_deg=180``) emits uniformly over the
 full 4*pi steradian sphere by construction (uniform sampling on the sphere,

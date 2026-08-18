@@ -14,7 +14,7 @@ built once, at the end of the trace, by vectorised dtype/lookup conversion
 -- not incrementally.
 
 :class:`PathRecorder` additionally implements the ``record_paths: int``
-contract (§5.4): recording a uniformly-chosen random subset of that many
+contract : recording a uniformly-chosen random subset of that many
 rays rather than every ray, selected by a PCG32 hash of ``ray_id`` (see
 :mod:`optiland.nonsequential.rng`) so the subset is deterministic under the
 RNG contract -- independent of ``batch_size`` and of NumPy-vs-Torch
@@ -83,7 +83,7 @@ def resolve_path_sample_mask(
     record_paths: bool | int,
     seed: int,
 ) -> np.ndarray:
-    """Which of ``ray_id`` fall in the recorded subset (§5.4).
+    """Which of ``ray_id`` fall in the recorded subset.
 
     Args:
         ray_id: Per-ray identifiers, shape (N,).

@@ -1,10 +1,10 @@
-"""§6.2 -- Convergence: Monte Carlo error decreases as 1/sqrt(N).
+"""Convergence: Monte Carlo error decreases as 1/sqrt(N).
 
 Standard-error-of-the-mean scaling for an unbiased estimator: repeating a
 trace at a fixed ray count N over several seeds gives a standard deviation
 that must shrink as N^(-1/2). Fitting ``log(std) = slope * log(N) +
 const`` over a swept ray count and checking ``slope`` lands at -0.5 (within
-the spec's stated +-0.05) is a direct, quantitative check that the
++-0.05) is a direct, quantitative check that the
 estimator is behaving like ordinary Monte Carlo -- not, say, silently
 biased in a way that keeps error roughly constant, or super/sub-linear
 because of an accidental correlation between rays.

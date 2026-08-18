@@ -1,4 +1,4 @@
-"""§6.3 -- scatter_fraction gradient (D-5), finite-difference validated.
+"""scatter_fraction gradient (D-5), finite-difference validated.
 
 D-5 named ``scatter_fraction`` as carrying zero gradient in the pre-revamp
 engine: the reflect/specular-vs-scatter branch was drawn from a detached

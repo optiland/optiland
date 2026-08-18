@@ -1,11 +1,11 @@
-"""Photometric conversion layer (D13, §4.9, PR14).
+"""Photometric conversion layer (D13, PR14).
 
 The NSQ radiometric core is unchanged: everything inside the trace stays in
 watts, W/mm^2, and micrometres. This module is a *read-only* conversion
 layer on top of finished results (and, for sources, an input-side
 lumens-to-watts helper) -- it never touches the trace loop.
 
-Guardrail (§4.9): converting a monochromatic result outside the visible
+Guardrail : converting a monochromatic result outside the visible
 band, or a spectrum with negligible V(lambda) overlap, raises rather than
 returning a near-zero photometric value that looks like a valid (if dim)
 answer. Silently returning ~0 is the same defect class as D-2 (an accepted
@@ -138,7 +138,7 @@ KM_SCOTOPIC = 1700.0  # lm/W at 507 nm
 VISIBLE_BAND_UM = (0.380, 0.780)
 
 # Below this fraction of the peak luminous efficacy, a spectrum's overlap
-# with V(lambda) is treated as negligible (guardrail, §4.9) rather than as
+# with V(lambda) is treated as negligible (guardrail) rather than as
 # a very dim but valid photometric answer.
 _NEGLIGIBLE_EFFICACY_FRACTION = 1e-6
 
@@ -233,7 +233,7 @@ def _require_in_band(
             f"its spectral content has negligible overlap with the "
             f"{weighting} V(lambda) curve (nonzero only within "
             f"{lo:g}-{hi:g} um). This would silently report ~0 rather than "
-            "a meaningful value, so it raises instead (§4.9 guardrail). "
+            "a meaningful value, so it raises instead (guardrail). "
             "Pass an explicit in-band wavelength_um, or verify the trace's "
             "source spectrum actually falls in the visible band."
         )
@@ -256,7 +256,7 @@ def lumens_to_watts(
 
     Raises:
         ValueError: If the spectrum has negligible overlap with the chosen
-            V(lambda) curve (§4.9 guardrail) -- e.g. a monochromatic 1.5 um
+            V(lambda) curve (guardrail) -- e.g. a monochromatic 1.5 um
             source has no photopic lumen equivalent worth reporting.
     """
     _, _, km = _table(weighting)
@@ -401,7 +401,7 @@ def to_photometric(
     weighting: Weighting = "photopic",
     wavelength_um: float | None = None,
 ) -> PhotometricMap | PhotometricScalar:
-    """Convert a detector result to a photometric quantity (§4.9, D13).
+    """Convert a detector result to a photometric quantity (D13).
 
     The radiometric result is unaffected; this returns a new object.
 
@@ -423,8 +423,8 @@ def to_photometric(
     Raises:
         ValueError: If the result's spectral content -- explicit
             ``wavelength_um`` or the result's own wavelength bins -- has
-            negligible overlap with the chosen V(lambda) curve (§4.9
-            guardrail: this would otherwise silently return ~0).
+            negligible overlap with the chosen V(lambda) curve (guardrail:
+            this would otherwise silently return ~0).
         TypeError: If ``result`` has neither a pixel grid nor per
             -wavelength data (e.g. a ``RayDatabase``), or ``quantity`` is
             not recognised.
@@ -439,7 +439,7 @@ def to_photometric(
             f"wavelength(s) {wl_desc} um have negligible overlap with the "
             f"{weighting} V(lambda) curve (nonzero only within "
             f"{lo:g}-{hi:g} um). This would silently report ~0 rather than "
-            "a meaningful value, so it raises instead (§4.9 guardrail)."
+            "a meaningful value, so it raises instead (guardrail)."
         )
 
     if quantity == "illuminance":

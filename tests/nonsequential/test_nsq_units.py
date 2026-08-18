@@ -1,4 +1,4 @@
-"""Tests for PR14: photometric conversion layer (D13, §4.9).
+"""Tests for PR14: photometric conversion layer (D13).
 
 Kramer Harrison, 2026
 """
@@ -311,7 +311,7 @@ class TestPhotometricMapPlot:
 
 
 # ---------------------------------------------------------------------------
-# Sources specified in lumens (§4.9)
+# Sources specified in lumens 
 # ---------------------------------------------------------------------------
 
 

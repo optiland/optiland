@@ -130,7 +130,7 @@ def _rich_scene() -> NSQScene:
 
 
 # ---------------------------------------------------------------------------
-# § lower() correctness
+# lower() correctness
 # ---------------------------------------------------------------------------
 
 
@@ -267,7 +267,7 @@ class TestLowerCorrectness:
 
 
 # ---------------------------------------------------------------------------
-# § Translatability checklist
+# Translatability checklist
 # ---------------------------------------------------------------------------
 
 
@@ -344,7 +344,7 @@ class TestTranslatabilityChecklist:
 
 
 # ---------------------------------------------------------------------------
-# § Registry completeness (guard against drift, structural half of PR4's
+# Registry completeness (guard against drift, structural half of PR4's
 # full numeric drift-guard)
 # ---------------------------------------------------------------------------
 
@@ -390,7 +390,7 @@ class TestRegistryCompleteness:
 
 
 # ---------------------------------------------------------------------------
-# § Basic dataclass sanity
+# Basic dataclass sanity
 # ---------------------------------------------------------------------------
 
 

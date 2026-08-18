@@ -1,4 +1,4 @@
-"""Self-diagnosing simulation results (§5.2, PR13).
+"""Self-diagnosing simulation results (PR13).
 
 ``SimulationResult.diagnostics`` turns several silent failure modes the NSQ
 engine could previously produce -- a scene that depth-truncates most of its
@@ -79,7 +79,7 @@ class DetectorDiagnostic:
 
 @dataclass(frozen=True)
 class Diagnostics:
-    """Self-diagnosing summary of one trace (§5.2).
+    """Self-diagnosing summary of one trace.
 
     Every field is computed during the trace at negligible extra cost (a
     few running counters and one pass over ``scene.detectors`` at the end)
@@ -88,7 +88,7 @@ class Diagnostics:
     Attributes:
         depth_truncated_flux_fraction: Fraction of ``total_flux_in`` killed
             by the hard ``max_depth`` cutoff. This is the one loss
-            mechanism that is an *inherent, reported bias* (§4.6) -- not
+            mechanism that is an *inherent, reported bias* -- not
             something roulette or importance sampling can fix -- so a
             nonzero value is a direct signal to raise ``max_depth`` if the
             deep paths matter.
@@ -107,7 +107,7 @@ class Diagnostics:
             ``scene.detectors`` order.
         medium_stack_underflows: Always 0 in this release. Reserved: D-1's
             sidedness fix is geometric per-surface (``n_geom``), not a
-            runtime nesting stack (§4.2's ``Volume``/medium-stack design is
+            runtime nesting stack (the ``Volume``/medium-stack design is
             not wired into the trace loop in this revamp), so there is
             structurally no stack to underflow yet. Kept as a field so a
             future medium-stack backend does not need a new diagnostics

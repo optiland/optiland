@@ -1,7 +1,7 @@
 """PR9 — NSQ gradient validation suite (the merge gate).
 
-Covers §9.3 (Type C — gradient correctness), §9.4 (backend cross-check),
-and §9.5 (performance smoke).
+Covers Type C (gradient correctness), backend cross-check, and
+performance smoke.
 
 Spec requirement: autograd gradients must match finite-difference gradients
 to within tol=0.02 relative error (MC + FD noise). Common-random-numbers
@@ -147,7 +147,7 @@ def _fd_gradient(
 
 
 # ---------------------------------------------------------------------------
-# § Type C.1 — Source flux gradient (linear case, zero MC noise)
+# Type C.1 — Source flux gradient (linear case, zero MC noise)
 # ---------------------------------------------------------------------------
 
 
@@ -218,7 +218,7 @@ class TestSourceFluxGradient:
 
 
 # ---------------------------------------------------------------------------
-# § Type C.2 — Lambertian BSDF reflectance gradient
+# Type C.2 — Lambertian BSDF reflectance gradient
 # ---------------------------------------------------------------------------
 
 
@@ -375,7 +375,7 @@ class TestBSDFReflectanceGradient:
 
 
 # ---------------------------------------------------------------------------
-# § Type C.3 — Visibility gradient is zero (v1 limitation)
+# Type C.3 — Visibility gradient is zero (v1 limitation)
 # ---------------------------------------------------------------------------
 
 
@@ -385,7 +385,7 @@ class TestVisibilityGradientZero:
     Moving a component laterally so it transitions from fully in-beam to
     fully out-of-beam produces a discontinuous jump in detected flux.
     The autograd gradient at any smooth interior point is zero because
-    the `argmin` over component t-values is detached (§3.2 of spec).
+    the `argmin` over component t-values is detached.
 
     This is the v1 documented limitation; reparameterization (roadmap #1)
     is required to fix this.
@@ -453,7 +453,7 @@ class TestVisibilityGradientZero:
 
 
 # ---------------------------------------------------------------------------
-# § §9.4 — Backend cross-check (NumPy vs Torch forward agreement)
+# Backend cross-check (NumPy vs Torch forward agreement)
 # ---------------------------------------------------------------------------
 
 
@@ -553,7 +553,7 @@ class TestBackendCrossCheck:
 
 
 # ---------------------------------------------------------------------------
-# § §9.5 — Performance smoke
+# Performance smoke
 # ---------------------------------------------------------------------------
 
 
@@ -642,7 +642,7 @@ class TestPerfSmoke:
 
 
 # ---------------------------------------------------------------------------
-# § Type A — Analytic forward correctness (explicit, per §9.1)
+# Type A — Analytic forward correctness (explicit)
 # ---------------------------------------------------------------------------
 
 

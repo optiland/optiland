@@ -1,4 +1,4 @@
-"""§6.1 -- Total internal reflection: sharp transition at the critical angle.
+"""Total internal reflection: sharp transition at the critical angle.
 
 Same isolated single-interface rig as ``test_benchmark_fresnel_sweep.py``,
 but glass -> vacuum, sweeping through the critical angle

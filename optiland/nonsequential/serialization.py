@@ -6,19 +6,16 @@ JSON-serializable :class:`dict`.
 
 Schema version
 --------------
-The top-level key ``"nsq_schema_version"`` is ``2`` (D17, PR17). Version 1
-was the pre-revamp beta schema; since NSQ has never been officially
-released, the loader **refuses** version-1 JSON outright rather than
-attempting to auto-migrate it -- carrying two physics paths (a legacy
-"v1 physics" mode alongside the current one) would defeat the point of the
-revamp (§8.3). The refusal names the version and points at
-``docs/gallery/nonsequential/whats_changed_v2.rst``, which enumerates every
-physics change between v1 and v2 with its expected magnitude and direction,
-so a user who recorded v1 numbers can tell an intended change from a
-regression. There is no code path that reads a v1 file's physics; a v1
-scene must be rebuilt from its original construction code (or converted
-again via :func:`~optiland.nonsequential.convert.sequential_to_nonsequential`)
-against the current API.
+The top-level key ``"nsq_schema_version"`` is ``1``. NSQ has never been
+officially released, so there is exactly one schema and no compatibility or
+migration machinery for an earlier one: a file whose ``nsq_schema_version``
+does not match the current loader is refused with a generic mismatch error
+naming both versions. Since NSQ is still pre-release, the physics and the
+schema can both change without notice; a scene built against an older
+checkout should be rebuilt from its original construction code (or
+converted again via
+:func:`~optiland.nonsequential.convert.sequential_to_nonsequential`) against
+the current API.
 
 Tensor handling
 ---------------
@@ -65,18 +62,7 @@ if TYPE_CHECKING:
     from optiland.nonsequential.scene import NSQScene
     from optiland.nonsequential.sources.base import Spectrum
 
-NSQ_SCHEMA_VERSION = 2
-
-# The last schema version this loader will name specifically in its refusal
-# message (D17): version 1 was the pre-revamp beta schema. Bumped alongside
-# NSQ_SCHEMA_VERSION only if a future revamp again breaks physics wholesale.
-_LAST_KNOWN_OLD_VERSION = 1
-
-_WHATS_CHANGED_DOC = (
-    "docs/gallery/nonsequential/whats_changed_v2.rst "
-    "(https://optiland.readthedocs.io/en/latest/gallery/nonsequential/"
-    "whats_changed_v2.html)"
-)
+NSQ_SCHEMA_VERSION = 1
 
 
 # ---------------------------------------------------------------------------
@@ -790,10 +776,10 @@ def scene_from_dict(d: dict) -> NSQScene:
 
     Raises:
         ValueError: If ``"nsq_schema_version"`` is missing or does not match
-            :data:`NSQ_SCHEMA_VERSION`. A version-1 file gets a pointed
-            message naming the physics changes doc (D17, §8.3) rather than
-            the generic mismatch text -- there is no v1 compatibility mode
-            to fall back to.
+            :data:`NSQ_SCHEMA_VERSION`. NSQ has never been officially
+            released, so there is no compatibility mode or auto-migration
+            for an older schema -- a mismatched file must be rebuilt against
+            the current API.
         ValueError: If any component/source/detector type is unknown.
     """
     from optiland.nonsequential.scene import NSQScene  # noqa: PLC0415
@@ -803,19 +789,6 @@ def scene_from_dict(d: dict) -> NSQScene:
         raise ValueError(
             "The JSON file is missing the required 'nsq_schema_version' key. "
             "This file may not be an Optiland NSQ scene file."
-        )
-    if version == _LAST_KNOWN_OLD_VERSION < NSQ_SCHEMA_VERSION:
-        raise ValueError(
-            f"This file was written by NSQ schema version {version} (the "
-            "pre-revamp beta). NSQ has never been officially released, so "
-            f"there is no version-{version} compatibility mode and no "
-            "auto-migration -- carrying two physics paths at once would "
-            "defeat the point of the revamp. Every physics change between "
-            f"v{version} and v{NSQ_SCHEMA_VERSION}, with its expected "
-            f"magnitude and direction, is listed at {_WHATS_CHANGED_DOC}. "
-            "Rebuild the scene from its original construction code (or "
-            "re-run sequential_to_nonsequential(optic) if it was converted) "
-            "against the current API, then re-export."
         )
     if version != NSQ_SCHEMA_VERSION:
         raise ValueError(

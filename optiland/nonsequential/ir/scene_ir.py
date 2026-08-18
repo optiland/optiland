@@ -169,8 +169,8 @@ class RngContract:
     """Which RNG algorithm the scene's random draws are contracted to.
 
     Not a trace seed -- ``trace(seed=...)`` stays a per-call argument. This
-    documents the *algorithm* every conforming backend must implement (D11,
-    §4.7): PCG32, keyed by ``(seed, ray_id, bounce, event_slot)``. See
+    documents the *algorithm* every conforming backend must implement (D11):
+    PCG32, keyed by ``(seed, ray_id, bounce, event_slot)``. See
     :mod:`optiland.nonsequential.rng`.
 
     Attributes:

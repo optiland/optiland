@@ -1,4 +1,4 @@
-"""§6.1 -- Small Lambertian disc -> parallel plane: cos^4 falloff.
+"""Small Lambertian disc -> parallel plane: cos^4 falloff.
 
 For a small Lambertian-emitting disc (radiant intensity I(theta) = I0 *
 cos(theta) about the disc normal) illuminating a plane parallel to the disc,

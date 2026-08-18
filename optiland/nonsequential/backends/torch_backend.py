@@ -154,7 +154,7 @@ class TorchBackend(TracerBackend):
             record_paths: ``False`` records nothing, ``True`` records every
                 ray's path (numpy, detached), and a positive ``int`` records
                 an approximately that-many-ray subset selected
-                deterministically by ``ray_id`` hash (D-7, §5.4) -- see
+                deterministically by ``ray_id`` hash (D-7) -- see
                 :mod:`optiland.nonsequential.path_recording`.
 
         Returns:
@@ -214,7 +214,7 @@ class TorchBackend(TracerBackend):
         num_rays_depth_killed = 0
         total_flux_escaped = 0.0
         total_flux_bulk_absorbed = 0.0
-        # Tracked separately for Diagnostics (§5.2, PR13) -- see the
+        # Tracked separately for Diagnostics (PR13) -- see the
         # matching comment in ArrayBackend.trace().
         total_flux_depth_killed = 0.0
         total_flux_rr_killed = 0.0
@@ -230,7 +230,7 @@ class TorchBackend(TracerBackend):
         # preallocated array writes, and adds hit/death recording (the
         # array backend already had both; this backend previously recorded
         # only birth events -- an existing parity gap this PR also closes)
-        # plus the record_paths: int subset contract (§5.4).
+        # plus the record_paths: int subset contract.
         path_recorder = PathRecorder(record_paths, num_rays_total, self.rng.seed)
         _next_ray_id: list[int] = [0]
 
@@ -287,7 +287,7 @@ class TorchBackend(TracerBackend):
                     det_first_np = any_det_hit_np & (~comp_closer_np | ~any_comp_hit_np)
                     comp_first_np = any_comp_hit_np & (~det_first_np)
 
-                    # unreached_geometry (§5.2, PR13): cheap running set of
+                    # unreached_geometry (PR13): cheap running set of
                     # every primitive that was ever the nearest hit.
                     if comp_first_np.any():
                         hit_component_ids.update(

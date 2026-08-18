@@ -1,4 +1,4 @@
-"""Round-trip fidelity tests for sequential_to_nonsequential (§5.3, PR15).
+"""Round-trip fidelity tests for sequential_to_nonsequential (PR15).
 
 For each reference Optic system, the converted NSQ scene's flux-weighted
 irradiance centroid and core spot size must agree with the sequential
@@ -212,7 +212,7 @@ class TestDoubletFidelity:
 
 class TestFidelityWithCoating:
     def test_ar_coated_singlet_flux_matches_expected_transmission(self):
-        """With AR coatings on both lens faces carried over (§4.3), the
+        """With AR coatings on both lens faces carried over, the
         detected flux must be close to (1-R1)(1-R2) of the launched flux --
         not the much larger loss a bare-Fresnel (uncoated) conversion would
         show. This is the direct test that the convert.py:187-era advice

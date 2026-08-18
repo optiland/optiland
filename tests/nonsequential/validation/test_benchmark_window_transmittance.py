@@ -1,4 +1,4 @@
-"""§6.1 -- Uncoated plane-parallel window: closed-form total transmittance.
+"""Uncoated plane-parallel window: closed-form total transmittance.
 
 For a plane-parallel plate of index n with two uncoated (bare Fresnel)
 surfaces at normal incidence, the total transmittance including *every*

@@ -1,5 +1,5 @@
-"""Tests for PR13: self-diagnosing SimulationResult (§5.2) and the
-ignored-config audit (§5.1).
+"""Tests for PR13: self-diagnosing SimulationResult and the
+ignored-config audit.
 
 Kramer Harrison, 2026
 """
@@ -49,7 +49,7 @@ from optiland.nonsequential.sources.configs import (
 )
 
 # ---------------------------------------------------------------------------
-# §5.1 -- ignored-config audit: every config dataclass field must be
+# Ignored-config audit: every config dataclass field must be
 # consumed somewhere in the live lowering path, or the audit fails.
 # ---------------------------------------------------------------------------
 
@@ -76,7 +76,7 @@ _CONFIG_CONSUMERS: list[tuple[type, list[object]]] = [
 )
 def test_every_config_field_is_consumed(config_cls, consumers):
     """Every field of a config dataclass must be read somewhere in its
-    lowering path (§5.1) -- a field that is accepted and silently ignored
+    lowering path -- a field that is accepted and silently ignored
     is exactly the D-2 class of defect (SurfaceConfig.coating was accepted
     and never read) this audit exists to catch before it ships again.
     """
@@ -188,7 +188,7 @@ class TestRayDatabaseConfigMaxRays:
     """Regression test for a defect the audit above caught live: max_rays
     was accepted by RayDatabaseConfig and never forwarded to
     RayDatabaseDetector, so the circular-buffer limit silently never took
-    effect (§5.1, PR13).
+    effect (PR13).
     """
 
     def test_max_rays_is_forwarded_and_enforced(self):
