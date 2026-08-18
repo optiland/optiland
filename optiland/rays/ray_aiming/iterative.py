@@ -36,6 +36,7 @@ def _max_abs_residual(ex: Any, ey: Any) -> float:
     finite = values[np.isfinite(values)]
     return float(finite.max()) if finite.size else float("inf")
 
+
 # Maximum number of step halvings in the per-ray backtracking line search
 # used by the Newton/Broyden core (see ``_solve_core``).
 _MAX_BACKTRACK = 8
@@ -454,14 +455,10 @@ class IterativeRayAimer(BaseRayAimer):
             ``J = [[d lx/d xi, d lx/d eta], [d ly/d xi, d ly/d eta]]``.
         """
         x1, y1, z1, L1, M1, N1 = bound.launch(xi + eps, eta)
-        r1 = self._trace_subset(
-            x1, y1, z1, L1, M1, N1, wavelengths, stop_idx, is_inf
-        )
+        r1 = self._trace_subset(x1, y1, z1, L1, M1, N1, wavelengths, stop_idx, is_inf)
         lx1, ly1 = self._get_local_stop_coords(r1, stop_idx)
         x2, y2, z2, L2, M2, N2 = bound.launch(xi, eta + eps)
-        r2 = self._trace_subset(
-            x2, y2, z2, L2, M2, N2, wavelengths, stop_idx, is_inf
-        )
+        r2 = self._trace_subset(x2, y2, z2, L2, M2, N2, wavelengths, stop_idx, is_inf)
         lx2, ly2 = self._get_local_stop_coords(r2, stop_idx)
 
         J11 = (lx1 - lx) / eps

@@ -274,8 +274,7 @@ class SurfaceGroup:
         """
         path = self.build_paraxial_path()
         rows = [
-            be.array([vertex[0], vertex[1], vertex[2]])
-            for vertex in path.vertices_gcs
+            be.array([vertex[0], vertex[1], vertex[2]]) for vertex in path.vertices_gcs
         ]
         return be.stack(rows) if rows else be.array([])
 
