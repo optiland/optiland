@@ -592,6 +592,7 @@ def _serialize_detector(name: str, detector: Any) -> dict:
             "num_pixels_y": int(detector.num_pixels_y),
             "splat": detector.splat,
             "splat_sigma": _to_float(detector.splat_sigma),
+            "absorb": bool(detector.absorb),
         }
 
     if isinstance(detector, SpectralDetector):
@@ -609,6 +610,7 @@ def _serialize_detector(name: str, detector: Any) -> dict:
             "num_bins": int(len(wl_bins) - 1),
             "splat": detector.splat,
             "splat_sigma": _to_float(detector.splat_sigma),
+            "absorb": bool(detector.absorb),
         }
 
     if isinstance(detector, FarFieldDetector):
@@ -618,6 +620,7 @@ def _serialize_detector(name: str, detector: Any) -> dict:
             "cs": cs_d,
             "num_bins_theta": int(detector.num_bins_theta),
             "num_bins_phi": int(detector.num_bins_phi),
+            "absorb": bool(detector.absorb),
         }
 
     if isinstance(detector, RayDatabaseDetector):
@@ -629,6 +632,7 @@ def _serialize_detector(name: str, detector: Any) -> dict:
             "cs": cs_d,
             "width": float(getattr(geom, "width", 10.0)),
             "height": float(getattr(geom, "height", 10.0)),
+            "absorb": bool(detector.absorb),
         }
 
     raise TypeError(
@@ -667,6 +671,7 @@ def _deserialize_detector(d: dict, scene: NSQScene) -> None:
             num_pixels_y=d.get("num_pixels_y", 256),
             splat=d.get("splat", "bilinear"),
             splat_sigma=d.get("splat_sigma", 0.5),
+            absorb=d.get("absorb", True),
         )
         scene.add_detector(name, cs, config)
 
@@ -681,6 +686,7 @@ def _deserialize_detector(d: dict, scene: NSQScene) -> None:
             num_bins=d.get("num_bins", 100),
             splat=d.get("splat", "bilinear"),
             splat_sigma=d.get("splat_sigma", 0.5),
+            absorb=d.get("absorb", True),
         )
         scene.add_detector(name, cs, config)
 
@@ -688,6 +694,7 @@ def _deserialize_detector(d: dict, scene: NSQScene) -> None:
         config = FarFieldDetectorConfig(
             num_theta=d.get("num_bins_theta", 90),
             num_phi=d.get("num_bins_phi", 360),
+            absorb=d.get("absorb", True),
         )
         scene.add_detector(name, cs, config)
 
@@ -695,6 +702,7 @@ def _deserialize_detector(d: dict, scene: NSQScene) -> None:
         config = RayDatabaseConfig(
             width=d["width"],
             height=d["height"],
+            absorb=d.get("absorb", True),
         )
         scene.add_detector(name, cs, config)
 

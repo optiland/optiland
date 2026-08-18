@@ -479,6 +479,7 @@ def _build_detector(cs: CoordinateSystem, config) -> object:
             num_pixels_y=config.num_pixels_y,
             splat=config.splat,
             splat_sigma=config.splat_sigma,
+            absorb=config.absorb,
         )
     if isinstance(config, SpectralDetectorConfig):
         wl_bins = be.linspace(config.wl_min, config.wl_max, config.num_bins + 1)
@@ -491,6 +492,7 @@ def _build_detector(cs: CoordinateSystem, config) -> object:
             wavelength_bins=wl_bins,
             splat=config.splat,
             splat_sigma=config.splat_sigma,
+            absorb=config.absorb,
         )
     if isinstance(config, FarFieldDetectorConfig):
         return FarFieldDetector(
@@ -498,6 +500,7 @@ def _build_detector(cs: CoordinateSystem, config) -> object:
             theta_max_deg=90.0,
             num_bins_theta=config.num_theta,
             num_bins_phi=config.num_phi,
+            absorb=config.absorb,
         )
     if isinstance(config, RayDatabaseConfig):
         from optiland.nonsequential.components.geometry.analytic.plane import (  # noqa: PLC0415
@@ -508,5 +511,6 @@ def _build_detector(cs: CoordinateSystem, config) -> object:
         return RayDatabaseDetector(
             cs=cs,
             geometry=geometry,
+            absorb=config.absorb,
         )
     raise TypeError(f"Unrecognised detector config type: {type(config).__name__}.")

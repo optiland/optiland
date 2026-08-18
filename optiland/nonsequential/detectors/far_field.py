@@ -45,6 +45,7 @@ class FarFieldDetector(BaseDetector):
         num_bins_phi: int,
         aperture_radius: float = 1e6,
         name: str = "",
+        absorb: bool = True,
     ) -> None:
         """Initialize FarFieldDetector.
 
@@ -55,9 +56,10 @@ class FarFieldDetector(BaseDetector):
             num_bins_phi: Number of azimuthal angle bins.
             aperture_radius: Detector aperture radius [mm] (default: very large).
             name: Optional label.
+            absorb: Whether a hit terminates the ray (default True).
         """
         geometry = FinitePlaneGeometry(aperture_radius=aperture_radius)
-        super().__init__(cs, geometry, name=name)
+        super().__init__(cs, geometry, name=name, absorb=absorb)
         self.num_bins_theta = int(num_bins_theta)
         self.num_bins_phi = int(num_bins_phi)
 

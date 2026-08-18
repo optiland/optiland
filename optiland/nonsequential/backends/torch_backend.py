@@ -26,6 +26,10 @@ from optiland.nonsequential._utils import (
     get_detector_names,
 )
 from optiland.nonsequential.backends.base import TracerBackend
+from optiland.nonsequential.detectors.dispatch import (
+    detector_absorb_mask,
+    intersect_detectors,
+)
 from optiland.nonsequential.ir.interpreter import apply_primitive_interactions
 from optiland.nonsequential.ir.lower import lower
 from optiland.nonsequential.rng import NSQRng
@@ -251,8 +255,9 @@ class TorchBackend(TracerBackend):
                         rays, scene.surfaces
                     )
 
-                    # Detector intersections. Dispatch is numpy; t stays attached.
-                    det_t_min, _det_normals, det_idx_np = self._intersect_detectors(
+                    # Detector intersections. Dispatch is numpy; t stays
+                    # attached (shared with ArrayBackend/NumpyBackend; D-10).
+                    det_t_min, _det_normals, det_idx_np = intersect_detectors(
                         rays, scene.detectors
                     )
                     det_t_min_np = to_numpy(det_t_min)
@@ -308,7 +313,10 @@ class TorchBackend(TracerBackend):
                             mask_di = be.array(mask_di_np)
                             det.record(rays, det_t_safe, mask_di)
 
-                    # Advance and kill detector-hit rays
+                    # Advance detector-hit rays. Absorbing detectors
+                    # terminate the ray; absorb=False detectors (D-10) are
+                    # transmissive: the hit is recorded (above) and the ray
+                    # continues on its unchanged direction.
                     if det_first_np.any():
                         dx_det = det_t_safe * rays.L
                         dy_det = det_t_safe * rays.M
@@ -316,8 +324,11 @@ class TorchBackend(TracerBackend):
                         rays.x = be.where(det_first, rays.x + dx_det, rays.x)
                         rays.y = be.where(det_first, rays.y + dy_det, rays.y)
                         rays.z = be.where(det_first, rays.z + dz_det, rays.z)
-                        rays.alive = rays.alive & ~det_first
                         rays.bounce = be.where(det_first, rays.bounce + 1, rays.bounce)
+
+                        absorb_np = detector_absorb_mask(det_idx_np, scene.detectors)
+                        kill_np = det_first_np & absorb_np
+                        rays.alive = rays.alive & ~be.array(kill_np)
 
                     # Apply component interactions, dispatched from the IR
                     # (ir.primitives[i].component_kind / .bsdf.kind) rather
@@ -393,7 +404,9 @@ class TorchBackend(TracerBackend):
             result = det.get_result()
             detector_results[name] = result
             if hasattr(result, "total_flux"):
-                total_flux_detected += result.total_flux
+                # IrradianceMap.total_flux may be an attached backend array
+                # (D-14); SimulationResult's aggregate stays a plain float.
+                total_flux_detected += float(to_numpy(result.total_flux))
 
         # Every launched watt ends up detected, absorbed, escaped, or killed
         # by the flux/depth cutoffs. Omitting total_flux_lost makes the metric
@@ -443,50 +456,6 @@ class TorchBackend(TracerBackend):
             trace_time_sec=t_end - t_start,
             ray_paths=ray_paths,
         )
-
-    def _intersect_detectors(
-        self,
-        rays: NSQRayBundle,
-        detectors: list,
-    ) -> tuple[object, object, np.ndarray]:
-        """Find nearest detector intersection, keeping ``t`` in the graph.
-
-        Only the *dispatch* (which detector, and whether it beats the nearest
-        component) is decided in NumPy — that choice is a discrete visibility
-        event with no gradient anyway.  The returned ``t_min`` stays attached
-        to the autograd graph, because the splatted landing position is
-        ``origin + t * direction``: detaching ``t`` drops the
-        ``direction * dt/dtheta`` term from every spatial loss.  That term is
-        negligible at normal incidence but reaches tens of percent for fast
-        systems and tilted detectors.
-
-        Args:
-            rays: Current ray bundle.
-            detectors: Scene detectors.
-
-        Returns:
-            ``(t_min, hit_normals, detector_indices)`` where ``t_min`` and
-            ``hit_normals`` are backend arrays and the indices are NumPy.
-        """
-        N = rays.num_rays
-        t_min = be.ones(N) * be.inf
-        t_min_np = np.full(N, np.inf, dtype=np.float64)
-        hit_normals = be.zeros((N, 3))
-        det_indices = np.full(N, -1, dtype=np.int32)
-
-        for i, det in enumerate(detectors):
-            t_d, normals_d, hit_d = det.intersect(rays)
-            t_d_np = to_numpy(t_d).astype(np.float64)
-            hit_d_np = to_numpy(hit_d).astype(bool)
-            better_np = hit_d_np & (t_d_np < t_min_np)
-            better = be.array(better_np)
-
-            t_min = be.where(better, t_d, t_min)
-            hit_normals = be.where(better[:, None], normals_d, hit_normals)
-            t_min_np = np.where(better_np, t_d_np, t_min_np)
-            det_indices = np.where(better_np, i, det_indices)
-
-        return t_min, hit_normals, det_indices
 
     def _ensure_torch_bundle(self, rays: NSQRayBundle) -> NSQRayBundle:
         """Convert all NSQRayBundle float arrays to torch tensors.

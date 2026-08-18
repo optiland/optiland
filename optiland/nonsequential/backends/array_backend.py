@@ -21,6 +21,10 @@ from optiland.nonsequential._utils import (
     get_detector_names,
 )
 from optiland.nonsequential.backends.base import TracerBackend
+from optiland.nonsequential.detectors.dispatch import (
+    detector_absorb_mask,
+    intersect_detectors,
+)
 from optiland.nonsequential.ir.interpreter import apply_primitive_interactions
 from optiland.nonsequential.ir.lower import lower
 
@@ -281,8 +285,8 @@ class ArrayBackend(TracerBackend):
                         rays, scene.surfaces
                     )
 
-                    # Detector intersections
-                    det_t_min, det_normals, det_idx = self._intersect_detectors(
+                    # Detector intersections (shared with TorchBackend; D-10)
+                    det_t_min, det_normals, det_idx = intersect_detectors(
                         rays, scene.detectors
                     )
 
@@ -336,7 +340,10 @@ class ArrayBackend(TracerBackend):
                             _log_hits(rays, mask_di, det_name, t_offset=det_t_safe)
                             det.record(rays, det_t_safe, mask_di)
 
-                    # Advance and kill detector-hit rays
+                    # Advance detector-hit rays. Absorbing detectors
+                    # terminate the ray; absorb=False detectors (D-10) are
+                    # transmissive: the hit is recorded (above) and the ray
+                    # continues on its unchanged direction.
                     if det_first.any():
                         dx = det_t_safe * rays.L
                         dy = det_t_safe * rays.M
@@ -344,8 +351,11 @@ class ArrayBackend(TracerBackend):
                         rays.x = be.where(det_first, rays.x + dx, rays.x)
                         rays.y = be.where(det_first, rays.y + dy, rays.y)
                         rays.z = be.where(det_first, rays.z + dz, rays.z)
-                        rays.alive = rays.alive & ~det_first
                         rays.bounce = be.where(det_first, rays.bounce + 1, rays.bounce)
+
+                        absorb_np = detector_absorb_mask(det_idx, scene.detectors)
+                        kill_np = np.asarray(det_first) & absorb_np
+                        rays.alive = rays.alive & ~be.array(kill_np)
 
                     # Apply component interactions, dispatched from the IR
                     # (ir.primitives[i].component_kind / .bsdf.kind) rather
@@ -431,7 +441,9 @@ class ArrayBackend(TracerBackend):
             result = det.get_result()
             detector_results[name] = result
             if hasattr(result, "total_flux"):
-                total_flux_detected += result.total_flux
+                # IrradianceMap.total_flux may be an attached backend array
+                # (D-14); SimulationResult's aggregate stays a plain float.
+                total_flux_detected += float(to_numpy(result.total_flux))
 
         # Every launched watt ends up detected, absorbed, escaped, or killed
         # by the flux/depth cutoffs. Omitting total_flux_lost makes the metric
@@ -477,34 +489,6 @@ class ArrayBackend(TracerBackend):
             trace_time_sec=t_end - t_start,
             ray_paths=ray_paths,
         )
-
-    def _intersect_detectors(
-        self,
-        rays: NSQRayBundle,
-        detectors: list,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Find nearest detector intersection for each ray.
-
-        Returns:
-            ``(t_min, hit_normals, detector_indices)``
-        """
-        N = rays.num_rays
-        t_min = np.full(N, np.inf, dtype=np.float64)
-        hit_normals = np.zeros((N, 3), dtype=np.float64)
-        det_indices = np.full(N, -1, dtype=np.int32)
-
-        for i, det in enumerate(detectors):
-            t_d, normals_d, hit_d = det.intersect(rays)
-            # Convert to numpy for the index-comparison logic (no grad needed)
-            t_d_np = to_numpy(t_d).astype(np.float64)
-            normals_d_np = to_numpy(normals_d).astype(np.float64)
-            hit_d_np = to_numpy(hit_d).astype(bool)
-            better = hit_d_np & (t_d_np < t_min)
-            t_min = np.where(better, t_d_np, t_min)
-            hit_normals = np.where(better[:, None], normals_d_np, hit_normals)
-            det_indices = np.where(better, i, det_indices)
-
-        return t_min, hit_normals, det_indices
 
     def _to_numpy(self, arr: object) -> np.ndarray:
         """Backward-compatible alias."""

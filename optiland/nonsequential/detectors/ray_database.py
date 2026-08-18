@@ -43,6 +43,7 @@ class RayDatabaseDetector(BaseDetector):
         store_rays: bool = True,
         max_rays: int | None = None,
         name: str = "",
+        absorb: bool = True,
     ) -> None:
         """Initialize RayDatabaseDetector.
 
@@ -52,8 +53,9 @@ class RayDatabaseDetector(BaseDetector):
             store_rays: If True, store per-ray phase-space data.
             max_rays: Maximum rays to store (circular buffer). None = unlimited.
             name: Optional label.
+            absorb: Whether a hit terminates the ray (default True).
         """
-        super().__init__(cs, geometry, name=name)
+        super().__init__(cs, geometry, name=name, absorb=absorb)
         self.store_rays = store_rays
         self.max_rays = max_rays
 

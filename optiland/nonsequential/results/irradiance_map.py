@@ -24,7 +24,11 @@ class IrradianceMap:
         irradiance: Irradiance [W/mm^2], shape (ny, nx), as a NumPy array.
         x_coords: Bin centre x-coordinates [mm], shape (nx,).
         y_coords: Bin centre y-coordinates [mm], shape (ny,).
-        total_flux: Total flux recorded [W].
+        total_flux: Total flux recorded [W]. Attached to the active
+            backend's autograd graph (D-14) -- a torch.Tensor when the
+            underlying data is, so ``result.total_flux.backward()``
+            propagates a gradient. Use :attr:`total_flux_float` for
+            printing or any consumer that expects a plain Python float.
         num_rays_hit: Number of rays recorded on this detector.
     """
 
@@ -33,7 +37,7 @@ class IrradianceMap:
         irradiance: np.ndarray,
         x_coords: np.ndarray,
         y_coords: np.ndarray,
-        total_flux: float,
+        total_flux,
         num_rays_hit: int,
         data=None,
     ) -> None:
@@ -43,7 +47,8 @@ class IrradianceMap:
             irradiance: 2D irradiance array [W/mm^2], shape (ny, nx).
             x_coords: Bin centre x-coordinates [mm], shape (nx,).
             y_coords: Bin centre y-coordinates [mm], shape (ny,).
-            total_flux: Total detected flux [W].
+            total_flux: Total detected flux [W]. May be a plain float or a
+                backend array/tensor; kept attached if the latter (D-14).
             num_rays_hit: Number of rays that contributed.
             data: Flat accumulated flux be-array (shape ny*nx), optional.
                 When provided, this is the attached differentiable buffer
@@ -53,8 +58,20 @@ class IrradianceMap:
         self.irradiance = irradiance
         self.x_coords = x_coords
         self.y_coords = y_coords
-        self.total_flux = float(total_flux)
+        self.total_flux = total_flux
         self.num_rays_hit = int(num_rays_hit)
+
+    @property
+    def total_flux_float(self) -> float:
+        """Total detected flux [W] as a plain, detached Python float.
+
+        Use this for printing, formatting, or any code path that cannot
+        accept a gradient-carrying tensor; :attr:`total_flux` stays attached
+        for differentiation.
+        """
+        from optiland.backend.utils import to_numpy  # noqa: PLC0415
+
+        return float(to_numpy(self.total_flux))
 
     def plot(self, ax=None, **kwargs):
         """Plot the irradiance map.
@@ -90,7 +107,7 @@ class IrradianceMap:
         ax.set_xlabel("x [mm]")
         ax.set_ylabel("y [mm]")
         ax.set_title(
-            f"Irradiance Map -- {self.num_rays_hit} rays, {self.total_flux:.3g} W"
+            f"Irradiance Map -- {self.num_rays_hit} rays, {self.total_flux_float:.3g} W"
         )
         return fig
 
@@ -105,7 +122,7 @@ class IrradianceMap:
             irradiance=self.irradiance,
             x_coords=self.x_coords,
             y_coords=self.y_coords,
-            total_flux=self.total_flux,
+            total_flux=self.total_flux_float,
             num_rays_hit=self.num_rays_hit,
         )
 

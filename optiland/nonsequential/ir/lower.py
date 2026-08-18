@@ -448,8 +448,8 @@ def _lower_detector(idx: int, detector: object) -> SensorIR:
         kind=kind,
         to_world=_to_world_matrix(detector.cs),
         params=params,
-        primitive_id=None,  # unified with primitives in PR10 (D-10)
-        absorb=True,
+        primitive_id=None,  # still not literally in SceneIR.primitives
+        absorb=detector.absorb,
         name=getattr(detector, "name", "") or f"detector_{idx}",
     )
 

@@ -56,6 +56,7 @@ class SpectralDetector(BaseDetector):
         splat: Literal["bilinear", "gaussian", "hard"] = "bilinear",
         splat_sigma: float = 0.5,
         name: str = "",
+        absorb: bool = True,
     ) -> None:
         """Initialize SpectralDetector.
 
@@ -72,6 +73,7 @@ class SpectralDetector(BaseDetector):
             splat_sigma: Gaussian splat sigma in pixels (reserved for future
                 use).
             name: Optional label.
+            absorb: Whether a hit terminates the ray (default True).
 
         Raises:
             ValueError: If ``wavelength_bins`` are not plausibly in µm. Bin
@@ -80,7 +82,7 @@ class SpectralDetector(BaseDetector):
                 first bin.
         """
         geometry = FinitePlaneGeometry(width=width, height=height)
-        super().__init__(cs, geometry, name=name)
+        super().__init__(cs, geometry, name=name, absorb=absorb)
         _reason = "it accumulates into a NumPy histogram"
         self.width = as_detached_param(width, "width", "SpectralDetector", _reason)
         self.height = as_detached_param(height, "height", "SpectralDetector", _reason)

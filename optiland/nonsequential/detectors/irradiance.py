@@ -52,6 +52,7 @@ class IrradianceDetector(BaseDetector):
         splat: Literal["bilinear", "gaussian", "hard"] = "bilinear",
         splat_sigma: float = 0.5,
         name: str = "",
+        absorb: bool = True,
     ) -> None:
         """Initialize IrradianceDetector.
 
@@ -62,14 +63,16 @@ class IrradianceDetector(BaseDetector):
             num_pixels_x: Number of pixels along x.
             num_pixels_y: Number of pixels along y.
             splat: Splatting mode. 'bilinear' (differentiable, default),
-                'hard' (forward-only histogram), or 'gaussian' (falls back
-                to bilinear; full Gaussian splat is a TODO).
+                'hard' (forward-only histogram), or 'gaussian' (a true
+                Gaussian kernel of width ``splat_sigma``, truncated and
+                renormalised -- see :meth:`_record_gaussian`).
             splat_sigma: Gaussian sigma in pixels. Only used when
                 ``splat='gaussian'``.
             name: Optional label.
+            absorb: Whether a hit terminates the ray (default True).
         """
         geometry = FinitePlaneGeometry(width=width, height=height)
-        super().__init__(cs, geometry, name=name)
+        super().__init__(cs, geometry, name=name, absorb=absorb)
         self.width = as_param(width)
         self.height = as_param(height)
         self.num_pixels_x = int(num_pixels_x)
@@ -129,9 +132,9 @@ class IrradianceDetector(BaseDetector):
 
         if self.splat == "hard":
             self._record_hard(hx_l, hy_l, flux_masked, hit_mask_np, nx, ny)
+        elif self.splat == "gaussian":
+            self._record_gaussian(hx_l, hy_l, flux_masked, nx, ny, dx, dy)
         else:
-            # 'bilinear' and 'gaussian' both use bilinear splat.
-            # Full Gaussian splat (spreading beyond 4 neighbours) is TODO.
             self._record_bilinear(hx_l, hy_l, flux_masked, hit_mask_np, nx, ny, dx, dy)
 
         self._num_rays_hit += int(hit_mask_np.sum())
@@ -234,21 +237,102 @@ class IrradianceDetector(BaseDetector):
             flat_np = (iy_np * nx + ix_np).astype(np.int64)
 
             contrib = flux_masked * wx * wy  # attached
+            self._data = be.index_add(self._data, 0, self._flat_index(flat_np), contrib)
 
-            # Use the index as-is for NumPy; wrap in a LongTensor for Torch.
-            try:
-                import torch  # noqa: PLC0415
+    def _record_gaussian(
+        self,
+        hx_l,
+        hy_l,
+        flux_masked,
+        nx: int,
+        ny: int,
+        dx: float,
+        dy: float,
+    ) -> None:
+        """Gaussian splat — differentiable, energy-conserving (D-11).
 
-                if isinstance(self._data, torch.Tensor):
-                    flat_idx = torch.from_numpy(flat_np).to(
-                        device=self._data.device, dtype=torch.long
-                    )
-                else:
-                    flat_idx = flat_np
-            except ImportError:
-                flat_idx = flat_np
+        Distributes each ray's flux over a ``(2*radius+1) x (2*radius+1)``
+        neighbourhood using a separable Gaussian kernel of width
+        ``self.splat_sigma`` pixels, truncated at ``radius = ceil(3 *
+        splat_sigma)`` pixels. The truncated kernel is renormalised per ray
+        (weights sum to 1 over exactly the pixels actually touched), so
+        truncating the tail never loses energy -- an untruncated Gaussian
+        would only asymptotically conserve flux, and a non-renormalised
+        truncation would be a new flux-truncation bias of exactly the kind
+        D-9 exists to avoid.
 
-            self._data = be.index_add(self._data, 0, flat_idx, contrib)
+        Args:
+            hx_l: Local x coordinates, be-array shape (N,).
+            hy_l: Local y coordinates, be-array shape (N,).
+            flux_masked: Per-ray flux (non-hit rays zeroed), be-array.
+            nx: Number of pixels along x.
+            ny: Number of pixels along y.
+            dx: Pixel width [mm].
+            dy: Pixel height [mm].
+        """
+        sigma = self.splat_sigma
+        if sigma <= 0.0:
+            hit_mask_np = to_numpy(flux_masked) != 0.0
+            self._record_hard(hx_l, hy_l, flux_masked, hit_mask_np, nx, ny)
+            return
+
+        radius = max(1, int(np.ceil(3.0 * sigma)))
+
+        px = (hx_l + self.width / 2.0) / dx - 0.5
+        py = (hy_l + self.height / 2.0) / dy - 0.5
+        px_np = to_numpy(px)
+        py_np = to_numpy(py)
+        ix0_np = np.floor(px_np).astype(np.int64)
+        iy0_np = np.floor(py_np).astype(np.int64)
+
+        offsets = range(-radius, radius + 1)
+        gx: dict[int, object] = {}
+        gy: dict[int, object] = {}
+        sx = be.zeros_like(px)
+        sy = be.zeros_like(py)
+        for d in offsets:
+            ddx = be.array((ix0_np + d).astype(np.float64)) - px
+            wx = be.exp(-0.5 * (ddx / sigma) ** 2)
+            gx[d] = wx
+            sx = sx + wx
+
+            ddy = be.array((iy0_np + d).astype(np.float64)) - py
+            wy = be.exp(-0.5 * (ddy / sigma) ** 2)
+            gy[d] = wy
+            sy = sy + wy
+
+        norm = sx * sy  # separable kernel: total weight = Sx * Sy
+        for dix in offsets:
+            ix_np = np.clip(ix0_np + dix, 0, nx - 1)
+            for diy in offsets:
+                iy_np = np.clip(iy0_np + diy, 0, ny - 1)
+                flat_np = (iy_np * nx + ix_np).astype(np.int64)
+                weight = (gx[dix] * gy[diy]) / norm
+                contrib = flux_masked * weight
+                self._data = be.index_add(
+                    self._data, 0, self._flat_index(flat_np), contrib
+                )
+
+    def _flat_index(self, flat_np: np.ndarray):
+        """Convert a flat NumPy pixel-index array to the active backend's format.
+
+        Args:
+            flat_np: Flat pixel indices, shape (N,), int64.
+
+        Returns:
+            ``flat_np`` unchanged for NumPy; a ``LongTensor`` on the same
+            device as ``self._data`` for Torch.
+        """
+        try:
+            import torch  # noqa: PLC0415
+
+            if isinstance(self._data, torch.Tensor):
+                return torch.from_numpy(flat_np).to(
+                    device=self._data.device, dtype=torch.long
+                )
+        except ImportError:
+            pass
+        return flat_np
 
     def get_result(self) -> IrradianceMap:
         """Return the accumulated irradiance map.
@@ -271,7 +355,10 @@ class IrradianceDetector(BaseDetector):
             irradiance=to_numpy(data_2d),
             x_coords=x_centres,
             y_coords=y_centres,
-            total_flux=float(to_numpy(self._data).sum()),
+            # Attached (D-14): be.sum keeps this on the autograd graph, so
+            # `result.detectors["D1"].total_flux.backward()` carries a
+            # gradient. Use `.total_flux_float` for printing/formatting.
+            total_flux=be.sum(self._data),
             num_rays_hit=self._num_rays_hit,
         )
 

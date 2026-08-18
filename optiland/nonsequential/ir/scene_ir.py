@@ -139,12 +139,19 @@ class SensorIR:
         kind: Detector family; ``params`` is interpreted according to it.
         to_world: ``(4, 4)`` homogeneous local -> global transform.
         params: Kind-specific parameters (extents, pixel counts, splat, ...).
-        primitive_id: Index into ``SceneIR.primitives``, once detectors join
-            the unified intersection pass (D-10, PR10). Always ``None``
-            until then -- detectors are still intersected by the backends'
-            separate ``_intersect_detectors`` dispatch.
-        absorb: Whether a hit terminates the ray (``False`` => transmissive,
-            mid-system sampling). Reserved for PR10; always ``True`` for now.
+        primitive_id: Index into ``SceneIR.primitives``, reserved for a
+            future unification of detectors into the primitive list itself.
+            Always ``None`` -- detectors are dispatched by
+            :mod:`optiland.nonsequential.detectors.dispatch`, a single
+            nearest-hit routine shared by both reference backends (PR10
+            deleted the two near-duplicate ``_intersect_detectors``
+            implementations that previously lived on
+            ``ArrayBackend``/``TorchBackend`` and had diverged in their
+            grad-attachment semantics; D-10).
+        absorb: Whether a hit terminates the ray. ``False`` => transmissive,
+            mid-system sampling: the hit is recorded and the ray continues
+            unchanged. Implemented as of PR10; mirrors the live detector's
+            ``BaseDetector.absorb``.
         name: Human-readable label.
     """
 

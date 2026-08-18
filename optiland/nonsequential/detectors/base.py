@@ -25,16 +25,22 @@ class BaseDetector(ABC):
     Detectors record ray data at a surface. They intersect rays (via their
     geometry) and accumulate hit data across simulation batches.
 
-    Detectors are **absorbing**: a ray that reaches a detector is recorded
-    and then terminated. Several detectors may share one scene, but only the
-    first one along a given ray's path sees it, so stacking detectors down a
-    beam records the beam at the nearest plane and nothing beyond it. To
-    profile a beam at several planes, trace one scene per plane.
+    Detectors are **absorbing by default**: a ray that reaches a detector is
+    recorded and then terminated. Setting ``absorb=False`` records the ray
+    but lets it continue unchanged, so a detector can be tilted into a
+    converging beam to sample it mid-system without terminating it (D-10).
+    Several detectors may share one scene; among the detectors a ray would
+    still reach, only the nearest one sees it, so stacking *absorbing*
+    detectors down a beam records the beam at the nearest plane and nothing
+    beyond it -- use ``absorb=False`` (or trace one scene per plane) to
+    profile a beam at several planes.
 
     Attributes:
         cs: Coordinate system defining detector position and orientation.
         geometry: Surface geometry that defines the detector area.
         name: Optional human-readable label.
+        absorb: Whether a hit terminates the ray. False => the ray is
+            recorded and passes through unaffected.
     """
 
     def __init__(
@@ -42,6 +48,7 @@ class BaseDetector(ABC):
         cs: CoordinateSystem,
         geometry: ComponentGeometry,
         name: str = "",
+        absorb: bool = True,
     ) -> None:
         """Initialize BaseDetector.
 
@@ -49,10 +56,14 @@ class BaseDetector(ABC):
             cs: Coordinate system.
             geometry: Surface geometry.
             name: Optional label.
+            absorb: Whether a hit terminates the ray (default True).
+                False makes the detector transmissive: the hit is recorded
+                and the ray continues with its direction unchanged.
         """
         self.cs = cs
         self.geometry = geometry
         self.name = name
+        self.absorb = bool(absorb)
 
     def intersect(
         self, rays: NSQRayBundle
