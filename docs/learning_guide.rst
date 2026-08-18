@@ -121,6 +121,24 @@ These examples demonstrate how Optiland can be used in conjunction with machine 
    Tutorial 9f: Predicting Physical Lens Misalignments from Optical Spot Diagrams <examples/Tutorial_9f_Predicting_Physical_Lens_Misalignments_from_Spot_Diagrams>
 
 
+10. Non-Sequential & Illumination
+---------------------------------
+
+Optiland's differentiable **non-sequential (NSQ)** engine handles illumination design,
+stray-light and ghost analysis, and non-imaging optics - where light propagates freely
+through a 3-D scene rather than a fixed surface sequence. Start with the numbered on-ramp
+below, then continue into the 11-notebook gallery deep dive (sources, components,
+detectors, scattering, diagnostics, multi-source illumination, stray light, reflective
+systems, advanced topics, and differentiable optimization).
+
+.. toctree::
+   :maxdepth: 1
+
+   Tutorial 10a: Non-Sequential & Illumination <examples/Tutorial_10a_Non_Sequential_and_Illumination>
+
+* :ref:`NSQ gallery deep dive (notebooks 01-11) <gallery_nonsequential>`
+* :ref:`NSQ Limitations & Roadmap <nsq_limitations_and_roadmap>`
+
 Community Resources
 --------------------
 

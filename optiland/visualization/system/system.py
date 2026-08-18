@@ -145,40 +145,25 @@ class OpticalSystem:
         lens_surfaces = []
 
         for k, surf in enumerate(self.optic.surfaces):
-            # Get the surface extent
             extent = self.rays.r_extent[k]
 
-            # Object surface
-            if k == 0:
-                if not surf.is_infinite:
-                    self._add_component("surface", surf, extent)
+            # Object surface at infinity: nothing to draw
+            if k == 0 and surf.is_infinite:
+                continue
 
-            # Image surface or paraxial surface
-            elif k == num_surf - 1 or surf.surface_type == "paraxial":
+            # Object, image, or paraxial surface
+            if k == 0 or k == num_surf - 1 or surf.surface_type == "paraxial":
                 self._add_component("surface", surf, extent)
 
             # Surface is a mirror
             elif surf.interaction_model.is_reflective:
-                if lens_surfaces:  # Second surface mirror (lens + mirror)
-                    surface = self._get_lens_surface(surf, extent)
-                    lens_surfaces.append(surface)
-                    self._add_component("lens", lens_surfaces)
-                    lens_surfaces = []
-                else:
-                    self._add_component("mirror", surf, extent)
+                lens_surfaces = self._add_mirror_component(surf, extent, lens_surfaces)
 
-            # Front surface of a lens
-            elif n[k] > 1:
-                surface = self._get_lens_surface(surf, extent)
-                lens_surfaces.append(surface)
-
-            # Back surface of a lens
-            elif n[k] == 1 and n[k - 1] > 1 and lens_surfaces:
-                surface = self._get_lens_surface(surf, extent)
-                lens_surfaces.append(surface)
-                self._add_component("lens", lens_surfaces)
-
-                lens_surfaces = []
+            # Front or back surface of a lens
+            elif n[k] > 1 or (n[k] == 1 and n[k - 1] > 1 and lens_surfaces):
+                lens_surfaces = self._add_lens_edge_component(
+                    surf, extent, n[k], lens_surfaces
+                )
 
             # Standalone phase surface
             elif surf.interaction_model.interaction_type == "phase":
@@ -188,6 +173,31 @@ class OpticalSystem:
         if lens_surfaces:
             self._add_component("lens", lens_surfaces)
 
+    def _add_mirror_component(self, surf, extent, lens_surfaces: list) -> list:
+        """Add a standalone mirror, or close out a second-surface mirror lens.
+
+        Returns the (possibly reset) `lens_surfaces` accumulator.
+        """
+        if lens_surfaces:  # Second surface mirror (lens + mirror)
+            lens_surfaces.append(self._get_lens_surface(surf, extent))
+            self._add_component("lens", lens_surfaces)
+            return []
+        self._add_component("mirror", surf, extent)
+        return lens_surfaces
+
+    def _add_lens_edge_component(
+        self, surf, extent, n_k: float, lens_surfaces: list
+    ) -> list:
+        """Append a front or back lens surface; close out the lens on the back one.
+
+        Returns the (possibly reset) `lens_surfaces` accumulator.
+        """
+        lens_surfaces.append(self._get_lens_surface(surf, extent))
+        if n_k == 1:  # back surface: n drops back to 1, closing out the lens
+            self._add_component("lens", lens_surfaces)
+            return []
+        return lens_surfaces
+
     def _add_component(self, component_name, *args):
         """Adds a component to the list of components."""
         if component_name in _CUSTOM_RENDERER_REGISTRY:
@@ -196,16 +206,117 @@ class OpticalSystem:
             self.components.append(
                 _CustomRendererAdapter(renderer, component_data, self.projection)
             )
-        elif component_name in self.component_registry:
+            return
+        if component_name in self.component_registry:
             component_class = self.component_registry[component_name][self.projection]
             self.components.append(component_class(*args))
-        else:
-            raise ValueError(f"Component {component_name} not found in registry.")
+            return
+        raise ValueError(f"Component {component_name} not found in registry.")
 
     def _get_lens_surface(self, surface, *args):
         """Gets the lens surface based on the projection type."""
         surface_class = self.component_registry["surface"][self.projection]
         return surface_class(surface, *args)
+
+    @staticmethod
+    def _is_lens_surface(n, idx: int) -> bool:
+        if idx > 0:
+            return n[idx] > 1 or (n[idx] == 1 and n[idx - 1] > 1)
+        return n[idx] > 1
+
+    def _aperture_indicator_extent(self, surface, idx: int, n):
+        """The (x_min, x_max, y_min, y_max) box for this surface's aperture
+        indicator, or None if this surface shouldn't get one at all.
+
+        Lens surfaces are skipped unless they're the stop, and non-stop
+        surfaces without an aperture are skipped too.
+        """
+        if self._is_lens_surface(n, idx) and not surface.is_stop:
+            return None
+        if surface.aperture is None and not surface.is_stop:
+            return None
+        return self._aperture_extent(surface, idx)
+
+    def _aperture_extent(self, surface, idx: int):
+        """The (x_min, x_max, y_min, y_max) box to draw this surface's
+        aperture indicator in, or None if there's nothing to draw.
+        """
+        if surface.aperture is not None:
+            return surface.aperture.extent
+
+        r = self._aperture_radius(surface, idx)
+        if r is None:
+            return None
+        return -r, r, -r, r
+
+    def _aperture_radius(self, surface, idx: int) -> float | None:
+        """The isotropic radius to draw for a circular aperture indicator
+        (semi-aperture, float-by-stop-size, or ray extent at the stop), or
+        None if none applies.
+        """
+        if surface.semi_aperture is not None:
+            return surface.semi_aperture
+        if (
+            surface.is_stop
+            and self.optic.aperture is not None
+            and self.optic.aperture.ap_type == "float_by_stop_size"
+        ):
+            return 0.5 * self.optic.aperture.value
+        if surface.is_stop and self.rays is not None:
+            r = be.to_numpy(self.rays.r_extent[idx]).item()
+            return r if r > 0 else None
+        return None
+
+    @staticmethod
+    def _local_aperture_coords(projection: str, extent: tuple):
+        # Only the axis actually shown in this projection is swept between
+        # its aperture bounds; the other is held at 0 (its axis-of-symmetry
+        # value) rather than paired corner-to-corner, which would otherwise
+        # mix in the wrong sag contribution for offset apertures.
+        x_min, x_max, y_min, y_max = extent
+        if projection == "XZ":
+            return be.array([x_min, x_max]), be.array([0.0, 0.0])
+        return be.array([0.0, 0.0]), be.array([y_min, y_max])  # YZ
+
+    @staticmethod
+    def _aperture_indicator_globals(surface, projection, x_local, y_local):
+        """Sag-projected global (z, in-plane) coordinates of an aperture
+        indicator's two endpoints.
+
+        The sag is evaluated at each point (instead of assuming z=0) so the
+        indicator line follows the true, possibly-tilted surface instead of
+        a flat plane through the vertex. Apertures with an unbounded extent
+        (e.g. an annular obstruction defined with r_max = inf) have no
+        well-defined sag at their outer edge; fall back to the vertex plane
+        there rather than evaluating sag() out of its domain.
+        """
+        finite = be.isfinite(x_local) & be.isfinite(y_local)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            z_local = be.where(finite, surface.geometry.sag(x_local, y_local), 0.0)
+        x_global, y_global, z_global = transform(
+            x_local, y_local, z_local, surface, is_global=False
+        )
+        axis_vals = x_global if projection == "XZ" else y_global
+        return be.to_numpy(z_global), be.to_numpy(axis_vals)
+
+    @staticmethod
+    def _draw_aperture_indicator(ax, z_global, axis_vals, facecolor: str):
+        (line,) = ax.plot(z_global, axis_vals, color="black", linewidth=0.3)
+
+        eps = 1e-6
+        arrowprops = {"arrowstyle": "-|>", "facecolor": facecolor, "linewidth": 0}
+        for z_val, axis_val, sign in (
+            (z_global[1], axis_vals[1], 1),  # top
+            (z_global[0], axis_vals[0], -1),  # bottom
+        ):
+            ax.annotate(
+                "",
+                xy=(z_val, axis_val),
+                xytext=(z_val, axis_val + sign * eps),
+                arrowprops=arrowprops,
+            )
+        return line
 
     def _plot_apertures(self, ax, projection="YZ"):
         if projection == "XY":
@@ -219,90 +330,17 @@ class OpticalSystem:
         artists = {}
         n = self.optic.surfaces.n(self.optic.primary_wavelength)
         for idx, surface in enumerate(self.optic.surfaces):
-            if idx > 0:
-                is_lens_surface = n[idx] > 1 or (n[idx] == 1 and n[idx - 1] > 1)
-            else:
-                is_lens_surface = n[idx] > 1
-            if is_lens_surface and not surface.is_stop:
-                continue
-            # Skip surfaces without apertures (unless stop)
-            if surface.aperture is None and not surface.is_stop:
+            extent = self._aperture_indicator_extent(surface, idx, n)
+            if extent is None:
                 continue
 
-            # Determine aperture extent
-            if surface.aperture is not None:
-                x_min, x_max, y_min, y_max = surface.aperture.extent
-            elif surface.semi_aperture is not None:
-                r = surface.semi_aperture
-                x_min, x_max, y_min, y_max = -r, r, -r, r
-            elif (
-                surface.is_stop
-                and self.optic.aperture is not None
-                and self.optic.aperture.ap_type == "float_by_stop_size"
-            ):
-                r = 0.5 * self.optic.aperture.value
-                x_min, x_max, y_min, y_max = -r, r, -r, r
-            elif surface.is_stop and self.rays is not None:
-                r = be.to_numpy(self.rays.r_extent[idx]).item()
-                if r <= 0:
-                    continue
-                x_min, x_max, y_min, y_max = -r, r, -r, r
-            else:
-                continue
-
-            # Define local coordinates based on projection. Only the axis
-            # actually shown in this projection is swept between its aperture
-            # bounds; the other is held at 0 (its axis-of-symmetry value)
-            # rather than paired corner-to-corner, which would otherwise mix
-            # in the wrong sag contribution for offset apertures. The sag is
-            # evaluated at each point (instead of assuming z=0) so the
-            # indicator line follows the true, possibly-tilted surface
-            # instead of a flat plane through the vertex.
-            if projection == "XZ":
-                x_local = be.array([x_min, x_max])
-                y_local = be.array([0.0, 0.0])
-            else:  # YZ
-                x_local = be.array([0.0, 0.0])
-                y_local = be.array([y_min, y_max])
-            # Apertures with an unbounded extent (e.g. an annular
-            # obstruction defined with r_max = inf) have no well-defined
-            # sag at their outer edge; fall back to the vertex plane there
-            # rather than evaluating sag() out of its domain.
-            finite = be.isfinite(x_local) & be.isfinite(y_local)
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                z_local = be.where(finite, surface.geometry.sag(x_local, y_local), 0.0)
-            x_global, y_global, z_global = transform(
-                x_local, y_local, z_local, surface, is_global=False
+            x_local, y_local = self._local_aperture_coords(projection, extent)
+            z_global, axis_vals = self._aperture_indicator_globals(
+                surface, projection, x_local, y_local
             )
-            x_global = be.to_numpy(x_global)
-            y_global = be.to_numpy(y_global)
-            z_global = be.to_numpy(z_global)
 
-            # Draw line for aperture edge
-            axis_vals = x_global if projection == "XZ" else y_global
-            (line,) = ax.plot(
-                z_global,
-                axis_vals,
-                color="black",
-                linewidth=0.3,
-            )
-            artists[line] = surface
-
-            # Add arrows to indicate aperture extent
-            eps = 1e-6
             facecolor = stop_color if surface.is_stop else aperture_color
-            arrowprops = {"arrowstyle": "-|>", "facecolor": facecolor, "linewidth": 0}
-            axis_vals = x_global if projection == "XZ" else y_global
-            for z_val, axis_val, sign in (
-                (z_global[1], axis_vals[1], 1),  # top
-                (z_global[0], axis_vals[0], -1),  # bottom
-            ):
-                ax.annotate(
-                    "",
-                    xy=(z_val, axis_val),
-                    xytext=(z_val, axis_val + sign * eps),
-                    arrowprops=arrowprops,
-                )
+            line = self._draw_aperture_indicator(ax, z_global, axis_vals, facecolor)
+            artists[line] = surface
 
         return artists

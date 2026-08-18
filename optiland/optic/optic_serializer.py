@@ -53,6 +53,12 @@ class OpticSerializer:
 
         data["wavelengths"]["polarization"] = optic.polarization
         data["ray_tracer"] = {"ray_aiming_config": optic.ray_tracer.ray_aiming_config}
+
+        if getattr(optic, "sequences", None):
+            data["sequences"] = {
+                name: seq.raw_steps for name, seq in optic.sequences.items()
+            }
+
         return data
 
     @classmethod
@@ -101,5 +107,8 @@ class OpticSerializer:
             optic.ray_tracer.ray_aiming_config = data["ray_tracer"].get(
                 "ray_aiming_config", optic.ray_tracer.ray_aiming_config
             )
+
+        for name, steps in data.get("sequences", {}).items():
+            optic.add_sequence(name, steps)
 
         return optic

@@ -101,6 +101,11 @@ class CreationMixin:
             elif isinstance(x[0], np.ndarray):
                 x = np.array(x)
 
+        # Preserve bool dtype so torch.where / logical ops receive BoolTensors.
+        # All other dtypes are cast to the backend's float precision.
+        if isinstance(x, np.ndarray) and x.dtype == np.bool_:
+            return torch.tensor(x, device=self._device(), dtype=torch.bool)
+
         return torch.tensor(
             x,
             device=self._device(),

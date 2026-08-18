@@ -19,3 +19,4 @@ sg_execution_times.rst
 .qlty/
 .claude/
 scratch/
+**/*.doit.db

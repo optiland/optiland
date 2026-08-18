@@ -54,5 +54,11 @@ autodoc_default_options = {
     "inherited-members": True,
 }
 
+# Render Google-style ``Attributes:`` sections as inline ``:ivar:`` fields rather
+# than separate ``.. attribute::`` object descriptions. This avoids "duplicate
+# object description" warnings for dataclasses whose fields are documented both
+# by the docstring Attributes section and by autodoc's member enumeration.
+napoleon_use_ivar = True
+
 # Jupyterlite configuration
 jupyterlite_bind_ipynb_suffix = False
