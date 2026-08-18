@@ -531,6 +531,11 @@ def _build_detector(cs: CoordinateSystem, config) -> object:
         return RayDatabaseDetector(
             cs=cs,
             geometry=geometry,
+            # 0 ("unlimited", the config default) maps to RayDatabaseDetector's
+            # own None-means-unlimited convention (§5.1 audit, PR13: this was
+            # previously accepted and silently dropped -- the circular-buffer
+            # limit never took effect).
+            max_rays=config.max_rays if config.max_rays > 0 else None,
             absorb=config.absorb,
         )
     raise TypeError(f"Unrecognised detector config type: {type(config).__name__}.")

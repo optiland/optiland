@@ -25,6 +25,7 @@ from optiland.nonsequential.detectors.dispatch import (
     detector_absorb_mask,
     intersect_detectors,
 )
+from optiland.nonsequential.diagnostics import build_diagnostics
 from optiland.nonsequential.ir.interpreter import apply_primitive_interactions
 from optiland.nonsequential.ir.lower import lower
 from optiland.nonsequential.path_recording import (  # noqa: F401
@@ -181,8 +182,15 @@ class ArrayBackend(TracerBackend):
         num_rays_flux_killed = 0
         num_rays_depth_killed = 0
         total_flux_escaped = 0.0
-        total_flux_lost = 0.0
         total_flux_bulk_absorbed = 0.0
+        # Tracked separately for Diagnostics (§5.2, PR13): depth truncation
+        # is an inherent, reported bias, while RR/split-budget culling is
+        # unbiased in expectation -- conflating them into one total_flux_lost
+        # would hide which mechanism a large loss actually came from.
+        total_flux_depth_killed = 0.0
+        total_flux_rr_killed = 0.0
+        hit_component_ids: set[int] = set()
+        split_budget_saturated = False
 
         # Distribute ray budget across sources proportional to flux
         rays_per_source = distribute_ray_budget(
@@ -249,6 +257,13 @@ class ArrayBackend(TracerBackend):
 
                     det_first = any_det_hit & (~comp_closer | ~any_comp_hit)
                     comp_first = any_comp_hit & (~det_first)
+
+                    # unreached_geometry (§5.2, PR13): cheap running set of
+                    # every primitive that was ever the nearest hit.
+                    if comp_first.any():
+                        hit_component_ids.update(
+                            np.unique(comp_idx[comp_first]).tolist()
+                        )
 
                     # Rays that reach no detector carry t = inf. Zero those
                     # before multiplying by a direction: inf * 0 is NaN, which
@@ -360,7 +375,7 @@ class ArrayBackend(TracerBackend):
                     newly_depth_killed = rays.alive & ~alive_depth
                     if newly_depth_killed.any():
                         num_rays_depth_killed += int(newly_depth_killed.sum())
-                        total_flux_lost += float(
+                        total_flux_depth_killed += float(
                             to_numpy(rays.flux[newly_depth_killed]).sum()
                         )
                         path_recorder.log_deaths(
@@ -389,7 +404,7 @@ class ArrayBackend(TracerBackend):
                     )
                     if rr_killed_np.any():
                         num_rays_flux_killed += int(rr_killed_np.sum())
-                        total_flux_lost += float(
+                        total_flux_rr_killed += float(
                             to_numpy(flux_before_rr)[rr_killed_np].sum()
                         )
                         path_recorder.log_deaths(rays, rr_killed_np, "flux_killed")
@@ -404,12 +419,13 @@ class ArrayBackend(TracerBackend):
                         budget = int(ir.sampling.split_budget * batch_size)
                         headroom = max(0, budget - rays.num_rays_alive)
                         if spawned.num_rays > headroom:
+                            split_budget_saturated = True
                             spawned, culled_flux_np, culled_np = _cull_to_budget(
                                 spawned, headroom, self.rng
                             )
                             if culled_np.any():
                                 num_rays_flux_killed += int(culled_np.sum())
-                                total_flux_lost += float(culled_flux_np.sum())
+                                total_flux_rr_killed += float(culled_flux_np.sum())
                         if spawned.num_rays > 0:
                             rays = NSQRayBundle.concat([rays, spawned])
 
@@ -444,6 +460,8 @@ class ArrayBackend(TracerBackend):
                 # (D-14); SimulationResult's aggregate stays a plain float.
                 total_flux_detected += float(to_numpy(result.total_flux))
 
+        total_flux_lost = total_flux_depth_killed + total_flux_rr_killed
+
         # Every launched watt ends up detected, absorbed, escaped, or killed
         # by the flux/depth cutoffs. Omitting total_flux_lost makes the metric
         # report a large error for any scene that depth-kills rays, which is
@@ -467,6 +485,18 @@ class ArrayBackend(TracerBackend):
         # incrementally per event.
         ray_paths = path_recorder.finalize()
 
+        diagnostics = build_diagnostics(
+            scene,
+            hit_component_ids,
+            num_rays_total,
+            total_flux_in,
+            total_flux_depth_killed,
+            total_flux_rr_killed,
+            flux_err,
+            split_budget_saturated,
+            detector_results,
+        )
+
         return SimulationResult(
             detectors=detector_results,
             num_rays_total=num_rays_total,
@@ -483,6 +513,7 @@ class ArrayBackend(TracerBackend):
             flux_conservation_error=flux_err,
             trace_time_sec=t_end - t_start,
             ray_paths=ray_paths,
+            diagnostics=diagnostics,
         )
 
     def _to_numpy(self, arr: object) -> np.ndarray:
