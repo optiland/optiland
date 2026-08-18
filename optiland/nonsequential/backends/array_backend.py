@@ -15,7 +15,12 @@ import numpy as np
 
 import optiland.backend as be
 from optiland.backend.utils import to_numpy
-from optiland.nonsequential._utils import DEFAULT_BATCH_SIZE
+from optiland.nonsequential._utils import (
+    DEFAULT_BATCH_SIZE,
+    distribute_ray_budget,
+    estimate_bounding_scale,
+    get_detector_names,
+)
 from optiland.nonsequential.backends.base import TracerBackend
 
 if TYPE_CHECKING:
@@ -122,22 +127,9 @@ class ArrayBackend(TracerBackend):
         total_flux_lost = 0.0
 
         # Distribute ray budget across sources proportional to flux
-        rays_per_source: list[int] = []
-        if len(sources) == 1:
-            rays_per_source = [num_rays_total]
-        else:
-            remaining = num_rays_total
-            for i, src in enumerate(sources):
-                if i == len(sources) - 1:
-                    n = remaining
-                else:
-                    # float(): total_flux may be a tensor under autograd
-                    n = max(
-                        1,
-                        round(num_rays_total * float(src.total_flux) / total_flux_in),
-                    )
-                    remaining -= n
-                rays_per_source.append(n)
+        rays_per_source = distribute_ray_budget(
+            num_rays_total, [float(s.total_flux) for s in sources]
+        )
 
         # Per-ray event log (numpy-only, for display/visualization)
         event_log: list[dict] | None = [] if record_paths else None
@@ -336,7 +328,7 @@ class ArrayBackend(TracerBackend):
                             to_numpy(rays.flux[escaped_now]).sum()
                         )
                         _log_deaths(rays, escaped_now, "escaped")
-                        bounding_scale = self._estimate_bounding_scale(scene)
+                        bounding_scale = estimate_bounding_scale(scene)
                         ex = bounding_scale * rays.L
                         ey = bounding_scale * rays.M
                         ez = bounding_scale * rays.N
@@ -389,7 +381,7 @@ class ArrayBackend(TracerBackend):
         # Collect detector results
         detector_results: dict[str, object] = {}
         total_flux_detected = 0.0
-        det_names = _get_detector_names(scene)
+        det_names = get_detector_names(scene)
         for i, det in enumerate(scene.detectors):
             name = det_names[i] if i < len(det_names) else (det.name or f"detector_{i}")
             result = det.get_result()
@@ -468,42 +460,6 @@ class ArrayBackend(TracerBackend):
 
         return t_min, hit_normals, det_indices
 
-    def _estimate_bounding_scale(self, scene: NSQScene) -> float:
-        """Estimate a reasonable length to extend escaped rays."""
-        try:
-            boxes = [comp.bounding_box for comp in scene.surfaces]
-            if not boxes:
-                return 100.0
-
-            xmin = min(b.xmin for b in boxes)
-            xmax = max(b.xmax for b in boxes)
-            ymin = min(b.ymin for b in boxes)
-            ymax = max(b.ymax for b in boxes)
-            zmin = min(b.zmin for b in boxes)
-            zmax = max(b.zmax for b in boxes)
-
-            extent = np.sqrt(
-                (xmax - xmin) ** 2 + (ymax - ymin) ** 2 + (zmax - zmin) ** 2
-            )
-            return float(extent) if extent > 1.0 else 100.0
-        except Exception:
-            return 100.0
-
     def _to_numpy(self, arr: object) -> np.ndarray:
         """Backward-compatible alias."""
         return to_numpy(arr)
-
-
-def _get_detector_names(scene: object) -> list[str]:
-    """Extract registry names for detectors.
-
-    Args:
-        scene: NSQScene instance.
-
-    Returns:
-        Ordered list of detector names.
-    """
-    try:
-        return list(scene.detector_registry._registry.keys())  # type: ignore[attr-defined]
-    except AttributeError:
-        return []

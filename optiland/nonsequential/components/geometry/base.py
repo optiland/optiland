@@ -23,6 +23,36 @@ class AABB:
     min_corner: np.ndarray
     max_corner: np.ndarray
 
+    @property
+    def xmin(self) -> float:
+        """Minimum x-extent [mm]."""
+        return float(self.min_corner[0])
+
+    @property
+    def xmax(self) -> float:
+        """Maximum x-extent [mm]."""
+        return float(self.max_corner[0])
+
+    @property
+    def ymin(self) -> float:
+        """Minimum y-extent [mm]."""
+        return float(self.min_corner[1])
+
+    @property
+    def ymax(self) -> float:
+        """Maximum y-extent [mm]."""
+        return float(self.max_corner[1])
+
+    @property
+    def zmin(self) -> float:
+        """Minimum z-extent [mm]."""
+        return float(self.min_corner[2])
+
+    @property
+    def zmax(self) -> float:
+        """Maximum z-extent [mm]."""
+        return float(self.max_corner[2])
+
     def intersects_ray(self, origins: np.ndarray, directions: np.ndarray) -> np.ndarray:
         """Test ray-AABB intersection (slab method).
 

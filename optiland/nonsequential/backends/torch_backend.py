@@ -19,7 +19,12 @@ import numpy as np
 
 import optiland.backend as be
 from optiland.backend.utils import to_numpy
-from optiland.nonsequential._utils import DEFAULT_BATCH_SIZE
+from optiland.nonsequential._utils import (
+    DEFAULT_BATCH_SIZE,
+    distribute_ray_budget,
+    estimate_bounding_scale,
+    get_detector_names,
+)
 from optiland.nonsequential.backends.base import TracerBackend
 
 if TYPE_CHECKING:
@@ -175,22 +180,9 @@ class TorchBackend(TracerBackend):
         total_flux_lost = 0.0
 
         # Distribute ray budget across sources proportional to flux
-        rays_per_source: list[int] = []
-        if len(sources) == 1:
-            rays_per_source = [num_rays_total]
-        else:
-            remaining = num_rays_total
-            for i, src in enumerate(sources):
-                if i == len(sources) - 1:
-                    n = remaining
-                else:
-                    # float(): total_flux may be a tensor under autograd
-                    n = max(
-                        1,
-                        round(num_rays_total * float(src.total_flux) / total_flux_in),
-                    )
-                    remaining -= n
-                rays_per_source.append(n)
+        rays_per_source = distribute_ray_budget(
+            num_rays_total, [float(s.total_flux) for s in sources]
+        )
 
         # Per-ray event log (numpy, detached -- for visualization only)
         event_log: list[dict] | None = [] if record_paths else None
@@ -311,7 +303,7 @@ class TorchBackend(TracerBackend):
                             to_numpy(rays.flux)[escaped_np].sum()
                         )
                         escaped = be.array(escaped_np)
-                        bs = self._estimate_bounding_scale(scene)
+                        bs = estimate_bounding_scale(scene)
                         rays.x = be.where(escaped, rays.x + bs * rays.L, rays.x)
                         rays.y = be.where(escaped, rays.y + bs * rays.M, rays.y)
                         rays.z = be.where(escaped, rays.z + bs * rays.N, rays.z)
@@ -355,7 +347,7 @@ class TorchBackend(TracerBackend):
         # Collect detector results
         detector_results: dict[str, object] = {}
         total_flux_detected = 0.0
-        det_names = _get_detector_names(scene)
+        det_names = get_detector_names(scene)
         for i, det in enumerate(scene.detectors):
             name = det_names[i] if i < len(det_names) else (det.name or f"detector_{i}")
             result = det.get_result()
@@ -497,30 +489,3 @@ class TorchBackend(TracerBackend):
                 np.asarray(rays.bounce, dtype=np.int32).copy()
             )
         return rays
-
-    def _estimate_bounding_scale(self, scene: NSQScene) -> float:
-        """Estimate a reasonable length to extend escaped rays."""
-        try:
-            boxes = [comp.bounding_box for comp in scene.surfaces]
-            if not boxes:
-                return 100.0
-            xmin = min(b.xmin for b in boxes)
-            xmax = max(b.xmax for b in boxes)
-            ymin = min(b.ymin for b in boxes)
-            ymax = max(b.ymax for b in boxes)
-            zmin = min(b.zmin for b in boxes)
-            zmax = max(b.zmax for b in boxes)
-            extent = float(
-                np.sqrt((xmax - xmin) ** 2 + (ymax - ymin) ** 2 + (zmax - zmin) ** 2)
-            )
-            return extent if extent > 1.0 else 100.0
-        except Exception:
-            return 100.0
-
-
-def _get_detector_names(scene: object) -> list[str]:
-    """Extract registry names for detectors."""
-    try:
-        return list(scene.detector_registry._registry.keys())  # type: ignore[attr-defined]
-    except AttributeError:
-        return []
