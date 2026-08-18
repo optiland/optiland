@@ -160,7 +160,8 @@ def test_robust_aimer_integration_with_cache(set_test_backend):
         be.array([0.0]),
         be.array([1.0]),
         be.array([1.0]) > 0.0,
-        None
+        None,
+        None,  # SolveReport slot
     )
     iterative_mock.tol = 1e-6
     iterative_mock._paraxial_aimer = paraxial_mock
@@ -177,6 +178,20 @@ def test_robust_aimer_integration_with_cache(set_test_backend):
 
     # Create CachedRayAimer wrapping RobustRayAimer
     cached_aimer = CachedRayAimer(optic, robust_aimer)
+
+    # The launch parameterization is built from the optic's entry frame,
+    # which the MagicMock optic cannot provide; supply the canonical +z one.
+    from unittest.mock import patch
+
+    from optiland.rays.ray_aiming.parameterization import LaunchParameterization
+
+    legacy_param = LaunchParameterization(
+        is_infinite=True, u=(1.0, 0.0, 0.0), v=(0.0, 1.0, 0.0)
+    )
+    patcher = patch.object(
+        LaunchParameterization, "for_optic", return_value=legacy_param
+    )
+    patcher.start()
 
     # 1. First call (Cache Miss)
     # This will call robust_aimer -> _solve -> iterative.aim_rays
@@ -221,6 +236,7 @@ def test_robust_aimer_integration_with_cache(set_test_backend):
                 found_guess = True
                 break
     assert found_guess, "Initial guess was not passed to iterative aimer on second call"
+    patcher.stop()
 
 
 if __name__ == "__main__":

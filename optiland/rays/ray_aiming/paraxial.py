@@ -13,6 +13,10 @@ from typing import TYPE_CHECKING
 
 import optiland.backend as be
 from optiland.fields.field_types import AngleField
+from optiland.paraxial_path import (
+    UnsupportedParaxialGeometryError,
+    paraxial_seed_scope,
+)
 from optiland.rays.ray_aiming.base import BaseRayAimer
 from optiland.rays.ray_aiming.registry import register_aimer
 
@@ -70,6 +74,16 @@ class ParaxialRayAimer(BaseRayAimer):
         Px = be.as_array_1d(Px)
         Py = be.as_array_1d(Py)
 
+        # Ray aiming uses scalar paraxial values as launch seeds for real
+        # rays; out-of-domain geometries (e.g. a slightly tilted stop
+        # mirror) warn instead of raising here. Direct first-order analysis
+        # stays strict.
+        with paraxial_seed_scope():
+            return self._aim_rays_impl(Hx, Hy, Px, Py)
+
+    def _aim_rays_impl(self, Hx, Hy, Px, Py):
+        """Body of :meth:`aim_rays`, run inside the paraxial seed scope."""
+
         vxf, vyf = self.optic.fields.get_vig_factor(Hx, Hy)
         vx = 1 - be.array(vxf)
         vy = 1 - be.array(vyf)
@@ -80,6 +94,19 @@ class ParaxialRayAimer(BaseRayAimer):
 
         if self.optic.obj_space_telecentric:
             self._check_telecentric_compatibility()
+            # The telecentric launch construction below displaces along
+            # global z and lays pupil offsets in global x/y; it is only
+            # valid while the beam enters along +z. Reject other entries
+            # rather than silently constructing invalid targets.
+            path = self.optic.surfaces.build_paraxial_path()
+            if not path.entry_is_positive_z:
+                raise UnsupportedParaxialGeometryError(
+                    "Object-space telecentric ray aiming is only supported "
+                    "for systems entered along global +z; this system's "
+                    "entry direction is off that axis. A local-coordinate "
+                    "telecentric construction is not yet implemented. Real "
+                    "ray tracing remains available."
+                )
             sin = self.optic.aperture.value
             z = be.sqrt(1 - sin**2) / sin + z0
             z1 = be.full_like(Px, z)

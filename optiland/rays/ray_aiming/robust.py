@@ -23,9 +23,11 @@ import contextlib
 from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
+from optiland.paraxial_path import paraxial_seed_scope
 from optiland.rays.ray_aiming.base import BaseRayAimer
 from optiland.rays.ray_aiming.initialization import get_stop_radius_strategy
 from optiland.rays.ray_aiming.iterative import IterativeRayAimer
+from optiland.rays.ray_aiming.parameterization import LaunchParameterization
 from optiland.rays.ray_aiming.pupil_map import PupilMap, PupilMapCache, to_float
 from optiland.rays.ray_aiming.registry import register_aimer
 
@@ -163,6 +165,22 @@ class RobustRayAimer(BaseRayAimer):
             ValueError: If every ray for a field fails to converge (a
                 misconfiguration, not ordinary partial vignetting).
         """
+        # Scalar paraxial values are only seeds here -- every returned ray
+        # is Newton-polished against real traces -- so out-of-domain
+        # geometries warn instead of raising inside this scope.
+        with paraxial_seed_scope():
+            return self._aim_rays_scoped(
+                fields, wavelengths, pupil_coords, initial_guess
+            )
+
+    def _aim_rays_scoped(
+        self,
+        fields: tuple,
+        wavelengths: Any,
+        pupil_coords: tuple,
+        initial_guess: tuple | None = None,
+    ) -> tuple:
+        """Body of :meth:`aim_rays`, run inside the paraxial seed scope."""
         if initial_guess is not None:
             try:
                 return self._iterative.aim_rays(
@@ -200,6 +218,11 @@ class RobustRayAimer(BaseRayAimer):
         is_inf = getattr(self.optic.object_surface, "is_infinite", False)
         r_stop = get_stop_radius_strategy(self.optic, "robust").calculate_stop_radius()
 
+        # One launch parameterization per aiming call: all solves below share
+        # the same entry frame, so the local transverse basis is built once
+        # and passed through rather than re-derived per solve.
+        param = LaunchParameterization.for_optic(self.optic, bool(is_inf))
+
         self._cache.sync(self.optic)
 
         # Group rays by field (D3: reuse the same pupil map across pupil
@@ -232,7 +255,7 @@ class RobustRayAimer(BaseRayAimer):
                     seed_map = self._cache.nearest(Hxk, Hyk)
                 with _cached_paraxial_constants(self.optic):
                     pmap = self._calibrate_field(
-                        Hxk, Hyk, wlk, stop_idx, is_inf, r_stop, seed_map
+                        Hxk, Hyk, wlk, stop_idx, is_inf, r_stop, seed_map, param
                     )
                 self._cache.put(Hxk, Hyk, wlk, pmap)
 
@@ -244,8 +267,8 @@ class RobustRayAimer(BaseRayAimer):
             tx = Px_g * r_stop
             ty = Py_g * r_stop
 
-            x, y, z, L, M, N, converged, _ = self._iterative._solve_core(
-                x0, y0, z0, L0, M0, N0, wl_g, stop_idx, is_inf, tx, ty
+            x, y, z, L, M, N, converged, _, _report = self._iterative._solve_core(
+                x0, y0, z0, L0, M0, N0, wl_g, stop_idx, is_inf, tx, ty, param=param
             )
 
             if not be.any(converged):
@@ -299,14 +322,17 @@ class RobustRayAimer(BaseRayAimer):
         is_inf: bool,
         r_stop: float,
         seed_map: PupilMap | None,
+        param: LaunchParameterization | None = None,
     ) -> PupilMap:
         """Chief solve + 4 edge probes -> affine :class:`PupilMap` (§4.2)."""
-        chief = self._solve_chief(Hx, Hy, wl, stop_idx, is_inf, seed_map)
+        if param is None:
+            param = LaunchParameterization.for_optic(self.optic, bool(is_inf))
+        chief = self._solve_chief(Hx, Hy, wl, stop_idx, is_inf, seed_map, param)
         probes = [
-            self._solve_probe(wl, stop_idx, is_inf, px, py, r_stop, chief)
+            self._solve_probe(wl, stop_idx, is_inf, px, py, r_stop, chief, param)
             for px, py in _EDGE_PROBES
         ]
-        return self._fit_affine(chief, probes, is_inf)
+        return self._fit_affine(chief, probes, param)
 
     def _solve_chief(
         self,
@@ -316,6 +342,7 @@ class RobustRayAimer(BaseRayAimer):
         stop_idx: int,
         is_inf: bool,
         seed_map: PupilMap | None,
+        param: LaunchParameterization | None = None,
     ) -> tuple[float, float, float, float, float, float]:
         """Solve the chief ray (stop target (0, 0)) for this field.
 
@@ -332,9 +359,12 @@ class RobustRayAimer(BaseRayAimer):
         field's paraxial trace, never from ``seed_map`` -- they encode the
         field angle itself, so reusing another field's fixed components
         would silently solve the wrong (e.g. on-axis) problem even though
-        Newton still converges. Only the free 2-DOF is warm-started from
-        the seed map's chief launch.
+        Newton still converges. Only the free transverse 2-DOF is
+        warm-started: the seed map's chief launch is projected onto this
+        field's fresh seed through the shared local parameterization.
         """
+        if param is None:
+            param = LaunchParameterization.for_optic(self.optic, bool(is_inf))
         wl_a = be.array([wl])
         tx = be.array([0.0])
         ty = be.array([0.0])
@@ -346,18 +376,17 @@ class RobustRayAimer(BaseRayAimer):
         )
 
         if seed_map is not None:
-            sx0, sy0, _sz0, sL0, sM0, _sN0 = seed_map.seed(
+            sx0, sy0, sz0, sL0, sM0, sN0 = seed_map.seed(
                 be.array([0.0]), be.array([0.0])
             )
-            if is_inf:
-                x0, y0 = sx0, sy0
-                z0, L0, M0, N0 = pz0, pL0, pM0, pN0
-            else:
-                L0, M0 = sL0, sM0
-                x0, y0, z0, N0 = px0, py0, pz0, pN0
+            # Carry only the free transverse offsets of the stored chief
+            # over to this field's fresh seed.
+            bound = param.bind(px0, py0, pz0, pL0, pM0, pN0)
+            xi, eta = bound.project(sx0, sy0, sz0, sL0, sM0, sN0)
+            x0, y0, z0, L0, M0, N0 = bound.launch(xi, eta)
 
-            x, y, z, L, M, N, converged, _ = self._iterative._solve_core(
-                x0, y0, z0, L0, M0, N0, wl_a, stop_idx, is_inf, tx, ty
+            x, y, z, L, M, N, converged, _, _r = self._iterative._solve_core(
+                x0, y0, z0, L0, M0, N0, wl_a, stop_idx, is_inf, tx, ty, param=param
             )
             if be.any(converged):
                 return (
@@ -369,8 +398,8 @@ class RobustRayAimer(BaseRayAimer):
                     to_float(N),
                 )
 
-        x, y, z, L, M, N, converged, _ = self._iterative._solve_core(
-            px0, py0, pz0, pL0, pM0, pN0, wl_a, stop_idx, is_inf, tx, ty
+        x, y, z, L, M, N, converged, _, _r = self._iterative._solve_core(
+            px0, py0, pz0, pL0, pM0, pN0, wl_a, stop_idx, is_inf, tx, ty, param=param
         )
         if be.any(converged):
             return (
@@ -382,13 +411,13 @@ class RobustRayAimer(BaseRayAimer):
                 to_float(N),
             )
 
-        marched = self._march_chief(Hx, Hy, wl_a, stop_idx, is_inf, tx, ty)
+        marched = self._march_chief(Hx, Hy, wl_a, stop_idx, is_inf, tx, ty, param)
         if marched is not None:
             return marched
 
         if is_inf:
             scanned = self._scan_chief(
-                px0, py0, pz0, pL0, pM0, pN0, wl_a, stop_idx, tx, ty
+                px0, py0, pz0, pL0, pM0, pN0, wl_a, stop_idx, tx, ty, param
             )
             if scanned is not None:
                 return scanned
@@ -411,27 +440,34 @@ class RobustRayAimer(BaseRayAimer):
         stop_idx: int,
         tx: Any,
         ty: Any,
+        param: LaunchParameterization,
         n: int = 2001,
     ) -> tuple[float, float, float, float, float, float] | None:
         """Last-resort chief-ray seed search for extreme (beyond +-90 degree)
         field angles.
 
-        Sweeps candidate launch points along the line through the paraxial
-        guess and returns the first one the Newton polish converges from,
-        for when neither the paraxial guess nor field marching converges.
+        Sweeps candidate launch points along the transverse line through the
+        paraxial guess (in the entry frame's transverse plane) and returns
+        the first one the Newton polish converges from, for when neither the
+        paraxial guess nor field marching converges.
         """
-        gx, gy = to_float(px0), to_float(py0)
-        norm = (gx**2 + gy**2) ** 0.5
+        # Sweep direction in the transverse (xi, eta) plane: the radial
+        # direction of the guess position projected onto the entry frame's
+        # transverse basis (for a +z entry this reduces to the old global
+        # (x, y) radial sweep), defaulting to eta -- the meridional v axis.
+        u, v = param.u, param.v
+        gpos = (to_float(px0), to_float(py0), to_float(pz0))
+        g_xi = gpos[0] * u[0] + gpos[1] * u[1] + gpos[2] * u[2]
+        g_eta = gpos[0] * v[0] + gpos[1] * v[1] + gpos[2] * v[2]
+        norm = (g_xi**2 + g_eta**2) ** 0.5
         if norm < 1e-9:
-            dirx, diry = 0.0, 1.0
+            dir_xi, dir_eta = 0.0, 1.0
         else:
-            dirx, diry = gx / norm, gy / norm
+            dir_xi, dir_eta = g_xi / norm, g_eta / norm
         scale = max(50.0, 20.0 * norm)
 
         r = be.linspace(-scale, scale, n)
         ones = be.ones(n)
-        x0 = dirx * r
-        y0 = diry * r
         z0 = ones * to_float(pz0)
         L0 = ones * to_float(pL0)
         M0 = ones * to_float(pM0)
@@ -440,8 +476,16 @@ class RobustRayAimer(BaseRayAimer):
         tx_b = ones * to_float(tx)
         ty_b = ones * to_float(ty)
 
-        x, y, z, L, M, N, converged, _ = self._iterative._solve_core(
-            x0, y0, z0, L0, M0, N0, wl_b, stop_idx, True, tx_b, ty_b
+        # Candidates sit on the transverse line through the origin of the
+        # sweep: bind the parameterization at the swept-axis origin so the
+        # xi/eta displacements stay in the transverse plane for any entry.
+        bound = param.bind(
+            be.zeros(n), be.zeros(n), z0, L0, M0, N0
+        )
+        x0, y0, z0, L0, M0, N0 = bound.launch(dir_xi * r, dir_eta * r)
+
+        x, y, z, L, M, N, converged, _, _r = self._iterative._solve_core(
+            x0, y0, z0, L0, M0, N0, wl_b, stop_idx, True, tx_b, ty_b, param=param
         )
         if not be.any(converged):
             return None
@@ -466,6 +510,7 @@ class RobustRayAimer(BaseRayAimer):
         is_inf: bool,
         tx: Any,
         ty: Any,
+        param: LaunchParameterization,
         max_attempts: int = 150,
         min_dt: float = 1e-4,
     ) -> tuple[float, float, float, float, float, float] | None:
@@ -516,8 +561,9 @@ class RobustRayAimer(BaseRayAimer):
                 L0 = be.array([launch[3]])
                 M0 = be.array([launch[4]])
                 N0 = be.array([launch[5]])
-                x, y, z, L, M, N, converged, _ = self._iterative._solve_core(
-                    x0, y0, z0, L0, M0, N0, wl_a, stop_idx, is_inf, tx, ty
+                x, y, z, L, M, N, converged, _, _r = self._iterative._solve_core(
+                    x0, y0, z0, L0, M0, N0, wl_a, stop_idx, is_inf, tx, ty,
+                    param=param,
                 )
                 if be.any(converged):
                     return (
@@ -538,29 +584,39 @@ class RobustRayAimer(BaseRayAimer):
                 (be.array([0.0]), be.array([0.0])),
             )
 
-            if is_inf:
-                x0 = be.array([launch[0]])
-                y0 = be.array([launch[1]])
-                z0, L0, M0, N0 = pz0, pL0, pM0, pN0
-            else:
-                L0 = be.array([launch[3]])
-                M0 = be.array([launch[4]])
-                x0, y0, z0, N0 = px0, py0, pz0, pN0
+            # Carry only the free transverse offsets of the last converged
+            # launch onto this step's fresh paraxial seed (the fixed DOF --
+            # direction for infinite conjugates, object point for finite
+            # ones -- encodes the field angle and must stay fresh).
+            bound = param.bind(px0, py0, pz0, pL0, pM0, pN0)
+            xi, eta = bound.project(
+                be.array([launch[0]]),
+                be.array([launch[1]]),
+                be.array([launch[2]]),
+                be.array([launch[3]]),
+                be.array([launch[4]]),
+                be.array([launch[5]]),
+            )
+            x0, y0, z0, L0, M0, N0 = bound.launch(xi, eta)
 
             with _relaxed_tolerance(self._iterative, relaxed_tol):
-                x, y, z, L, M, N, converged, _ = self._iterative._solve_core(
-                    x0, y0, z0, L0, M0, N0, wl_a, stop_idx, is_inf, tx, ty
+                x, y, z, L, M, N, converged, _, _r = self._iterative._solve_core(
+                    x0, y0, z0, L0, M0, N0, wl_a, stop_idx, is_inf, tx, ty,
+                    param=param,
                 )
 
             if not be.any(converged) and is_inf:
-                # The free (x, y) launch warm-started from the previous step
+                # The transverse launch warm-started from the previous step
                 # can occasionally be a worse seed than a fresh paraxial
                 # guess at the new angle (e.g. right where marching first
                 # takes a large stride); retry once from the fresh guess
                 # before giving up and shrinking the step.
                 with _relaxed_tolerance(self._iterative, relaxed_tol):
-                    x, y, z, L, M, N, converged, _ = self._iterative._solve_core(
-                        px0, py0, pz0, pL0, pM0, pN0, wl_a, stop_idx, is_inf, tx, ty
+                    x, y, z, L, M, N, converged, _, _r = (
+                        self._iterative._solve_core(
+                            px0, py0, pz0, pL0, pM0, pN0, wl_a, stop_idx,
+                            is_inf, tx, ty, param=param,
+                        )
                     )
 
             if be.any(converged):
@@ -593,6 +649,7 @@ class RobustRayAimer(BaseRayAimer):
         Py_e: float,
         r_stop: float,
         chief: tuple[float, float, float, float, float, float],
+        param: LaunchParameterization,
     ) -> tuple[float, float, float, float, float, float]:
         """Solve one cardinal edge probe, seeded from the chief launch."""
         x0, y0, z0, L0, M0, N0 = (be.array([v]) for v in chief)
@@ -600,8 +657,8 @@ class RobustRayAimer(BaseRayAimer):
         tx = be.array([Px_e * r_stop])
         ty = be.array([Py_e * r_stop])
 
-        x, y, z, L, M, N, converged, _ = self._iterative._solve_core(
-            x0, y0, z0, L0, M0, N0, wl_a, stop_idx, is_inf, tx, ty
+        x, y, z, L, M, N, converged, _, _r = self._iterative._solve_core(
+            x0, y0, z0, L0, M0, N0, wl_a, stop_idx, is_inf, tx, ty, param=param
         )
 
         if not be.any(converged):
@@ -623,17 +680,22 @@ class RobustRayAimer(BaseRayAimer):
         self,
         chief: tuple[float, float, float, float, float, float],
         probes: list[tuple[float, float, float, float, float, float]],
-        is_inf: bool,
+        param: LaunchParameterization,
     ) -> PupilMap:
-        """Fit the 2x2 affine launch model from the chief ray + 4 probes."""
-        x_c, y_c, z_c, L_c, M_c, N_c = chief
+        """Fit the 2x2 affine launch model from the chief ray + 4 probes.
+
+        The probes' launch states are projected into the chief-bound local
+        transverse parameterization, so the fitted offsets are (xi, eta)
+        coordinates -- valid for any entry direction, and stored as plain
+        floats (detached by design).
+        """
         p_east, p_west, p_north, p_south = probes
+        bound = param.bind(*(be.array([v]) for v in chief))
 
-        def free(v: tuple) -> tuple[float, float]:
-            x, y, _z, L, M, _N = v
-            return (x, y) if is_inf else (L, M)
+        def free(state: tuple) -> tuple[float, float]:
+            xi, eta = bound.project(*(be.array([v]) for v in state))
+            return to_float(xi), to_float(eta)
 
-        c1, c2 = free(chief)
         e1, e2 = free(p_east)
         w1, w2 = free(p_west)
         n1, n2 = free(p_north)
@@ -644,6 +706,4 @@ class RobustRayAimer(BaseRayAimer):
             ((e2 - w2) / 2.0, (n2 - s2) / 2.0),
         )
 
-        fixed = (z_c, L_c, M_c, N_c) if is_inf else (z_c, x_c, y_c, N_c)
-
-        return PupilMap(c=(c1, c2), A=A, is_infinite=is_inf, fixed=fixed)
+        return PupilMap(base=chief, A=A, param=param)

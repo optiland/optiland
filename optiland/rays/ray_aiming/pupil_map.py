@@ -21,6 +21,7 @@ import optiland.backend as be
 
 if TYPE_CHECKING:
     from optiland.optic import Optic
+    from optiland.rays.ray_aiming.parameterization import LaunchParameterization
 
 
 def to_float(x: Any) -> float:
@@ -29,36 +30,41 @@ def to_float(x: Any) -> float:
 
 
 class PupilMap:
-    """Per-field affine launch model: ``launch(Px, Py) = c + A @ [Px, Py]``.
+    """Per-field affine launch model in local transverse coordinates.
 
-    For infinite-conjugate systems ``launch`` is the ray origin ``(x, y)``;
-    for finite conjugates it is the launch direction ``(L, M)``. The
-    remaining launch components (the ones not solved by the 2-DOF Newton
-    loop) are fixed at their chief-ray values and reused for every pupil
-    point of this field.
+    ``seed(Px, Py)`` evaluates ``(xi, eta) = A @ [Px, Py]`` and maps the
+    result through the chief ray's bound
+    :class:`~optiland.rays.ray_aiming.parameterization.LaunchParameterization`:
+    for infinite conjugates the launch point moves in the entry-frame
+    transverse plane around the chief launch (fixed field direction); for
+    finite conjugates the object point is fixed and the direction rotates
+    in the tangent basis around the chief direction, staying unit-norm.
+    The stored coordinates are local transverse offsets, never global
+    ``(x, y)`` -- a system entered off the z axis seeds correctly.
 
     Attributes:
-        c: Chief launch ``(p1, p2)`` -- ``(x, y)`` or ``(L, M)``.
-        A: Affine matrix ``((a11, a12), (a21, a22))``.
-        is_infinite: Whether the object is at infinity.
-        fixed: The non-solved launch components, evaluated at the chief ray:
-            ``(z, L, M, N)`` for infinite conjugates, or
-            ``(z, x, y, N)`` for finite conjugates.
+        base: Chief launch state ``(x, y, z, L, M, N)`` as plain floats.
+        A: Affine matrix ``((a11, a12), (a21, a22))`` mapping normalized
+            pupil coordinates to ``(xi, eta)``.
+        param: The launch parameterization (entry-frame basis, conjugate
+            mode) the offsets are expressed in.
     """
 
-    __slots__ = ("c", "A", "is_infinite", "fixed")
+    __slots__ = ("base", "A", "param")
 
     def __init__(
         self,
-        c: tuple[float, float],
+        base: tuple[float, float, float, float, float, float],
         A: tuple[tuple[float, float], tuple[float, float]],
-        is_infinite: bool,
-        fixed: tuple[float, float, float, float],
+        param: LaunchParameterization,
     ) -> None:
-        self.c = c
+        self.base = base
         self.A = A
-        self.is_infinite = is_infinite
-        self.fixed = fixed
+        self.param = param
+
+    @property
+    def is_infinite(self) -> bool:
+        return self.param.is_infinite
 
     def seed(self, Px: Any, Py: Any) -> tuple:
         """Evaluate the affine model for pupil coordinates (Px, Py).
@@ -73,26 +79,16 @@ class PupilMap:
         Px = be.as_array_1d(Px)
         Py = be.as_array_1d(Py)
 
-        c1, c2 = self.c
         (a11, a12), (a21, a22) = self.A
-        p1 = c1 + a11 * Px + a12 * Py
-        p2 = c2 + a21 * Px + a22 * Py
+        xi = a11 * Px + a12 * Py
+        eta = a21 * Px + a22 * Py
 
-        z_fixed, o1, o2, o3 = self.fixed
-        z = be.ones_like(Px) * z_fixed
-
-        if self.is_infinite:
-            x, y = p1, p2
-            L = be.ones_like(Px) * o1
-            M = be.ones_like(Px) * o2
-            N = be.ones_like(Px) * o3
-        else:
-            L, M = p1, p2
-            x = be.ones_like(Px) * o1
-            y = be.ones_like(Px) * o2
-            N = be.ones_like(Px) * o3
-
-        return x, y, z, L, M, N
+        ones = be.ones_like(Px)
+        bx, by, bz, bL, bM, bN = self.base
+        bound = self.param.bind(
+            ones * bx, ones * by, ones * bz, ones * bL, ones * bM, ones * bN
+        )
+        return bound.launch(xi, eta)
 
 
 class PupilMapCache:

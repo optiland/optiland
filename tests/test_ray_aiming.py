@@ -463,6 +463,9 @@ from optiland.distribution import create_distribution  # noqa: E402
 from optiland.rays.ray_aiming.initialization import (  # noqa: E402
     get_stop_radius_strategy,
 )
+from optiland.rays.ray_aiming.parameterization import (  # noqa: E402
+    LaunchParameterization,
+)
 from optiland.rays.ray_aiming.pupil_map import PupilMap  # noqa: E402
 from optiland.samples.lithography import UVProjectionLens  # noqa: E402
 
@@ -476,13 +479,18 @@ _WIDE_ANGLE_SAMPLES = [
 
 
 def test_pupil_map_seed_affine_arithmetic(set_test_backend):
-    """Unit test for the affine fit itself: launch(Px, Py) = c + A @ [Px, Py],
-    with the non-solved DOF held fixed at their chief-ray values."""
+    """Unit test for the affine fit itself: (xi, eta) = A @ [Px, Py] offsets
+    applied around the chief launch in the local transverse basis, with the
+    non-solved DOF (the direction, for infinite conjugates) held fixed at
+    their chief-ray values. For a +z entry the basis is global (+x, +y), so
+    the offsets read directly as x/y displacements."""
+    param = LaunchParameterization(
+        is_infinite=True, u=(1.0, 0.0, 0.0), v=(0.0, 1.0, 0.0)
+    )
     pmap = PupilMap(
-        c=(1.0, 2.0),
+        base=(1.0, 2.0, 10.0, 0.0, 0.0, 1.0),
         A=((0.5, 0.1), (0.2, 0.3)),
-        is_infinite=True,
-        fixed=(10.0, 0.0, 0.0, 1.0),
+        param=param,
     )
     x, y, z, L, M, N = pmap.seed(be.array([0.0, 1.0]), be.array([0.0, -1.0]))
     assert_allclose(x, [1.0, 1.4])

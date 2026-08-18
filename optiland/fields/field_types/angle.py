@@ -6,14 +6,70 @@ Kramer Harrison, 2025
 from __future__ import annotations
 
 import optiland.backend as be
+from optiland.paraxial_path import (
+    AMBIGUOUS_WIDE_ANGLE_FIELD,
+    UnsupportedParaxialGeometryError,
+)
 from optiland.utils import globalize_coordinates
 
 from .base import BaseFieldDefinition
 
+# Below this angle (degrees) a field component is treated as zero for the
+# wide-angle ambiguity check.
+_MATERIAL_ANGLE_DEG = 1e-9
+
+
+def _validate_unambiguous_field(field_x, field_y) -> None:
+    """Reject two-dimensional angle fields whose direction is ambiguous.
+
+    The current component-angle representation composes ``tan(fx)`` and
+    ``tan(fy)`` with a hemisphere rule based on the total angle. That
+    uniquely defines a direction for one-dimensional fields at any angle
+    and for two-dimensional fields inside 90 degrees; a two-dimensional
+    field at or beyond 90 degrees has no unique three-dimensional direction
+    in this representation, so it is rejected rather than silently mapped.
+
+    Raises:
+        UnsupportedParaxialGeometryError: With code
+            ``AMBIGUOUS_WIDE_ANGLE_FIELD`` when both components are
+            materially nonzero and either component or the total field
+            angle crosses 90 degrees.
+    """
+    fx = be.to_numpy(be.atleast_1d(be.array(field_x))).reshape(-1)
+    fy = be.to_numpy(be.atleast_1d(be.array(field_y))).reshape(-1)
+    if fx.size == 1 and fy.size > 1:
+        fx = fx.repeat(fy.size)
+    if fy.size == 1 and fx.size > 1:
+        fy = fy.repeat(fx.size)
+    both = (abs(fx) > _MATERIAL_ANGLE_DEG) & (abs(fy) > _MATERIAL_ANGLE_DEG)
+    total = (fx**2 + fy**2) ** 0.5
+    wide = (abs(fx) >= 90.0) | (abs(fy) >= 90.0) | (total >= 90.0)
+    bad = both & wide
+    if bad.any():
+        i = int(bad.nonzero()[0][0])
+        raise UnsupportedParaxialGeometryError(
+            f"[{AMBIGUOUS_WIDE_ANGLE_FIELD}] the two-dimensional angle "
+            f"field (fx={fx[i]:.6g} deg, fy={fy[i]:.6g} deg, total "
+            f"{total[i]:.6g} deg) reaches 90 degrees. The current "
+            "component-angle representation does not uniquely define a "
+            "three-dimensional direction in that regime; use a "
+            "one-dimensional field, or wait for an explicit wide-angle "
+            "field convention (polar angle + azimuth or direction "
+            "cosines)."
+        )
+
 
 @BaseFieldDefinition.register("angle")
 class AngleField(BaseFieldDefinition):
-    """Defines fields by angle (in degrees) relative to the optical axis."""
+    """Defines fields by angle (in degrees) relative to the optical axis.
+
+    For an object at infinity the field direction is composed from the two
+    component angles against the entry axis; ``(u, v)`` pupil/field offsets
+    use the entry frame's transverse basis for folded or off-axis-entered
+    systems. Two-dimensional fields at or beyond 90 degrees total are
+    ambiguous under this representation and are rejected (see
+    :func:`_validate_unambiguous_field`).
+    """
 
     def get_ray_origins(self, optic, Hx, Hy, Px, Py, vx, vy):
         """Calculate the initial positions for rays originating at the object.
@@ -38,6 +94,7 @@ class AngleField(BaseFieldDefinition):
         field_y = max_field * be.array(Hy)
 
         if obj.is_infinite:
+            _validate_unambiguous_field(field_x, field_y)
             EPD = optic.paraxial.EPD()
             offset = self._get_starting_z_offset(optic)
             d = offset + EPL
