@@ -1,11 +1,11 @@
 """PCG32 RNG conformance suite for Non-Sequential Raytracing.
 
-Covers D11 / D-8 (SPEC_NSQ_Revamp_20260818.md §4.7): random numbers are a
-pure function of ``(seed, ray_id, bounce, event_slot)``, with no shared
-mutable stream. This file is the fixed-vector table a third-party backend
-(Mitsuba, OptiX) can run against to prove conformance, plus the invariants
-the spec requires: batch-size independence, order independence, and
-identical random decisions across the NumPy and Torch backends.
+Covers D11 / D-8: random numbers are a pure function of ``(seed, ray_id,
+bounce, event_slot)``, with no shared mutable stream. This file is the
+fixed-vector table a third-party backend (Mitsuba, OptiX) can run against to
+prove conformance, plus the required invariants: batch-size independence,
+order independence, and identical random decisions across the NumPy and
+Torch backends.
 
 Kramer Harrison, 2026
 """

@@ -8,8 +8,8 @@ across any two conforming backends: a ray's random numbers depend only on
 its own identity, never on which other rays happen to be alive in the same
 batch or in what order components were visited.
 
-Algorithm (D11, SPEC_NSQ_Revamp_20260818.md §4.7)
---------------------------------------------------
+Algorithm (D11)
+----------------
 This is the standard O'Neill PCG32 (XSH-RR 64/32), the same generator used
 by Mitsuba 3 (``pcg32.h``) and satisfied by the per-launch-index
 counter-based PRNGs conventional in OptiX kernels:
@@ -24,9 +24,8 @@ slots such as rejection sampling) selects *which* output in that stream via
 PCG32's jump-ahead identity -- a closed-form function of the LCG step count,
 computed by the standard doubling algorithm in O(64) fixed iterations. This
 is what "counter derived arithmetically rather than by stateful advance"
-means in the spec: computing output number ``k`` never requires having
-computed outputs ``0..k-1`` first, and no RNG object needs to persist state
-between calls.
+means: computing output number ``k`` never requires having computed outputs
+``0..k-1`` first, and no RNG object needs to persist state between calls.
 
 Honest scope of the guarantee: the *random-number stream* per
 ``(ray_id, bounce, event_slot)`` is bit-identical everywhere this module is
@@ -70,7 +69,7 @@ class EventSlot(IntEnum):
 
     Every stochastic decision draws from its own slot, so adding, removing,
     or reordering an unrelated decision can never perturb another
-    decision's stream -- this is defect D-8 in the spec's defect inventory.
+    decision's stream (defect D-8: a shared, position-dependent stream).
     """
 
     SOURCE_U1 = 0
