@@ -90,5 +90,6 @@ class Mirror(CompoundComponent):
                 cfg.surface,
                 interaction,
                 f"{self._name}.surface",
+                reflectance=cfg.reflectance,
             )
         ]

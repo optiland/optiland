@@ -286,7 +286,7 @@ class TestMirrorRadiusGradient:
         scene.add_mirror(
             "M1",
             CoordinateSystem(z=100.0),
-            MirrorConfig(radius=radius, aperture_radius=25.0),
+            MirrorConfig(radius=radius, reflectance=1.0, aperture_radius=25.0),
         )
         scene.add_detector(
             "D1",

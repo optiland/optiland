@@ -54,7 +54,9 @@ def _lens_mirror_scene() -> NSQScene:
         ),
     )
     scene.add_mirror(
-        "M", CoordinateSystem(z=100), MirrorConfig(radius=-200, aperture_radius=20)
+        "M",
+        CoordinateSystem(z=100),
+        MirrorConfig(radius=-200, reflectance=1.0, aperture_radius=20),
     )
     scene.add_detector(
         "D",
@@ -152,7 +154,10 @@ class TestBsdfDispatchIsIrDriven:
         cs = CoordinateSystem(z=10)
         geom = FinitePlaneGeometry(width=20.0, height=20.0)
         mirror = ReflectiveComponent(
-            cs=cs, geometry=geom, bsdf=LambertianBSDF(reflectance_value=1.0)
+            cs=cs,
+            geometry=geom,
+            reflectance=1.0,
+            bsdf=LambertianBSDF(reflectance_value=1.0),
         )
 
         n = 2000
@@ -193,7 +198,7 @@ class TestBsdfDispatchIsIrDriven:
         cs = CoordinateSystem(z=10)
         geom = FinitePlaneGeometry(width=20.0, height=20.0)
         bsdf = LambertianBSDF(reflectance_value=1.0)
-        mirror = ReflectiveComponent(cs=cs, geometry=geom, bsdf=bsdf)
+        mirror = ReflectiveComponent(cs=cs, geometry=geom, reflectance=1.0, bsdf=bsdf)
 
         n = 2000
         from optiland.nonsequential.ray_bundle import NSQRayBundle  # noqa: PLC0415

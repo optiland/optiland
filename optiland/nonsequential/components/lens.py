@@ -297,6 +297,7 @@ def _make_surface(
     cfg: SurfaceConfig | None,
     interaction: InteractionType,
     name: str = "",
+    reflectance: object | None = None,
 ) -> BaseComponent:
     """Construct the correct BaseComponent from config overrides.
 
@@ -308,9 +309,17 @@ def _make_surface(
         cfg: Optional SurfaceConfig with overrides.
         interaction: Default interaction type.
         name: Label for this sub-surface, e.g. ``"L1.front"``.
+        reflectance: Compound-level reflectance (e.g. ``MirrorConfig
+            .reflectance``), used when this surface resolves to
+            ``InteractionType.REFLECTIVE`` and ``cfg.reflectance`` does not
+            override it. Ignored for non-reflective surfaces.
 
     Returns:
         The constructed BaseComponent subclass.
+
+    Raises:
+        ValueError: If the surface resolves to REFLECTIVE and neither
+            ``cfg.reflectance`` nor ``reflectance`` supplies a value.
     """
     resolved = _resolve_interaction(cfg, interaction)
     bsdf = cfg.bsdf if cfg is not None else None
@@ -320,6 +329,7 @@ def _make_surface(
         geom.aperture_radius = as_param(aperture_override)
 
     if resolved == InteractionType.REFRACTIVE:
+        coating = cfg.coating if cfg is not None else None
         return RefractiveComponent(
             cs,
             geom,
@@ -328,12 +338,24 @@ def _make_surface(
             bsdf=bsdf,
             name=name,
             scatter_fraction=scatter_fraction,
+            coating=coating,
         )
     if resolved == InteractionType.REFLECTIVE:
-        # ReflectiveComponent: (cs, geometry, bsdf=None, material_front=VACUUM)
+        surface_reflectance = cfg.reflectance if cfg is not None else None
+        if surface_reflectance is None:
+            surface_reflectance = reflectance
+        if surface_reflectance is None:
+            raise ValueError(
+                f"Surface {name!r} resolves to InteractionType.REFLECTIVE but "
+                "no reflectance was supplied. Set MirrorConfig.reflectance "
+                "(or this surface's SurfaceConfig.reflectance) to a constant, "
+                "a callable(wavelength_um) -> reflectance, or an unpolarized "
+                "optiland.coatings.BaseCoating."
+            )
         return ReflectiveComponent(
             cs,
             geom,
+            surface_reflectance,
             bsdf=bsdf,
             material_front=mat_front,
             name=name,

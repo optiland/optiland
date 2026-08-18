@@ -81,13 +81,16 @@ def _rich_scene() -> NSQScene:
         ),
     )
     scene.add_mirror(
-        "M", CoordinateSystem(z=100), MirrorConfig(radius=-200, aperture_radius=20)
+        "M",
+        CoordinateSystem(z=100),
+        MirrorConfig(radius=-200, reflectance=1.0, aperture_radius=20),
     )
     scene.add_component(
         "diffuser",
         ReflectiveComponent(
             cs=CoordinateSystem(z=120),
             geometry=FinitePlaneGeometry(width=40.0, height=40.0),
+            reflectance=1.0,
             bsdf=LambertianBSDF(reflectance_value=0.7),
             scatter_fraction=0.3,
             name="diffuser",
@@ -98,6 +101,7 @@ def _rich_scene() -> NSQScene:
         ReflectiveComponent(
             cs=CoordinateSystem(z=140),
             geometry=FinitePlaneGeometry(width=40.0, height=40.0),
+            reflectance=1.0,
             bsdf=HarveyShackBSDF(b0=1e-3, l0=0.01, s=2.0),
             name="scatterer",
         ),

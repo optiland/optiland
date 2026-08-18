@@ -12,12 +12,19 @@ from typing import TYPE_CHECKING
 import optiland.backend as be
 from optiland.backend.utils import to_numpy
 from optiland.nonsequential.components.base import BaseComponent
+from optiland.nonsequential.components.coating_support import (
+    reject_polarized_coating,
+    resolve_reflectance,
+)
 from optiland.nonsequential.materials.nsq_material import VACUUM
 from optiland.nonsequential.rng import EventSlot
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     import numpy as np
 
+    from optiland.coatings import BaseCoating
     from optiland.coordinate_system import CoordinateSystem
     from optiland.nonsequential.bsdf.base import BaseBSDF
     from optiland.nonsequential.components.geometry.base import ComponentGeometry
@@ -35,6 +42,8 @@ class ReflectiveComponent(BaseComponent):
     Attributes:
         cs: Coordinate system.
         geometry: Surface geometry.
+        reflectance: Constant, callable(wavelength_um), or unpolarized
+            BaseCoating giving the fraction of flux reflected.
         bsdf: Optional BSDF for scatter. None = specular mirror.
         name: Optional label.
     """
@@ -43,6 +52,7 @@ class ReflectiveComponent(BaseComponent):
         self,
         cs: CoordinateSystem,
         geometry: ComponentGeometry,
+        reflectance: float | Callable[[be.ndarray], be.ndarray] | BaseCoating,
         bsdf: BaseBSDF | None = None,
         material_front: NSQMaterial = VACUUM,
         name: str = "",
@@ -53,12 +63,23 @@ class ReflectiveComponent(BaseComponent):
         Args:
             cs: Coordinate system.
             geometry: Surface geometry.
+            reflectance: Fraction of incident flux reflected. Required --
+                unlike ``bsdf``, there is no "perfect mirror" default (D-3):
+                a mirror built without saying how reflective it is would
+                otherwise silently reflect 100% of incoming flux. Accepts a
+                constant in [0, 1], a ``callable(wavelength_um) ->
+                reflectance``, or an unpolarized ``optiland.coatings
+                .BaseCoating`` (e.g. ``SimpleCoating``); a
+                ``BaseCoatingPolarized`` instance raises
+                ``NotImplementedError`` at construction.
             bsdf: Optional BSDF scatter model. None = perfect mirror.
             material_front: Medium on the front side (default: vacuum).
             name: Optional label.
             scatter_fraction: Probability that a hit ray is routed through
                 ``bsdf`` rather than specularly reflected.
         """
+        reject_polarized_coating(reflectance, surface_name=name)
+        self.reflectance = reflectance
         super().__init__(
             cs,
             geometry,
@@ -121,6 +142,11 @@ class ReflectiveComponent(BaseComponent):
         reflected = reflected / (norms_r + 1e-30)
         hit_col = hit_mask[:, None]
         new_dirs = be.where(hit_col, reflected, dirs)
+
+        # D-3: reflectance is mandatory, applied to every hit ray regardless
+        # of whether it also scatters through a BSDF below.
+        R = resolve_reflectance(self.reflectance, rays.wavelength)
+        rays.flux = rays.flux * be.where(hit_mask, R, be.ones_like(R))
 
         if bsdf_ir.kind != "none":
             # Compute BSDF for all N rays; where-select only scattering rays

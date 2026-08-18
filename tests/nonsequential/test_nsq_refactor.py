@@ -202,7 +202,9 @@ class TestLensBuild:
             thickness=5,
             material=VACUUM,
             front_aperture_radius=10,
-            front=SurfaceConfig(interaction=InteractionType.REFLECTIVE),
+            front=SurfaceConfig(
+                interaction=InteractionType.REFLECTIVE, reflectance=1.0
+            ),
         )
         lens = Lens("L", cs, cfg)
         assert isinstance(lens.surfaces[0], ReflectiveComponent)
@@ -333,7 +335,9 @@ class TestNSQSceneNewAPI:
     def test_add_mirror(self):
         scene = NSQScene()
         cs = CoordinateSystem(z=100)
-        cfg = MirrorConfig(radius=200.0, conic=-1.0, aperture_radius=50.0)
+        cfg = MirrorConfig(
+            radius=200.0, reflectance=1.0, conic=-1.0, aperture_radius=50.0
+        )
         scene.add_mirror("M1", cs, cfg)
         assert len(scene.surfaces) == 1
 
@@ -384,7 +388,7 @@ class TestBackwardCompat:
 
         cs = CoordinateSystem(z=50)
         comp = ReflectiveComponent(
-            cs=cs, geometry=FinitePlaneGeometry(width=20, height=20)
+            cs=cs, geometry=FinitePlaneGeometry(width=20, height=20), reflectance=1.0
         )
         scene = NSQScene()
         scene.add_component("mirror", comp)

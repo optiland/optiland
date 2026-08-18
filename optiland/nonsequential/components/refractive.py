@@ -15,9 +15,13 @@ import numpy as np
 import optiland.backend as be
 from optiland.backend.utils import to_numpy
 from optiland.nonsequential.components.base import BaseComponent
+from optiland.nonsequential.components.coating_support import (
+    reject_polarized_coating,
+)
 from optiland.nonsequential.rng import EventSlot
 
 if TYPE_CHECKING:
+    from optiland.coatings import BaseCoating
     from optiland.coordinate_system import CoordinateSystem
     from optiland.nonsequential.bsdf.base import BaseBSDF
     from optiland.nonsequential.components.geometry.base import ComponentGeometry
@@ -64,6 +68,7 @@ class RefractiveComponent(BaseComponent):
         bsdf: BaseBSDF | None = None,
         name: str = "",
         scatter_fraction: float = 1.0,
+        coating: BaseCoating | None = None,
     ) -> None:
         """Initialize RefractiveComponent.
 
@@ -81,7 +86,16 @@ class RefractiveComponent(BaseComponent):
             name: Optional label.
             scatter_fraction: Probability that a hit ray is routed through
                 ``bsdf`` rather than refracted.
+            coating: Optional ``optiland.coatings.BaseCoating`` (e.g.
+                ``SimpleCoating``). When set, its ``.reflectance``/
+                ``.transmittance`` replace the bare Fresnel R/T so NSQ
+                agrees with the sequential engine's coating model. Must be
+                unpolarized -- a ``BaseCoatingPolarized`` instance raises
+                ``NotImplementedError`` immediately, since NSQ rays carry no
+                polarization state.
         """
+        reject_polarized_coating(coating, surface_name=name)
+        self.coating = coating
         super().__init__(
             cs,
             geometry,
@@ -107,7 +121,10 @@ class RefractiveComponent(BaseComponent):
         Uses detached-sample / attached-weight Fresnel: the reflect/transmit
         branch decision is drawn from a detached probability so stochastic
         choices do not block gradients; the throughput weight multiplier
-        carries the attached reflectance so ∂flux/∂R is non-zero.
+        carries the attached reflectance so ∂flux/∂R is non-zero. When
+        ``self.coating`` is set, its R/T replace the bare Fresnel values
+        (still forced to R=1/T=0 under TIR, where no coating can restore a
+        transmitted wave).
 
         Args:
             rays: Ray bundle updated in-place.
@@ -193,18 +210,38 @@ class RefractiveComponent(BaseComponent):
         )
         R_fresnel = be.where(tir, be.ones_like(rs), 0.5 * (rs**2 + rp**2))
 
+        # A coating overrides the bare Fresnel R/T with its own (possibly
+        # wavelength-independent, possibly lossy: R + T < 1) values -- except
+        # under TIR, where there is no real transmitted wave regardless of
+        # what the coating claims, so reflection stays forced to R=1, T=0.
+        if self.coating is not None:
+            R_used = be.ones_like(R_fresnel) * float(self.coating.reflectance)
+            T_used = be.ones_like(R_fresnel) * float(self.coating.transmittance)
+        else:
+            R_used = R_fresnel
+            T_used = 1.0 - R_fresnel
+        R_used = be.where(tir, be.ones_like(R_used), R_used)
+        T_used = be.where(tir, be.zeros_like(T_used), T_used)
+
         # --- Detached-sample / attached-weight ---
         # Sampling decision uses detached R so the branch doesn't block grad.
-        R_np = to_numpy(R_fresnel).astype(np.float64)
+        R_np = to_numpy(R_used).astype(np.float64)
         u = rng.uniform(ray_id_key, bounce_key, EventSlot.FRESNEL_BRANCH)
         do_reflect_np = (u < R_np) | to_numpy(tir).astype(bool)
         do_reflect = be.array(do_reflect_np)
 
-        # Throughput weight: forward value is 1.0; carries ∂R.
+        # Throughput weight: forward value is 1.0 (R_used == R_used/1); carries
+        # gradients through R/T. Generalizes the plain-Fresnel
+        # weight_transmit = (1-R)/(1-R_det) to allow T != 1-R (coating
+        # absorption): the branch is still a single reflect-vs-transmit draw
+        # with P(reflect) = R_det, so E[weight] = R on the reflect branch and
+        # T on the transmit branch -- exact flux conservation in expectation,
+        # with the shortfall R+T<1 taken up by the deterministic T weight
+        # rather than a separate absorption draw.
         # For TIR rays weight stays 1.0 (full reflection is deterministic).
         R_det = be.array(R_np)  # detached copy used as denominator
-        weight_reflect = R_fresnel / (R_det + 1e-30)
-        weight_transmit = (1.0 - R_fresnel) / (1.0 - R_det + 1e-30)
+        weight_reflect = R_used / (R_det + 1e-30)
+        weight_transmit = T_used / (1.0 - R_det + 1e-30)
         weight = be.where(do_reflect, weight_reflect, weight_transmit)
         # TIR: weight is exactly 1
         weight = be.where(tir, be.ones_like(weight), weight)

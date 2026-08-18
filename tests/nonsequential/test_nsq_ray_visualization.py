@@ -58,7 +58,7 @@ def _folded_scene() -> NSQScene:
     scene.add_mirror(
         "M",
         CoordinateSystem(z=0.0, rx=np.radians(45.0)),
-        MirrorConfig(radius=np.inf, aperture_radius=20.0),
+        MirrorConfig(radius=np.inf, reflectance=1.0, aperture_radius=20.0),
     )
     scene.add_detector(
         "D",

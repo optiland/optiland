@@ -100,7 +100,7 @@ def _make_mirror_scene() -> NSQScene:
     scene.add_mirror(
         "M1",
         mirror_cs,
-        MirrorConfig(radius=-100.0, conic=-1.0, aperture_radius=20.0),
+        MirrorConfig(radius=-100.0, reflectance=1.0, conic=-1.0, aperture_radius=20.0),
     )
 
     ff_cs = CoordinateSystem(x=0, y=0, z=0)

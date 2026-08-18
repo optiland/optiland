@@ -292,12 +292,23 @@ def _serialize_component(name: str, compound: Any) -> dict:
         }
 
     if isinstance(compound, Mirror):
+        if not isinstance(config.reflectance, int | float) and not hasattr(
+            config.reflectance, "numpy"
+        ):
+            raise TypeError(
+                f"Cannot serialize mirror '{name}': reflectance is "
+                f"{type(config.reflectance).__name__}, not a constant. "
+                "Only a scalar reflectance round-trips through JSON "
+                "serialization; a callable or coating reflectance must be "
+                "re-attached after loading."
+            )
         return {
             "type": "mirror",
             "name": name,
             "cs": _serialize_cs(cs),
             "config": {
                 "radius": _to_float(config.radius),
+                "reflectance": _to_float(config.reflectance),
                 "conic": _to_float(config.conic),
                 "aperture_radius": _to_float(config.aperture_radius),
             },
@@ -367,6 +378,7 @@ def _deserialize_component(d: dict, scene: NSQScene) -> None:
     elif ctype == "mirror":
         config = MirrorConfig(
             radius=cfg_d["radius"],
+            reflectance=cfg_d["reflectance"],
             conic=cfg_d.get("conic", 0.0),
             aperture_radius=cfg_d["aperture_radius"],
         )

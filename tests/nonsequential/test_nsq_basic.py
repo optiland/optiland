@@ -246,6 +246,7 @@ class TestFlatMirrorReflection:
         mirror = ReflectiveComponent(
             cs=mirror_cs,
             geometry=FinitePlaneGeometry(width=20.0, height=20.0),
+            reflectance=1.0,
             bsdf=SpecularBRDF(),
         )
 
@@ -356,6 +357,7 @@ class TestFluxConservation:
         mirror = ReflectiveComponent(
             cs=mirror_cs,
             geometry=ConicGeometry(radius=200.0, conic=-1.0, aperture_radius=50.0),
+            reflectance=1.0,
             bsdf=SpecularBRDF(),
         )
 
@@ -412,6 +414,7 @@ class TestFluxConservation:
         mirror = ReflectiveComponent(
             cs=mirror_cs,
             geometry=FinitePlaneGeometry(width=20.0, height=20.0),
+            reflectance=1.0,
             bsdf=SpecularBRDF(),
         )
 
@@ -584,7 +587,9 @@ class TestSelfIntersectionGuard:
         Spectrum.monochromatic(0.55)
         cs = CoordinateSystem(x=0, y=0, z=10)
         geom = FinitePlaneGeometry(width=20.0, height=20.0)
-        comp = ReflectiveComponent(cs=cs, geometry=geom, bsdf=SpecularBRDF())
+        comp = ReflectiveComponent(
+            cs=cs, geometry=geom, reflectance=1.0, bsdf=SpecularBRDF()
+        )
 
         # Create a ray bundle that is AT the surface (t would be 0 without guard)
         rays = NSQRayBundle(

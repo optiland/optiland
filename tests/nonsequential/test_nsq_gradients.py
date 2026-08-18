@@ -266,6 +266,7 @@ class TestBSDFReflectanceGradient:
             ReflectiveComponent(
                 cs=mirror_cs,
                 geometry=FinitePlaneGeometry(width=20.0, height=20.0),
+                reflectance=1.0,
                 bsdf=bsdf,
             ),
         )
@@ -310,6 +311,7 @@ class TestBSDFReflectanceGradient:
                 ReflectiveComponent(
                     cs=CoordinateSystem(z=5),
                     geometry=FinitePlaneGeometry(width=20.0, height=20.0),
+                    reflectance=1.0,
                     bsdf=LambertianBSDF(reflectance_value=float(r_val)),
                 ),
             )
@@ -347,6 +349,7 @@ class TestBSDFReflectanceGradient:
             ReflectiveComponent(
                 cs=CoordinateSystem(z=5),
                 geometry=FinitePlaneGeometry(width=20.0, height=20.0),
+                reflectance=1.0,
                 bsdf=bsdf,
             ),
         )

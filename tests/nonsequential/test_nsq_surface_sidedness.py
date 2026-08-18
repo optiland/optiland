@@ -108,7 +108,7 @@ def test_retro_reflected_beam_emerges_antiparallel():
     scene.add_mirror(
         "M",
         CoordinateSystem(z=15.0),
-        MirrorConfig(radius=np.inf, aperture_radius=30.0),
+        MirrorConfig(radius=np.inf, reflectance=1.0, aperture_radius=30.0),
     )
     scene.add_detector(
         "D", CoordinateSystem(z=-25.0), RayDatabaseConfig(width=400, height=400)

@@ -389,10 +389,51 @@ def _add_mirror(scene, optic, surf, elem_idx: int) -> None:
     radius = _surface_radius(surf)
     conic = _surface_conic(surf)
     ap_r = _surface_semi_diameter(surf, optic, elem_idx)
+    reflectance = _mirror_reflectance(surf, elem_idx)
 
     cs = CoordinateSystem(z=z)
-    config = MirrorConfig(radius=radius, conic=conic, aperture_radius=ap_r)
+    config = MirrorConfig(
+        radius=radius, reflectance=reflectance, conic=conic, aperture_radius=ap_r
+    )
     scene.add_mirror(f"M{elem_idx}", cs, config)
+
+
+def _mirror_reflectance(surf, elem_idx: int) -> float:
+    """Extract a scalar reflectance for a mirror surface being converted.
+
+    Reads ``surf.interaction_model.coating`` (the non-deprecated accessor).
+    An unpolarized ``SimpleCoating``-like coating's ``.reflectance``
+    attribute is used directly; anything else (no coating attached, or a
+    coating without a plain ``.reflectance`` attribute) falls back to a
+    perfect mirror, since NSQ requires an explicit reflectance (D-3) and the
+    sequential engine has no equivalent implicit default to defer to.
+
+    Args:
+        surf: Sequential Surface object for the mirror.
+        elem_idx: Element index (for the warning message).
+
+    Returns:
+        Scalar reflectance in [0, 1].
+
+    Warns:
+        UserWarning: If no usable reflectance could be read from the
+            sequential surface, so the mirror is defaulting to R=1.0.
+    """
+    model = getattr(surf, "interaction_model", None)
+    coating = getattr(model, "coating", None) if model is not None else None
+    reflectance = getattr(coating, "reflectance", None)
+    if reflectance is not None:
+        return float(reflectance)
+
+    warnings.warn(
+        f"Mirror M{elem_idx} has no coating with a scalar .reflectance "
+        "attached in the sequential system; defaulting to a perfect "
+        "reflector (reflectance=1.0). Set MirrorConfig.reflectance "
+        "explicitly after conversion if this is not correct.",
+        UserWarning,
+        stacklevel=2,
+    )
+    return 1.0
 
 
 def _add_lens(scene, optic, element_surfaces: list, elem_indices: list) -> None:

@@ -47,17 +47,31 @@ class SurfaceConfig:
             below 1 to model a partially scattering surface, e.g. 0.1 for a
             surface that scatters a tenth of the light and transmits the
             rest.  Ignored when ``bsdf`` is None.
-        coating: Thin-film coating model (deferred -- not yet implemented).
+        coating: An ``optiland.coatings.BaseCoating`` for a refractive
+            surface (e.g. an AR coating). When set, its reflectance/
+            transmittance replace the bare Fresnel calculation, so NSQ and
+            the sequential engine agree on R. Must be an unpolarized coating
+            (``SimpleCoating``); a ``BaseCoatingPolarized`` instance (Jones-
+            matrix based -- ``FresnelCoating``, ``ThinFilmCoating``, ...)
+            raises ``NotImplementedError`` rather than being silently
+            degraded to its scalar average. Ignored on absorbing surfaces.
         aperture_radius: Semi-diameter override [mm].  Overrides the aperture
             computed from the compound config.
         interaction: Force a specific interaction type on this surface.
+        reflectance: Required when ``interaction`` selects
+            ``InteractionType.REFLECTIVE``: a constant in [0, 1], a
+            wavelength-dependent ``callable(wavelength_um) -> reflectance``,
+            or an unpolarized ``BaseCoating``. See
+            ``ReflectiveComponent`` -- constructing a reflective surface
+            without one raises rather than defaulting to a perfect mirror.
     """
 
     bsdf: BaseBSDF | None = None
     scatter_fraction: float = 1.0
-    coating: object | None = None  # BaseCoating -- deferred
+    coating: object | None = None  # optiland.coatings.BaseCoating
     aperture_radius: float | None = None
     interaction: InteractionType | None = None
+    reflectance: object | None = None  # float | Callable | BaseCoating
 
 
 @dataclass
@@ -154,12 +168,20 @@ class MirrorConfig:
     Attributes:
         radius: Vertex radius of curvature [mm].  Negative = concave when
             oriented with the normal pointing toward +z.
+        reflectance: Mirror reflectance: a constant in [0, 1], a
+            wavelength-dependent ``callable(wavelength_um) -> reflectance``,
+            or an unpolarized ``optiland.coatings.BaseCoating`` (e.g.
+            ``SimpleCoating``). Required -- there is no implicit
+            perfect-mirror default (D-3): a mirror built without specifying
+            how much light it reflects is a modelling bug, not a 100%
+            reflector. Overridden per-surface by ``surface.reflectance``.
         conic: Conic constant (0 = sphere, -1 = paraboloid, etc.).
         aperture_radius: Semi-diameter [mm].
         surface: Per-surface overrides (e.g. to attach a scatter BSDF).
     """
 
     radius: float
+    reflectance: object  # float | Callable | BaseCoating
     conic: float = 0.0
     aperture_radius: float = 25.0
     surface: SurfaceConfig | None = None
