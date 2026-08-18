@@ -274,13 +274,20 @@ class CreationMixin:
             fill_value: Fill value.
 
         Returns:
-            Tensor: Filled tensor.
+            Tensor: Filled tensor. When ``fill_value`` is itself a Tensor,
+                the result stays attached to its autograd graph (via a
+                broadcast multiply) instead of being detached through
+                ``.item()`` -- a scalar ``requires_grad`` leaf broadcast
+                across a multi-element ``x`` must still carry a gradient
+                back to that leaf.
         """
         x_t = self.array(x)
-        val = fill_value.item() if isinstance(fill_value, torch.Tensor) else fill_value
+        if isinstance(fill_value, torch.Tensor):
+            ones = torch.ones_like(x_t, device=self._device(), dtype=self._dtype())
+            return ones * fill_value.to(device=self._device(), dtype=self._dtype())
         return torch.full_like(
             x_t,
-            val,
+            fill_value,
             device=self._device(),
             dtype=self._dtype(),
             requires_grad=self._grad(),
