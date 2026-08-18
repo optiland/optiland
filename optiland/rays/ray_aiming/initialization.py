@@ -91,7 +91,7 @@ class RealReferenceStrategy(StopSizeStrategy):
 
     def _trace_real_marginal_ray(self) -> float:
         wavelength = self.optic.primary_wavelength
-        EPL = float(self.optic.paraxial.entrance_pupil_z())
+        EPL = float(self.optic.paraxial.entrance_pupil_axial_position())
         EPD = float(self.optic.paraxial.EPD())
 
         stop_index = self.optic.surfaces.stop_index
@@ -145,9 +145,7 @@ class RealReferenceStrategy(StopSizeStrategy):
                 # Push the chief launch to the pupil plane (the plane through
                 # the apparent pupil point, perpendicular to the entry
                 # direction), offset there by EPD/2 along v, and re-aim.
-                r_ep = tuple(
-                    _anchor[i] + (EPL - axial) * d0[i] for i in range(3)
-                )
+                r_ep = tuple(_anchor[i] + (EPL - axial) * d0[i] for i in range(3))
                 c_pos = (cx, cy, cz)
                 c_dir = (cL, cM, cN)
                 denom = sum(c_dir[i] * d0[i] for i in range(3))
@@ -242,7 +240,7 @@ class RealReferenceStrategy(StopSizeStrategy):
         from optiland.rays.ray_aiming.iterative import IterativeRayAimer
 
         wavelength = self.optic.primary_wavelength
-        EPL = float(self.optic.paraxial.entrance_pupil_z())
+        EPL = float(self.optic.paraxial.entrance_pupil_axial_position())
 
         if frame is None:
             # First-order seed: the pupil is the image of the stop, so the
@@ -288,9 +286,7 @@ class RealReferenceStrategy(StopSizeStrategy):
                 N0 = be.array([d0[2]])
             else:
                 obj_cs = self.optic.object_surface.geometry.cs
-                obj_pos = tuple(
-                    to_float(c) for c in obj_cs.position_in_gcs
-                )
+                obj_pos = tuple(to_float(c) for c in obj_cs.position_in_gcs)
                 delta = tuple(r_ep[i] - obj_pos[i] for i in range(3))
                 mag = float(be.sqrt(be.array(sum(d**2 for d in delta))))
                 x0 = be.array([obj_pos[0]])

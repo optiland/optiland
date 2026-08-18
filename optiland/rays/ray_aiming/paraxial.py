@@ -117,7 +117,7 @@ class ParaxialRayAimer(BaseRayAimer):
             frame = self.optic.surfaces._entry_frame()
 
             if frame is None:
-                epl_global = self.optic.paraxial.entrance_pupil_z()
+                epl_global = self.optic.paraxial.entrance_pupil_axial_position()
 
                 x1 = Px * EPD * vx / 2
                 y1 = Py * EPD * vy / 2
@@ -131,7 +131,7 @@ class ParaxialRayAimer(BaseRayAimer):
                 # See SurfaceGroup._entry_frame for why the position is
                 # never refolded onto a downstream leg.
                 anchor, axial, d0, u0, v0 = frame
-                ep = self.optic.paraxial.entrance_pupil_z()
+                ep = self.optic.paraxial.entrance_pupil_axial_position()
                 a = Px * EPD * vx / 2
                 b = Py * EPD * vy / 2
                 x1 = anchor[0] + (ep - axial) * d0[0] + a * u0[0] + b * v0[0]

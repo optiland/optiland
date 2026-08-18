@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import optiland.backend as be
+from optiland._deprecation import deprecated
 from optiland.fields import ObjectHeightField, ParaxialImageHeightField
 from optiland.raytrace.paraxial_ray_tracer import ParaxialRayTracer
 
@@ -270,6 +271,7 @@ class Paraxial:
             path = self.surfaces.build_paraxial_path()
         return self.EPL(path=path) + path.axial_positions.reshape(-1, 1)[1, 0]
 
+    @deprecated("paraxial.entrance_pupil_axial_position()")
     def entrance_pupil_z(self, path: ParaxialPath | None = None) -> ScalarOrArray:
         """Entrance pupil location as an axial scalar (legacy name).
 

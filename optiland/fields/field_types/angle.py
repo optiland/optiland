@@ -109,7 +109,7 @@ class AngleField(BaseFieldDefinition):
 
             frame = optic.surfaces._entry_frame()
             if frame is None:
-                z_pupil = optic.paraxial.entrance_pupil_z()
+                z_pupil = optic.paraxial.entrance_pupil_axial_position()
                 x = -s * be.tan(be.radians(field_x)) * d
                 y = -s * be.tan(be.radians(field_y)) * d
                 z = z_pupil - s * d
@@ -125,7 +125,7 @@ class AngleField(BaseFieldDefinition):
                 # same thing the z-based branch means wherever both are
                 # defined. See SurfaceGroup._entry_frame.
                 anchor, axial, d0, u0, v0 = frame
-                ep = optic.paraxial.entrance_pupil_z()
+                ep = optic.paraxial.entrance_pupil_axial_position()
                 back = ep - axial - s * d
                 tu = (
                     be.array(Px) * EPD / 2 * be.array(vx)
@@ -139,7 +139,10 @@ class AngleField(BaseFieldDefinition):
                 y0 = anchor[1] + back * d0[1] + tu * u0[1] + tv * v0[1]
                 z0 = anchor[2] + back * d0[2] + tu * u0[2] + tv * v0[2]
         else:
-            dist_to_ep = optic.paraxial.entrance_pupil_z() - optic.surfaces.positions[0]
+            dist_to_ep = (
+                optic.paraxial.entrance_pupil_axial_position()
+                - optic.surfaces.positions[0]
+            )
             x_local = be.atleast_1d(be.array(-be.tan(be.radians(field_x)) * dist_to_ep))
             y_local = be.atleast_1d(be.array(-be.tan(be.radians(field_y)) * dist_to_ep))
             z_local = obj.geometry.sag(x_local, y_local)
