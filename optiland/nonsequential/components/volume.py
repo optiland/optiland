@@ -1,12 +1,24 @@
 """Volume -- a closed, outward-oriented solid built from boundary surfaces.
 
-Not required for D-1 (medium sidedness is fixed geometrically per-surface;
-see ``RefractiveComponent.interact``), but a compound component's boundary
-surfaces are supposed to form a genuinely closed solid, and nothing
-currently checks that. ``Volume`` is that check: it validates a boundary
-list at construction time and raises loudly (``NonWatertightVolumeError``)
-if the surfaces do not actually close up or are inconsistently oriented,
-rather than letting a silent gap leak flux at trace time.
+Medium sidedness (which material a ray is entering) is fixed geometrically
+per-surface -- see ``RefractiveComponent.interact`` -- and stays the sole
+source of truth for n1/n2. ``Volume`` is a separate, independent check: a
+compound component's boundary surfaces are supposed to form a genuinely
+closed solid, and nothing else checks that. It validates a boundary list at
+construction time and raises loudly (``NonWatertightVolumeError``) if the
+surfaces do not actually close up or are inconsistently oriented, rather
+than letting a silent gap leak flux at trace time.
+
+A ray-level medium stack (``NSQRayBundle.medium_stack``/``medium_depth``,
+pushed/popped by ``RefractiveComponent.interact`` on every transmitted ray)
+runs alongside this as a runtime cross-check: it does not feed back into
+n1/n2 either, but a pop on an empty stack is counted in
+``Diagnostics.medium_stack_underflows`` as a likely geometry defect. This
+``Volume`` boundary list is not yet wired into that stack via ids (there is
+no ``SceneIR``-level ``VolumeIR`` population), so the stack's push/pop
+identity currently comes from ``NSQMaterial`` object identity
+(``optiland.nonsequential.materials.nsq_material.medium_stack_id``), not
+from a volume registry.
 
 Kramer Harrison, 2026
 """

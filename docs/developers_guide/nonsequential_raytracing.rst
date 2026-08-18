@@ -261,17 +261,27 @@ index-matched or nearly-matched interfaces (cemented doublets, oil
 immersion) — the fix is direction-agnostic *by construction*.
 
 :class:`~optiland.nonsequential.components.volume.Volume` is a
-construction-time correctness check built on top of that fix, not a runtime
-medium-nesting stack: it validates that a compound component's boundary
-surfaces actually close up (every rim meets a neighbour's rim within
-``WATERTIGHT_TOL``) and are consistently outward-oriented (a ray-parity test
-from the interior centroid), raising
+construction-time correctness check built on top of that fix: it validates
+that a compound component's boundary surfaces actually close up (every rim
+meets a neighbour's rim within ``WATERTIGHT_TOL``) and are consistently
+outward-oriented (a ray-parity test from the interior centroid), raising
 :class:`~optiland.nonsequential.components.volume.NonWatertightVolumeError`
 at construction rather than letting a geometry gap leak flux silently at
 trace time. ``Lens``, ``Doublet``, and ``Mirror`` build a ``Volume``
 internally; ``NSQScene.add_lens``/``add_doublet``/``add_mirror`` keep their
-existing signatures. ``SimulationResult.diagnostics.medium_stack_underflows``
-is reserved for a future runtime nesting stack and is always ``0`` today.
+existing signatures.
+
+Each ray also carries a runtime medium-nesting stack
+(``NSQRayBundle.medium_stack``/``medium_depth``), pushed and popped by
+``RefractiveComponent.interact`` alongside ``n_current`` on every
+transmitted ray. This never feeds back into n1/n2 -- the geometric
+resolution above stays the sole source of truth -- it is a cross-check: a
+pop attempted on an empty stack (a ray exiting a volume it never entered)
+is counted in ``SimulationResult.diagnostics.medium_stack_underflows``
+rather than raised, so one bad ray does not abort an otherwise-good trace.
+A nonzero count usually means two separately constructed ``NSQMaterial``
+instances stand in for what should be one physical medium, or a genuine
+geometry defect.
 
 .. _nsq_detectors:
 

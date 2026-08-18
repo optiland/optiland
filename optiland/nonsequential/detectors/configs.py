@@ -46,9 +46,10 @@ class SpectralDetectorConfig:
         wl_min: Minimum wavelength for spectral binning [µm].
         wl_max: Maximum wavelength for spectral binning [µm].
         num_bins: Number of wavelength bins.
-        splat: Splatting mode — 'bilinear', 'gaussian', or 'hard'.
-            Note: only 'hard' is currently implemented for SpectralDetector.
-        splat_sigma: Gaussian splat sigma in pixels (reserved for future use).
+        splat: Spatial (x, y) splatting mode — 'bilinear', 'gaussian', or
+            'hard'. The wavelength bin is always hard-assigned.
+        splat_sigma: Gaussian splat sigma in pixels (used when
+            ``splat='gaussian'``).
         absorb: Whether a hit terminates the ray.
 
     Note:

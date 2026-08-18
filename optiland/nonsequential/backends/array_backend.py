@@ -191,6 +191,7 @@ class ArrayBackend(TracerBackend):
         total_flux_rr_killed = 0.0
         hit_component_ids: set[int] = set()
         split_budget_saturated = False
+        total_medium_stack_underflows = 0
 
         # Distribute ray budget across sources proportional to flux
         rays_per_source = distribute_ray_budget(
@@ -429,6 +430,15 @@ class ArrayBackend(TracerBackend):
                         if spawned.num_rays > 0:
                             rays = NSQRayBundle.concat([rays, spawned])
 
+                    # D1: flush this bounce's medium-stack underflow counts
+                    # (see RefractiveComponent.interact) into the running
+                    # total, then reset so they are counted exactly once
+                    # regardless of subsequent compaction/concat.
+                    total_medium_stack_underflows += int(
+                        rays.medium_stack_underflows.sum()
+                    )
+                    rays.medium_stack_underflows[:] = 0
+
                     rays = self._maybe_compact(rays)
                     if rays.num_rays == 0:
                         break
@@ -495,6 +505,7 @@ class ArrayBackend(TracerBackend):
             flux_err,
             split_budget_saturated,
             detector_results,
+            medium_stack_underflows=total_medium_stack_underflows,
         )
 
         return SimulationResult(

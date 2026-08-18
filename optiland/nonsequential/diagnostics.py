@@ -105,13 +105,16 @@ class Diagnostics:
             unused spare aperture -- reported, not assumed to be a bug.
         detectors: Per-detector sampling-quality diagnostics, in
             ``scene.detectors`` order.
-        medium_stack_underflows: Always 0 in this release. Reserved: D-1's
-            sidedness fix is geometric per-surface (``n_geom``), not a
-            runtime nesting stack (the ``Volume``/medium-stack design is
-            not wired into the trace loop in this revamp), so there is
-            structurally no stack to underflow yet. Kept as a field so a
-            future medium-stack backend does not need a new diagnostics
-            field.
+        medium_stack_underflows: Total pop-on-empty-stack events across all
+            rays this trace (see ``NSQRayBundle.medium_stack``/
+            ``RefractiveComponent.interact``). This is a diagnostic
+            cross-check layered on top of the geometric ``n_geom``
+            sidedness resolution -- it never affects the physics (n1/n2 are
+            always resolved geometrically, never from the stack) -- so a
+            nonzero value flags a likely geometry defect (a volume boundary
+            surface reused inconsistently, or two separately constructed
+            ``NSQMaterial`` instances standing in for what should be one
+            physical medium) without itself changing any traced result.
         split_budget_saturated: True if bounded splitting ever
             hit its ``split_budget`` cap during this trace, meaning some
             spawned ghost-path rays were roulette-terminated rather than
@@ -301,6 +304,7 @@ def build_diagnostics(
     flux_conservation_error: float,
     split_budget_saturated: bool,
     detector_results: dict[str, object],
+    medium_stack_underflows: int = 0,
 ) -> Diagnostics:
     """Assemble a :class:`Diagnostics` from one trace's bookkeeping.
 
@@ -320,6 +324,8 @@ def build_diagnostics(
         split_budget_saturated: Whether bounded splitting ever hit its cap.
         detector_results: ``{name: get_result()}`` for every detector, in
             ``scene.detectors`` order.
+        medium_stack_underflows: Total medium-stack pop-on-empty events
+            across the trace (see :class:`Diagnostics`).
 
     Returns:
         The assembled diagnostics.
@@ -342,6 +348,6 @@ def build_diagnostics(
         flux_conservation_error=flux_conservation_error,
         unreached_geometry=unreached,
         detectors=detector_diags,
-        medium_stack_underflows=0,
+        medium_stack_underflows=medium_stack_underflows,
         split_budget_saturated=split_budget_saturated,
     )

@@ -18,6 +18,12 @@ from optiland.nonsequential.components.base import BaseComponent
 from optiland.nonsequential.components.coating_support import (
     reject_polarized_coating,
 )
+from optiland.nonsequential.materials.nsq_material import medium_stack_id
+from optiland.nonsequential.ray_bundle import (
+    MEDIUM_STACK_EMPTY,
+    MEDIUM_STACK_MAX_DEPTH,
+    MediumStackOverflowError,
+)
 from optiland.nonsequential.rng import EventSlot
 from optiland.nonsequential.sampling import resolve_reflect_prob
 
@@ -328,6 +334,69 @@ class RefractiveComponent(BaseComponent):
             hit_mask, be.where(do_reflect, k1, k2), rays.k_current
         )
 
+        # D1: medium stack push/pop -- a diagnostic cross-check, never fed
+        # back into n1/n2 above. Direction is decided by medium identity,
+        # not entering_back (a Lens's two faces share one +n_geom
+        # convention but opposite interior sides). Reaching ambient (id 0)
+        # always unwinds the whole stack, since abutting media (e.g. a
+        # cemented doublet) push sequentially without true nesting; a pop
+        # at depth 0 is counted as a leak. Reaching a non-ambient medium
+        # that matches one level below the top is a true nesting exit
+        # (pop); anything else pushes.
+        transmit_np = to_numpy(hit_mask).astype(bool) & ~to_numpy(do_reflect).astype(
+            bool
+        )
+        if transmit_np.any():
+            entering_back_np = to_numpy(entering_back).astype(bool)
+            front_id = medium_stack_id(self.material_front)
+            back_id = medium_stack_id(self.material_back)
+            mat2_np = np.where(entering_back_np, back_id, front_id)
+
+            rows = np.where(transmit_np)[0]
+            mat2_rows = mat2_np[rows]
+            ambient_mask = mat2_rows == 0
+
+            if ambient_mask.any():
+                amb_rows = rows[ambient_mask]
+                underflow_mask = rays.medium_depth[amb_rows] == 0
+                if underflow_mask.any():
+                    rays.medium_stack_underflows[amb_rows[underflow_mask]] += 1
+                rays.medium_stack[amb_rows, :] = MEDIUM_STACK_EMPTY
+                rays.medium_depth[amb_rows] = 0
+
+            non_ambient_mask = ~ambient_mask
+            if non_ambient_mask.any():
+                na_rows = rows[non_ambient_mask]
+                na_mat2 = mat2_rows[non_ambient_mask]
+                na_depth = rays.medium_depth[na_rows]
+
+                below = np.zeros_like(na_mat2)  # depth 0 or 1 -> "below" is ambient
+                two_or_more = na_depth >= 2
+                if two_or_more.any():
+                    below[two_or_more] = rays.medium_stack[
+                        na_rows[two_or_more], na_depth[two_or_more] - 2
+                    ]
+                pop_mask = (na_depth >= 1) & (na_mat2 == below)
+                push_mask = ~pop_mask
+
+                if pop_mask.any():
+                    pr = na_rows[pop_mask]
+                    rays.medium_depth[pr] -= 1
+                    rays.medium_stack[pr, rays.medium_depth[pr]] = MEDIUM_STACK_EMPTY
+                if push_mask.any():
+                    pr = na_rows[push_mask]
+                    if (rays.medium_depth[pr] >= MEDIUM_STACK_MAX_DEPTH).any():
+                        raise MediumStackOverflowError(
+                            f"Medium stack exceeded MEDIUM_STACK_MAX_DEPTH="
+                            f"{MEDIUM_STACK_MAX_DEPTH} at surface "
+                            f"{self.name or type(self).__name__!r}. This "
+                            "indicates either pathologically deep volume "
+                            "nesting or a geometry defect that pushes "
+                            "without popping."
+                        )
+                    rays.medium_stack[pr, rays.medium_depth[pr]] = na_mat2[push_mask]
+                    rays.medium_depth[pr] += 1
+
         # Update bounce count
         rays.bounce = be.where(hit_mask, rays.bounce + 1, rays.bounce)
 
@@ -386,3 +455,9 @@ class RefractiveComponent(BaseComponent):
             rays.k_current = be.where(
                 scatters, be.where(bsdf_in_medium2, k2, k1), rays.k_current
             )
+            # Note: the medium stack above is not re-synced for scattered
+            # rays -- a transmissive BSDF lobe can cross the boundary
+            # opposite to the deterministic Fresnel branch's push/pop, so
+            # scatter_fraction > 0 on a volume boundary can drift the stack
+            # out of sync with n_current (diagnostic-only; n1/n2 stay
+            # correct either way).

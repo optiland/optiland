@@ -40,9 +40,11 @@ class SpectralDetector(BaseDetector):
         num_pixels_x: Number of pixels along x.
         num_pixels_y: Number of pixels along y.
         wavelength_bins: Wavelength bin edges [µm].
-        splat: Splatting mode. Only 'hard' binning is currently implemented;
-            'bilinear' and 'gaussian' are accepted but fall back to hard.
-        splat_sigma: Reserved for future Gaussian splat support.
+        splat: Spatial splatting mode -- 'bilinear', 'gaussian', or 'hard'.
+            Splatting is spatial (x, y) only; the wavelength bin is always
+            hard-assigned.
+        splat_sigma: Gaussian splat sigma in pixels (used when
+            ``splat='gaussian'``).
     """
 
     def __init__(
@@ -67,11 +69,10 @@ class SpectralDetector(BaseDetector):
             num_pixels_x: Number of pixels along x.
             num_pixels_y: Number of pixels along y.
             wavelength_bins: Wavelength bin edges [µm], shape (n_lambda + 1,).
-            splat: Splatting mode. Accepts 'bilinear', 'gaussian', or 'hard'.
-                Currently all modes use hard binning; bilinear splat for
-                SpectralDetector is a TODO.
-            splat_sigma: Gaussian splat sigma in pixels (reserved for future
-                use).
+            splat: Spatial splatting mode. Accepts 'bilinear', 'gaussian',
+                or 'hard'.
+            splat_sigma: Gaussian splat sigma in pixels. Only used when
+                ``splat='gaussian'``.
             name: Optional label.
             absorb: Whether a hit terminates the ray (default True).
 
@@ -151,24 +152,78 @@ class SpectralDetector(BaseDetector):
         flux_hit = flux_np[idx]
         wl_hit = wl_np[idx]
 
-        ix = np.clip(
-            np.searchsorted(self._x_edges, hx_l, side="right") - 1,
-            0,
-            self.num_pixels_x - 1,
-        )
-        iy = np.clip(
-            np.searchsorted(self._y_edges, hy_l, side="right") - 1,
-            0,
-            self.num_pixels_y - 1,
-        )
         iwl = np.clip(
             np.searchsorted(self.wavelength_bins, wl_hit, side="right") - 1,
             0,
             self._flux_map.shape[2] - 1,
         )
 
-        np.add.at(self._flux_map, (iy, ix, iwl), flux_hit)
+        nx, ny = self.num_pixels_x, self.num_pixels_y
+        dx = self.width / nx
+        dy = self.height / ny
+        if self.splat == "hard":
+            self._record_hard(hx_l, hy_l, flux_hit, iwl, nx, ny)
+        elif self.splat == "gaussian":
+            self._record_gaussian(hx_l, hy_l, flux_hit, iwl, nx, ny, dx, dy)
+        else:
+            self._record_bilinear(hx_l, hy_l, flux_hit, iwl, nx, ny, dx, dy)
         self._num_rays_hit += hit_mask_np.sum()
+
+    def _record_hard(self, hx_l, hy_l, flux_hit, iwl, nx, ny) -> None:
+        """Hard-bin spatial accumulation (see ``IrradianceDetector._record_hard``)."""
+        ix = np.clip(np.searchsorted(self._x_edges, hx_l, side="right") - 1, 0, nx - 1)
+        iy = np.clip(np.searchsorted(self._y_edges, hy_l, side="right") - 1, 0, ny - 1)
+        np.add.at(self._flux_map, (iy, ix, iwl), flux_hit)
+
+    def _record_bilinear(self, hx_l, hy_l, flux_hit, iwl, nx, ny, dx, dy) -> None:
+        """Bilinear spatial splat (see ``IrradianceDetector._record_bilinear``)."""
+        px = (hx_l + self.width / 2.0) / dx - 0.5
+        py = (hy_l + self.height / 2.0) / dy - 0.5
+        ix0 = np.floor(px).astype(np.int64)
+        iy0 = np.floor(py).astype(np.int64)
+        wx1 = px - ix0
+        wy1 = py - iy0
+        wx0 = 1.0 - wx1
+        wy0 = 1.0 - wy1
+
+        for dix, diy, wx, wy in (
+            (0, 0, wx0, wy0),
+            (1, 0, wx1, wy0),
+            (0, 1, wx0, wy1),
+            (1, 1, wx1, wy1),
+        ):
+            ix = np.clip(ix0 + dix, 0, nx - 1)
+            iy = np.clip(iy0 + diy, 0, ny - 1)
+            np.add.at(self._flux_map, (iy, ix, iwl), flux_hit * wx * wy)
+
+    def _record_gaussian(self, hx_l, hy_l, flux_hit, iwl, nx, ny, dx, dy) -> None:
+        """Gaussian spatial splat, truncated and renormalised per ray so
+        truncation never loses energy (see
+        ``IrradianceDetector._record_gaussian``)."""
+        sigma = self.splat_sigma
+        if sigma <= 0.0:
+            self._record_hard(hx_l, hy_l, flux_hit, iwl, nx, ny)
+            return
+
+        radius = max(1, int(np.ceil(3.0 * sigma)))
+        px = (hx_l + self.width / 2.0) / dx - 0.5
+        py = (hy_l + self.height / 2.0) / dy - 0.5
+        ix0 = np.floor(px).astype(np.int64)
+        iy0 = np.floor(py).astype(np.int64)
+
+        offsets = range(-radius, radius + 1)
+        gx = {d: np.exp(-0.5 * ((ix0 + d - px) / sigma) ** 2) for d in offsets}
+        gy = {d: np.exp(-0.5 * ((iy0 + d - py) / sigma) ** 2) for d in offsets}
+        sx = sum(gx.values())
+        sy = sum(gy.values())
+        norm = sx * sy
+
+        for dix in offsets:
+            ix = np.clip(ix0 + dix, 0, nx - 1)
+            for diy in offsets:
+                iy = np.clip(iy0 + diy, 0, ny - 1)
+                weight = (gx[dix] * gy[diy]) / norm
+                np.add.at(self._flux_map, (iy, ix, iwl), flux_hit * weight)
 
     def get_result(self) -> SpectralResult:
         """Return accumulated spectral result.

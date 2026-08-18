@@ -37,6 +37,8 @@ from optiland.nonsequential.components.lens import (
     _resolve_interaction,
 )
 from optiland.nonsequential.components.mirror import Mirror
+from optiland.nonsequential.detectors.irradiance import IrradianceDetector
+from optiland.nonsequential.detectors.spectral import SpectralDetector
 from optiland.nonsequential.diagnostics import DetectorDiagnostic, Diagnostics
 from optiland.nonsequential.scene import (
     _build_detector,
@@ -62,8 +64,8 @@ _CONFIG_CONSUMERS: list[tuple[type, list[object]]] = [
     (PointSourceConfig, [_build_source, _resolve_total_flux]),
     (CollimatedSourceConfig, [_build_source, _resolve_total_flux]),
     (ExtendedSourceConfig, [_build_source, _resolve_total_flux]),
-    (IrradianceDetectorConfig, [_build_detector]),
-    (SpectralDetectorConfig, [_build_detector]),
+    (IrradianceDetectorConfig, [_build_detector, IrradianceDetector.record]),
+    (SpectralDetectorConfig, [_build_detector, SpectralDetector.record]),
     (FarFieldDetectorConfig, [_build_detector]),
     (RayDatabaseConfig, [_build_detector]),
 ]
@@ -96,6 +98,23 @@ def test_every_config_field_is_consumed(config_cls, consumers):
         f"(as '.{{field}}') in {[c.__name__ for c in consumers]} -- accepted "
         "but silently ignored."
     )
+
+
+# ---------------------------------------------------------------------------
+# The generic audit above is satisfied once a field is forwarded into a
+# constructor kwarg (e.g. `_build_detector`'s `splat=cfg.splat`) -- exactly
+# the shape D-11 (SpectralDetector.splat silently falling back to hard
+# binning) shipped in. This checks the stronger claim directly: the field
+# must be read somewhere in the detector class's own behaviour, not just
+# passed through construction.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "detector_cls", [IrradianceDetector, SpectralDetector], ids=lambda c: c.__name__
+)
+def test_detector_splat_is_read_in_record(detector_cls):
+    assert "self.splat" in inspect.getsource(detector_cls.record)
 
 
 # ---------------------------------------------------------------------------
@@ -311,14 +330,93 @@ class TestBuildDiagnostics:
             result.flux_conservation_error
         )
 
-    def test_medium_stack_underflows_always_zero(self):
-        """Documented limitation: this revamp's D-1 sidedness fix is
-        geometric per-surface (n_geom), not a runtime nesting stack, so
-        there is structurally nothing to detect an underflow in yet.
-        """
+    def test_medium_stack_underflows_zero_for_well_formed_lens(self):
         scene = self._scene()
         result = scene.trace(num_rays=1000, seed=1, backend=NumpyBackend(seed=1))
         assert result.diagnostics.medium_stack_underflows == 0
+
+    def test_medium_stack_underflows_zero_for_cemented_doublet(self):
+        """A doublet's cement interface pushes a second, non-nested medium
+        onto the stack; exiting to ambient must still fully unwind it."""
+        scene = NSQScene()
+        scene.add_source(
+            "S",
+            CoordinateSystem(),
+            CollimatedSourceConfig(
+                spectrum=Spectrum.monochromatic(0.55),
+                total_flux=1.0,
+                aperture_radius=8.0,
+            ),
+        )
+        scene.add_doublet(
+            "D",
+            CoordinateSystem(z=50.0),
+            DoubletConfig(
+                r1=60.0,
+                r2=-60.0,
+                r3=-200.0,
+                thickness1=6.0,
+                thickness2=3.0,
+                material1="N-BK7",
+                material2="N-SF5",
+                aperture_radius=12.0,
+            ),
+        )
+        scene.add_detector(
+            "Det",
+            CoordinateSystem(z=200.0),
+            IrradianceDetectorConfig(
+                width=40, height=40, num_pixels_x=32, num_pixels_y=32
+            ),
+        )
+        result = scene.trace(num_rays=1000, seed=1, backend=NumpyBackend(seed=1))
+        assert result.diagnostics.medium_stack_underflows == 0
+
+    def test_medium_stack_underflow_detects_leak(self):
+        """A bare refractive surface hit from its interior side first (no
+        prior entry) is exactly the leak this diagnostic exists to catch.
+        """
+        import numpy as np
+
+        from optiland.nonsequential.components.geometry.analytic.plane import (
+            FinitePlaneGeometry,
+        )
+        from optiland.nonsequential.components.refractive import (
+            RefractiveComponent,
+        )
+        from optiland.nonsequential.materials.nsq_material import (
+            VACUUM,
+            NSQMaterial,
+        )
+
+        scene = NSQScene()
+        scene.add_source(
+            "S",
+            CoordinateSystem(z=10.0, rx=np.pi),
+            CollimatedSourceConfig(
+                spectrum=Spectrum.monochromatic(0.55),
+                total_flux=1.0,
+                aperture_radius=4.0,
+            ),
+        )
+        scene.add_component(
+            "plate",
+            RefractiveComponent(
+                cs=CoordinateSystem(z=0.0),
+                geometry=FinitePlaneGeometry(width=20, height=20),
+                material_front=VACUUM,
+                material_back=NSQMaterial.from_glass("N-BK7"),
+            ),
+        )
+        scene.add_detector(
+            "Det",
+            CoordinateSystem(z=-50.0),
+            IrradianceDetectorConfig(
+                width=40, height=40, num_pixels_x=16, num_pixels_y=16
+            ),
+        )
+        result = scene.trace(num_rays=1000, seed=1, backend=NumpyBackend(seed=1))
+        assert result.diagnostics.medium_stack_underflows > 0
 
     def test_split_budget_saturated_true_under_tight_budget(self):
         from optiland.nonsequential.ir.scene_ir import SamplingPolicy

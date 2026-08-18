@@ -116,3 +116,31 @@ class NSQMaterial:
 
 # Module-level vacuum constant
 VACUUM: NSQMaterial = NSQMaterial(optiland_material=None)
+
+
+def medium_stack_id(material: NSQMaterial) -> int:
+    """Canonical integer id for a medium, for the ray-level medium stack.
+
+    Every vacuum-like material (``optiland_material is None``) maps to the
+    same id ``0`` regardless of which ``NSQMaterial`` instance wraps it --
+    two separately constructed vacuum wrappers are physically the same
+    medium. Any other material is identified by Python object identity: two
+    ``NSQMaterial`` instances that happen to wrap the same physical glass
+    are only treated as the same medium if the scene reuses one instance
+    for both (as :class:`~optiland.nonsequential.components.volume.Volume`
+    and the ``Lens``/``Doublet`` builders do for a shared interior). This is
+    a conservative default -- reusing distinct instances for the same
+    physical glass on either side of a gap can produce a spurious
+    ``medium_stack_underflows`` count, never a wrong flux/index result (the
+    stack is a diagnostic cross-check; ``n1``/``n2`` are always resolved
+    geometrically, never from the stack).
+
+    Args:
+        material: The medium to identify.
+
+    Returns:
+        A stable (for the process lifetime) non-negative integer id.
+    """
+    if material.optiland_material is None:
+        return 0
+    return id(material)

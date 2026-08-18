@@ -219,6 +219,7 @@ class TorchBackend(TracerBackend):
         total_flux_depth_killed = 0.0
         total_flux_rr_killed = 0.0
         hit_component_ids: set[int] = set()
+        total_medium_stack_underflows = 0
 
         # Distribute ray budget across sources proportional to flux
         rays_per_source = distribute_ray_budget(
@@ -373,6 +374,14 @@ class TorchBackend(TracerBackend):
                         log_hit_fn=path_recorder.log_hits,
                     )
 
+                    # D1: flush this bounce's medium-stack underflow counts
+                    # (see RefractiveComponent.interact) into the running
+                    # total, then reset -- counted exactly once per bounce.
+                    total_medium_stack_underflows += int(
+                        rays.medium_stack_underflows.sum()
+                    )
+                    rays.medium_stack_underflows[:] = 0
+
                     # Kill escaped rays
                     no_hit_np = ~any_comp_hit_np & ~any_det_hit_np
                     escaped_np = no_hit_np & alive_np
@@ -501,6 +510,7 @@ class TorchBackend(TracerBackend):
             flux_err,
             False,
             detector_results,
+            medium_stack_underflows=total_medium_stack_underflows,
         )
 
         return SimulationResult(

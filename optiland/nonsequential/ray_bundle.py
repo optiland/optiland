@@ -13,6 +13,24 @@ import numpy as np
 
 import optiland.backend as be
 
+# Maximum simultaneous medium nesting depth a ray's medium_stack can record
+# (e.g. a cemented triplet in an immersion fluid inside a sealed housing is
+# 4). A push past this depth raises MediumStackOverflowError rather than
+# silently wrapping or dropping the entry.
+MEDIUM_STACK_MAX_DEPTH = 8
+
+# Sentinel medium id for "no medium" / unused stack slots.
+MEDIUM_STACK_EMPTY = -1
+
+
+class MediumStackOverflowError(Exception):
+    """A ray's medium nesting exceeded ``MEDIUM_STACK_MAX_DEPTH``.
+
+    Raised rather than silently wrapping or truncating: this indicates
+    either a pathologically deep (past any realistic optical assembly)
+    volume nesting, or a geometry defect that pushes without ever popping.
+    """
+
 
 @dataclass
 class NSQRayBundle:
@@ -40,6 +58,19 @@ class NSQRayBundle:
             Feeds Beer-Lambert bulk absorption over the distance a
             ray travels before its next hit; updated alongside ``n_current``
             wherever a ray crosses into a new medium.
+        medium_stack: Nested medium ids the ray has entered but not yet
+            exited, shape (N, ``MEDIUM_STACK_MAX_DEPTH``), int64. Slots at
+            or beyond ``medium_depth`` for a given row are
+            ``MEDIUM_STACK_EMPTY``. Plain NumPy always (bookkeeping only,
+            never differentiated): pushed/popped by
+            ``RefractiveComponent.interact`` alongside ``n_current``.
+        medium_depth: Stack pointer -- number of valid entries in
+            ``medium_stack`` for each ray, shape (N,), int32. Plain NumPy.
+        medium_stack_underflows: Cumulative count of pop attempts on an
+            empty ``medium_stack`` for each ray (a ray exiting a volume it
+            never entered -- a geometry defect), shape (N,), int32. Plain
+            NumPy; summed across all rays into
+            ``Diagnostics.medium_stack_underflows`` at the end of a trace.
     """
 
     x: np.ndarray
@@ -55,6 +86,9 @@ class NSQRayBundle:
     alive: np.ndarray
     ray_id: np.ndarray | None = None
     k_current: np.ndarray | None = None
+    medium_stack: np.ndarray | None = None
+    medium_depth: np.ndarray | None = None
+    medium_stack_underflows: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         if self.k_current is None:
@@ -63,6 +97,16 @@ class NSQRayBundle:
             # tensor afterward via _ensure_torch_bundle), so this stays
             # NumPy too rather than dispatching through the active backend.
             self.k_current = np.zeros_like(self.n_current)
+        if self.medium_stack is None:
+            self.medium_stack = np.full(
+                (self.num_rays, MEDIUM_STACK_MAX_DEPTH),
+                MEDIUM_STACK_EMPTY,
+                dtype=np.int64,
+            )
+        if self.medium_depth is None:
+            self.medium_depth = np.zeros(self.num_rays, dtype=np.int32)
+        if self.medium_stack_underflows is None:
+            self.medium_stack_underflows = np.zeros(self.num_rays, dtype=np.int32)
 
     @property
     def num_rays(self) -> int:
@@ -105,6 +149,9 @@ class NSQRayBundle:
             bounce=self.bounce[mask],
             alive=self.alive[mask],
             k_current=self.k_current[mask],
+            medium_stack=self.medium_stack[mask],
+            medium_depth=self.medium_depth[mask],
+            medium_stack_underflows=self.medium_stack_underflows[mask],
         )
         if self.ray_id is not None:
             kwargs["ray_id"] = self.ray_id[mask]
@@ -154,6 +201,9 @@ class NSQRayBundle:
             bounce=self.bounce[idx].copy(),
             alive=np.ones(len(idx), dtype=bool),
             k_current=self.k_current[idx].copy(),
+            medium_stack=self.medium_stack[idx].copy(),
+            medium_depth=self.medium_depth[idx].copy(),
+            medium_stack_underflows=self.medium_stack_underflows[idx].copy(),
         )
         if ray_id is not None:
             kwargs["ray_id"] = ray_id
@@ -190,6 +240,11 @@ class NSQRayBundle:
             bounce=np.concatenate([b.bounce for b in bundles]),
             alive=np.concatenate([b.alive for b in bundles]),
             k_current=np.concatenate([b.k_current for b in bundles]),
+            medium_stack=np.concatenate([b.medium_stack for b in bundles]),
+            medium_depth=np.concatenate([b.medium_depth for b in bundles]),
+            medium_stack_underflows=np.concatenate(
+                [b.medium_stack_underflows for b in bundles]
+            ),
         )
         if all(b.ray_id is not None for b in bundles):
             kwargs["ray_id"] = np.concatenate([b.ray_id for b in bundles])

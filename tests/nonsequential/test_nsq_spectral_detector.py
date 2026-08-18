@@ -122,3 +122,77 @@ def test_spectral_detector_config_defaults_span_the_visible_in_um():
     config = SpectralDetectorConfig(width=1.0, height=1.0)
     assert config.wl_min == pytest.approx(0.4)
     assert config.wl_max == pytest.approx(0.7)
+
+
+class TestSpatialSplat:
+    """D-11: splat='bilinear'/'gaussian' must actually spread flux across
+    neighbouring pixels, not silently fall back to hard binning."""
+
+    def _single_point_scene(self, splat: str, splat_sigma: float = 1.0) -> NSQScene:
+        scene = NSQScene()
+        scene.add_source(
+            "S",
+            CoordinateSystem(z=-10.0),
+            CollimatedSourceConfig(
+                spectrum=Spectrum.monochromatic(0.55),
+                total_flux=1.0,
+                aperture_radius=0.05,
+            ),
+        )
+        scene.add_detector(
+            "SD",
+            CoordinateSystem(z=10.0),
+            SpectralDetectorConfig(
+                width=10.0,
+                height=10.0,
+                num_pixels_x=32,
+                num_pixels_y=32,
+                wl_min=0.5,
+                wl_max=0.6,
+                num_bins=1,
+                splat=splat,
+                splat_sigma=splat_sigma,
+            ),
+        )
+        return scene
+
+    def test_bilinear_spreads_beyond_one_pixel(self):
+        result = self._single_point_scene("bilinear").trace(num_rays=2000, seed=0)
+        nonzero = (result.detectors["SD"].irradiance > 0).sum()
+        assert nonzero > 1
+
+    def test_gaussian_spreads_more_than_bilinear(self):
+        result_b = self._single_point_scene("bilinear").trace(num_rays=500, seed=1)
+        result_g = self._single_point_scene("gaussian", splat_sigma=2.0).trace(
+            num_rays=500, seed=1
+        )
+        nz_b = (result_b.detectors["SD"].irradiance > 0).sum()
+        nz_g = (result_g.detectors["SD"].irradiance > 0).sum()
+        assert nz_g > nz_b
+
+    def test_gaussian_conserves_energy(self):
+        result = self._single_point_scene("gaussian", splat_sigma=1.5).trace(
+            num_rays=5000, seed=0
+        )
+        assert result.detectors["SD"].total_flux == pytest.approx(1.0, rel=0.02)
+
+    def test_hard_does_not_spread_like_gaussian(self):
+        result_h = self._single_point_scene("hard").trace(num_rays=2000, seed=0)
+        result_g = self._single_point_scene("gaussian", splat_sigma=2.0).trace(
+            num_rays=2000, seed=0
+        )
+        nz_h = (result_h.detectors["SD"].irradiance > 0).sum()
+        nz_g = (result_g.detectors["SD"].irradiance > 0).sum()
+        assert nz_h < nz_g
+
+    def test_splat_does_not_change_per_wavelength_bin_totals(self):
+        """Spatial spread must not leak flux across wavelength bins."""
+        wl_totals = {}
+        for splat in ("hard", "bilinear", "gaussian"):
+            scene = _rgb_scene(0.4, 0.7, 30)
+            for det in scene.detectors:
+                det.splat = splat
+            res = scene.trace(num_rays=20_000, seed=42)
+            wl_totals[splat] = res.detectors["SD"].irradiance.sum(axis=(0, 1))
+        np.testing.assert_allclose(wl_totals["bilinear"], wl_totals["hard"], atol=2e-3)
+        np.testing.assert_allclose(wl_totals["gaussian"], wl_totals["hard"], atol=2e-3)
