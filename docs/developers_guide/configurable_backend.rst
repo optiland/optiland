@@ -100,7 +100,17 @@ Example usage:
    ``torch.cuda.max_memory_allocated()`` first: if it is close to your
    card's total VRAM, reduce ``num_rays`` (or split the trace into smaller
    batches) or switch to ``be.set_precision("float32")`` rather than
-   assuming there is a bug.
+   assuming there is a bug. When only the returned rays are needed,
+   ``trace(..., record=False)`` skips the per-surface ray snapshots and
+   roughly triples the ray count that fits on the card.
+
+   .. figure:: ../images/gpu_trace_before_after.png
+      :width: 85%
+
+      Throughput vs ray count on a 12 GB card (Cooke triplet, float64,
+      single wavelength). Traces stay fast until allocations reach physical
+      VRAM; skipping per-surface snapshots moves that point out by roughly
+      3x.
 
 Adding New Functionality
 ------------------------
