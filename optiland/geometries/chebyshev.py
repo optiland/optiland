@@ -144,7 +144,8 @@ class ChebyshevPolynomialGeometry(NewtonRaphsonGeometry):
         z = r2 / (self.radius * (1 + be.sqrt(1 - (1 + self.k) * r2 / self.radius**2)))
 
         non_zero_indices = be.argwhere(self.coefficients != 0)
-        for i, j in non_zero_indices:
+        for idx in non_zero_indices:
+            i, j = int(idx[0]), int(idx[1])
             z = z + self.coefficients[i, j] * self._chebyshev(
                 i, x_norm
             ) * self._chebyshev(j, y_norm)
@@ -175,14 +176,20 @@ class ChebyshevPolynomialGeometry(NewtonRaphsonGeometry):
         dzdy = y / denom
 
         non_zero_indices = be.argwhere(self.coefficients != 0)
-        for i, j in non_zero_indices:
+        for idx in non_zero_indices:
+            i, j = int(idx[0]), int(idx[1])
+            # Chain rule: d/dx T_i(x / norm_x) = T_i'(x / norm_x) / norm_x, so
+            # the sag and normal derivatives describe the same surface for any
+            # normalization.
             dzdx = dzdx + (
                 self._chebyshev_derivative(i, x_norm)
+                / self.norm_x
                 * self.coefficients[i, j]
                 * self._chebyshev(j, y_norm)
             )
             dzdy = dzdy + (
                 self._chebyshev_derivative(j, y_norm)
+                / self.norm_y
                 * self.coefficients[i, j]
                 * self._chebyshev(i, x_norm)
             )
@@ -198,6 +205,12 @@ class ChebyshevPolynomialGeometry(NewtonRaphsonGeometry):
         """Calculates the Chebyshev polynomial of the first kind of degree n at
         the given x value.
 
+        Uses the recurrence ``T_0 = 1``, ``T_1 = x``,
+        ``T_n = 2 x T_{n-1} - T_{n-2}``, which -- unlike the
+        ``cos(n arccos(x))`` form -- is exact, differentiable and finite over
+        the whole valid domain, including the endpoints ``x = +-1`` where the
+        ``arccos`` form has an autograd singularity.
+
         Args:
             n (int): The degree of the Chebyshev polynomial.
             x (be.ndarray or float): The coordinate value(s) (normalized).
@@ -206,23 +219,45 @@ class ChebyshevPolynomialGeometry(NewtonRaphsonGeometry):
             be.ndarray or float: The Chebyshev polynomial T_n(x).
 
         """
-        return be.cos(n * be.arccos(x))
+        n = int(n)
+        t_prev = be.ones_like(x)
+        if n == 0:
+            return t_prev
+        t_curr = x
+        for _ in range(n - 1):
+            t_prev, t_curr = t_curr, 2.0 * x * t_curr - t_prev
+        return t_curr
 
     def _chebyshev_derivative(self, n, x):
-        """Calculates the derivative of the Chebyshev polynomial of the first kind
-        of degree n at the given x value.
+        """Derivative of the Chebyshev polynomial of the first kind, degree n.
+
+        Uses ``T_n'(x) = n * U_{n-1}(x)`` with the second-kind recurrence
+        ``U_0 = 1``, ``U_1 = 2x``, ``U_n = 2 x U_{n-1} - U_{n-2}``. The
+        recurrence gives the exact finite endpoint values
+        ``T_n'(+-1) = (+-1)^{n-1} n^2``, where the closed form containing
+        ``sqrt(1 - x^2)`` produces an autograd ``0/0``.
+
+        The returned value is the derivative with respect to the *normalized*
+        coordinate; the caller applies the ``1/norm`` chain-rule factor.
 
         Args:
             n (int): The degree of the Chebyshev polynomial.
             x (be.ndarray or float): The coordinate value(s) (normalized).
 
         Returns:
-            be.ndarray or float: The derivative of the Chebyshev polynomial T_n(x)
-            with respect to x, scaled by 1/norm_factor if applicable
-            (handled by caller). Returns 0 for n=0.
+            be.ndarray or float: ``dT_n/dx``. Returns 0 for n=0.
 
         """
-        return n * be.sin(n * be.arccos(x)) / be.sqrt(1 - x**2)
+        n = int(n)
+        if n == 0:
+            return be.zeros_like(x)
+        u_prev = be.ones_like(x)
+        if n == 1:
+            return u_prev
+        u_curr = 2.0 * x
+        for _ in range(n - 2):
+            u_prev, u_curr = u_curr, 2.0 * x * u_curr - u_prev
+        return n * u_curr
 
     def _validate_inputs(self, x_norm, y_norm):
         """Validates the input coordinates for the Chebyshev polynomial surface.

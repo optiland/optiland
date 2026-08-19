@@ -23,6 +23,48 @@ if TYPE_CHECKING:
     from optiland.optic import Optic
 
 
+def _prepare_axes(
+    fig_to_plot_on: Figure | None, figsize: tuple[float, float]
+) -> tuple[Figure, Axes, bool]:
+    is_gui_embedding = fig_to_plot_on is not None
+    if is_gui_embedding:
+        current_fig = fig_to_plot_on
+        current_fig.clear()
+        ax = current_fig.add_subplot(111)
+    else:
+        current_fig, ax = plt.subplots(figsize=figsize)
+    return current_fig, ax, is_gui_embedding
+
+
+def _finalize_figure(current_fig: Figure, is_gui_embedding: bool, show: bool) -> None:
+    if is_gui_embedding and hasattr(current_fig, "canvas"):
+        current_fig.canvas.draw_idle()
+    if show and not is_gui_embedding:
+        plt.show()
+
+
+def _plot_field_series(
+    ax: Axes, field_y, series_data, wavelengths, y_label: str
+) -> None:
+    """Plot one line per wavelength of `series_data` vs. normalized Y field.
+
+    Shared by RmsSpotSizeVsField.view() and RmsWavefrontErrorVsField.view(),
+    which differ only in which precomputed array and axis label they plot.
+    """
+    field_y_np = be.to_numpy(field_y)
+    data_np = be.to_numpy(series_data)
+
+    for i, wp in enumerate(wavelengths):
+        ax.plot(field_y_np, data_np[:, i], label=f"{wp.value:.4f} µm")
+
+    ax.set_xlabel("Normalized Y Field Coordinate")
+    ax.set_ylabel(y_label)
+    ax.legend(bbox_to_anchor=(1.05, 0.5), loc="center left")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, None)
+    ax.grid()
+
+
 class RmsSpotSizeVsField(SpotDiagram):
     """RMS Spot Size versus Field Coordinate.
 
@@ -84,43 +126,23 @@ class RmsSpotSizeVsField(SpotDiagram):
 
         Notes
         -----
-        - Each wavelength's RMS spot size is plotted as a separate line for clarity
-        and legend handling.
+        - Each wavelength's RMS spot size is plotted as a separate line for
+          clarity and legend handling.
         - The legend is placed outside the plot area for better readability.
         - The method is suitable for both standalone plotting and GUI embedding.
         """
-        is_gui_embedding = fig_to_plot_on is not None
+        current_fig, ax, is_gui_embedding = _prepare_axes(fig_to_plot_on, figsize)
 
-        if is_gui_embedding:
-            current_fig = fig_to_plot_on
-            current_fig.clear()
-            ax = current_fig.add_subplot(111)
-        else:
-            current_fig, ax = plt.subplots(figsize=figsize)
+        _plot_field_series(
+            ax,
+            self._field[:, 1],
+            self._spot_size,
+            self.wavelengths,
+            "RMS Spot Size (mm)",
+        )
 
-        analysis_wavelengths = self.wavelengths
-        spot_size_data = be.to_numpy(self._spot_size)
-
-        # Plot each wavelength's data as a separate line to handle legends correctly.
-        for i, wp in enumerate(analysis_wavelengths):
-            ax.plot(
-                be.to_numpy(self._field[:, 1]),
-                spot_size_data[:, i],
-                label=f"{wp.value:.4f} µm",
-            )
-
-        ax.set_xlabel("Normalized Y Field Coordinate")
-        ax.set_ylabel("RMS Spot Size (mm)")
-        ax.legend(bbox_to_anchor=(1.05, 0.5), loc="center left")
-        ax.set_xlim(0, 1)
-        ax.set_ylim(0, None)
-        ax.grid()
         current_fig.tight_layout()
-
-        if is_gui_embedding and hasattr(current_fig, "canvas"):
-            current_fig.canvas.draw_idle()
-        if show and not is_gui_embedding:
-            plt.show()
+        _finalize_figure(current_fig, is_gui_embedding, show)
         return current_fig, ax
 
 
@@ -163,37 +185,18 @@ class RmsWavefrontErrorVsField(Wavefront):
         show: bool = True,
     ) -> tuple[Figure, Axes]:
         """View the RMS wavefront error versus field coordinate."""
-        is_gui_embedding = fig_to_plot_on is not None
+        current_fig, ax, is_gui_embedding = _prepare_axes(fig_to_plot_on, figsize)
 
-        if is_gui_embedding:
-            current_fig = fig_to_plot_on
-            current_fig.clear()
-            ax = current_fig.add_subplot(111)
-        else:
-            current_fig, ax = plt.subplots(figsize=figsize)
+        _plot_field_series(
+            ax,
+            self._field[:, 1],
+            self._wavefront_error,
+            self.wavelengths,
+            "RMS Wavefront Error (waves)",
+        )
 
-        analysis_wavelengths = self.wavelengths
-        wavefront_error_data = be.to_numpy(self._wavefront_error)
-
-        # Plot each wavelength's data as a separate line.
-        for i, wp in enumerate(analysis_wavelengths):
-            ax.plot(
-                be.to_numpy(self._field[:, 1]),
-                wavefront_error_data[:, i],
-                label=f"{wp.value:.4f} µm",
-            )
-        ax.set_xlabel("Normalized Y Field Coordinate")
-        ax.set_ylabel("RMS Wavefront Error (waves)")
-        ax.legend(bbox_to_anchor=(1.05, 0.5), loc="center left")
-        ax.set_xlim(0, 1)
-        ax.set_ylim(0, None)
-        ax.grid()
         current_fig.tight_layout()
-
-        if is_gui_embedding and hasattr(current_fig, "canvas"):
-            current_fig.canvas.draw_idle()
-        if show and not is_gui_embedding:
-            plt.show()
+        _finalize_figure(current_fig, is_gui_embedding, show)
         return current_fig, ax
 
     def _rms_wavefront_error(self):

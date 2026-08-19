@@ -45,6 +45,7 @@ class Variable:
     optical system optimization. It acts as a wrapper around specific variable
     behaviors defined in separate modules, and can be used with multiple optimization
     backends.
+
     Args:
         optic (OpticalSystem): The optical system to which the variable
             belongs.

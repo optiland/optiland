@@ -42,7 +42,7 @@ class RadiantIntensity(BaseAnalysis):
         angle_Y_min (float): Minimum Y-angle in degrees for binning.
         angle_Y_max (float): Maximum Y-angle in degrees for binning.
         reference_surface_index (int): Index of the surface *after* which ray
-                                       directions are considered.
+            directions are considered.
         fields (list): List of field coordinates for analysis.
         wavelengths (list): List of wavelengths for analysis.
         num_rays (int): Number of rays to trace if user_initial_rays is None.
@@ -52,13 +52,11 @@ class RadiantIntensity(BaseAnalysis):
             (e.g., GaussianSource) to generate initial rays automatically.
             Cannot be used with user_initial_rays. When provided, num_rays
             determines how many rays to generate.
-        data (list[list[tuple]]): Stores (intensity_map,
-                                          angle_X_bin_edges, angle_Y_bin_edges,
-                                          angle_X_bin_centers, angle_Y_bin_centers)
-                                  for each (field, wavelength).
-        use_absolute_units (bool): If True (default), calculates intensity in W/sr.
-                                   If False, result is a relative value normalized
-                                   to the peak.
+        data (list[list[tuple]]): Stores (intensity_map, angle_X_bin_edges,
+            angle_Y_bin_edges, angle_X_bin_centers, angle_Y_bin_centers) for
+            each (field, wavelength).
+        use_absolute_units (bool): If True (default), calculates intensity in
+            W/sr. If False, result is a relative value normalized to the peak.
     """
 
     def __init__(

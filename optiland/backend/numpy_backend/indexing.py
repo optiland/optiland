@@ -260,3 +260,25 @@ class IndexingMixin:
             NDArray: Array with an extra trailing dimension.
         """
         return x[..., np.newaxis]
+
+    def index_add(
+        self,
+        target: NDArray,
+        dim: int,
+        index: NDArray,
+        source: NDArray,
+    ) -> NDArray:
+        """Scatter-add: result[index[i]] += source[i] along dim=0.
+
+        Args:
+            target: Accumulation buffer, shape (N, ...).
+            dim: Must be 0 (only 0 supported for NumPy path).
+            index: Integer indices, shape (K,).
+            source: Values to add, shape (K, ...).
+
+        Returns:
+            NDArray: New array with scattered values added.
+        """
+        result = target.copy()
+        np.add.at(result, index, source)
+        return result

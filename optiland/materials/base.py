@@ -21,6 +21,11 @@ from optiland._suggest import options_hint
 from optiland.propagation.base import BasePropagationModel
 from optiland.propagation.homogeneous import HomogeneousPropagation
 
+try:
+    import torch
+except (ImportError, ModuleNotFoundError):
+    torch = None
+
 # Maps id(array) -> (weakref, content_digest, version_token) so the O(N) content
 # hash in BaseMaterial._array_metadata_key runs once per array object and is
 # reused on later lookups. The weakref callback evicts the entry when the array
@@ -169,6 +174,29 @@ class BaseMaterial(ABC):
         return hasattr(value, "requires_grad") and value.requires_grad
 
     @staticmethod
+    def _compute_grad_aware(calculate, wavelength, **kwargs):
+        """Evaluate a property calculation with grad recording enabled.
+
+        The first evaluation of a material property can happen inside a
+        ``torch.no_grad()`` block -- the implicit-differentiation primal
+        solves trace the system graph-free. Computed under ``no_grad``, a
+        value derived from a *trainable* parameter reports
+        ``requires_grad == False``, so the do-not-cache-differentiable-values
+        check below would mistake it for a constant and cache it detached;
+        every later grad-attached trace would then read the stale detached
+        value and the parameter's gradient would silently collapse to zero.
+        Evaluating under ``torch.enable_grad()`` (the same principle as the
+        Forbes coefficient-cache fix) keeps a grad-connected result
+        recognizable regardless of the caller's ambient grad context. Only
+        this evaluation is recorded; the caller's ``no_grad`` scope still
+        applies to everything downstream.
+        """
+        if torch is not None and be.get_backend() == "torch":
+            with torch.enable_grad():
+                return calculate(wavelength, **kwargs)
+        return calculate(wavelength, **kwargs)
+
+    @staticmethod
     def _detach_if_tensor(value):
         """Detach a torch tensor to sever the computation graph link.
 
@@ -196,7 +224,7 @@ class BaseMaterial(ABC):
         if cache_key in self._n_cache:
             return self._n_cache[cache_key]
 
-        result = self._calculate_n(wavelength, **kwargs)
+        result = self._compute_grad_aware(self._calculate_n, wavelength, **kwargs)
 
         # If the result requires grad, it is connected to an optimization
         # variable (e.g. the index itself is being optimized).  In that case
@@ -225,7 +253,7 @@ class BaseMaterial(ABC):
         if cache_key in self._k_cache:
             return self._k_cache[cache_key]
 
-        result = self._calculate_k(wavelength, **kwargs)
+        result = self._compute_grad_aware(self._calculate_k, wavelength, **kwargs)
         # Same logic as n(): skip cache if result is differentiable.
         if self._requires_grad(result):
             return result

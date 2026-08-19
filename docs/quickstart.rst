@@ -155,7 +155,23 @@ Serialize the optimized design to JSON and reload it in a new session:
 
 ----
 
-8. What Next?
+8. Beyond Imaging: Non-Sequential & Illumination
+------------------------------------------------
+
+Optiland also ships a differentiable **non-sequential (NSQ)** engine for
+illumination design, stray-light, and ghost analysis - where light is free to
+take any path through a 3-D scene. You can even convert an existing sequential
+lens in one line::
+
+   from optiland.nonsequential import sequential_to_nonsequential
+   scene = sequential_to_nonsequential(lens)
+
+See the :ref:`NSQ gallery <gallery_nonsequential>` overview and the on-ramp
+tutorial :doc:`Tutorial 10a <examples/Tutorial_10a_Non_Sequential_and_Illumination>`.
+
+----
+
+9. What Next?
 -------------
 
 You have installed Optiland, built a lens, traced rays, run a spot diagram, optimized, and saved your

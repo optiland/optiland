@@ -13,6 +13,34 @@ from typing import Any, NamedTuple
 
 import optiland.backend as be
 
+try:
+    import torch
+except (ImportError, ModuleNotFoundError):
+    torch = None
+
+
+def machine_eps(value) -> float:
+    """Machine epsilon of ``value``'s floating dtype.
+
+    Backend-agnostic: uses ``torch.finfo`` for torch tensors and numpy's
+    ``finfo`` otherwise. Numerical thresholds built from this scale correctly
+    in float32, where a hardcoded float64-sized constant is below round-off
+    and therefore never triggers.
+
+    Args:
+        value: A backend array/tensor, or anything without a ``dtype``
+            attribute (treated as the default Python float precision).
+
+    Returns:
+        float: The machine epsilon for the corresponding dtype.
+    """
+    dtype = getattr(value, "dtype", None)
+    if dtype is None:
+        return float(be.finfo(float).eps)
+    if torch is not None and isinstance(dtype, torch.dtype):
+        return float(torch.finfo(dtype).eps)
+    return float(be.finfo(dtype).eps)
+
 
 class FieldPoint(NamedTuple):
     """A resolved field coordinate with its associated weight.
@@ -51,14 +79,15 @@ def get_working_FNO(optic, field, wavelength):
 
     Algorithm:
         1. Retrieve the defined given wavelength and field coordinates.
-        2. Determine the image-space refractive index 'n' at the given wavelength.
-        3. Trace four marginal rays (top, bottom, left, right) at the pupil edges,
-            as well as the chief ray.
+        2. Determine the image-space refractive index 'n' at the given
+           wavelength.
+        3. Trace four marginal rays (top, bottom, left, right) at the pupil
+           edges, as well as the chief ray.
         4. Compute the angle between each marginal ray and the chief ray.
-        4. Calculate the average of the squared numerical apertures from all traced
-            marginal rays.
-        5. Compute the working F-number as 1 / (2 * be.sqrt(average_NA_squared)).
-        6. Cap the calculated F/# at 10,000 if it exceeds this value.
+        5. Calculate the average of the squared numerical apertures from all
+           traced marginal rays.
+        6. Compute the working F-number as 1 / (2 * be.sqrt(average_NA_squared)).
+        7. Cap the calculated F/# at 10,000 if it exceeds this value.
 
     Returns:
         float: The working F-number.
