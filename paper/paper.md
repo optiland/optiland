@@ -73,7 +73,7 @@ Optiland supports a wide range of design, analysis, and optimization tasks, maki
 
 ## Performance and benchmarking
 
-To illustrate the performance gain using GPU acceleration, we benchmarked ray tracing through a Cooke triplet lens and measured throughput in terms of ray–surface interactions per second. Benchmarks were run on a system with an Intel Core i7-12700H CPU and an NVIDIA RTX 3070 GPU, with results shown in \autoref{tbl:benchmark}.
+To illustrate the performance gain using GPU acceleration, we benchmarked ray tracing through a Cooke triplet lens and measured throughput in terms of ray–surface interactions per second. Benchmarks were run on a system with an Intel Core i7-12700H CPU and an NVIDIA RTX 3070 GPU, with results shown in \autoref{tbl:benchmark}. Each configuration traces a fixed random distribution of 10 million rays (20 million for the float32 GPU configuration) through the lens once; reported figures are a single `trace()` measurement, not an average. We observed run-to-run spread of up to several tens of percent on the CPU configurations, so absolute throughput should be treated as illustrative rather than precise. The benchmark script is provided at `benchmarks/sequential/cooke_triplet.py` in the main Optiland repository so readers can reproduce or repeat these measurements on their own hardware.
 
 | Backend Configuration | RMSE vs NumPy float64 (m) |Throughput (ray-surfaces/s) | Relative Speedup |
 | :--- | :--- | :--- | :--- |
