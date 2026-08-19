@@ -127,6 +127,7 @@ class CodeVDataParser:
             "HOR": lambda t: None,
             "HCT": lambda t: None,
             "HCO": lambda t: None,
+            "MFL": self._read_paraxial,
         }
         # Aspheric coefficient keys
         for _key in _ASPH_KEYS:
@@ -418,6 +419,9 @@ class CodeVDataParser:
 
     def _read_cde(self, tokens: list[str]) -> None:
         self._current_surf_data["cde"] = float(tokens[1])
+
+    def _read_paraxial(self, tokens: list[str]) -> None:
+        self._current_surf_data["mfl"] = float(tokens[1])
 
     def _read_asph_coeff(self, tokens: list[str]) -> None:
         key_letter = tokens[0].upper()

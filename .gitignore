@@ -3,6 +3,7 @@
 **/.venv/
 **/__pycache__/
 **/jupyter/
+docs/.jupyterlite.doit.db
 build/
 dist/
 **/.ipynb_checkpoints/
@@ -19,3 +20,4 @@ sg_execution_times.rst
 .claude/
 scratch/
 docs/examples/iso10110_output/
+**/*.doit.db

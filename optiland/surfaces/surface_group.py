@@ -243,12 +243,22 @@ class SurfaceGroup:
             if surface.is_stop:
                 return index
 
-        raise ValueError("No stop surface found.")
+        raise ValueError(
+            "No stop surface found. Exactly one surface must be marked as "
+            "the aperture stop, either by passing is_stop=True to "
+            "lens.add_surface(...) or by setting "
+            "lens.surface_group.stop_index = <index>."
+        )
 
     @stop_index.setter
     def stop_index(self, index: int):
         if index < 1 or index > len(self.surfaces) - 2:
-            raise ValueError("Index out of range")
+            raise ValueError(
+                f"Invalid stop index, got {index}. The stop must be an "
+                f"optical surface, so its index must lie between 1 and "
+                f"{len(self.surfaces) - 2} (index 0 is the object surface "
+                f"and index {len(self.surfaces) - 1} is the image surface)."
+            )
         for idx, surf in enumerate(self.surfaces):
             surf.is_stop = index == idx
 
@@ -269,7 +279,11 @@ class SurfaceGroup:
     def total_track(self):
         """float: the total track length of the system"""
         if self.num_surfaces < 2:
-            raise ValueError("Not enough surfaces to calculate total track.")
+            raise ValueError(
+                f"Cannot compute the total track: the system has "
+                f"{self.num_surfaces} surface(s), and at least 2 are "
+                "required. Add surfaces with lens.add_surface(...)."
+            )
         z = self.positions[1:]
         return be.max(z) - be.min(z)
 
@@ -351,7 +365,11 @@ class SurfaceGroup:
         """
         if new_surface is None:
             if index is None:
-                raise ValueError("Must define index when defining surface.")
+                raise ValueError(
+                    "No index was given for the new surface. Pass the "
+                    "position it should occupy, e.g. "
+                    "lens.add_surface(index=1, radius=50, thickness=5)."
+                )
 
             new_surface = self.surface_factory.create_surface(
                 surface_type,
@@ -372,15 +390,24 @@ class SurfaceGroup:
             index = len(self._surfaces) - 1
         else:
             if index < 0:
-                raise IndexError(f"Index {index} cannot be negative.")
+                raise IndexError(
+                    f"Cannot add a surface at index {index}: surface indices "
+                    "are non-negative, counting from the object surface at "
+                    "index 0."
+                )
             if index > len(self._surfaces):
                 raise IndexError(
-                    f"Index {index} is out of bounds for insertion. "
-                    f"Max index for insertion is {len(self._surfaces)} (to append)."
+                    f"Cannot add a surface at index {index}: the system "
+                    f"currently has {len(self._surfaces)} surface(s), so the "
+                    f"highest valid index is {len(self._surfaces)}. Surfaces "
+                    "must be added in order, starting with the object "
+                    "surface at index 0."
                 )
             if index == 0 and len(self.surfaces) > 0:
                 raise ValueError(
-                    "Surface index cannot be zero after first surface is created."
+                    "Cannot add a surface at index 0: index 0 is the object "
+                    "surface and it already exists. Insert at index 1 or "
+                    "later, or remove the existing object surface first."
                 )
 
             self._surfaces.insert(index, new_surface)

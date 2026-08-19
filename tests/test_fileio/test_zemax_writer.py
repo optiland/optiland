@@ -159,6 +159,51 @@ class TestRoundTripFloaAperture:
 
 
 # ---------------------------------------------------------------------------
+# Round-trip: reflective (mirror) surfaces
+# ---------------------------------------------------------------------------
+
+
+class TestRoundTripMirror:
+    """Reflective surfaces must be written as ``GLAS MIRROR``.
+
+    Regression: mirrors were previously detected only by comparing the material
+    against the string ``"mirror"``, which never matched because the material has
+    already been resolved to an object by then. The mirrors were silently dropped
+    and the reloaded system was not an imaging system at all.
+    """
+
+    def test_mirror_surfaces_written(self, set_test_backend):
+        from optiland.samples.telescopes import HubbleTelescope
+
+        model = OpticToZemaxConverter(HubbleTelescope()).convert()
+        mirrors = [
+            s
+            for s in model.surfaces.values()
+            if s.get("GLAS", {}).get("name") == "MIRROR"
+        ]
+        assert len(mirrors) == 2
+
+    def test_roundtrip_preserves_focal_length(self, tmp_path, set_test_backend):
+        from optiland.samples.telescopes import HubbleTelescope
+
+        original = HubbleTelescope()
+        out = tmp_path / "hubble.zmx"
+        save_zemax_file(original, str(out))
+        reloaded = load_zemax_file(str(out))
+
+        assert_allclose(original.paraxial.f2(), reloaded.paraxial.f2(), rtol=1e-6)
+
+    def test_roundtrip_preserves_surfaces(self, tmp_path, set_test_backend):
+        from optiland.samples.telescopes import HubbleTelescope
+
+        original = HubbleTelescope()
+        out = tmp_path / "hubble.zmx"
+        save_zemax_file(original, str(out))
+        reloaded = load_zemax_file(str(out))
+        _surfaces_match(original, reloaded)
+
+
+# ---------------------------------------------------------------------------
 # Warning: MODEL glass
 # ---------------------------------------------------------------------------
 
@@ -315,6 +360,7 @@ class TestOpticToZemaxConverterExtended:
 # GLAS encoding
 # ---------------------------------------------------------------------------
 
+
 class TestGlasEncoding:
     def test_encode_catalog_glass(self):
         from optiland.fileio.zemax.writer.encoder import ZemaxFileEncoder
@@ -341,5 +387,143 @@ class TestGlasEncoding:
         encoder = ZemaxFileEncoder(ZemaxDataModel())
         glas = {"name": "MODEL", "n": 1.5, "V": 50.0}
         res = encoder._encode_glas(glas)
-        # Use startswith to allow for exact scientific notation format
-        assert res.startswith("  GLAS MODEL 1 0 1.50000000E+00 5.00000000E+01 0 0 0 0 0 0")
+        # Compare parsed values rather than the rendered text, so the assertion
+        # survives a change to the formatter's digit count.
+        tokens = res.split()
+        assert tokens[:4] == ["GLAS", "MODEL", "1", "0"]
+        assert float(tokens[4]) == 1.5
+        assert float(tokens[5]) == 50.0
+        assert tokens[6:] == ["0"] * 6
+
+
+# ---------------------------------------------------------------------------
+# Glass catalog disambiguation (#713)
+# ---------------------------------------------------------------------------
+
+
+class TestGlassCatalogDisambiguation:
+    """A name present in several declared catalogs must round-trip to the
+    catalog it was originally declared in, not whichever one a bare,
+    catalog-unaware lookup happens to prefer.
+
+    Regression: the writer recorded catalogs only at file level (``GCAT``),
+    so on reload a name like "F2" (present in ``cdgm``, ``hikari`` and
+    ``schott``) resolved to whichever catalog a global fuzzy-match landed on,
+    silently swapping the glass and shifting EFL by ~1.2e-05 relative on
+    ``CookeTriplet``.
+    """
+
+    def test_cooke_triplet_preserves_per_surface_catalog(
+        self, tmp_path, set_test_backend
+    ):
+        from optiland.samples.objectives import CookeTriplet
+
+        original = CookeTriplet()
+        out = tmp_path / "cooke.zmx"
+        save_zemax_file(original, str(out))
+        reloaded = load_zemax_file(str(out))
+
+        for i in range(original.surfaces.num_surfaces):
+            mat = original.surfaces[i].material_post
+            catalog = getattr(mat, "reference", None)
+            if not catalog:
+                continue
+            reloaded_mat = reloaded.surfaces[i].material_post
+            assert getattr(reloaded_mat, "reference", None) == catalog, (
+                f"Surface {i}: catalog {catalog!r} did not survive round trip"
+            )
+
+        assert_allclose(original.paraxial.f2(), reloaded.paraxial.f2(), rtol=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# Writer precision
+# ---------------------------------------------------------------------------
+
+
+def _precision_sample(name: str) -> Optic:
+    """Build a sample system in memory (never via a file)."""
+    if name == "hubble":
+        from optiland.samples.telescopes import HubbleTelescope
+
+        return HubbleTelescope()
+    if name == "cooke":
+        from optiland.samples.objectives import CookeTriplet
+
+        return CookeTriplet()
+    from optiland.samples.objectives import DoubleGauss
+
+    return DoubleGauss()
+
+
+def _image_intercept(optic: Optic, Hx, Hy, Px, Py, wavelength):
+    """Trace one ray and return its (x, y, L, M) at the image surface."""
+    rays = optic.trace_generic(Hx, Hy, Px, Py, wavelength)
+    return tuple(
+        float(be.to_numpy(getattr(rays, attr)).reshape(-1)[-1]) for attr in "xyLM"
+    )
+
+
+_PRECISION_SAMPLES = ["hubble", "double_gauss", "cooke"]
+
+# (Hx, Hy, Px, Py) — on-axis marginal, full-field chief, and a skew ray.
+_PRECISION_RAYS = [(0.0, 0.0, 0.0, 0.7), (0.0, 1.0, 0.0, 0.0), (0.0, 0.7, 0.7, 0.0)]
+
+
+class TestWriterPrecision:
+    """A saved .zmx must reproduce the system it was written from.
+
+    The other round-trip tests in this module start from a .zmx on disk, so both
+    sides of the comparison have already been through the writer's float
+    formatting once and any precision loss cancels out. These start from an
+    in-memory sample instead, which is what actually exercises the formatter.
+
+    Regression: ``_fmt`` used ``%.8E`` (9 significant digits). On
+    ``HubbleTelescope`` (EFL ~5.76e4, R = -11040.02286 so CURV =
+    9.05795225862422e-05 written as ``-9.05795226E-05``) one save/load shifted
+    EFL by 1.1e-03 mm and real-ray image-surface intercepts by 1.8e-06 mm. That
+    exceeds the 1e-06 mm threshold used when validating Optiland against
+    OpticStudio and CODE V, so the writer was manufacturing apparent
+    disagreements that had nothing to do with the tracing.
+    """
+
+    def _reload(self, optic: Optic, tmp_path) -> Optic:
+        out = tmp_path / "precision.zmx"
+        save_zemax_file(optic, str(out))
+        return load_zemax_file(str(out))
+
+    @pytest.mark.parametrize("sample_name", _PRECISION_SAMPLES)
+    def test_paraxial_survives_round_trip(
+        self, sample_name, tmp_path, set_test_backend
+    ):
+        original = _precision_sample(sample_name)
+        reloaded = self._reload(original, tmp_path)
+        for quantity in ("f2", "EPD", "FNO", "EPL", "XPD"):
+            assert_allclose(
+                getattr(original.paraxial, quantity)(),
+                getattr(reloaded.paraxial, quantity)(),
+                rtol=1e-12,
+            )
+
+    @pytest.mark.parametrize("sample_name", _PRECISION_SAMPLES)
+    def test_real_rays_survive_round_trip(
+        self, sample_name, tmp_path, set_test_backend
+    ):
+        original = _precision_sample(sample_name)
+        reloaded = self._reload(original, tmp_path)
+        wavelength = original.primary_wavelength
+        for Hx, Hy, Px, Py in _PRECISION_RAYS:
+            before = _image_intercept(original, Hx, Hy, Px, Py, wavelength)
+            after = _image_intercept(reloaded, Hx, Hy, Px, Py, wavelength)
+            for a, b in zip(before, after, strict=True):
+                assert math.isclose(a, b, rel_tol=0.0, abs_tol=1e-9), (
+                    f"{sample_name} H=({Hx},{Hy}) P=({Px},{Py}): "
+                    f"{a!r} != {b!r} after save/load"
+                )
+
+    def test_formatter_round_trips_a_hard_value(self):
+        """The formatter itself must not lose bits."""
+        from optiland.fileio.zemax.writer.encoder import _fmt
+
+        for value in (9.05795225862422e-05, -11040.02286, 1.0 / 3.0, 6365.20955):
+            assert float(_fmt(value)) == value

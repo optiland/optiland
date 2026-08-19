@@ -184,6 +184,44 @@ class StandardSurfaceHandler(BaseSurfaceHandler):
 
 
 @register
+class ParaxialSurfaceHandler(BaseSurfaceHandler):
+    """Handler for PARAXIAL surfaces."""
+
+    zemax_type: ClassVar[str] = "PARAXIAL"
+    optiland_type: ClassVar[str] = "paraxial"
+
+    def parse(self, raw: dict[str, Any]) -> dict[str, Any]:
+        """Parse a PARAXIAL surface raw dict.
+
+        Args:
+            raw: Raw surface dict from ZemaxDataParser.
+
+        Returns:
+            Kwargs for ``optic.surfaces.add()``.
+        """
+        return {
+            "surface_type": self.optiland_type,
+            "radius": raw.get("radius", float(be.inf)),
+        }
+
+    def format(self, surface: Surface) -> dict[str, Any]:
+        """Format a paraxial surface to Zemax operand dict.
+
+        Args:
+            surface: The Optiland surface.
+
+        Returns:
+            Raw operand dict for ZemaxFileEncoder.
+        """
+        geom = surface.geometry
+        return {
+            "TYPE": self.zemax_type,
+            "CURV": _curvature(float(geom.radius)),
+            "PARM_1": float(surface.interaction_model.f),
+        }
+
+
+@register
 class EvenAsphereSurfaceHandler(BaseSurfaceHandler):
     """Handler for EVENASPH (even asphere) surfaces."""
 

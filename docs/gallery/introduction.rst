@@ -6,6 +6,11 @@ Introduction
 This gallery contains a collection of examples demonstrating the capabilities of Optiland. Each example is a self-contained Jupyter notebook that shows how to achieve a specific task using Optiland. The examples cover a wide range of topics, from basic lens design to freeform optics.
 For more detailed explanations of how to use Optiland, see the step-by-step learning guide.
 
+.. tip::
+
+   The gallery is organized by Optiland feature. If you know the *question* you want answered
+   rather than the feature you need, use the task-shaped :doc:`../how_do_i` index instead.
+
 The following sections are covered:
 
 1. :ref:`Basic Lenses <gallery_basic_lenses>`

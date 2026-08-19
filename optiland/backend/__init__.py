@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING
 
 import numpy as _np
 
+from optiland._suggest import options_hint
 from optiland.backend.base import BackendCapabilityError  # noqa: F401
 from optiland.backend.numpy_backend import NumpyBackend
 from optiland.backend.utils import is_torch_tensor, to_numpy  # noqa: F401
@@ -135,8 +136,11 @@ def set_backend(name: str) -> None:
     """
     global _current_backend
     if name not in _backends:
+        available = list_available_backends()
         raise ValueError(
-            f'Unknown backend "{name}". Available: {list_available_backends()}'
+            f"Unknown backend {name!r}.{options_hint(str(name), available)} "
+            "Install the extra for a missing backend, e.g. "
+            "pip install optiland[torch]."
         )
     _current_backend = name
 

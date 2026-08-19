@@ -170,7 +170,10 @@ class RealRayTracer(BaseRayTracer):
         valid_y = be.all((y >= -1) & (y <= 1))
         if not (valid_x and valid_y):
             raise ValueError(
-                f"Normalized {coord_type} coordinates must be within (-1, 1)"
+                f"Normalized {coord_type} coordinates must lie within "
+                f"[-1, 1], got x={x!r}, y={y!r}. These are normalized "
+                f"coordinates: {coord_type} extremes are +/-1, not physical "
+                "units."
             )
 
     def _validate_array_size(self, *arrays):

@@ -9,7 +9,12 @@ import optiland.backend as be
 from optiland.coordinate_system import CoordinateSystem
 from optiland.materials.ideal import IdealMaterial
 from optiland.optic import Optic
+from optiland.physical_apertures.radial import RadialAperture
 from optiland.rays import RealRays
+from optiland.rays.ray_aiming.initialization import (
+    ParaxialReferenceStrategy,
+    RealReferenceStrategy,
+)
 from optiland.rays.ray_aiming.iterative import IterativeRayAimer
 from optiland.rays.ray_aiming.paraxial import ParaxialRayAimer
 from optiland.rays.ray_aiming.robust import RobustRayAimer
@@ -864,6 +869,58 @@ def _issue_654_tilted_finite_stop(tilt_deg=120.0):
     return optic
 
 
+def _issue_654_decentered_stop(decenter_y=5.0):
+    """Infinite-conjugate system whose stop is a small decentered lens
+    (issue #654 follow-up).
+
+    The entrance pupil is the image of the stop, so decentering the stop
+    decenters the pupil too. The EPD is scaled so the paraxial marginal ray
+    exactly fills the stop's physical radius, as in the reported system.
+    """
+    glass = IdealMaterial(n=1.5168)
+    # Explicit RadialAperture: a scalar `aperture=` is a *diameter*, and these
+    # radii must match the reported system exactly.
+    optic = Optic()
+    optic.surfaces.add(index=0, thickness=np.inf)
+    optic.surfaces.add(index=1, thickness=0.0)
+    optic.surfaces.add(
+        index=2,
+        radius=61.0,
+        thickness=4.67,
+        material=glass,
+        aperture=RadialAperture(r_max=12.7),
+    )
+    optic.surfaces.add(
+        index=3, radius=-61.0, thickness=5.33, aperture=RadialAperture(r_max=12.7)
+    )
+    optic.surfaces.add(
+        index=4,
+        radius=5.0,
+        thickness=1.0,
+        material=glass,
+        is_stop=True,
+        aperture=RadialAperture(r_max=1.0),
+    )
+    optic.surfaces.add(
+        index=5, radius=-5.0, thickness=4.2, aperture=RadialAperture(r_max=1.0)
+    )
+    optic.surfaces.add(index=6)
+    optic.fields.set_type("angle")
+    optic.fields.add(y=0)
+    optic.fields.add(y=5)
+    optic.wavelengths.add(0.52, is_primary=True)
+    optic.set_aperture("EPD", 2.0)
+
+    # Shift the stop doublet off axis, then rescale the EPD so the paraxial
+    # marginal ray lands exactly on the stop's r_max = 1.0 edge.
+    optic.surfaces[4].geometry.cs.y = decenter_y
+    optic.surfaces[5].geometry.cs.y = decenter_y
+    y_marginal, _ = optic.paraxial.marginal_ray()
+    r_par = float(be.to_numpy(y_marginal[4]).ravel()[0])
+    optic.set_aperture("EPD", 2.0 / r_par)
+    return optic
+
+
 def _disk_pupil(n=5):
     """Return the (Px, Py) of an ``n x n`` grid clipped to the unit disk."""
     t = np.linspace(-1, 1, n)
@@ -968,3 +1025,62 @@ def test_tilted_finite_stop_converges_all_pupil_rays_issue654(set_test_backend):
 
     sx = be.to_numpy(optic.surfaces[stop_idx].x).ravel()
     assert not np.any(np.isnan(sx))
+
+
+def test_decentered_stop_radius_matches_paraxial_issue654(set_test_backend):
+    """The real-ray stop radius must be measured from the *decentered* entrance
+    pupil (issue #654 follow-up).
+
+    Probing from the on-axis pupil edge instead measured the distance from the
+    stop centre to a ray that never went near the pupil: ~4 mm against a true
+    radius of ~1 mm.
+    """
+    optic = _issue_654_decentered_stop(decenter_y=5.0)
+
+    real_r = RealReferenceStrategy(optic).calculate_stop_radius()
+    paraxial_r = ParaxialReferenceStrategy(optic).calculate_stop_radius()
+
+    # The paraxial marginal ray fills the stop edge by construction, so the
+    # real-ray radius may differ only by pupil aberration (a few percent).
+    assert_allclose(real_r, paraxial_r, atol=0.05)
+
+
+def test_decentered_stop_fills_pupil_issue654(set_test_backend):
+    """Every pupil ray of a decentered stop must aim inside the stop's clear
+    aperture and reach the image unvignetted (issue #654 follow-up).
+
+    With the stop radius mis-measured, the aimer targeted a radius several
+    times too large: the outer rays missed the stop surface entirely (NaN) and
+    the rest were vignetted by its physical aperture, leaving only the chief
+    ray.
+    """
+    optic = _issue_654_decentered_stop(decenter_y=5.0)
+    optic.ray_tracer.set_aiming("robust")
+    stop_idx = optic.surfaces.stop_index
+    Px, Py = _disk_pupil(5)
+    zeros = be.zeros(len(Px))
+
+    rays = optic.trace_generic(zeros, zeros, be.array(Px), be.array(Py), 0.52)
+
+    # Rays land on the stop, within its r_max = 1.0 clear aperture, measured
+    # in the stop's own (decentered) frame.
+    local = RealRays(
+        be.copy(optic.surfaces[stop_idx].x),
+        be.copy(optic.surfaces[stop_idx].y),
+        be.copy(optic.surfaces[stop_idx].z),
+        be.zeros(len(Px)),
+        be.zeros(len(Px)),
+        be.ones(len(Px)),
+        intensity=be.ones(len(Px)),
+        wavelength=be.full(len(Px), 0.52),
+    )
+    optic.surfaces[stop_idx].geometry.cs.localize(local)
+    r_local = np.hypot(be.to_numpy(local.x).ravel(), be.to_numpy(local.y).ravel())
+    assert not np.any(np.isnan(r_local))
+    assert np.all(r_local <= 1.0 + 1e-9)
+
+    # The pupil is actually filled, not collapsed onto the chief ray, and no
+    # ray is vignetted away.
+    assert r_local.max() > 0.9
+    assert not np.any(np.isnan(be.to_numpy(rays.y).ravel()))
+    assert np.all(be.to_numpy(rays.i).ravel() > 0.0)

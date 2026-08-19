@@ -83,16 +83,21 @@ class IndexingMixin:
         """
         return x.clone()
 
-    def size(self, x: Tensor) -> int:
+    def size(self, x: Any) -> int:
         """Return the total number of elements in x.
 
         Args:
-            x: Input tensor.
+            x: Input tensor, array, or scalar.
 
         Returns:
             int: Number of elements.
         """
-        return torch.numel(x)
+        if isinstance(x, torch.Tensor):
+            return torch.numel(x)
+        # Parity with the NumPy backend, where be.size falls through to
+        # np.size and accepts plain scalars (e.g. operands such as
+        # total_track return Python floats under the torch backend).
+        return int(np.size(x))
 
     def shape(self, tensor: Tensor) -> tuple[int, ...]:
         """Return the shape of a tensor.
@@ -116,15 +121,19 @@ class IndexingMixin:
         """
         return torch.is_tensor(x) and x.dim() == 0
 
-    def ravel(self, x: Tensor) -> Tensor:
+    def ravel(self, x: Any) -> Tensor:
         """Return a contiguous flattened tensor.
 
         Args:
-            x: Input tensor.
+            x: Input tensor, array, or scalar.
 
         Returns:
             Tensor: Flattened tensor.
         """
+        if not isinstance(x, torch.Tensor):
+            # Parity with the NumPy backend, where be.ravel falls through
+            # to np.ravel and accepts plain scalars.
+            x = torch.as_tensor(x)
         return x.reshape(-1)
 
     # ------------------------------------------------------------------
@@ -322,3 +331,23 @@ class IndexingMixin:
             Tensor: Tensor with extra trailing dimension.
         """
         return x.unsqueeze(-1)
+
+    def index_add(
+        self,
+        target: Tensor,
+        dim: int,
+        index: Tensor,
+        source: Tensor,
+    ) -> Tensor:
+        """Scatter-add: result[index[i]] += source[i] along dim.
+
+        Args:
+            target: Accumulation buffer.
+            dim: Dimension along which to scatter.
+            index: 1-D integer indices tensor.
+            source: Values to add (same dtype as target).
+
+        Returns:
+            Tensor: New tensor with values scatter-added (non-in-place).
+        """
+        return target.index_add(dim, index, source)

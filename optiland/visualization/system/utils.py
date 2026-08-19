@@ -7,6 +7,7 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+import numpy as np  # noqa: TC002
 import vtk
 
 import optiland.backend as be
@@ -78,6 +79,33 @@ def transform_3d(actor, surface):
     actor.SetUserMatrix(vtk_matrix)
 
     return actor
+
+
+def project_rays(
+    xs: np.ndarray,
+    ys: np.ndarray,
+    zs: np.ndarray,
+    projection: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Project 3D ray coordinates onto the chosen 2D plane.
+
+    Args:
+        xs: X coordinates, shape (N,).
+        ys: Y coordinates, shape (N,).
+        zs: Z coordinates, shape (N,).
+        projection: One of ``'YZ'``, ``'XZ'``, ``'XY'``.
+
+    Returns:
+        (horizontal, vertical) coordinate arrays for the projection plane.
+        YZ → (z, y), XZ → (z, x), XY → (x, y).
+    """
+    proj = projection.upper()
+    if proj == "YZ":
+        return zs, ys
+    if proj == "XZ":
+        return zs, xs
+    # XY
+    return xs, ys
 
 
 def revolve_contour(x, y, z):

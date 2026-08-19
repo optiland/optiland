@@ -56,12 +56,12 @@ class PSFBasisGenerator:
             n_components (int): Number of principal components (EigenPSFs) to keep.
 
         Returns:
-        Returns:
-            tuple:
-                - eigen_psfs (be.ndarray): Basis PSFs, shape (n_components, H, W).
-                - coefficient_grid (be.ndarray): Coefficient maps on low-res grid,
-                  shape (n_components, grid_ny, grid_nx).
-                - mean_psf (be.ndarray): Average PSF across field, shape (H, W).
+            tuple: A three-element tuple of
+
+            - eigen_psfs (be.ndarray): Basis PSFs, shape (n_components, H, W).
+            - coefficient_grid (be.ndarray): Coefficient maps on low-res grid,
+              shape (n_components, grid_ny, grid_nx).
+            - mean_psf (be.ndarray): Average PSF across field, shape (H, W).
 
         """
         # 1. Generate Grid of PSFs

@@ -74,7 +74,7 @@ class ParaxialRayAimer(BaseRayAimer):
         vx = 1 - be.array(vxf)
         vy = 1 - be.array(vyf)
 
-        x0, y0, z0 = self.optic.fields.field_definition.get_ray_origins(
+        x0, y0, z0 = self.optic.fields.require_definition().get_ray_origins(
             self.optic, Hx, Hy, Px, Py, vx, vy
         )
 

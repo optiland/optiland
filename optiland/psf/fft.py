@@ -26,10 +26,13 @@ def calculate_grid_size(num_rays) -> tuple[int, int]:
 
     Args:
         num_rays (int): The number of rays used to sample the pupil.
+
     Returns:
-        int: The effective pupil sampling size, which is the number of rays
-            used to sample the pupil in one dimension.
-        int: The grid size used for FFT computation.
+        tuple[int, int]: A two-element tuple of
+
+        - the effective pupil sampling size, i.e. the number of rays used to
+          sample the pupil in one dimension, and
+        - the grid size used for FFT computation.
     """
     effective_pupil_sampling = np.floor(32 * 2 ** ((np.log2(num_rays) - 5) / 2)).astype(
         int

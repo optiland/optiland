@@ -72,7 +72,7 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
 
    3D plotting does not work in the interactive shell, but you can run the code in your local Python environment to try the 3D visualizations.
 
-.. _getting_started:
+.. _getting_started_toc:
 
 .. toctree::
    :maxdepth: 1
@@ -81,6 +81,8 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
    start_here
    installation
    quickstart
+   conventions
+   how_do_i
    cheat_sheet
    glossary
    gui_quickstart
@@ -107,10 +109,12 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
    gallery/tolerancing
    gallery/freeforms
    gallery/diffractive_and_phase
+   gallery/coatings_and_polarization
    gallery/differentiable_ray_tracing
    gallery/real_world_projects
    gallery/external_tools
    gallery/extended_sources
+   gallery/nonsequential
    gallery/miscellaneous
 
 
@@ -136,14 +140,17 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
    developers_guide/code_structure
    developers_guide/configurable_backend
    developers_guide/ray_overview
+   developers_guide/nonsequential_raytracing
    developers_guide/surface_overview
    developers_guide/interaction_models
    developers_guide/propagation_models
    developers_guide/geometry_overview
+   developers_guide/implicit_differentiation
    developers_guide/analysis_framework
    developers_guide/optimization_framework
    developers_guide/tolerancing_framework
    developers_guide/multiconfig_framework
+   developers_guide/sequences_framework
    developers_guide/visualization_framework
    developers_guide/optiland_file_format
    developers_guide/gui
@@ -167,7 +174,10 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
    api/api_prescription
    api/api_backend
    api/api_coatings
+   api/api_colorimetry
    api/api_core
+   api/api_diagnostics
+   api/api_environment
    api/api_fields
    api/api_fileio
    api/api_geometries
@@ -181,6 +191,7 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
    api/api_physical_apertures
    api/api_rays
    api/api_raytrace
+   api/api_sequences
    api/api_solves
    api/api_sources
    api/api_surfaces
@@ -189,6 +200,7 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
    api/api_visualization
    api/api_wavefront
    api/api_zernike
+   api/api_nonsequential
    api/api_multiconfig
 
 

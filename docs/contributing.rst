@@ -31,8 +31,8 @@ Development Setup
        uv sync --group dev
 
    This installs Optiland in editable mode plus ``pytest``, ``ruff``, ``mypy``, and ``vulture``.
-   Without ``uv``, ``pip install -e ".[dev]"`` (or installing the packages listed under
-   ``[dependency-groups].dev`` in ``pyproject.toml`` manually) works too.
+   Without ``uv``, ``pip install -e "." --group dev`` (requires pip 25.1+; or install the
+   packages listed under ``[dependency-groups].dev`` in ``pyproject.toml`` manually) works too.
 3. Run the test suite scoped to what you're changing — **never run the full suite blindly**::
 
        pytest -v tests/<area_you_touched>/

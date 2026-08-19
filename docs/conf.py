@@ -19,7 +19,6 @@ extensions = [
     "sphinx.ext.intersphinx",
     "sphinx.ext.viewcode",
     "nbsphinx",
-    "sphinx_gallery.gen_gallery",
 ]
 
 add_module_names = False  # Remove module names from class and function names
@@ -32,11 +31,6 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 html_theme = "sphinx_rtd_theme"
 html_static_path = ["_static"]
 html_theme_options = {"navigation_depth": 2}
-
-sphinx_gallery_conf = {
-    "examples_dirs": "examples",  # path to example scripts
-    "gallery_dirs": "auto_examples",  # gallery output directory
-}
 
 autodoc_mock_imports = [
     "numpy",
@@ -59,6 +53,12 @@ autodoc_default_options = {
     "special-members": False,
     "inherited-members": True,
 }
+
+# Render Google-style ``Attributes:`` sections as inline ``:ivar:`` fields rather
+# than separate ``.. attribute::`` object descriptions. This avoids "duplicate
+# object description" warnings for dataclasses whose fields are documented both
+# by the docstring Attributes section and by autodoc's member enumeration.
+napoleon_use_ivar = True
 
 # Jupyterlite configuration
 jupyterlite_bind_ipynb_suffix = False

@@ -45,6 +45,106 @@ class TestRadiusVariable:
         self.radius_var.update_value(5.0)
         assert_allclose(self.radius_var.get_value(), 5.0)
 
+    def test_rejects_axis_for_standard_geometry(self, set_test_backend):
+        with pytest.raises(ValueError, match="only supported for toroidal"):
+            variable.RadiusVariable(self.optic, 1, axis="x")
+
+
+class TestToroidalRadiusVariable:
+    @pytest.fixture
+    def optic(self, set_test_backend):
+        optic = Optic()
+        optic.surfaces.add(index=0, thickness=be.inf)
+        optic.surfaces.add(
+            index=1,
+            surface_type="toroidal",
+            radius_x=30.0,
+            radius_y=40.0,
+        )
+        return optic
+
+    def test_requires_axis(self, optic):
+        with pytest.raises(ValueError, match="axis.*required"):
+            variable.RadiusVariable(optic, surface_number=1)
+
+    def test_rejects_invalid_axis(self, optic):
+        with pytest.raises(ValueError, match='Invalid axis "z"'):
+            variable.RadiusVariable(optic, surface_number=1, axis="z")
+
+    def test_get_value_by_axis(self, optic):
+        radius_x = variable.RadiusVariable(optic, surface_number=1, axis="x")
+        radius_y = variable.RadiusVariable(optic, surface_number=1, axis="y")
+
+        assert_allclose(radius_x.get_value(), 30.0)
+        assert_allclose(radius_y.get_value(), 40.0)
+
+    @pytest.mark.parametrize(
+        ("axis", "expected"),
+        [
+            ("x", "Radius X, Surface 1"),
+            ("y", "Radius Y, Surface 1"),
+        ],
+    )
+    def test_string_representation(self, optic, axis, expected):
+        radius = variable.RadiusVariable(optic, surface_number=1, axis=axis)
+
+        assert str(radius) == expected
+
+    def test_update_x_radius(self, optic):
+        radius_x = variable.RadiusVariable(optic, surface_number=1, axis="x")
+        radius_x.update_value(35.0)
+
+        geometry = optic.surfaces[1].geometry
+        assert_allclose(geometry.R_rot, 35.0)
+        assert_allclose(geometry.R_yz, 40.0)
+        assert_allclose(geometry.radius, 40.0)
+
+    def test_update_y_radius_keeps_geometry_consistent(self, optic):
+        radius_y = variable.RadiusVariable(optic, surface_number=1, axis="y")
+        radius_y.update_value(50.0)
+
+        geometry = optic.surfaces[1].geometry
+        assert_allclose(geometry.R_rot, 30.0)
+        assert_allclose(geometry.R_yz, 50.0)
+        assert_allclose(geometry.radius, 50.0)
+        assert_allclose(geometry.c_yz, 1.0 / 50.0)
+
+    def test_generic_updater_keeps_y_radius_consistent(self, optic):
+        optic.updater.set_radius(60.0, surface_number=1)
+
+        geometry = optic.surfaces[1].geometry
+        assert_allclose(geometry.R_rot, 30.0)
+        assert_allclose(geometry.R_yz, 60.0)
+        assert_allclose(geometry.radius, 60.0)
+        assert_allclose(geometry.c_yz, 1.0 / 60.0)
+
+    def test_problem_registers_both_radii(self, optic):
+        problem = OptimizationProblem()
+        problem.add_variable(
+            optic,
+            "radius",
+            surface_number=1,
+            axis="x",
+            scaler=IdentityScaler(),
+        )
+        problem.add_variable(
+            optic,
+            "radius",
+            surface_number=1,
+            axis="y",
+            scaler=IdentityScaler(),
+        )
+
+        assert_allclose(problem.variables[0].value, 30.0)
+        assert_allclose(problem.variables[1].value, 40.0)
+
+        problem.variables[0].update(32.0)
+        problem.variables[1].update(45.0)
+
+        geometry = optic.surfaces[1].geometry
+        assert_allclose(geometry.R_rot, 32.0)
+        assert_allclose(geometry.R_yz, 45.0)
+
 
 class TestReciprocalRadiusVariable:
     @pytest.fixture(autouse=True)
@@ -823,5 +923,5 @@ class TestVariablesExtended:
         assert optic.surfaces[1].geometry.cs.x == 1.0
 
     def test_variable_wrapper_invalid_type(self, optic):
-        with pytest.raises(ValueError, match='Invalid variable type "invalid"'):
+        with pytest.raises(ValueError, match="Unknown variable type 'invalid'"):
             Variable(optic, type_name="invalid")

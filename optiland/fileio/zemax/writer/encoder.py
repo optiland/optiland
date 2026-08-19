@@ -35,8 +35,16 @@ _FIELD_TYPE_TO_FTYP: dict[str, int] = {
 
 
 def _fmt(value: float) -> str:
-    """Format a float in Zemax scientific notation."""
-    return f"{value:.8E}"
+    """Format a float in Zemax scientific notation.
+
+    Uses 17 significant digits, the IEEE-754 binary64 round-trip guarantee, so
+    that ``save_zemax_file`` followed by ``load_zemax_file`` reproduces the
+    original system bit-for-bit. The previous ``%.8E`` (9 significant digits)
+    was lossy enough to matter: on ``HubbleTelescope`` (EFL ~5.76e4) a single
+    save/load shifted real-ray image-surface intercepts by 1.8e-06 mm, which
+    exceeds the 1e-06 mm agreement threshold used for cross-tool validation.
+    """
+    return f"{value:.16E}"
 
 
 def _fmt_vals(values: list[float]) -> str:
@@ -204,10 +212,10 @@ class ZemaxFileEncoder:
         clap = raw.get("CLAP")
         if clap is None:
             return
-        try:
+        if hasattr(clap, "r_min"):
             lines.append(f"  CLAP {_fmt(float(clap.r_min))} {_fmt(float(clap.r_max))}")
-        except AttributeError:
-            lines.append("  CLAP 0")
+        elif hasattr(clap, "x_min"):
+            lines.append(f"  CLAP {_fmt(0.0)} {_fmt(float(clap.x_max))}")
 
     def _encode_parameters(self, lines: list[str], raw: dict[str, Any]) -> None:
         for i in range(1, 17):
@@ -221,8 +229,12 @@ class ZemaxFileEncoder:
         name = glas.get("name", "")
         if name == "MIRROR":
             return "  GLAS MIRROR 0 0 0 0 0 0 0 0 0 0"
-        if "n" in glas and "V" in glas:
+        if "catalog" not in glas and "n" in glas and "V" in glas:
             # MODEL glass
             return f"  GLAS MODEL 1 0 {_fmt(glas['n'])} {_fmt(glas['V'])} 0 0 0 0 0 0"
-        # Catalog glass
+        if "n" in glas and "V" in glas:
+            # Catalog glass: record Nd/Vd so an ambiguous name (present in
+            # multiple GCAT catalogs) can be disambiguated on reload.
+            return f"  GLAS {name} 0 0 {_fmt(glas['n'])} {_fmt(glas['V'])} 0 0 0 0 0 0"
+        # Catalog glass without index data (e.g. round-tripped from another format)
         return f"  GLAS {name} 0 0 0 0 0 0 0 0 0 0"

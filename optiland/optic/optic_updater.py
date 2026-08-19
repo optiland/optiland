@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import optiland.backend as be
+from optiland._suggest import options_hint
 from optiland.apodization import BaseApodization
 from optiland.geometries import StandardGeometry
 from optiland.materials import IdealMaterial
@@ -173,8 +174,9 @@ class OpticUpdater:
         """
         if isinstance(polarization, str) and polarization != "ignore":
             raise ValueError(
-                "Invalid polarization state. Must be either "
-                'PolarizationState or "ignore".',
+                f"Invalid polarization state, got {polarization!r}. Pass a "
+                "PolarizationState instance, or the string 'ignore' to "
+                "disable polarization ray tracing.",
             )
         self.optic.polarization = polarization
 
@@ -279,7 +281,10 @@ class OpticUpdater:
         """
         if self.optic.surfaces.num_surfaces < 3:
             raise ValueError(
-                "Optic flip requires at least 3 surfaces (obj, element, img)"
+                f"Cannot flip a system with "
+                f"{self.optic.surfaces.num_surfaces} surface(s): at least 3 "
+                "are required (object, one optical surface, image). Add the "
+                "missing surfaces with lens.add_surface(...) first."
             )
 
         # 1. Call SurfaceGroup.flip()
@@ -317,6 +322,7 @@ class OpticUpdater:
         """Sets the apodization for the optical system.
 
         This method supports setting the apodization in multiple ways:
+
         1. By providing an instance of a `BaseApodization` subclass.
         2. By providing a string identifier (e.g., "GaussianApodization")
            and keyword arguments for its parameters.
@@ -342,7 +348,10 @@ class OpticUpdater:
                 apodization_class = BaseApodization._registry[apodization]
                 self.optic.apodization = apodization_class(**kwargs)
             else:
-                raise ValueError(f"Unknown apodization type: {apodization}")
+                raise ValueError(
+                    f"Unknown apodization type, got {apodization!r}."
+                    f"{options_hint(apodization, BaseApodization._registry)}"
+                )
         elif isinstance(apodization, dict):
             self.optic.apodization = BaseApodization.from_dict(apodization)
         else:

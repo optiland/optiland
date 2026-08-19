@@ -256,16 +256,16 @@ class TestAngleVsHeightErrors:
             # Case 1: Field is scanned (PupilIncidentAngleVsHeight)
             pupil_scan_analysis = PupilIncidentAngleVsHeight(cooke_triplet, axis=0)
             pupil_scan_analysis.view()
-            # Get the keyword arguments from the last call to the mock
-            kwargs = mock_plot.call_args.kwargs
-            assert "Normalized Pupil Coordinate (Px)" in kwargs["color_label"]
+            # Get the plot spec passed to the last call to the mock
+            plot_spec = mock_plot.call_args.args[0]
+            assert "Normalized Pupil Coordinate (Px)" in plot_spec.color_label
 
             mock_plot.reset_mock()
 
             # Case 2: Pupil is scanned (FieldIncidentAngleVsHeight)
             field_scan_analysis = FieldIncidentAngleVsHeight(cooke_triplet, axis=1)
             field_scan_analysis.view()
-            kwargs = mock_plot.call_args.kwargs
-            assert "Normalized Field Coordinate (Hy)" in kwargs["color_label"]
+            plot_spec = mock_plot.call_args.args[0]
+            assert "Normalized Field Coordinate (Hy)" in plot_spec.color_label
 
         plt.close("all")

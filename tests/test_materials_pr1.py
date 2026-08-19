@@ -138,6 +138,36 @@ class TestMatchPolicy:
         mat_warns = [x for x in w if issubclass(x.category, OptilandMaterialWarning)]
         assert len(mat_warns) == 0
 
+    def test_ambiguous_exact_match_warns_by_default(self):
+        """An exact name matching multiple catalogs (e.g. 'F5') warns under
+        the default WARN policy, even though the match itself is exact."""
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            mat = Material("F5")
+        mat_warns = [x for x in w if issubclass(x.category, OptilandMaterialWarning)]
+        assert len(mat_warns) >= 1
+        assert "multiple catalogs" in str(mat_warns[0].message)
+        # Still resolves to a usable material (first match, deterministically).
+        assert mat.name == "F5"
+
+    def test_ambiguous_exact_match_strict_raises(self):
+        """An exact name matching multiple catalogs raises under STRICT."""
+        with pytest.raises(ValueError, match="multiple catalogs"):
+            Material("F5", match_policy=MatchPolicy.STRICT)
+
+    def test_ambiguous_exact_match_best_silent(self):
+        """match_policy='best' silently resolves an ambiguous exact match."""
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            Material("F5", match_policy=MatchPolicy.BEST)
+        mat_warns = [x for x in w if issubclass(x.category, OptilandMaterialWarning)]
+        assert len(mat_warns) == 0
+
+    def test_ambiguous_exact_match_resolved_with_catalog(self):
+        """Passing catalog= disambiguates and yields the correct glass data."""
+        mat = Material("F5", catalog="cdgm")
+        assert pytest.approx(mat.n(0.5876), abs=1e-3) == 1.6243
+
 
 # ---------------------------------------------------------------------------
 # robust_search deprecation

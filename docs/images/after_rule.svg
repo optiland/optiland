@@ -1,0 +1,162 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 410" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <defs>
+    <!-- Arrow markers -->
+    <marker id="arrow-axis" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M0,1 L7,4 L0,7 Z" fill="#64748B" />
+    </marker>
+    <marker id="arrow-dim-start" markerWidth="7" markerHeight="7" refX="1" refY="3.5" orient="auto">
+      <path d="M6,0.5 L1,3.5 L6,6.5" fill="none" stroke="#D97706" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+    </marker>
+    <marker id="arrow-dim-end" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+      <path d="M1,0.5 L6,3.5 L1,6.5" fill="none" stroke="#D97706" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+    </marker>
+
+    <!-- Glass Gradients -->
+    <linearGradient id="glassGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#BAE6FD" stop-opacity="0.85" />
+      <stop offset="50%" stop-color="#7DD3FC" stop-opacity="0.65" />
+      <stop offset="100%" stop-color="#38BDF8" stop-opacity="0.85" />
+    </linearGradient>
+
+    <!-- Space Background Gradients -->
+    <linearGradient id="spaceGrad0" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#F1F5F9" stop-opacity="0.85" />
+      <stop offset="100%" stop-color="#E2E8F0" stop-opacity="0.5" />
+    </linearGradient>
+
+    <linearGradient id="spaceGrad2" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#E2E8F0" stop-opacity="0.5" />
+      <stop offset="100%" stop-color="#F1F5F9" stop-opacity="0.85" />
+    </linearGradient>
+  </defs>
+
+  <style>
+    .title { font-size: 16px; font-weight: 700; fill: #0F172A; }
+    .subtitle { font-size: 13px; fill: #475569; }
+    .axis { stroke: #94A3B8; stroke-width: 1.5; stroke-dasharray: 6 4; }
+    .axis-label { fill: #64748B; font-size: 11px; font-weight: 600; }
+    
+    .surf-line { stroke: #0284C7; stroke-width: 2.5; fill: none; stroke-linecap: round; }
+    .surf-plane { stroke: #475569; stroke-width: 2; stroke-dasharray: 4 3; }
+    .rim-line { stroke: #334155; stroke-width: 2; }
+
+    .surf-title { font-size: 13px; font-weight: 700; fill: #0F172A; }
+    .surf-sub { font-size: 11px; fill: #64748B; }
+
+    .dim-line { stroke: #D97706; stroke-width: 1.5; }
+    .dim-ext { stroke: #F59E0B; stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.6; }
+    .dim-label { font-size: 11.5px; font-weight: 700; fill: #B45309; }
+    .dim-sub { font-size: 10px; fill: #D97706; }
+
+    .mat-tag { font-size: 11px; font-weight: 600; fill: #1E293B; }
+    .mat-val { font-size: 11px; font-weight: 700; fill: #0369A1; }
+
+    .ray { stroke-width: 1.5; opacity: 0.85; fill: none; }
+  </style>
+
+  <!-- Background Canvas -->
+  <rect width="840" height="410" fill="#FFFFFF" rx="8" />
+
+  <!-- HEADER -->
+  <text x="25" y="30" class="title">The &quot;After&quot; Rule in Optiland</text>
+  <text x="25" y="48" class="subtitle">A surface&apos;s <tspan font-weight="bold" fill="#0284C7">thickness</tspan> and <tspan font-weight="bold" fill="#0284C7">material</tspan> describe the space immediately FOLLOWING that surface.</text>
+
+  <!-- SURFACE LABELS (TOP HEADER ROW) -->
+  <!-- Surface 0 -->
+  <text x="90" y="75" text-anchor="middle" class="surf-title">Surface 0</text>
+  <text x="90" y="89" text-anchor="middle" class="surf-sub">(Object)</text>
+
+  <!-- Surface 1 -->
+  <text x="222.5" y="75" text-anchor="middle" class="surf-title" fill="#0369A1">Surface 1</text>
+  <text x="222.5" y="89" text-anchor="middle" class="surf-sub">(Front surface)</text>
+
+  <!-- Surface 2 -->
+  <text x="377.5" y="75" text-anchor="middle" class="surf-title" fill="#0369A1">Surface 2</text>
+  <text x="377.5" y="89" text-anchor="middle" class="surf-sub">(Back surface)</text>
+
+  <!-- Surface 3 -->
+  <text x="740" y="75" text-anchor="middle" class="surf-title">Surface 3</text>
+  <text x="740" y="89" text-anchor="middle" class="surf-sub">(Image)</text>
+
+  <!-- SHADED REGIONS FOLLOWING CURVATURE (y: 105 to 285) -->
+
+  <!-- Space AFTER Surface 0 (Object Space) -->
+  <path d="M 90,105 L 260,105 C 210,135 210,255 260,285 L 90,285 Z" fill="url(#spaceGrad0)" />
+
+  <!-- Space AFTER Surface 1 (Glass Element) -->
+  <path d="M 260,105 C 210,135 210,255 260,285 L 340,285 C 390,255 390,135 340,105 Z" fill="url(#glassGrad)" />
+
+  <!-- Space AFTER Surface 2 (Image Space) -->
+  <path d="M 340,105 L 740,105 L 740,285 L 340,285 C 390,255 390,135 340,105 Z" fill="url(#spaceGrad2)" />
+
+  <!-- OPTICAL AXIS -->
+  <line x1="30" y1="195" x2="795" y2="195" class="axis" marker-end="url(#arrow-axis)" />
+  <text x="745" y="183" class="axis-label">+z (optical axis)</text>
+
+  <!-- RAYS -->
+  <!-- Top Ray -->
+  <path d="M 90,135 L 235,135 L 355,155 L 740,195" class="ray" stroke="#EA580C" />
+  <!-- Marginal Ray Bottom -->
+  <path d="M 90,255 L 235,255 L 355,235 L 740,195" class="ray" stroke="#EA580C" />
+  <!-- Chief Ray / Center Ray -->
+  <line x1="90" y1="195" x2="740" y2="195" class="ray" stroke="#0284C7" stroke-dasharray="5 3" />
+
+  <!-- SURFACES GEOMETRY -->
+
+  <!-- Surface 0: Object plane -->
+  <line x1="90" y1="98" x2="90" y2="292" class="surf-plane" />
+  <!-- Surface 1: Lens Front (Convex) -->
+  <path d="M 260,105 C 210,135 210,255 260,285" class="surf-line" />
+  <!-- Surface 2: Lens Rear (Convex) -->
+  <path d="M 340,105 C 390,135 390,255 340,285" class="surf-line" />
+  <!-- Lens Rims -->
+  <line x1="260" y1="105" x2="340" y2="105" class="rim-line" />
+  <line x1="260" y1="285" x2="340" y2="285" class="rim-line" />
+  <!-- Surface 3: Image plane -->
+  <line x1="740" y1="98" x2="740" y2="292" class="surf-plane" />
+
+  <!-- SURFACE APEX INDICATORS ON OPTICAL AXIS -->
+  <circle cx="90" cy="195" r="4" fill="#475569" />
+  <circle cx="222.5" cy="195" r="4" fill="#0284C7" />
+  <circle cx="377.5" cy="195" r="4" fill="#0284C7" />
+  <circle cx="740" cy="195" r="4" fill="#475569" />
+
+  <!-- MATERIAL ANNOTATIONS IN SPACES -->
+  <!-- Space 0 Material -->
+  <rect x="112" y="145" width="88" height="24" rx="5" fill="#FFFFFF" opacity="0.92" stroke="#CBD5E1" stroke-width="1" />
+  <text x="156" y="161" text-anchor="middle" class="mat-tag">material: <tspan class="mat-val">&quot;air&quot;</tspan></text>
+
+  <!-- Space 1 Material (Glass) -->
+  <rect x="255" y="145" width="90" height="24" rx="5" fill="#FFFFFF" opacity="0.95" stroke="#0284C7" stroke-width="1.5" />
+  <text x="300" y="161" text-anchor="middle" class="mat-tag">material: <tspan class="mat-val">&quot;N-BK7&quot;</tspan></text>
+
+  <!-- Space 2 Material -->
+  <rect x="514" y="145" width="88" height="24" rx="5" fill="#FFFFFF" opacity="0.92" stroke="#CBD5E1" stroke-width="1" />
+  <text x="558" y="161" text-anchor="middle" class="mat-tag">material: <tspan class="mat-val">&quot;air&quot;</tspan></text>
+
+  <!-- DIMENSION LINES (THICKNESS) -->
+  <!-- Extension lines down from apices -->
+  <line x1="90" y1="200" x2="90" y2="385" class="dim-ext" />
+  <line x1="222.5" y1="200" x2="222.5" y2="385" class="dim-ext" />
+  <line x1="377.5" y1="200" x2="377.5" y2="385" class="dim-ext" />
+  <line x1="740" y1="200" x2="740" y2="385" class="dim-ext" />
+
+  <!-- Dim 0: Surface 0 Thickness -->
+  <line x1="90" y1="345" x2="222.5" y2="345" class="dim-line" marker-start="url(#arrow-dim-start)" marker-end="url(#arrow-dim-end)" />
+  <text x="156.25" y="338" text-anchor="middle" class="dim-label">surface 0 thickness</text>
+  <text x="156.25" y="360" text-anchor="middle" class="dim-sub">space AFTER surface 0</text>
+  <text x="156.25" y="373" text-anchor="middle" class="dim-sub">(object distance)</text>
+
+  <!-- Dim 1: Surface 1 Thickness -->
+  <line x1="222.5" y1="345" x2="377.5" y2="345" class="dim-line" marker-start="url(#arrow-dim-start)" marker-end="url(#arrow-dim-end)" />
+  <text x="300" y="338" text-anchor="middle" class="dim-label">surface 1 thickness</text>
+  <text x="300" y="360" text-anchor="middle" class="dim-sub">space AFTER surface 1</text>
+  <text x="300" y="373" text-anchor="middle" class="dim-sub">(lens glass thickness)</text>
+
+  <!-- Dim 2: Surface 2 Thickness -->
+  <line x1="377.5" y1="345" x2="740" y2="345" class="dim-line" marker-start="url(#arrow-dim-start)" marker-end="url(#arrow-dim-end)" />
+  <text x="558.75" y="338" text-anchor="middle" class="dim-label">surface 2 thickness</text>
+  <text x="558.75" y="360" text-anchor="middle" class="dim-sub">space AFTER surface 2</text>
+  <text x="558.75" y="373" text-anchor="middle" class="dim-sub">(image distance)</text>
+
+</svg>

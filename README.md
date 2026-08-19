@@ -37,11 +37,40 @@ Whether you're developing prototypes in research or refining production systems,
 
 Under the hood, Optiland uses NumPy for fast CPU calculations and PyTorch for GPU acceleration and automatic differentiation. Switch between engines depending on your use case with the same interface.
 
-**Get started in 5 minutes:**
-```python
+## Get started in 5 minutes
+
+```bash
 pip install optiland
 ```
-→ [5-minute quickstart](https://optiland.readthedocs.io/en/latest/quickstart.html) · [Example Gallery](https://optiland.readthedocs.io/en/latest/gallery/introduction.html) · [Full Learning Guide](https://optiland.readthedocs.io/en/latest/learning_guide.html)
+
+Copy-paste the following to build a singlet, trace it, and draw it:
+
+```python
+from optiland.optic import Optic
+
+lens = Optic()
+lens.surfaces.add(index=0, thickness=float("inf"))                                     # object
+lens.surfaces.add(index=1, radius=25.0, thickness=6.0, material="N-BK7", is_stop=True)  # front
+lens.surfaces.add(index=2, radius=-75.0, thickness=34.0)                               # back
+lens.surfaces.add(index=3)                                                             # image
+lens.set_aperture(aperture_type="EPD", value=20)
+lens.fields.set_type("angle")
+lens.fields.add(y=0)
+lens.fields.add(y=5)
+lens.wavelengths.add(value=0.587, is_primary=True)
+
+lens.draw()                       # 2D layout with traced rays
+print(lens.paraxial.f2())         # effective focal length -> 37.04 mm
+```
+
+<div align="center">
+  <img src="https://github.com/optiland/optiland/raw/master/docs/images/readme_singlet.png" alt="A singlet drawn by Optiland" style="max-width: 100%; height: auto;">
+</div>
+
+Stuck? `from optiland.diagnostics import check_system; print(check_system(lens))` reports what
+is missing or inconsistent about a system, each finding with a runnable fix.
+
+→ [Start Here](https://optiland.readthedocs.io/en/latest/start_here.html) · [Conventions](https://optiland.readthedocs.io/en/latest/conventions.html) · [How do I …?](https://optiland.readthedocs.io/en/latest/how_do_i.html) · [5-minute quickstart](https://optiland.readthedocs.io/en/latest/quickstart.html) · [Example Gallery](https://optiland.readthedocs.io/en/latest/gallery/introduction.html) · [Full Learning Guide](https://optiland.readthedocs.io/en/latest/learning_guide.html)
 
 
 
@@ -71,11 +100,11 @@ pip install optiland
 
     ```bash
     pip install optiland
-    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
     ```
 
 ⚠️ Important Notes on GPU Installation
-- This command installs PyTorch with CUDA 11.8. Ensure that your NVIDIA drivers and toolkit are compatible.
+- This command installs PyTorch with CUDA 12.6. Ensure that your NVIDIA drivers and toolkit are compatible.
 - You can find the correct PyTorch + CUDA combo for your system using the [official PyTorch installation selector](https://pytorch.org/get-started/locally/).
 - If you're using a non-NVIDIA GPU or running on Apple Silicon, use the CPU-only installation instead.
 
@@ -89,6 +118,8 @@ For more details, see the [installation guide](https://optiland.readthedocs.io/e
 | **🛠️ Design & Modeling** | Configure fields, wavelengths, apertures. Build systems using spherical, aspheric, conic, and freeform surfaces.  |
 | **🧮 Differentiable Core** | Switch between NumPy (CPU) and PyTorch (GPU/autograd) seamlessly for hybrid physics-ML workflows. |
 | **🔬 Ray Tracing** | Trace paraxial and real rays through sequential systems with support for polarization, birefringence, and coatings. |
+| **💡 Non-Sequential (pre-release)** | Differentiable non-sequential ray tracing: illumination, stray-light & ghost analysis, coatings, and absorption, optimizable via `loss.backward()`. |
+| **👻 Multi-Sequence Tracing (beta)** | Trace ghost paths, reverse traces, and sub-component views as ordered sub-sequences over the same surfaces. Geometry and materials stay linked to the base system. |
 | **📊 Optical Analysis** | Generate spot diagrams, wavefront error maps, ray fans, PSF/MTF plots, Zernike decompositions, distortion plots, etc. |
 | **🧠 Optimization** | Local & global optimizers, autograd support, operand-based merit functions, and GlassExpert for categorical variable search. |
 | **📈 Tolerancing** | Monte Carlo and parametric sensitivity analysis to evaluate robustness and manufacturability. |
@@ -111,9 +142,17 @@ For a full breakdown of Optiland’s functionalities, see the [complete feature 
 Optiland is continually evolving to provide new functionalities for optical design and analysis. Below are some of the planned features and enhancements we aim to implement in future versions. We welcome contributions in any of these areas:
 
 ### Physics & Core Engine
-- [ ] **Non-sequential Ray Tracing** (Ghost analysis, stray light, etc.)
+- [x] **Non-Sequential Ray Tracing** (pre-release) — differentiable illumination, stray-light & ghost analysis, with coatings, required mirror reflectance, Beer–Lambert absorption, and self-diagnosing results. See the [Limitations & Roadmap](https://optiland.readthedocs.io/en/latest/gallery/nonsequential/limitations_and_roadmap.html) page (canonical) for the full capability envelope and these follow-ups:
+  - [ ] Reparameterization for visibility gradients (silhouette/vignetting)
+  - [ ] Optimization-system integration (Variable/operand wiring)
+  - [ ] Path Replay Backpropagation (constant-memory gradients)
+  - [ ] GUI integration
+  - [ ] Volumetric scattering (beyond the Beer–Lambert absorption already implemented)
+  - [ ] Polarization (Stokes through Fresnel)
+  - [ ] Dr.Jit / Mitsuba 3 / OptiX backend
+- [x] **Multi-Sequence Ray Tracing** (beta) - ghost paths, reverse traces, and sub-component views as alternate traversal orders over the same surfaces. Per-sequence first-order analysis, a visualization overlay, and a ghost-enumeration helper are follow-ups.
 - [ ] **Physical Optics Propagation** (Diffraction, beam clipping, Gaussian beam evolution)
-- [ ] **Multi-Path Sequential Ray Tracing**
+- [ ] **Multi-Path Sequential Ray Tracing** (branching arms / beamsplitters)
 - [ ] **Additional Freeforms** (Superconic, etc.)
 
 ### Optimization & Algorithms

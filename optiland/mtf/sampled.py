@@ -125,26 +125,28 @@ class SampledMTF:
 
         Notes:
             The calculation involves:
+
             1. Retrieving the exit pupil diameter (XPD). If XPD is near zero,
                MTF is 0 for non-zero frequencies and 1 for zero frequency.
             2. Converting the wavelength to mm.
-            3. For each frequency pair (fx, fy):
-                a. Calculating physical shifts in the pupil based on wavelength and
-                   frequency.
-                b. Normalizing these shifts using the XPD radius & exit pupil position.
-                c. Determining the shifted normalized coordinates for pupil evaluation.
-                d. Evaluating the Optical Path Difference (OPD) at these shifted
-                   coordinates using the Zernike polynomial fit of the wavefront.
-                e. Masking points where the shifted evaluation falls outside the
-                   unit circle (i.e., outside the pupil).
-                f. Computing the complex conjugate of the pupil function at the
-                   shifted coordinates (P2_conj).
-                g. Calculating the OTF element as the product of the original complex
-                   pupil function (P1) and P2_conj.
-                h. Summing the OTF elements over all pupil sample points to get the
-                   total OTF value for the given frequency.
-                i. Normalizing the OTF value by otf_at_zero (the OTF at zero frequency).
-                j. The MTF is the absolute value of this normalized OTF.
+            3. For each frequency pair (fx, fy), the OTF is built up as follows:
+
+               a. Calculating physical shifts in the pupil based on wavelength and
+                  frequency.
+               b. Normalizing these shifts using the XPD radius & exit pupil position.
+               c. Determining the shifted normalized coordinates for pupil evaluation.
+               d. Evaluating the Optical Path Difference (OPD) at these shifted
+                  coordinates using the Zernike polynomial fit of the wavefront.
+               e. Masking points where the shifted evaluation falls outside the
+                  unit circle (i.e., outside the pupil).
+               f. Computing the complex conjugate of the pupil function at the
+                  shifted coordinates (P2_conj).
+               g. Calculating the OTF element as the product of the original complex
+                  pupil function (P1) and P2_conj.
+               h. Summing the OTF elements over all pupil sample points to get the
+                  total OTF value for the given frequency.
+               i. Normalizing the OTF value by otf_at_zero (the OTF at zero frequency).
+               j. The MTF is the absolute value of this normalized OTF.
         """
         xpd_is_zero = self.xpd == 0.0
 

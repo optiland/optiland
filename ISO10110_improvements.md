@@ -608,7 +608,7 @@ real, not just theoretical.
   that doesn't appear in any current notebook) were removed from git.
   Investigating what actually reproduces these files found that 6 of the 19
   files in `iso10110_output/` (the per-element `.png` previews) aren't
-  produced by any cell in `Tutorial_10a_ISO_10110_Drawings.ipynb` at all —
+  produced by any cell in `Tutorial_11a_ISO_10110_Drawings.ipynb` at all —
   they were leftovers from the same removed `regen_iso10110.py` script noted
   in §W1, i.e. already stale before this cleanup.
 - The notebook's own stored cell outputs (rendered inline via `nbsphinx`,

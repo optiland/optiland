@@ -46,12 +46,22 @@ Workflow
 How to Extend This
 ------------------
 
-**Scenario:** Add a custom tolerance sensitivity class to Optiland.
+**Scenario:** Add a custom perturbation sampling strategy to Optiland.
 
-**Step 1:** Create a new perturbation class in ``optiland/tolerancing/perturbations.py``.
-**Step 2:** Implement ``apply(optic)`` (apply the perturbation to the system) and ``revert(optic)``
-(restore the original state).
-**Step 3:** Pass instances of your perturbation to ``Tolerancing.add_perturbation()``.
+The ``Perturbation`` class in ``optiland/tolerancing/perturbation.py`` is not subclassed per
+perturbation type — instead it wraps an existing optimization ``Variable`` (identified by a
+``variable_type`` string, e.g. ``"radius"`` or ``"thickness"``) together with a sampler that
+supplies new values. Its ``apply()`` method draws a value from the sampler and calls
+``self.variable.update(value)``; ``reset()`` restores the variable's original value.
+
+**Step 1:** To add a new *sampling* strategy, subclass ``BaseSampler`` in
+``optiland/tolerancing/perturbation.py`` and implement ``sample()``.
+**Step 2:** To perturb a new *kind of parameter*, add or reuse a variable type in the
+optimization framework's ``Variable``/``VariableBehavior`` classes (see
+:doc:`optimization_framework`) — ``Perturbation`` will pick it up automatically via
+``variable_type``.
+**Step 3:** Register perturbations on a ``Tolerancing`` instance with
+``Tolerancing.add_perturbation(variable_type, sampler, **kwargs)``.
 **Step 4:** Add tests in ``tests/test_tolerancing/``.
 
 For step-by-step guidance, see :ref:`extension_recipes`.
