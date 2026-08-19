@@ -165,6 +165,29 @@ def test_all_any(set_test_backend):
     assert not be.any(be.array([False, False]))
 
 
+def test_all_any_native_masks_and_host_data(set_test_backend):
+    """Comparison masks reduce in their own dtype and host data stays on the
+    host; both paths return plain Python bools."""
+    x = be.array([1.0, 2.0, 3.0])
+    assert be.all(x > 0)
+    assert not be.all(x > 2.0)
+    assert be.any(x > 2.0)
+    assert not be.any(x > 3.0)
+    assert isinstance(be.all(x > 0), bool)
+    assert isinstance(be.any(x > 0), bool)
+    # lists, tuples, and numpy arrays never touch the compute device
+    assert be.all([True, True])
+    assert not be.all(np.array([True, False]))
+    assert be.any((False, True))
+
+
+def test_max_min_return_python_scalars(set_test_backend):
+    x = be.array([3.0, 1.0, 2.0])
+    assert be.max(x) == 3.0
+    assert be.min(x) == 1.0
+    assert float(be.max(x)) == 3.0  # usable directly in host-side math
+
+
 def test_cross_product(set_test_backend):
     if hasattr(be, "cross"):
         a = be.array([1.0, 0.0, 0.0])

@@ -79,7 +79,10 @@ class ReductionsMixin:
             float: Maximum value as a Python scalar.
         """
         if isinstance(x, torch.Tensor):
-            return x.detach().cpu().max().item()
+            # Reduce on the device and transfer one scalar; copying the whole
+            # tensor to the host first stalls the pipeline and moves N values
+            # to compute one.
+            return x.detach().max().item()
         return np.max(x)
 
     def min(self, x: Any) -> Any:
@@ -92,7 +95,7 @@ class ReductionsMixin:
             float: Minimum value as a Python scalar.
         """
         if isinstance(x, torch.Tensor):
-            return x.detach().cpu().min().item()
+            return x.detach().min().item()
         return np.min(x)
 
     def argmin(self, x: Any, axis: int | None = None) -> Tensor:
@@ -238,8 +241,13 @@ class ReductionsMixin:
         """
         if isinstance(x, bool):
             return x
-        t = torch.as_tensor(x, dtype=self._dtype(), device=self._device())
-        return bool(torch.all(t).item())
+        if isinstance(x, torch.Tensor):
+            # Reduce in the tensor's own dtype: casting a bool mask to the
+            # working float precision allocates a full-size temporary for a
+            # reduction that torch performs on bool directly.
+            return bool(torch.all(x).item())
+        # Host data (lists, numpy arrays) reduces on the host.
+        return bool(np.all(x))
 
     def any(self, x: Any) -> bool:
         """Return True if any element of x is True.
@@ -252,8 +260,9 @@ class ReductionsMixin:
         """
         if isinstance(x, bool):
             return x
-        t = torch.as_tensor(x, dtype=self._dtype(), device=self._device())
-        return bool(torch.any(t).item())
+        if isinstance(x, torch.Tensor):
+            return bool(torch.any(x).item())
+        return bool(np.any(x))
 
     def nanmax(
         self, x: Tensor, axis: int | None = None, keepdim: bool = False
