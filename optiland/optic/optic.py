@@ -766,6 +766,7 @@ class Optic:
         wavelength: float,
         num_rays: int | None = 100,
         distribution: DistributionType | BaseDistribution | None = "hexapolar",
+        record: bool = True,
     ) -> RealRays:
         """Trace a distribution of rays through the optical system.
 
@@ -779,12 +780,19 @@ class Optic:
                 The distribution of rays. Can be a string identifier (e.g.,
                 'hexapolar', 'uniform') or a `BaseDistribution` object.
                 Defaults to 'hexapolar'.
+            record: Whether to store per-surface snapshots of the traced rays,
+                which analyses and visualization read afterwards. Passing
+                False roughly halves peak memory and is recommended for very
+                large GPU traces where only the returned rays are needed.
+                Defaults to True.
 
         Returns:
             RealRays: A `RealRays` object containing the traced rays.
 
         """
-        return self.ray_tracer.trace(Hx, Hy, wavelength, num_rays, distribution)
+        return self.ray_tracer.trace(
+            Hx, Hy, wavelength, num_rays, distribution, record=record
+        )
 
     def trace_generic(
         self,

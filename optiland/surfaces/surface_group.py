@@ -316,18 +316,23 @@ class SurfaceGroup:
         t = self.positions
         return t[surface_number + 1] - t[surface_number]
 
-    def trace(self, rays, skip=0):
+    def trace(self, rays, skip=0, record=True):
         """Trace the given rays through the surfaces.
 
         Args:
             rays (BaseRays): List of rays to be traced.
             skip (int, optional): Number of surfaces to skip before tracing.
                 Defaults to 0.
+            record (bool, optional): Whether to store per-surface snapshots of
+                the ray state (positions, directions, intensity, OPD). The
+                snapshots feed analyses and visualization but keep eight
+                full-size arrays alive per surface; pass False when only the
+                rays returned at the image are needed. Defaults to True.
 
         """
         self.reset()
         for surface in self.surfaces[skip:]:
-            surface.trace(rays)
+            surface.trace(rays, record=record)
         return rays
 
     def add(

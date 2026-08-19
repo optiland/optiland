@@ -38,12 +38,15 @@ class _TracingCoordinator:
     the surface are always reflected without recreating the coordinator.
     """
 
-    def trace(self, rays: BaseRays, surface: Surface) -> BaseRays:
+    def trace(self, rays: BaseRays, surface: Surface, record: bool = True) -> BaseRays:
         """Execute the full ray-surface interaction pipeline.
 
         Args:
             rays: The rays to be traced.
             surface: The surface being traced through.
+            record: Whether to store a snapshot of the ray state on the
+                surface after tracing. Recording keeps eight full-size arrays
+                alive per surface; pass False when only the final rays matter.
 
         Returns:
             The traced rays.
@@ -52,7 +55,8 @@ class _TracingCoordinator:
         surface.geometry.localize(rays)
         rays = rays.trace_on_surface(surface)
         surface.geometry.globalize(rays)
-        rays.record_on_surface(surface)
+        if record:
+            rays.record_on_surface(surface)
         return rays
 
 
@@ -204,17 +208,19 @@ class Surface(ObserverMixin):
         super().__init_subclass__(**kwargs)
         Surface._registry[cls.__name__] = cls
 
-    def trace(self, rays: BaseRays) -> BaseRays:
+    def trace(self, rays: BaseRays, record: bool = True) -> BaseRays:
         """Traces the given rays through the surface.
 
         Args:
             rays (BaseRays): The rays to be traced.
+            record (bool, optional): Whether to store the traced ray state on
+                the surface. Defaults to True.
 
         Returns:
             BaseRays: The traced rays.
 
         """
-        return self._coordinator.trace(rays, self)
+        return self._coordinator.trace(rays, self, record=record)
 
     @property
     def _coordinator(self) -> _TracingCoordinator:

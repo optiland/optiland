@@ -53,11 +53,13 @@ class ObjectSurface(Surface):
     def set_aperture(self):
         """Sets the aperture of the surface."""
 
-    def trace(self, rays: BaseRays) -> BaseRays:
+    def trace(self, rays: BaseRays, record: bool = True) -> BaseRays:
         """Traces the given rays through the surface.
 
         Args:
             rays (BaseRays): The rays to be traced.
+            record (bool, optional): Whether to store the traced ray state on
+                the surface. Defaults to True.
 
         Returns:
             BaseRays: The traced rays.
@@ -65,7 +67,8 @@ class ObjectSurface(Surface):
         """
         self.reset()
         rays.trace_on_surface(self)
-        rays.record_on_surface(self)
+        if record:
+            rays.record_on_surface(self)
         return rays
 
     def _trace_paraxial(self, rays: ParaxialRays) -> ParaxialRays:
