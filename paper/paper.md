@@ -127,7 +127,7 @@ lens.add_wavelength(value=0.65)
 
 lens.update_paraxial()
 
-# Visualize in 3D
+# Visualize in 3D (note: this opens a new window)
 lens.draw3D()
 ```
 
