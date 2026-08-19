@@ -39,7 +39,7 @@ class VariableBehavior(ABC):
 
     def __init__(self, optic, surface_number, scaler: Scaler = None, **kwargs):
         self.optic = optic
-        self._surfaces = self.optic.surface_group
+        self._surfaces = self.optic.surfaces
         self.surface_number = surface_number
         if scaler is None:
             self.scaler = IdentityScaler()

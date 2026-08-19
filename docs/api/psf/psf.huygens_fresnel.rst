@@ -1,4 +1,4 @@
-﻿psf.huygens\_fresnel
+psf.huygens\_fresnel
 ====================
 
 .. automodule:: psf.huygens_fresnel
@@ -9,4 +9,5 @@
    .. autosummary::
    
       HuygensPSF
+      ScalarHuygensPSF
    

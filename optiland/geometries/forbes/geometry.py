@@ -3,30 +3,29 @@
 This module provides implementations for optical surfaces described by
 Forbes polynomials, which are superimposed on a base conic section.
 Forbes polynomials offer a modern alternative to standard power-series
-aspheres, providing better control over the surface shape and its derivatives.
-Their orthogonality helps to decouple the effects of different coefficients,
-which is advantageous for optimization, tolerancing, and assessing
-manufacturability.
+aspheres.
 
 The implementation is based on the work of G. W. Forbes. See, for example,
 G. W. Forbes, "Manufacturability estimates for optical aspheres," Opt. Express (2011).
 
 This module implements two types of Forbes surfaces:
-    1.  **ForbesQbfsGeometry (Q-type, Best Fit Sphere)**:
-        This class represents rotationally symmetric aspheric surfaces. The "Qbfs"
-        polynomials are orthogonal over a circular aperture and describe the
-        departure from a base conic.
+    1.  **ForbesQNormalSlopeGeometry** (slope-orthogonal Q polynomials):
+        This class represents rotationally symmetric aspheric surfaces using
+        Forbes Q polynomials (historically called Q^bfs in Forbes 2007). These
+        polynomials are orthogonal with respect to the normal-departure
+        slope metric, and the implementation supports a general conic
+        reference surface (Forbes 2011 generalization). The deprecated alias
+        ``ForbesQbfsGeometry`` is retained for backward compatibility.
     2.  **ForbesQ2dGeometry (Q-type, 2D)**:
         This class represents non-rotationally symmetric, or "freeform," surfaces.
         The Q2D polynomials extend the Q-type formalism to two dimensions, allowing
         for the description of complex, freeform optical surfaces that lack
         rotational symmetry.
-
-Manuel Fragata Mendes, 2025
 """
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -35,8 +34,11 @@ from optiland.coordinate_system import CoordinateSystem
 from optiland.geometries.newton_raphson import NewtonRaphsonGeometry
 
 from .qpoly import (
+    _q2d_cartesian_eval,
+    _trim_trailing_zeros,
     clenshaw_q2d,
     clenshaw_qbfs,
+    compute_z_q2d,
     compute_z_zprime_q2d,
     compute_z_zprime_qbfs,
     q2d_nm_coeffs_to_ams_bms,
@@ -44,6 +46,65 @@ from .qpoly import (
 )
 
 _EPSILON = 1e-12
+
+
+class _CoeffCacheDict(dict):
+    """Coefficient dict that invalidates its owner's prepared-coefficient cache.
+
+    The Forbes geometries cache trimmed/stacked coefficient containers and
+    rebuild them lazily (see ``_ensure_coeffs``). The optimizer and ``scale``
+    invalidate that cache explicitly, but a user may also poke a coefficient in
+    place (``geom.radial_terms[n] = value``). This dict catches such in-place
+    edits and marks the owner dirty, so the next ``sag`` / ``_surface_normal``
+    picks them up -- matching the pre-cache behavior where the coefficients
+    were rebuilt on every call.
+
+    The standard ``dict`` constructor signature is kept intact so that
+    ``dataclasses.asdict`` (used by ``to_dict``) can reconstruct the mapping via
+    ``type(obj)(...)``. The owner is attached afterwards with :meth:`_bind`; an
+    unbound instance simply behaves like a plain ``dict``.
+    """
+
+    _owner = None
+
+    def _bind(self, owner) -> _CoeffCacheDict:
+        self._owner = owner
+        return self
+
+    def _invalidate(self) -> None:
+        if self._owner is not None:
+            self._owner._coeffs_dirty = True
+
+    def __setitem__(self, key, value) -> None:
+        super().__setitem__(key, value)
+        self._invalidate()
+
+    def __delitem__(self, key) -> None:
+        super().__delitem__(key)
+        self._invalidate()
+
+    def update(self, *args, **kwargs) -> None:
+        super().update(*args, **kwargs)
+        self._invalidate()
+
+    def setdefault(self, key, default=None):
+        result = super().setdefault(key, default)
+        self._invalidate()
+        return result
+
+    def pop(self, *args, **kwargs):
+        result = super().pop(*args, **kwargs)
+        self._invalidate()
+        return result
+
+    def popitem(self):
+        result = super().popitem()
+        self._invalidate()
+        return result
+
+    def clear(self) -> None:
+        super().clear()
+        self._invalidate()
 
 
 @dataclass
@@ -66,7 +127,9 @@ class ForbesSurfaceConfig:
     Attributes:
         radius (float): The vertex radius of curvature of the base surface.
         conic (float): The conic constant of the base surface.
-        norm_radius (float): The normalization radius for the polynomial terms.
+        norm_radius (float, optional): The normalization radius for the
+            polynomial terms. If None, the radius scales automatically
+            during paraxial updates. Defaults to None.
         terms (dict, optional): A dictionary of polynomial coefficients.
         The key format depends on the
             specific geometry type (e.g., `radial_terms` for Qbfs,
@@ -75,7 +138,7 @@ class ForbesSurfaceConfig:
 
     radius: float
     conic: float = 0.0
-    norm_radius: float = 1.0
+    norm_radius: float | None = None
     # either radial_terms or freeform_coeffs
     terms: dict[Any, float] | None = None
 
@@ -112,6 +175,19 @@ class ForbesGeometryBase(NewtonRaphsonGeometry):
         )
         self.surface_config = surface_config
         self.solver_config = solver_config
+        # Coefficient cache: ``_prepare_coeffs`` is expensive (dict -> stacked
+        # tensors + per-family trimming, each ``bool(v == 0)`` forcing a CUDA
+        # sync). It is rebuilt only when invalidated -- on construction, on
+        # ``scale``, and on optimizer coefficient updates -- not on every
+        # ``sag``/``_surface_normal`` call. ``norm_radius`` is applied at
+        # evaluation time and does not enter coefficient preparation, so
+        # ``update_normalization`` does not invalidate this cache.
+        self._coeffs_dirty = True
+
+    def _ensure_coeffs(self) -> None:
+        """Rebuild cached coefficient containers only when invalidated."""
+        if self._coeffs_dirty:
+            self._prepare_coeffs()
 
     def _base_sag(self, r2):
         """Calculates the sag of the base conic surface.
@@ -180,11 +256,17 @@ class ForbesGeometryBase(NewtonRaphsonGeometry):
         return factor, derivative
 
 
-class ForbesQbfsGeometry(ForbesGeometryBase):
-    r"""Represents a Forbes Q-bfs surface (rotationally symmetric Q-type).
+class ForbesQNormalSlopeGeometry(ForbesGeometryBase):
+    r"""Represents a Forbes Q surface using slope-orthogonal polynomials.
 
-    The Q-bfs surface is defined by the sag equation:
-    $z(\rho) = z_{base}(\rho) + \frac{1}{\sigma(\rho)}
+    This surface uses the Forbes Q polynomials that are orthogonal with respect
+    to the normal-departure slope metric. These were historically called
+    Q^bfs ("best-fit sphere") in Forbes 2007, but the implementation here
+    supports a general conic reference surface following the Forbes 2011
+    generalization.
+
+    The surface sag is defined as:
+    $z(\rho) = z_{base}(\rho) + \phi(\rho)
     \left[ u^2(1-u^2) \sum_{m=0}^{M} a_m Q_m(u^2) \right]$
 
     where:
@@ -192,10 +274,16 @@ class ForbesQbfsGeometry(ForbesGeometryBase):
           is the base conic.
         - $c = 1/R$ is the curvature, $k$ is the conic constant.
         - $u = \rho/\rho_{max}$ is the normalized radial coordinate.
-        - $Q_m(u^2)$ are the Forbes orthogonal polynomials.
+        - $Q_m(u^2)$ are the Forbes slope-orthogonal polynomials.
         - $a_m$ are the polynomial coefficients.
-        - $\sigma(\rho) = \sqrt{\frac{1 - kc^2\rho^2}{1 - (1+k)c^2\rho^2}}$ is a
-          conic scaling factor.
+        - $\phi(\rho) = \sqrt{\frac{1 - kc^2\rho^2}{1 - (1+k)c^2\rho^2}}$ is the
+          conic correction factor that projects the normal departure onto the
+          sag axis.
+
+    Note:
+        The internal polynomial basis functions (named ``*_qbfs`` in the code)
+        retain the historical "qbfs" identifier for stability. This does not
+        imply a spherical reference; the conic constant $k$ can be nonzero.
 
     Args:
         coordinate_system (CoordinateSystem): The local coordinate system of the
@@ -215,19 +303,41 @@ class ForbesQbfsGeometry(ForbesGeometryBase):
     ):
         super().__init__(coordinate_system, surface_config, solver_config)
         if be.get_backend() == "torch":
-            self.radial_terms = {
-                k: be.array(v) for k, v in (self.surface_config.terms or {}).items()
-            }
+            self.radial_terms = _CoeffCacheDict(
+                {k: be.array(v) for k, v in (self.surface_config.terms or {}).items()}
+            )._bind(self)
         else:
-            self.radial_terms = self.surface_config.terms or {}
+            # Preserve the historical numpy aliasing: ``radial_terms`` and
+            # ``surface_config.terms`` are the same object, so in-place edits
+            # propagate to serialization.
+            self.radial_terms = _CoeffCacheDict(self.surface_config.terms or {})._bind(
+                self
+            )
+            self.surface_config.terms = self.radial_terms
 
-        self.norm_radius = be.array(self.surface_config.norm_radius)
+        if self.surface_config.norm_radius is not None:
+            self.normalization_mode = "manual"
+            self.norm_radius = be.array(self.surface_config.norm_radius)
+        else:
+            self.normalization_mode = "auto"
+            self.norm_radius = be.array(1.0)
+
         self.is_symmetric = True
 
     def _prepare_coeffs(self):
-        """Prepares the internal coefficient lists from the radial_terms dictionary."""
+        """Prepares the internal coefficient lists from the radial_terms dictionary.
+
+        Also builds the trimmed ``_prepared_radial_coeffs`` container and the
+        ``_all_coeffs_zero`` flag consumed by the hot ``sag``/``_surface_normal``
+        paths, so that trailing-zero trimming (and its CUDA synchronization)
+        happens here -- once per coefficient change -- rather than on every
+        evaluation. Clears the dirty flag.
+        """
         if not self.radial_terms:
             self.coeffs_n, self.coeffs_c = [], be.array([])
+            self._prepared_radial_coeffs = []
+            self._all_coeffs_zero = True
+            self._coeffs_dirty = False
             return
 
         max_n = max(self.radial_terms.keys())
@@ -241,24 +351,28 @@ class ForbesQbfsGeometry(ForbesGeometryBase):
         else:
             self.coeffs_n, self.coeffs_c = [], be.array([])
 
+        self._prepared_radial_coeffs = _trim_trailing_zeros(self.coeffs_c)
+        self._all_coeffs_zero = len(self._prepared_radial_coeffs) == 0
+        self._coeffs_dirty = False
+
     def sag(self, x=0, y=0):
-        """Calculate the sag of the Forbes Q-bfs surface.
+        """Calculate the sag of the Forbes Q (slope-orthogonal) surface.
 
         Args:
             x (int, optional): x-coordinate. Defaults to 0.
             y (int, optional): y-coordinate. Defaults to 0.
 
         Returns:
-            The sag of the Forbes Q-bfs surface.
+            The sag of the Forbes Q (slope-orthogonal) surface.
         """
-        self._prepare_coeffs()
+        self._ensure_coeffs()
         x, y = be.array(x), be.array(y)
         r2 = x**2 + y**2
         z_base = self._base_sag(r2)
 
         usq = r2 / (self.norm_radius**2)
 
-        poly_sum_m0 = clenshaw_qbfs(self.coeffs_c, usq)
+        poly_sum_m0 = clenshaw_qbfs(self._prepared_radial_coeffs, usq, _no_trim=True)
         prefactor = usq * (1 - usq)
         conic_correction_factor, _ = self._conic_correction_factor(r2)
         departure = prefactor * conic_correction_factor * poly_sum_m0
@@ -269,9 +383,8 @@ class ForbesQbfsGeometry(ForbesGeometryBase):
     def _surface_normal(self, x, y):
         """Calculates the unit vector normal to the surface.
 
-        Dispatches to an autograd-based method for the torch backend and an
-        analytical method for the numpy backend. It also patches the `NaN`
-        gradient that autograd produces at the vertex.
+        Uses analytical method for both torch and numpy backends, with proper
+        handling of the vertex case to avoid NaN gradients.
 
         Args:
             x (float or array_like): X coordinate(s).
@@ -281,39 +394,20 @@ class ForbesQbfsGeometry(ForbesGeometryBase):
             tuple[float or array_like, float or array_like, float or array_like]:
                 Components of the unit normal vector (nx, ny, nz).
         """
-        self._prepare_coeffs()
+        self._ensure_coeffs()
         x_in, y_in = be.array(x), be.array(y)
 
-        if be.get_backend() == "torch":
-            # ensure inputs require gradients for autograd to work
-            x_grad = x_in.clone().detach().requires_grad_(True)
-            y_grad = y_in.clone().detach().requires_grad_(True)
-            z0 = self.sag(x_grad, y_grad)
-
-            grad_outputs = be.ones_like(z0)
-            gradients = be.autograd.grad(
-                outputs=z0,
-                inputs=(x_grad, y_grad),
-                grad_outputs=grad_outputs,
-                create_graph=True,
-                allow_unused=True,
-            )
-            df_dx, df_dy = gradients[0], gradients[1]
-
-            # replace possible NaNs at the vertex with the analytical value
-            # (which is 0 for Qbfs)
-            is_vertex = be.logical_and(be.abs(x_in) < _EPSILON, be.abs(y_in) < _EPSILON)
-            df_dx = be.where(is_vertex, 0.0, df_dx)
-            df_dy = be.where(is_vertex, 0.0, df_dy)
-        else:
-            df_dx, df_dy = self._surface_normal_analytical(x_in, y_in)
+        df_dx, df_dy = self._surface_normal_analytical(x_in, y_in)
 
         mag = be.sqrt(df_dx**2 + df_dy**2 + 1)
         safe_mag = be.where(mag < _EPSILON, 1.0, mag)
         return df_dx / safe_mag, df_dy / safe_mag, -1 / safe_mag
 
     def _surface_normal_analytical(self, x, y):
-        """Computes the analytical surface derivatives for the numpy backend.
+        """Computes the analytical surface derivatives.
+
+        This method handles the vertex case by ensuring numerically stable
+        computation that works with both numpy and torch autodiff.
 
         Args:
             x (float or array_like): X coordinate(s).
@@ -324,18 +418,34 @@ class ForbesQbfsGeometry(ForbesGeometryBase):
                 The partial derivatives (df_dx, df_dy).
         """
         r2 = x**2 + y**2
-        rho_safe = be.sqrt(r2 + _EPSILON)
-        ds_base_d_rho = self._base_sag_derivative(rho_safe, r2)
 
-        if len(self.coeffs_c) == 0 or be.all(self.coeffs_c == 0):
+        # For exact vertex in torch autodiff, add a tiny perturbation to ensure
+        # gradient stability in full ray tracing context
+        is_exact_vertex = (be.abs(x) < _EPSILON) & (be.abs(y) < _EPSILON)
+        if be.get_backend() == "torch" and be.any(is_exact_vertex):
+            # Add tiny perturbation only at exact vertex for torch
+            x_safe = be.where(is_exact_vertex, x + _EPSILON * 1e-3, x)
+            y_safe = be.where(is_exact_vertex, y, y)
+            r2_safe = x_safe**2 + y_safe**2
+            rho_safe = be.sqrt(r2_safe + _EPSILON**2)
+        else:
+            x_safe, y_safe = x, y
+            r2_safe = r2
+            rho_safe = be.sqrt(r2 + _EPSILON**2)
+
+        ds_base_d_rho = self._base_sag_derivative(rho_safe, r2_safe)
+
+        if self._all_coeffs_zero:
             df_d_rho = ds_base_d_rho
         else:
             u = rho_safe / self.norm_radius
 
-            poly_val, dpoly_d_u = compute_z_zprime_qbfs(self.coeffs_c, u, u**2)
+            poly_val, dpoly_d_u = compute_z_zprime_qbfs(
+                self._prepared_radial_coeffs, u, u**2, _no_trim=True
+            )
             dprefactor_d_rho = (2 * u - 4 * u**3) / self.norm_radius
             dpoly_d_rho = dpoly_d_u / self.norm_radius
-            conic_factor, dconic_factor_d_rho = self._conic_correction_factor(r2)
+            conic_factor, dconic_factor_d_rho = self._conic_correction_factor(r2_safe)
 
             usq = u**2
             ds_dep_d_rho = (
@@ -345,7 +455,28 @@ class ForbesQbfsGeometry(ForbesGeometryBase):
             )
             df_d_rho = ds_base_d_rho + be.where(u >= 1, 0.0, ds_dep_d_rho)
 
-        return df_d_rho * (x / rho_safe), df_d_rho * (y / rho_safe)
+        # Use the safe coordinates for directional computation
+        cos_t = x_safe / rho_safe
+        sin_t = y_safe / rho_safe
+
+        # Ensure smooth behavior at vertex for rotationally symmetric surfaces
+        df_dx = df_d_rho * cos_t
+        df_dy = df_d_rho * sin_t
+
+        return df_dx, df_dy
+
+    def _surface_normal_analytical_vertex(self):
+        """Computes the stable analytical derivative exactly at the vertex.
+
+        For rotationally symmetric surfaces, the gradient at the vertex
+        (x=0, y=0) should be (0, 0) due to symmetry.
+
+        Returns:
+            tuple[float, float]: The partial derivatives (df_dx, df_dy) at the vertex.
+        """
+        # For rotationally symmetric surfaces, the gradient at the vertex is (0, 0)
+        # due to symmetry - there's no preferred direction for the slope
+        return 0.0, 0.0
 
     def to_dict(self):
         """Serializes the geometry to a dictionary.
@@ -364,22 +495,68 @@ class ForbesQbfsGeometry(ForbesGeometryBase):
     def from_dict(cls, data):
         """Creates an instance from a dictionary.
 
+        Accepts both "ForbesQNormalSlopeGeometry" and legacy "ForbesQbfsGeometry"
+        type identifiers for backward compatibility.
+
         Args:
             data (dict): A dictionary representation of the geometry.
 
         Returns:
-            ForbesQbfsGeometry: An instance of the class.
+            ForbesQNormalSlopeGeometry: An instance of the class.
         """
         cs = CoordinateSystem.from_dict(data["cs"])
         surface_config = ForbesSurfaceConfig(**data["surface_config"])
         solver_config = ForbesSolverConfig(**data.get("solver_config", {}))
-        return cls(cs, surface_config, solver_config)
+        # Always return the canonical class, regardless of whether the
+        # serialized type was "ForbesQbfsGeometry" or "ForbesQNormalSlopeGeometry"
+        return ForbesQNormalSlopeGeometry(cs, surface_config, solver_config)
+
+    def scale(self, scale_factor: float):
+        """Scale the geometry parameters.
+
+        Scales the radius, normalization radius, and radial coefficients.
+        The polynomial coefficients scale linearly with the sag when the
+        normalization radius is also scaled.
+
+        Args:
+            scale_factor (float): The factor by which to scale the geometry.
+        """
+        super().scale(scale_factor)
+        self.surface_config.radius = self.radius
+        if self.surface_config.norm_radius is not None:
+            self.surface_config.norm_radius *= scale_factor
+        self.norm_radius = self.norm_radius * scale_factor
+
+        for key in self.radial_terms:
+            self.radial_terms[key] = self.radial_terms[key] * scale_factor
+
+        # Coefficients changed: invalidate the cache so the next sag/normal
+        # rebuilds the prepared (trimmed) containers.
+        self._coeffs_dirty = True
+
+    def update_normalization(self, semi_aperture: float) -> None:
+        if self.normalization_mode == "auto":
+            self.norm_radius = be.array(semi_aperture * 1.25)
+            self.surface_config.norm_radius = float(self.norm_radius)
 
     def __str__(self):
-        return "ForbesQbfs"
+        return "ForbesQNormalSlope"
 
 
 class ForbesQ2dGeometry(ForbesGeometryBase):
+    """Forbes Q2D (freeform) surface geometry."""
+
+    # Default surface-normal path: direct-Cartesian (harmonic powers).
+    # Regular at the origin with finite autograd gradients — the legacy
+    # polar path's `1/r` artefact produced NaN gradients at the vertex.
+    # The polar path with its `_surface_normal_analytical_vertex`
+    # `where`-blend remains available as a fallback by setting
+    # ``_use_cartesian_normal = False`` per-instance; it is kept for
+    # one release as a safety net per the PR-series guidance, and may
+    # be removed in a follow-up once Cartesian has bedded in. See
+    # issue #617.
+    _use_cartesian_normal: bool = True
+
     r"""Forbes Q2D freeform surface.
 
     The Q2D surface is defined by a departure $\delta(u, \theta)$ from a base conic:
@@ -417,13 +594,23 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
         super().__init__(coordinate_system, surface_config, solver_config)
         self.c = 1 / self.radius if self.radius != 0 else 0
         if be.get_backend() == "torch":
-            self.freeform_coeffs = {
-                k: be.array(v) for k, v in (self.surface_config.terms or {}).items()
-            }
+            self.freeform_coeffs = _CoeffCacheDict(
+                {k: be.array(v) for k, v in (self.surface_config.terms or {}).items()}
+            )._bind(self)
         else:
-            self.freeform_coeffs = self.surface_config.terms or {}
+            # Preserve the historical numpy aliasing (see ForbesQNormalSlope).
+            self.freeform_coeffs = _CoeffCacheDict(
+                self.surface_config.terms or {}
+            )._bind(self)
+            self.surface_config.terms = self.freeform_coeffs
 
-        self.norm_radius = be.array(self.surface_config.norm_radius)
+        if self.surface_config.norm_radius is not None:
+            self.normalization_mode = "manual"
+            self.norm_radius = be.array(self.surface_config.norm_radius)
+        else:
+            self.normalization_mode = "auto"
+            self.norm_radius = be.array(1.0)
+
         self.cm0_coeffs, self.ams_coeffs, self.bms_coeffs = [], [], []
         self._prepare_coeffs()
 
@@ -431,9 +618,17 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
         """
         Translates the user-facing Zemax-style `freeform_coeffs` dictionary
         into the internal coefficient lists required by the `qpoly` backend.
+
+        Also builds the trimmed ``_prepared_*`` containers consumed by the hot
+        ``sag``/``_surface_normal`` paths, so trailing-zero trimming (and its
+        CUDA synchronization) happens here -- once per coefficient change --
+        rather than on every evaluation. Clears the dirty flag.
         """
         if not self.freeform_coeffs:
             self.coeffs_n, self.coeffs_c = [], be.array([])
+            self.cm0_coeffs, self.ams_coeffs, self.bms_coeffs = [], [], []
+            self._refresh_prepared_coeffs()
+            self._coeffs_dirty = False
             return
 
         internal_coeffs = {}
@@ -467,6 +662,20 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
                 q2d_nm_coeffs_to_ams_bms(self.coeffs_n, self.coeffs_c)
             )
 
+        self._refresh_prepared_coeffs()
+        self._coeffs_dirty = False
+
+    def _refresh_prepared_coeffs(self) -> None:
+        """Rebuild the trimmed ``_prepared_*`` coefficient containers.
+
+        Trailing exact-zero trimming is done once here (the ``bool(v == 0)``
+        checks force a CUDA sync) so the per-evaluation Clenshaw passes can
+        run with ``_no_trim=True``.
+        """
+        self._prepared_cm0_coeffs = _trim_trailing_zeros(self.cm0_coeffs)
+        self._prepared_ams_coeffs = [_trim_trailing_zeros(a) for a in self.ams_coeffs]
+        self._prepared_bms_coeffs = [_trim_trailing_zeros(b) for b in self.bms_coeffs]
+
     def sag(self, x, y):
         """Calculate the sag of the Forbes Q2D freeform surface.
 
@@ -477,6 +686,7 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
         Returns:
             float or array_like: The sag of the Forbes Q2D freeform surface.
         """
+        self._ensure_coeffs()
         x, y = be.array(x), be.array(y)
         r2 = x**2 + y**2
         z_base = self._base_sag(r2)
@@ -487,8 +697,13 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
         safe_x = be.where(rho < _EPSILON, x + 1e-12, x)
         theta = be.arctan2(y, safe_x)
 
-        poly_sum_m0, _, poly_sum_m_gt0, _, _ = compute_z_zprime_q2d(
-            self.cm0_coeffs, self.ams_coeffs, self.bms_coeffs, u, theta
+        poly_sum_m0, poly_sum_m_gt0 = compute_z_q2d(
+            self._prepared_cm0_coeffs,
+            self._prepared_ams_coeffs,
+            self._prepared_bms_coeffs,
+            u,
+            theta,
+            _no_trim=True,
         )
         conic_correction_factor, _ = self._conic_correction_factor(r2)
         usq = u**2
@@ -516,45 +731,10 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
             tuple[float or array_like, float or array_like, float or array_like]:
                 Components of the unit normal vector (nx, ny, nz).
         """
+        self._ensure_coeffs()
         x_in, y_in = be.array(x), be.array(y)
 
-        if be.get_backend() == "torch":
-            # For torch, use autograd but patch the vertex NaN issue.
-            x_grad, y_grad = (
-                x_in.clone().detach().requires_grad_(True),
-                y_in.clone().detach().requires_grad_(True),
-            )
-            # offset to avoid 0/0 derivative at the vertex
-            is_vertex = be.sqrt(x_grad**2 + y_grad**2) < _EPSILON
-            x_grad_safe = be.where(is_vertex, x_grad + _EPSILON, x_grad)
-            y_grad_safe = be.where(is_vertex, y_grad + _EPSILON, y_grad)
-
-            z0 = self.sag(x_grad_safe, y_grad_safe)
-
-            gradients = be.autograd.grad(
-                outputs=z0,
-                inputs=(x_grad, y_grad),
-                grad_outputs=be.ones_like(z0),
-                create_graph=True,
-                allow_unused=True,
-                retain_graph=True,
-            )
-            df_dx_raw, df_dy_raw = gradients[0], gradients[1]
-
-            rho = be.sqrt(x_in**2 + y_in**2)
-            is_vertex = rho < _EPSILON
-
-            # If any ray is at the vertex, we need the analytical
-            # derivative to patch the NaN.
-            if be.any(is_vertex):
-                df_dx_vertex, df_dy_vertex = self._surface_normal_analytical_vertex()
-                df_dx = be.where(is_vertex, df_dx_vertex, df_dx_raw)
-                df_dy = be.where(is_vertex, df_dy_vertex, df_dy_raw)
-            else:
-                df_dx, df_dy = df_dx_raw, df_dy_raw
-        else:
-            # For numpy, the analytical path is stable.
-            df_dx, df_dy = self._surface_normal_analytical(x_in, y_in)
+        df_dx, df_dy = self._surface_normal_analytical(x_in, y_in)
 
         mag = be.sqrt(df_dx**2 + df_dy**2 + 1)
         safe_mag = be.where(mag < _EPSILON, 1.0, mag)
@@ -563,21 +743,81 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
     def _surface_normal_analytical_vertex(self):
         """Computes the stable analytical derivative exactly at the vertex."""
         df_dx_vertex, df_dy_vertex = 0.0, 0.0
-        if self.ams_coeffs and self.ams_coeffs[0]:
-            a_coeffs = self.ams_coeffs[0]
-            alphas_a = clenshaw_q2d(a_coeffs, m=1, usq=0.0)
+        if self._prepared_ams_coeffs and self._prepared_ams_coeffs[0]:
+            a_coeffs = self._prepared_ams_coeffs[0]
+            alphas_a = clenshaw_q2d(a_coeffs, m=1, usq=0.0, _no_trim=True)
             sum_a1 = q2d_sum_from_alphas(alphas_a, m=1, num_coeffs=len(a_coeffs))
             df_dx_vertex = sum_a1 / self.norm_radius
-        if self.bms_coeffs and self.bms_coeffs[0]:
-            b_coeffs = self.bms_coeffs[0]
-            alphas_b = clenshaw_q2d(b_coeffs, m=1, usq=0.0)
+        if self._prepared_bms_coeffs and self._prepared_bms_coeffs[0]:
+            b_coeffs = self._prepared_bms_coeffs[0]
+            alphas_b = clenshaw_q2d(b_coeffs, m=1, usq=0.0, _no_trim=True)
             sum_b1 = q2d_sum_from_alphas(alphas_b, m=1, num_coeffs=len(b_coeffs))
             df_dy_vertex = sum_b1 / self.norm_radius
         return df_dx_vertex, df_dy_vertex
 
+    def _surface_normal_analytical_cartesian(self, x_in, y_in):
+        """Direct-Cartesian surface-derivative path for ``ForbesQ2dGeometry``.
+
+        Uses :func:`_q2d_cartesian_eval` (harmonic powers + per-m radial
+        Clenshaw) to obtain the dimensionless polynomial value and its
+        Cartesian derivatives without ever forming a ``1/r`` factor. The
+        base conic sag and conic-correction factor terms still go through
+        the existing rotationally-symmetric helpers; their chain rule
+        from polar to Cartesian uses a safe ``rho`` because
+        ``dconic/drho`` and ``dbase/drho`` both vanish at least linearly
+        at the axis, so the limit is finite and the safe-division
+        artifact is bounded.
+
+        Returns:
+            tuple: ``(df_dx, df_dy)``.
+        """
+        r2 = x_in**2 + y_in**2
+        # Use the regularized rho everywhere so the gradient through
+        # sqrt(r2) is finite at the origin (autograd-safe path).
+        rho_safe = be.sqrt(r2 + _EPSILON**2)
+        r2_safe = rho_safe**2
+        X = x_in / self.norm_radius
+        Y = y_in / self.norm_radius
+        u2 = X * X + Y * Y
+
+        P, dP_dX, dP_dY = _q2d_cartesian_eval(
+            X,
+            Y,
+            self._prepared_cm0_coeffs,
+            self._prepared_ams_coeffs,
+            self._prepared_bms_coeffs,
+            _no_trim=True,
+        )
+        # Convert dP/dX, dP/dY (w.r.t. normalized coords) to physical.
+        dP_dx = dP_dX / self.norm_radius
+        dP_dy = dP_dY / self.norm_radius
+
+        conic_factor, dconic_d_rho = self._conic_correction_factor(r2_safe)
+        cos_t = x_in / rho_safe
+        sin_t = y_in / rho_safe
+        dconic_dx = dconic_d_rho * cos_t
+        dconic_dy = dconic_d_rho * sin_t
+
+        # Departure derivative inside the unit disk (clipped to zero outside).
+        d_dep_dx = dconic_dx * P + conic_factor * dP_dx
+        d_dep_dy = dconic_dy * P + conic_factor * dP_dy
+        d_dep_dx = be.where(u2 > 1, 0.0, d_dep_dx)
+        d_dep_dy = be.where(u2 > 1, 0.0, d_dep_dy)
+
+        d_base_dr = self._base_sag_derivative(rho_safe, r2_safe)
+        d_base_dx = d_base_dr * cos_t
+        d_base_dy = d_base_dr * sin_t
+
+        return d_base_dx + d_dep_dx, d_base_dy + d_dep_dy
+
     def _surface_normal_analytical(self, x_in, y_in):
         """
         Computes the analytical surface derivatives for the numpy backend.
+
+        Dispatches to the direct-Cartesian harmonic-powers path when
+        ``_use_cartesian_normal`` is set (regular at the origin); the
+        default polar path with explicit vertex ``where``-blend is
+        otherwise used. See class-level docstring on the switch.
 
         This method is fully vectorized and uses a `where` clause to combine
         the stable vertex calculation with the general non-vertex calculation.
@@ -590,6 +830,9 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
             tuple[float or array_like, float or array_like]: The analytical surface
                                                 derivatives for the numpy backend.
         """
+        if self._use_cartesian_normal:
+            return self._surface_normal_analytical_cartesian(x_in, y_in)
+
         df_dx_vertex, df_dy_vertex = self._surface_normal_analytical_vertex()
 
         r2 = x_in**2 + y_in**2
@@ -601,7 +844,12 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
         theta = be.arctan2(y_in, x_in)
 
         vals = compute_z_zprime_q2d(
-            self.cm0_coeffs, self.ams_coeffs, self.bms_coeffs, u, theta
+            self._prepared_cm0_coeffs,
+            self._prepared_ams_coeffs,
+            self._prepared_bms_coeffs,
+            u,
+            theta,
+            _no_trim=True,
         )
         poly_sum_m0, d_poly_m0_du, poly_sum_m_gt0, dr_poly_m_gt0_du, dt_poly_m_gt0 = (
             vals
@@ -666,5 +914,61 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
         solver_config = ForbesSolverConfig(**data.get("solver_config", {}))
         return cls(cs, surface_config, solver_config)
 
+    def scale(self, scale_factor: float):
+        """Scale the geometry parameters.
+
+        Scales the radius, normalization radius, and freeform coefficients.
+        The polynomial coefficients scale linearly with the sag when the
+        normalization radius is also scaled.
+
+        Args:
+            scale_factor (float): The factor by which to scale the geometry.
+        """
+        super().scale(scale_factor)
+        self.surface_config.radius = self.radius
+        if self.surface_config.norm_radius is not None:
+            self.surface_config.norm_radius *= scale_factor
+        self.norm_radius = self.norm_radius * scale_factor
+
+        for key in self.freeform_coeffs:
+            self.freeform_coeffs[key] = self.freeform_coeffs[key] * scale_factor
+
+        self.c = 1 / self.radius if self.radius != 0 else 0
+        self._prepare_coeffs()
+
+    def update_normalization(self, semi_aperture: float) -> None:
+        if self.normalization_mode == "auto":
+            self.norm_radius = be.array(semi_aperture * 1.25)
+            self.surface_config.norm_radius = float(self.norm_radius)
+
     def __str__(self):
         return "ForbesQ2d"
+
+
+class ForbesQbfsGeometry(ForbesQNormalSlopeGeometry):
+    """Deprecated alias for ForbesQNormalSlopeGeometry.
+
+    .. deprecated::
+        Use :class:`ForbesQNormalSlopeGeometry` instead. The name \"Qbfs\" was
+        historically used in the Forbes literature for the slope-orthogonal
+        Q basis, but it misleadingly suggests a best-fit sphere reference.
+        The implementation supports a general conic reference.
+    """
+
+    def __init__(
+        self,
+        coordinate_system: CoordinateSystem,
+        surface_config: ForbesSurfaceConfig,
+        solver_config: ForbesSolverConfig = None,
+    ):
+        warnings.warn(
+            "ForbesQbfsGeometry is deprecated; use ForbesQNormalSlopeGeometry "
+            "(slope-orthogonal Q basis with a general conic reference).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(coordinate_system, surface_config, solver_config)
+
+    def __str__(self):
+        # Keep legacy string for backward compatibility in displays
+        return "ForbesQbfs"

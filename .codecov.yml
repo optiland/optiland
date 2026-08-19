@@ -28,6 +28,7 @@ coverage:
 ignore:
   - "tests/*"  # Ignore test files
   - "optiland/database/generate_csv_database.py"
+  - "optiland_gui/*"  # Ignore GUI files
 
 comment:
   layout: "reach, diff, files"

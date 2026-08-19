@@ -1,18 +1,26 @@
-import numpy as np
-import pytest
+from __future__ import annotations
+
 from unittest.mock import patch
+
 import matplotlib
 import matplotlib.pyplot as plt
+import numpy as np
+import pytest
 
 import optiland.backend as be
 from optiland.psf.huygens_fresnel import HuygensPSF
 from optiland.samples.objectives import CookeTriplet, DoubleGauss, ReverseTelephoto
-from optiland.rays import RealRays
 
 matplotlib.use("Agg")  # use non-interactive backend for testing
 
-# Ensure the backend is set to numpy for all tests in this module
-be.set_backend("numpy")
+
+@pytest.fixture(autouse=True)
+def set_numpy_backend():
+    """Ensure the numpy backend is used for all tests in this module and restore after."""
+    original_backend = be.get_backend()
+    be.set_backend("numpy")
+    yield
+    be.set_backend(original_backend)
 
 
 @pytest.fixture(scope="module")
@@ -69,8 +77,10 @@ class TestHuygensPSF:
         )
 
         assert psf_instance.optic == optic
-        assert psf_instance.fields == [field]  # BasePSF stores fields as a list
-        assert psf_instance.wavelengths == [
+        assert [fp.coord for fp in psf_instance.fields] == [
+            field
+        ]  # BasePSF stores fields as a list
+        assert [wp.value for wp in psf_instance.wavelengths] == [
             self.WAVELENGTH_GREEN
         ]  # BasePSF stores wavelengths as a list
         assert psf_instance.num_rays == self.NUM_RAYS_LOW
@@ -86,12 +96,15 @@ class TestHuygensPSF:
         assert psf_instance.pixel_pitch > 0, "Pixel pitch must be positive"
 
     @patch("optiland.backend.get_backend", return_value="cupy")
-    def test_huygens_psf_backend_check(self, cooke_triplet_optic):
+    def test_huygens_psf_unsupported_backend_check(
+        self, mock_get_backend, cooke_triplet_optic
+    ):
         """
-        Tests that HuygensPSF raises ValueError if backend is not numpy.
-        This test relies on mocking the backend check.
+        Tests that HuygensPSF raises ValueError for an unsupported backend.
         """
-        with pytest.raises(ValueError, match="HuygensPSF only supports numpy backend."):
+        with pytest.raises(
+            ValueError, match="Unsupported backend for HuygensPSF: cupy"
+        ):
             HuygensPSF(
                 optic=cooke_triplet_optic,
                 field=(0, 0),
@@ -234,11 +247,9 @@ class TestHuygensPSF:
             f"out of expected range [{expected_strehl_min}, 1.005]. "
         )
 
-        # Verify Strehl calculation from BasePSF: peak at center / 100
-        center_x = psf_instance.psf.shape[0] // 2
-        center_y = psf_instance.psf.shape[1] // 2
-        expected_sr_from_psf_center = psf_instance.psf[center_x, center_y] / 100.0
-        assert np.isclose(sr, expected_sr_from_psf_center), (
+        # Verify Strehl calculation from BasePSF: array peak / 100
+        expected_sr_from_psf_peak = np.max(be.to_numpy(psf_instance.psf)) / 100.0
+        assert np.isclose(sr, expected_sr_from_psf_peak), (
             "Strehl ratio mismatch with definition"
         )
 
@@ -247,31 +258,31 @@ class TestHuygensPSF:
     ):
         EXPECTED_STREHL_VALUES = {
             "CookeTriplet": {
-                (0, 0): 0.3023159962682067,
+                (0, 0): 0.30215346284681016,
                 (
                     0.7,
                     0.0,
-                ): 0.019029390469840174,
+                ): 0.023345559659099676,
             },
             "DoubleGauss": {
                 (
                     0,
                     0,
-                ): 0.07405715702199461,
+                ): 0.07332452538749026,
                 (
                     0.7,
                     0.0,
-                ): 0.0063032279399868095,
+                ): 0.00723398494179964,
             },
             "ReverseTelephoto": {
                 (
                     0,
                     0,
-                ): 0.9785343625747402,
+                ): 0.9785149658601526,
                 (
                     0.7,
                     0.0,
-                ): 0.881275354472487,
+                ): 0.8828802278745688,
             },
         }
         # Tolerance for Strehl comparison

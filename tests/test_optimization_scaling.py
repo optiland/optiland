@@ -1,10 +1,12 @@
-import pytest
+from __future__ import annotations
+
 import optiland.backend as be
 from optiland.optimization.scaling.identity import IdentityScaler
 from optiland.optimization.scaling.linear import LinearScaler
-from optiland.optimization.scaling.reciprocal import ReciprocalScaler
-from optiland.optimization.scaling.power import PowerScaler
 from optiland.optimization.scaling.log import LogScaler
+from optiland.optimization.scaling.power import PowerScaler
+from optiland.optimization.scaling.reciprocal import ReciprocalScaler
+
 from .utils import assert_allclose
 
 

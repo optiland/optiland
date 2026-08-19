@@ -54,7 +54,7 @@ class RayOperand:
 
         """
         optic.trace_generic(Hx, Hy, Px, Py, wavelength)
-        return optic.surface_group.x[surface_number, 0]
+        return optic.surfaces.x[surface_number, 0]
 
     @staticmethod
     def y_intercept(optic, surface_number, Hx, Hy, Px, Py, wavelength):
@@ -75,7 +75,7 @@ class RayOperand:
 
         """
         optic.trace_generic(Hx, Hy, Px, Py, wavelength)
-        return optic.surface_group.y[surface_number, 0]
+        return optic.surfaces.y[surface_number, 0]
 
     @staticmethod
     def z_intercept(optic, surface_number, Hx, Hy, Px, Py, wavelength):
@@ -96,7 +96,7 @@ class RayOperand:
 
         """
         optic.trace_generic(Hx, Hy, Px, Py, wavelength)
-        return optic.surface_group.z[surface_number, 0]
+        return optic.surfaces.z[surface_number, 0]
 
     @staticmethod
     def x_intercept_lcs(optic, surface_number, Hx, Hy, Px, Py, wavelength):
@@ -117,8 +117,8 @@ class RayOperand:
 
         """
         optic.trace_generic(Hx, Hy, Px, Py, wavelength)
-        intercept = optic.surface_group.x[surface_number, 0]
-        decenter = optic.surface_group.surfaces[surface_number].geometry.cs.x
+        intercept = optic.surfaces.x[surface_number, 0]
+        decenter = optic.surfaces[surface_number].geometry.cs.x
         return intercept - decenter
 
     @staticmethod
@@ -140,8 +140,8 @@ class RayOperand:
 
         """
         optic.trace_generic(Hx, Hy, Px, Py, wavelength)
-        intercept = optic.surface_group.y[surface_number, 0]
-        decenter = optic.surface_group.surfaces[surface_number].geometry.cs.y
+        intercept = optic.surfaces.y[surface_number, 0]
+        decenter = optic.surfaces[surface_number].geometry.cs.y
         return intercept - decenter
 
     @staticmethod
@@ -163,8 +163,8 @@ class RayOperand:
 
         """
         optic.trace_generic(Hx, Hy, Px, Py, wavelength)
-        intercept = optic.surface_group.z[surface_number, 0]
-        decenter = optic.surface_group.surfaces[surface_number].geometry.cs.z
+        intercept = optic.surfaces.z[surface_number, 0]
+        decenter = optic.surfaces[surface_number].geometry.cs.z
 
         # For some reason decenter can sometimes be a single-element array.
         # In that case, retreive the float inside.
@@ -192,7 +192,7 @@ class RayOperand:
 
         """
         optic.trace_generic(Hx, Hy, Px, Py, wavelength)
-        return optic.surface_group.L[surface_number, 0]
+        return optic.surfaces.L[surface_number, 0]
 
     @staticmethod
     def M(optic, surface_number, Hx, Hy, Px, Py, wavelength):
@@ -212,7 +212,7 @@ class RayOperand:
 
         """
         optic.trace_generic(Hx, Hy, Px, Py, wavelength)
-        return optic.surface_group.M[surface_number, 0]
+        return optic.surfaces.M[surface_number, 0]
 
     @staticmethod
     def N(optic, surface_number, Hx, Hy, Px, Py, wavelength):
@@ -232,7 +232,7 @@ class RayOperand:
 
         """
         optic.trace_generic(Hx, Hy, Px, Py, wavelength)
-        return optic.surface_group.N[surface_number, 0]
+        return optic.surfaces.N[surface_number, 0]
 
     @staticmethod
     def AOI(optic, surface_number, Hx, Hy, Px, Py, wavelength):
@@ -256,19 +256,19 @@ class RayOperand:
 
         optic.trace_generic(Hx, Hy, Px, Py, wavelength)
 
-        surface = optic.surface_group.surfaces[surface_number]
+        surface = optic.surfaces[surface_number]
         geometry = surface.geometry
 
-        L_inc = optic.surface_group.L[surface_number - 1, 0]
-        M_inc = optic.surface_group.M[surface_number - 1, 0]
-        N_inc = optic.surface_group.N[surface_number - 1, 0]
+        L_inc = optic.surfaces.L[surface_number - 1, 0]
+        M_inc = optic.surfaces.M[surface_number - 1, 0]
+        N_inc = optic.surfaces.N[surface_number - 1, 0]
 
         from optiland.rays import RealRays
 
         rays_at_surface = RealRays(
-            x=optic.surface_group.x[surface_number, 0],
-            y=optic.surface_group.y[surface_number, 0],
-            z=optic.surface_group.z[surface_number, 0],
+            x=optic.surfaces.x[surface_number, 0],
+            y=optic.surfaces.y[surface_number, 0],
+            z=optic.surfaces.z[surface_number, 0],
             L=L_inc,
             M=M_inc,
             N=N_inc,
@@ -286,8 +286,15 @@ class RayOperand:
         dot_product_clip = be.minimum(dot_product, be.array(1.0))
 
         angle_rad = be.arccos(dot_product_clip)
+        angle_deg = be.rad2deg(angle_rad)
 
-        return be.rad2deg(angle_rad)
+        # For some reason angle_deg can sometimes be a single-element array.
+        # In that case, retreive the float inside.
+        # This is a workaround until a solution is found.
+        if be.is_array_like(angle_deg):
+            angle_deg = angle_deg.item()
+
+        return angle_deg
 
     @staticmethod
     def rms_spot_size(
@@ -298,6 +305,7 @@ class RayOperand:
         num_rays,
         wavelength,
         distribution="hexapolar",
+        nan_policy="propagate",
     ):
         """Calculates the root mean square (RMS) spot size on a specific surface.
 
@@ -309,28 +317,71 @@ class RayOperand:
             num_rays: The number of rays to trace.
             wavelength: The wavelength of the rays.
             distribution: The distribution of the rays. Default is 'hexapolar'.
+            nan_policy: How to handle NaN ray intersections, which typically
+                arise from total internal reflection or vignetted rays. One
+                of "propagate" (default, return NaN if any intersection is
+                NaN), "omit" (ignore NaN intersections and compute the RMS
+                from the remaining valid rays), or "raise" (raise a
+                ValueError if any intersection is NaN).
 
         Returns:
             The RMS spot size on the specified surface.
 
+        Raises:
+            ValueError: If nan_policy is "raise" and a NaN ray intersection
+                is encountered, or if nan_policy is not a recognized value.
+
         """
+        valid_nan_policies = ("propagate", "omit", "raise")
+        if nan_policy not in valid_nan_policies:
+            raise ValueError(
+                f"Invalid nan_policy '{nan_policy}'. Must be one of "
+                f"{valid_nan_policies}."
+            )
+
+        def _has_nan(*arrays):
+            return any(be.any(be.isnan(a)) for a in arrays)
+
+        # Note: reductions always use the NaN-omitting `be.nanmean`, rather
+        # than `be.mean`, because `be.mean` is not NaN-consistent across
+        # backends (the torch backend's `mean` already silently ignores
+        # NaNs, while numpy's propagates them). Using `nanmean` everywhere
+        # and handling `nan_policy` explicitly via `_has_nan` keeps behavior
+        # identical on both backends.
         if wavelength == "all":
             x = []
             y = []
             for wave in optic.wavelengths.get_wavelengths():
                 optic.trace(Hx, Hy, wave, num_rays, distribution)
-                x.append(optic.surface_group.x[surface_number, :].flatten())
-                y.append(optic.surface_group.y[surface_number, :].flatten())
+                x.append(optic.surfaces.x[surface_number, :].flatten())
+                y.append(optic.surfaces.y[surface_number, :].flatten())
+            has_nan = _has_nan(*x, *y)
             wave_idx = optic.wavelengths.primary_index
-            mean_x = be.mean(x[wave_idx])
-            mean_y = be.mean(y[wave_idx])
+            mean_x = be.nanmean(x[wave_idx])
+            mean_y = be.nanmean(y[wave_idx])
             r2 = [(x[i] - mean_x) ** 2 + (y[i] - mean_y) ** 2 for i in range(len(x))]
-            return be.sqrt(be.mean(be.concatenate(r2)))
-        optic.trace(Hx, Hy, wavelength, num_rays, distribution)
-        x = optic.surface_group.x[surface_number, :].flatten()
-        y = optic.surface_group.y[surface_number, :].flatten()
-        r2 = (x - be.mean(x)) ** 2 + (y - be.mean(y)) ** 2
-        return be.sqrt(be.mean(r2))
+            rms = be.sqrt(be.nanmean(be.concatenate(r2)))
+        else:
+            optic.trace(Hx, Hy, wavelength, num_rays, distribution)
+            x = optic.surfaces.x[surface_number, :].flatten()
+            y = optic.surfaces.y[surface_number, :].flatten()
+            has_nan = _has_nan(x, y)
+            r2 = (x - be.nanmean(x)) ** 2 + (y - be.nanmean(y)) ** 2
+            rms = be.sqrt(be.nanmean(r2))
+
+        if has_nan:
+            if nan_policy == "raise":
+                raise ValueError(
+                    "rms_spot_size encountered a NaN ray intersection on "
+                    f"surface {surface_number}. This typically indicates "
+                    "total internal reflection or a vignetted ray. Use "
+                    "nan_policy='omit' to compute the RMS from valid rays "
+                    "only, or leave nan_policy='propagate' (default) to "
+                    "return NaN."
+                )
+            if nan_policy == "propagate":
+                return rms * be.nan
+        return rms
 
     @staticmethod
     def OPD_difference(
@@ -357,17 +408,13 @@ class RayOperand:
             The OPD difference for the given ray distribution.
 
         """
-        weights = 1.0
+        weights = None
 
         if distribution == "gaussian_quad":
-            if Hx == Hy == 0:
-                distribution = GaussianQuadrature(is_symmetric=True)
-                weights = distribution.get_weights(num_rays)
-            else:
-                distribution = GaussianQuadrature(is_symmetric=False)
-                weights = be.repeat(distribution.get_weights(num_rays), 3)
+            distribution = GaussianQuadrature()
 
-            distribution.generate_points(num_rings=num_rays)
+            distribution.generate_points(num_rays)
+            weights = distribution.weights
 
         wf = wavefront.Wavefront(
             optic,
@@ -378,8 +425,10 @@ class RayOperand:
         )
         wavefront_data = wf.get_data((Hx, Hy), wavelength)
         opd = wavefront_data.opd
-        delta = (opd - be.mean(opd)) * weights
-        return be.mean(be.abs(delta))
+        if weights is None:
+            weights = 1.0 / len(wf.distribution.x)
+        delta = be.abs(opd - be.mean(opd)) * weights
+        return be.sum(delta)
 
     @staticmethod
     def clearance(
@@ -402,10 +451,13 @@ class RayOperand:
         This operand is useful for creating clearance or interference constraints,
         particularly in off-axis reflective systems.
 
-        The sign convention is such that for Line A propagating generally in the
-        +Z direction (N direction cosine > 0), the signed distance is positive
-        if Point B is on the +Y side of Line A. If Line A propagates generally
-        in the -Z direction (N direction cosine < 0), this sign is flipped.
+        The sign convention follows the direction of propagation of Line A: for
+        Line A propagating generally in the +Z direction (N direction cosine >
+        0), the signed distance is positive if Point B is on the +Y side of
+        Line A. For Line A propagating generally in the -Z direction (N
+        direction cosine < 0), the sign convention naturally flips (positive
+        indicates Point B is on the -Y side) -- no separate correction should
+        be applied for this case.
 
         Args:
             optic: The optical system model.
@@ -432,16 +484,16 @@ class RayOperand:
         FA_Hx, FA_Hy = line_ray_field_coords
         FA_Px, FA_Py = line_ray_pupil_coords
         optic.trace_generic(FA_Hx, FA_Hy, FA_Px, FA_Py, wavelength)
-        yA = optic.surface_group.y[line_ray_surface_idx, 0]
-        zA = optic.surface_group.z[line_ray_surface_idx, 0]
-        mA = optic.surface_group.M[line_ray_surface_idx, 0]
-        nA = optic.surface_group.N[line_ray_surface_idx, 0]
+        yA = optic.surfaces.y[line_ray_surface_idx, 0]
+        zA = optic.surfaces.z[line_ray_surface_idx, 0]
+        mA = optic.surfaces.M[line_ray_surface_idx, 0]
+        nA = optic.surfaces.N[line_ray_surface_idx, 0]
 
         FB_Hx, FB_Hy = point_ray_field_coords
         FB_Px, FB_Py = point_ray_pupil_coords
         optic.trace_generic(FB_Hx, FB_Hy, FB_Px, FB_Py, wavelength)
-        yB = optic.surface_group.y[point_ray_surface_idx, 0]
-        zB = optic.surface_group.z[point_ray_surface_idx, 0]
+        yB = optic.surfaces.y[point_ray_surface_idx, 0]
+        zB = optic.surfaces.z[point_ray_surface_idx, 0]
 
         denominator = be.sqrt(mA**2 + nA**2)
         epsilon = 1e-9
@@ -451,6 +503,4 @@ class RayOperand:
         else:
             numerator = nA * (yB - yA) - mA * (zB - zA)
             d = numerator / denominator
-            if nA < 0:
-                d = -d
         return d

@@ -32,41 +32,31 @@ class ImageSurface(Surface):
 
     def __init__(
         self,
+        previous_surface: Surface | None,
         geometry: BaseGeometry,
-        material_pre: BaseMaterial,
         material_post: BaseMaterial,
         aperture: BaseAperture = None,
     ):
         super().__init__(
+            previous_surface=previous_surface,
             geometry=geometry,
-            material_pre=material_pre,
             material_post=material_post,
             is_stop=False,
             aperture=aperture,
         )
 
-    def _trace_paraxial(self, rays: ParaxialRays):
-        """Traces paraxial rays through the surface.
+    def _trace_paraxial(self, rays: ParaxialRays) -> ParaxialRays:
+        """Paraxial physics kernel for the image surface.
 
         Args:
             rays (ParaxialRays): The paraxial rays to be traced.
 
+        Returns:
+            ParaxialRays: The traced paraxial rays.
+
         """
-        # reset recorded information
-        self.reset()
-
-        # transform coordinate system
-        self.geometry.localize(rays)
-
-        # propagate to this surface
         t = -rays.z
         rays.propagate(t)
-
-        # inverse transform coordinate system
-        self.geometry.globalize(rays)
-
-        self._record(rays)
-
         return rays
 
     def _interact(self, rays):

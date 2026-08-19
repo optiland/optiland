@@ -55,7 +55,7 @@ class ConicVariable(VariableBehavior):
             new_value (float): The new conic constant to set.
 
         """
-        self.optic.set_conic(new_value, self.surface_number)
+        self.optic.updater.set_conic(new_value, self.surface_number)
 
     def __str__(self):
         """Return a string representation of the variable.

@@ -10,7 +10,7 @@ Welcome to Optiland's documentation!
 - Build, trace, and analyze lens and mirror systems (paraxial → real → polarization-aware)
 - Perform paraxial, wavefront, PSF/MTF, and scattering analyses
 - Optimize via local/global solvers or differentiable ML pipelines
-- Visualize in 2D (matplotlib) and 3D (VTK)
+- Visualize in 2D (interactive, themeable matplotlib) and 3D (VTK)
 - Extend with custom surfaces, coatings, optimization operands, and more
 
 Under the hood, Optiland leverages **NumPy** for CPU‑bound tasks and **PyTorch** for GPU acceleration and autograd‑enabled workflows - so you get the best of both worlds.
@@ -72,15 +72,19 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
 
    3D plotting does not work in the interactive shell, but you can run the code in your local Python environment to try the 3D visualizations.
 
-.. _getting_started:
+.. _getting_started_toc:
 
 .. toctree::
    :maxdepth: 1
    :caption: Getting Started
 
+   start_here
    installation
    quickstart
+   conventions
+   how_do_i
    cheat_sheet
+   glossary
    gui_quickstart
 
 
@@ -104,10 +108,13 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
    gallery/optimization
    gallery/tolerancing
    gallery/freeforms
-   gallery/diffractive
+   gallery/diffractive_and_phase
+   gallery/coatings_and_polarization
    gallery/differentiable_ray_tracing
    gallery/real_world_projects
    gallery/external_tools
+   gallery/extended_sources
+   gallery/nonsequential
    gallery/miscellaneous
 
 
@@ -130,16 +137,25 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
    developers_guide/installation
    developers_guide/getting_started
    developers_guide/architecture
+   developers_guide/code_structure
    developers_guide/configurable_backend
    developers_guide/ray_overview
+   developers_guide/nonsequential_raytracing
    developers_guide/surface_overview
+   developers_guide/interaction_models
+   developers_guide/propagation_models
    developers_guide/geometry_overview
    developers_guide/analysis_framework
    developers_guide/optimization_framework
    developers_guide/tolerancing_framework
+   developers_guide/multiconfig_framework
+   developers_guide/sequences_framework
    developers_guide/visualization_framework
    developers_guide/optiland_file_format
    developers_guide/gui
+   developers_guide/extension_recipes
+   developers_guide/plugin_packages
+   developers_guide/deprecations
 
 
 .. toctree::
@@ -154,9 +170,13 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
 
    api/api_introduction
    api/api_analysis
+   api/api_prescription
    api/api_backend
    api/api_coatings
+   api/api_colorimetry
    api/api_core
+   api/api_diagnostics
+   api/api_environment
    api/api_fields
    api/api_fileio
    api/api_geometries
@@ -166,15 +186,21 @@ Not sure what to type in the shell? Here are a few ideas to explore Optiland rig
    api/api_optic
    api/api_optimization
    api/api_paraxial
+   api/api_phase
    api/api_physical_apertures
    api/api_rays
    api/api_raytrace
+   api/api_sequences
    api/api_solves
+   api/api_sources
    api/api_surfaces
+   api/api_thin_film
    api/api_tolerancing
    api/api_visualization
    api/api_wavefront
    api/api_zernike
+   api/api_nonsequential
+   api/api_multiconfig
 
 
 .. toctree::

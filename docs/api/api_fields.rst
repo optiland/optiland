@@ -7,8 +7,9 @@ Optiland supports three field specification types:
 * Angle (`angle`): Field positions specified as angular coordinates
 * Object height (`object_height`): Field positions defined by object space heights
 * Paraxial image height (`paraxial_image_height`): Field positions specified by paraxial image plane heights
+* Real image height (`real_image_height`): Field positions defined by real chief ray intersection height at the image plane
 
-This section covers Optiland functionality related to defining and manipulating various field types used in optical systems.
+This section covers Optiland functionality related to defining and manipulating various field types used in optical systems. Furthermore, each field can be assigned a ``weight``, which scales its relative importance during system optimization and aggregate analyses.
 
 .. autosummary::
    :toctree: fields/

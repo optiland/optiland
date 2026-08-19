@@ -67,9 +67,11 @@ class ChebyshevPolynomialGeometry(NewtonRaphsonGeometry):
             `coefficients[i][j]` is the coefficient for T_i(x) * T_j(y).
             Defaults to an empty list (no polynomial contribution).
         norm_x (float, optional): Normalization radius for the x-coordinate.
-            Defaults to 1.0.
+            If None, the radius scales automatically during paraxial updates.
+            Defaults to None.
         norm_y (float, optional): Normalization radius for the y-coordinate.
-            Defaults to 1.0.
+            If None, the radius scales automatically during paraxial updates.
+            Defaults to None.
 
     Attributes:
         c (be.ndarray): 2D array of Chebyshev coefficients.
@@ -86,19 +88,40 @@ class ChebyshevPolynomialGeometry(NewtonRaphsonGeometry):
         tol=1e-10,
         max_iter=100,
         coefficients=None,
-        norm_x=1,
-        norm_y=1,
+        norm_x=None,
+        norm_y=None,
     ):
         if coefficients is None:
             coefficients = []
         super().__init__(coordinate_system, radius, conic, tol, max_iter)
-        self.c = be.atleast_2d(coefficients)
-        self.norm_x = be.array(norm_x)
-        self.norm_y = be.array(norm_y)
+        self.coefficients = be.atleast_2d(coefficients)
+
+        self.normalization_mode = (
+            "manual" if (norm_x is not None or norm_y is not None) else "auto"
+        )
+        self.norm_x = be.array(norm_x if norm_x is not None else 1.0)
+        self.norm_y = be.array(norm_y if norm_y is not None else 1.0)
+
         self.is_symmetric = False
 
     def __str__(self):
         return "Chebyshev Polynomial"
+
+    def scale(self, scale_factor: float):
+        """Scale the geometry parameters.
+
+        Args:
+            scale_factor (float): The factor by which to scale the geometry.
+        """
+        super().scale(scale_factor)
+        self.norm_x = self.norm_x * scale_factor
+        self.norm_y = self.norm_y * scale_factor
+        self.coefficients = self.coefficients * scale_factor
+
+    def update_normalization(self, semi_aperture: float) -> None:
+        if self.normalization_mode == "auto":
+            self.norm_x = semi_aperture * 1.25
+            self.norm_y = semi_aperture * 1.25
 
     def sag(self, x=0, y=0):
         """Calculates the sag of the Chebyshev polynomial surface at the given
@@ -120,11 +143,11 @@ class ChebyshevPolynomialGeometry(NewtonRaphsonGeometry):
         r2 = x**2 + y**2
         z = r2 / (self.radius * (1 + be.sqrt(1 - (1 + self.k) * r2 / self.radius**2)))
 
-        non_zero_indices = be.argwhere(self.c != 0)
+        non_zero_indices = be.argwhere(self.coefficients != 0)
         for i, j in non_zero_indices:
-            z = z + self.c[i, j] * self._chebyshev(i, x_norm) * self._chebyshev(
-                j, y_norm
-            )
+            z = z + self.coefficients[i, j] * self._chebyshev(
+                i, x_norm
+            ) * self._chebyshev(j, y_norm)
 
         return z
 
@@ -151,16 +174,16 @@ class ChebyshevPolynomialGeometry(NewtonRaphsonGeometry):
         dzdx = x / denom
         dzdy = y / denom
 
-        non_zero_indices = be.argwhere(self.c != 0)
+        non_zero_indices = be.argwhere(self.coefficients != 0)
         for i, j in non_zero_indices:
             dzdx = dzdx + (
                 self._chebyshev_derivative(i, x_norm)
-                * self.c[i, j]
+                * self.coefficients[i, j]
                 * self._chebyshev(j, y_norm)
             )
             dzdy = dzdy + (
                 self._chebyshev_derivative(j, y_norm)
-                * self.c[i, j]
+                * self.coefficients[i, j]
                 * self._chebyshev(i, x_norm)
             )
 
@@ -226,7 +249,7 @@ class ChebyshevPolynomialGeometry(NewtonRaphsonGeometry):
         geometry_dict = super().to_dict()
         geometry_dict.update(
             {
-                "coefficients": self.c.tolist(),
+                "coefficients": self.coefficients.tolist(),
                 "norm_x": self.norm_x,
                 "norm_y": self.norm_y,
             },

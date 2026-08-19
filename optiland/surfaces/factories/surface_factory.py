@@ -13,12 +13,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import optiland.backend as be
 from optiland.surfaces.factories.coating_factory import CoatingFactory
 from optiland.surfaces.factories.coordinate_system_factory import (
     CoordinateSystemFactory,
 )
-from optiland.surfaces.factories.geometry_factory import GeometryConfig, GeometryFactory
+from optiland.surfaces.factories.geometry_factory import GeometryFactory
 from optiland.surfaces.factories.interaction_model_factory import (
     InteractionModelFactory,
 )
@@ -29,6 +28,14 @@ from optiland.surfaces.standard_surface import Surface
 if TYPE_CHECKING:
     from optiland._types import SurfaceParameters, SurfaceType, Unpack
     from optiland.materials.base import BaseMaterial
+
+
+# Surface type → forced interaction_type override.
+# None value means: use caller-supplied interaction_type or the default.
+_SURFACE_INTERACTION_OVERRIDES: dict[str, str] = {
+    "paraxial": "thin_lens",
+    "grating": "diffractive",
+}
 
 
 class SurfaceFactory:
@@ -44,6 +51,34 @@ class SurfaceFactory:
         _material_factory (MaterialFactory): Factory for materials.
         _coating_factory (CoatingFactory): Factory for coatings.
     """
+
+    @classmethod
+    def register_surface_interaction(
+        cls,
+        surface_type: str,
+        interaction_type: str,
+        *,
+        overwrite: bool = False,
+    ) -> None:
+        """Register a mandatory interaction type for a given surface type.
+
+        When a surface of this type is created, the factory always uses the
+        specified interaction_type regardless of any caller kwarg.
+
+        Args:
+            surface_type: The surface type string key (e.g. 'paraxial').
+            interaction_type: The interaction model string key to force.
+            overwrite: Allow replacing an existing mapping.
+
+        Raises:
+            ValueError: If surface_type already has a mapping and overwrite is False.
+        """
+        if surface_type in _SURFACE_INTERACTION_OVERRIDES and not overwrite:
+            raise ValueError(
+                f"Surface type '{surface_type}' already has a registered "
+                "interaction override. Pass overwrite=True to replace it."
+            )
+        _SURFACE_INTERACTION_OVERRIDES[surface_type] = interaction_type
 
     def __init__(self, surface_group):
         self._surface_group = surface_group
@@ -80,10 +115,16 @@ class SurfaceFactory:
             Surface: The created surface object.
 
         Raises:
-            ValueError: If the index is greater than the number of surfaces.
+            IndexError: If the index is greater than the number of surfaces.
         """
         if index > self._surface_group.num_surfaces:
-            raise IndexError("Surface index cannot be greater than number of surfaces.")
+            num_surfaces = self._surface_group.num_surfaces
+            raise IndexError(
+                f"Cannot add surface at index {index}: the system currently has "
+                f"{num_surfaces} surface{'s' if num_surfaces != 1 else ''}, so the "
+                f"highest valid index is {num_surfaces}. Surfaces must be "
+                "added in order, starting with the object surface at index 0."
+            )
 
         # Build coordinate system
         coordinate_system = self._coordinate_factory.create(
@@ -103,30 +144,8 @@ class SurfaceFactory:
         is_reflective = material == "mirror"
 
         # Build geometry
-        geometry_config = GeometryConfig(
-            radius=kwargs.get("radius", be.inf),
-            conic=kwargs.get("conic", 0.0),
-            coefficients=kwargs.get("coefficients", []),
-            tol=kwargs.get("tol", 1e-6),
-            max_iter=kwargs.get("max_iter", 100),
-            norm_x=kwargs.get("norm_x", 1.0),
-            norm_y=kwargs.get("norm_y", 1.0),
-            norm_radius=kwargs.get("norm_radius", 1.0),
-            radius_x=kwargs.get("radius_x", be.inf),
-            radius_y=kwargs.get("radius_y", be.inf),
-            grating_order=kwargs.get("grating_order", 0),
-            grating_period=kwargs.get("grating_period", be.inf),
-            groove_orientation_angle=kwargs.get("groove_orientation_angle", 0.0),
-            conic_x=kwargs.get("conic_x", 0.0),
-            conic_y=kwargs.get("conic_y", 0.0),
-            toroidal_coeffs_poly_y=kwargs.get("toroidal_coeffs_poly_y", []),
-            zernike_type=kwargs.get("zernike_type", "fringe"),
-            radial_terms=kwargs.get("radial_terms"),
-            freeform_coeffs=kwargs.get("freeform_coeffs"),
-        )
-
         geometry = self._geometry_factory.create(
-            surface_type, coordinate_system, geometry_config
+            surface_type, coordinate_system, **kwargs
         )
 
         # Special case: object surface
@@ -139,27 +158,30 @@ class SurfaceFactory:
 
         # Determine interaction type
         interaction_type = kwargs.get("interaction_type", "refractive_reflective")
-        if surface_type == "paraxial":
-            interaction_type = "thin_lens"
-        elif surface_type == "grating":
-            interaction_type = "diffractive"
+
+        if surface_type in _SURFACE_INTERACTION_OVERRIDES:
+            interaction_type = _SURFACE_INTERACTION_OVERRIDES[surface_type]
+        elif kwargs.get("phase_profile") is not None:
+            interaction_type = "phase"
 
         # Build interaction model
+        interaction_kwargs = {
+            "focal_length": kwargs.get("f"),
+            "phase_profile": kwargs.get("phase_profile"),
+        }
         interaction_model = self._interaction_model_factory.create(
+            parent_surface=None,  # Hooked up in Surface.__init__()
             interaction_type=interaction_type,
-            geometry=geometry,
-            material_pre=material_pre,
-            material_post=material_post,
             is_reflective=is_reflective,
             coating=coating,
             bsdf=kwargs.get("bsdf"),
-            focal_length=kwargs.get("f"),
+            **interaction_kwargs,
         )
 
         # Standard surface - `surface_type` indicates geometrical shape of surface
         surface_obj = Surface(
+            previous_surface=None,  #  To be fixed by surface_group.surfaces.add()
             geometry=geometry,
-            material_pre=material_pre,
             material_post=material_post,
             is_stop=is_stop,
             surface_type=surface_type,

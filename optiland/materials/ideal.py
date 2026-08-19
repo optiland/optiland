@@ -9,8 +9,14 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import optiland.backend as be
 from optiland.materials.base import BaseMaterial
+from optiland.propagation.base import BasePropagationModel
+
+if TYPE_CHECKING:
+    from optiland.propagation.base import BasePropagationModel
 
 
 class IdealMaterial(BaseMaterial):
@@ -23,11 +29,17 @@ class IdealMaterial(BaseMaterial):
 
     """
 
-    def __init__(self, n, k=0):
+    def __init__(
+        self,
+        n: float,
+        k: float = 0,
+        propagation_model: BasePropagationModel | None = None,
+    ):
+        super().__init__(propagation_model)
         self.index = be.array([n])
         self.absorp = be.array([k])
 
-    def n(self, wavelength):
+    def _calculate_n(self, wavelength, **kwargs):
         """Returns the refractive index of the material.
 
         Args:
@@ -44,7 +56,7 @@ class IdealMaterial(BaseMaterial):
             return be.full_like(wavelength, self.index[0])
         return self.index[0]
 
-    def k(self, wavelength):
+    def _calculate_k(self, wavelength, **kwargs):
         """Returns the extinction coefficient of the material.
 
         Args:

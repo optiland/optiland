@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import inspect
+import logging
 import os
 from collections import defaultdict
 
@@ -19,27 +20,20 @@ from PySide6.QtCore import (
     QByteArray,
     QEasingCurve,
     QEvent,
-    QPoint,
     QPropertyAnimation,
-    QRect,
     QSettings,
     Qt,
     Slot,
 )
-from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QPainter, QResizeEvent
+from PySide6.QtGui import QAction, QIcon, QKeySequence, QResizeEvent, QShortcut
 from PySide6.QtWidgets import (
     QDialog,
     QDockWidget,
     QFileDialog,
-    QHBoxLayout,
     QLabel,
-    QMainWindow,
-    QMenu,
     QMenuBar,
     QMessageBox,
     QPushButton,
-    QStyle,
-    QStyleOption,
     QTabWidget,
     QToolBar,
     QVBoxLayout,
@@ -50,118 +44,44 @@ import optiland.samples
 from optiland.optic import Optic
 
 from . import gui_plot_utils
-from .analysis_panel import AnalysisPanel
-from .lens_editor import LensEditor
+from .action_manager import ActionManager
+from .config import (
+    APPLICATION_NAME,
+    OPTILAND_ICON_PATH,
+    ORGANIZATION_NAME,
+    SIDEBAR_QSS_PATH,
+    THEME_DARK_PATH,
+)
 from .optiland_connector import OptilandConnector
-
-# from .optimization_panel import OptimizationPanel # we will support this later on
-from .system_properties_panel import SystemPropertiesPanel
-from .viewer_panel import ViewerPanel
+from .panel_manager import PanelManager
+from .utils import logging_handler as _log_handler
+from .utils.plot_theme import apply_plot_theme
+from .widgets.command_palette import (
+    CommandPaletteWidget,
+    CommandRegistry,
+    PaletteCommand,
+)
 from .widgets.custom_title_bar import CustomTitleBar
-from .widgets.python_terminal import PythonTerminalWidget
+from .widgets.frameless_window import FramelessWindow
 from .widgets.sidebar import (
     SIDEBAR_MAX_WIDTH,
     SIDEBAR_MIN_WIDTH,
-    SidebarWidget,
 )
+from .widgets.toast import ToastManager
 
 try:
     from .resources import resources_rc  # noqa: F401
 except ImportError as e:
-    print(f"Warning (main_window.py): Could not import resources_rc.py: {e}")
+    import logging as _import_logging
 
-THEME_DARK_PATH = os.path.join(
-    os.path.dirname(__file__), "resources", "styles", "dark_theme.qss"
-)
-THEME_LIGHT_PATH = os.path.join(
-    os.path.dirname(__file__), "resources", "styles", "light_theme.qss"
-)
-SIDEBAR_QSS_PATH = os.path.join(
-    os.path.dirname(__file__), "resources", "styles", "sidebar.qss"
-)
+    _import_logging.getLogger(__name__).warning(
+        "Could not import resources_rc.py: %s", e
+    )
 
-ORGANIZATION_NAME = "OptilandProject"
-APPLICATION_NAME = "OptilandGUI"
+logger = logging.getLogger(__name__)
 
 
-class CustomDockTitleBar(QWidget):
-    """A custom title bar for QDockWidgets with macOS-style buttons."""
-
-    def __init__(self, parent_dock: QDockWidget, title: str = ""):
-        super().__init__(parent_dock)
-        self.setObjectName("CustomDockTitleBar")
-        self.dock_widget = parent_dock  # Store reference to the actual dock widget
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 3, 8, 3)  # Left, Top, Right, Bottom
-        layout.setSpacing(2)
-
-        self.title_label = QLabel(title)
-        layout.addWidget(self.title_label)
-        layout.addStretch()
-
-        # Create buttons
-        self.minimize_btn = QPushButton(self)
-        self.minimize_btn.setObjectName("DockMinimizeButton")
-        self.minimize_btn.setFixedSize(10, 10)
-        self.minimize_btn.setToolTip("Hide")
-        self.minimize_btn.clicked.connect(parent_dock.toggleViewAction().trigger)
-
-        self.undock_btn = QPushButton(self)
-        self.undock_btn.setObjectName("DockUndockButton")
-        self.undock_btn.setFixedSize(10, 10)
-        self.undock_btn.setToolTip("Float/Dock")
-        self.undock_btn.clicked.connect(
-            lambda: parent_dock.setFloating(not parent_dock.isFloating())
-        )
-
-        self.close_btn = QPushButton(self)
-        self.close_btn.setObjectName("DockCloseButton")
-        self.close_btn.setFixedSize(10, 10)
-        self.close_btn.setToolTip("Close")
-        self.close_btn.clicked.connect(parent_dock.close)
-
-        layout.addWidget(self.minimize_btn)
-        layout.addWidget(self.undock_btn)
-        layout.addWidget(self.close_btn)
-
-    def paintEvent(self, event):
-        """Ensures the background is drawn correctly according to the stylesheet."""
-        opt = QStyleOption()
-        opt.initFrom(self)
-        painter = QPainter(self)
-        self.style().drawPrimitive(
-            QStyle.PrimitiveElement.PE_Widget, opt, painter, self
-        )
-        super().paintEvent(event)
-
-    def mousePressEvent(self, event):
-        """Handles mouse press for dragging the floating dock."""
-        if (
-            event.button() == Qt.MouseButton.LeftButton
-            and self.dock_widget.isFloating()
-        ):
-            self._mouse_press_pos = event.globalPosition().toPoint()
-            self._window_pos_before_move = self.dock_widget.pos()
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event):
-        """Handles mouse move for dragging."""
-        if (
-            self.dock_widget.isFloating()
-            and event.buttons() == Qt.MouseButton.LeftButton
-        ) and (hasattr(self, "_mouse_press_pos") and self._mouse_press_pos is not None):
-            delta = event.globalPosition().toPoint() - self._mouse_press_pos
-            self.dock_widget.move(self._window_pos_before_move + delta)
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        """Handles mouse release to stop dragging."""
-        self._mouse_press_pos = None
-        super().mouseReleaseEvent(event)
-
-
-class MainWindow(QMainWindow):
+class MainWindow(FramelessWindow):
     """The main application window for the Optiland GUI.
 
     This class orchestrates the entire graphical user interface. It initializes
@@ -205,7 +125,7 @@ class MainWindow(QMainWindow):
             Returns:
                 AnalysisPanel: The main analysis panel widget.
             """
-            return self._win.analysisPanel
+            return self._win.panel_manager.analysis_panel
 
         def get_lens_editor(self):
             """Returns the LensEditor widget instance.
@@ -213,7 +133,7 @@ class MainWindow(QMainWindow):
             Returns:
                 LensEditor: The lens data editor widget.
             """
-            return self._win.lensEditor
+            return self._win.panel_manager.lens_editor
 
         def get_viewer_panel(self):
             """Returns the ViewerPanel widget instance.
@@ -221,21 +141,22 @@ class MainWindow(QMainWindow):
             Returns:
                 ViewerPanel: The 2D/3D viewer panel widget.
             """
-            return self._win.viewerPanel
+            return self._win.panel_manager.viewer_panel
 
         def show_lens_editor(self):
             """Brings the Lens Data Editor dock widget to the front."""
-            self._win.lensEditorDock.show()
-            self._win.lensEditorDock.raise_()
+            self._win.panel_manager.lens_editor_dock.show()
+            self._win.panel_manager.lens_editor_dock.raise_()
 
         def show_analysis_panel(self):
             """Brings the Analysis Panel dock widget to the front."""
-            self._win.analysisPanelDock.show()
-            self._win.analysisPanelDock.raise_()
+            dock = self._win.panel_manager.analysis_dock
+            dock.show()
+            dock.raise_()
             # Also ensure its tab is selected
-            parent_tab_widget = self._win.analysisPanelDock.parentWidget()
+            parent_tab_widget = dock.parentWidget()
             if isinstance(parent_tab_widget, QTabWidget):
-                parent_tab_widget.setCurrentWidget(self._win.analysisPanelDock)
+                parent_tab_widget.setCurrentWidget(dock)
 
         def refresh_all(self):
             """Triggers a full refresh of all GUI panels.
@@ -257,25 +178,16 @@ class MainWindow(QMainWindow):
 
     def _init_ui(self):
         """Initializes the main UI components, panels, docks, and toolbars."""
-        self._init_ui_panels()
-        self._setup_all_dock_widgets()
-        self._create_actions()
+        self.panel_manager.create_all_panels(self)
+        self.action_manager.create_all_actions()
         self._setup_menus_and_toolbars()
         self._setup_layout()
 
     def _configure_window(self):
-        """Sets up the main window's flags, title, geometry, and resizing logic."""
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
+        """Sets up the main window's flags, title, and geometry."""
         self.setWindowTitle("Optiland GUI")
+        self.setWindowIcon(QIcon(OPTILAND_ICON_PATH))
         self.setGeometry(100, 100, 1600, 900)
-        self.setMouseTracking(True)
-        self.grip_size = 8
-        self.is_resizing = False
-        self.resize_area = None
-        self.is_moving = False
-        self.drag_position = QPoint()
-        self.start_geometry = None
-        self.start_pos = None
 
     def _init_core_components(self):
         """Initializes non-UI core components like settings, the connector,
@@ -288,25 +200,15 @@ class MainWindow(QMainWindow):
         )
         self.connector = OptilandConnector()
         self.iface = self.OptilandInterface(self)
+        self.panel_manager = PanelManager(self, self.connector)
+        self.action_manager = ActionManager(self, self.connector)
         self.dock_animations = {}
         self.dock_original_sizes = {}
         self.about_dialog = None
-
-    def _init_ui_panels(self):
-        """Creates instances of all the main UI panels and widgets."""
-        self.lensEditor = LensEditor(self.connector)
-        self.viewerPanel = ViewerPanel(self.connector)
-        self.analysisPanel = AnalysisPanel(self.connector)
-        self.systemPropertiesPanel = SystemPropertiesPanel(self.connector)
-        initial_theme_name = (
-            "dark" if self.current_theme_path == THEME_DARK_PATH else "light"
-        )
-        self.pythonTerminal = PythonTerminalWidget(
-            self,
-            custom_variables={"connector": self.connector, "iface": self.iface},
-            theme=initial_theme_name,
-        )
-        self.pythonTerminal.commandExecuted.connect(self.refresh_all_gui_panels)
+        # These are initialised after the window is shown (needs parent geometry)
+        self.toast_manager: ToastManager | None = None
+        self.command_palette: CommandPaletteWidget | None = None
+        self.command_registry = CommandRegistry.instance()
 
     def _setup_menus_and_toolbars(self):
         """Creates and populates the main menu bar, custom title bar, and toolbars."""
@@ -351,11 +253,14 @@ class MainWindow(QMainWindow):
     def _finalize_setup(self):
         """Applies stylesheets, connects signals, and sets the initial UI state."""
         self.load_stylesheets()
-        if hasattr(self, "darkThemeAction"):
-            self.darkThemeAction.setChecked(self.current_theme_path == THEME_DARK_PATH)
-            self.lightThemeAction.setChecked(self.current_theme_path != THEME_DARK_PATH)
+        dark_theme_action = self.action_manager.get_action("dark_theme")
+        light_theme_action = self.action_manager.get_action("light_theme")
+        if dark_theme_action and light_theme_action:
+            dark_theme_action.setChecked(self.current_theme_path == THEME_DARK_PATH)
+            light_theme_action.setChecked(self.current_theme_path != THEME_DARK_PATH)
 
         self._connect_dock_animations()
+        self.panel_manager.connect_signals()
 
         self.connector.opticLoaded.connect(self._update_project_name_in_title_bar)
         self.connector.opticChanged.connect(self._update_project_name_in_title_bar)
@@ -363,103 +268,26 @@ class MainWindow(QMainWindow):
             self._update_project_name_in_title_bar
         )
 
+        # Toast manager — must be created after the window exists
+        self.toast_manager = ToastManager(self)
+        # Expose on connector so services can call it
+        self.connector.toast_manager = self.toast_manager
+
+        # Logging handler: route Python WARNING+ to toasts
+        self._gui_log_handler = _log_handler.install(self.toast_manager)
+
+        # Command palette (Ctrl+K)
+        self.command_palette = CommandPaletteWidget(
+            self, self.command_registry, self.settings
+        )
+        palette_shortcut = QShortcut(QKeySequence("Ctrl+K"), self)
+        palette_shortcut.activated.connect(self.command_palette.toggle)
+
+        # Register commands
+        self._register_palette_commands()
+
         self._initial_narrow_check_done = False
         self._update_project_name_in_title_bar()
-
-    def _setup_all_dock_widgets(self):
-        """Initializes and configures all dockable widgets for the application.
-
-        This method creates instances of all the main panels (Sidebar, Viewer,
-        Lens Editor, etc.) and wraps them in `QDockWidget` containers. It sets
-        their properties, such as features and object names.
-        """
-        self.sidebar_content_widget = SidebarWidget(self)
-        self.sidebar_content_widget.menuSelected.connect(self.on_sidebar_menu_selected)
-        self.sidebarDock = QDockWidget("NavigationSidebar", self)
-        self.sidebarDock.setWidget(self.sidebar_content_widget)
-        self.sidebarDock.setObjectName("SidebarDockWidget")
-        self.sidebarDock.setFeatures(
-            QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable
-        )
-        self.sidebarDock.setTitleBarWidget(QWidget())
-        self.sidebarDock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
-
-        self.viewerDock = QDockWidget("System Viewer", self)
-        self.viewerDock.setWidget(self.viewerPanel)
-        self.viewerDock.setObjectName("ViewerDock")
-        self.viewerDock.setTitleBarWidget(
-            CustomDockTitleBar(self.viewerDock, "System Viewer")
-        )
-        self.viewerDock.setFeatures(
-            QDockWidget.DockWidgetClosable
-            | QDockWidget.DockWidgetMovable
-            | QDockWidget.DockWidgetFloatable
-        )
-
-        self.lensEditorDock = QDockWidget("Lens Data Editor", self)
-        self.lensEditorDock.setWidget(self.lensEditor)
-        self.lensEditorDock.setObjectName("LensEditorDock")
-        self.lensEditorDock.setTitleBarWidget(
-            CustomDockTitleBar(self.lensEditorDock, "Lens Data Editor")
-        )
-        self.lensEditorDock.setFeatures(
-            QDockWidget.DockWidgetClosable
-            | QDockWidget.DockWidgetMovable
-            | QDockWidget.DockWidgetFloatable
-        )
-
-        self.systemPropertiesDock = QDockWidget("System Properties", self)
-        self.systemPropertiesDock.setWidget(self.systemPropertiesPanel)
-        self.systemPropertiesDock.setObjectName("SystemPropertiesDock")
-        self.systemPropertiesDock.setTitleBarWidget(
-            CustomDockTitleBar(self.systemPropertiesDock, "System Properties")
-        )
-        self.systemPropertiesDock.setFeatures(
-            QDockWidget.DockWidgetClosable
-            | QDockWidget.DockWidgetMovable
-            | QDockWidget.DockWidgetFloatable
-        )
-
-        self.analysisPanelDock = QDockWidget("Analysis", self)
-        self.analysisPanelDock.setWidget(self.analysisPanel)
-        self.analysisPanelDock.setObjectName("AnalysisPanelDock")
-        self.analysisPanelDock.setTitleBarWidget(
-            CustomDockTitleBar(self.analysisPanelDock, "Analysis")
-        )
-        self.analysisPanelDock.setFeatures(
-            QDockWidget.DockWidgetClosable
-            | QDockWidget.DockWidgetMovable
-            | QDockWidget.DockWidgetFloatable
-        )
-        self.analysisPanelDock.setContextMenuPolicy(
-            Qt.ContextMenuPolicy.CustomContextMenu
-        )
-        self.analysisPanelDock.customContextMenuRequested.connect(
-            lambda pos: self._show_dock_context_menu(pos, self.analysisPanelDock)
-        )
-
-        self.terminalDock = QDockWidget("Scripts Terminal", self)
-        self.terminalDock.setWidget(self.pythonTerminal)
-        self.terminalDock.setObjectName("TerminalDock")
-        self.terminalDock.setTitleBarWidget(
-            CustomDockTitleBar(self.terminalDock, "Scripts Terminal")
-        )
-        self.terminalDock.setFeatures(
-            QDockWidget.DockWidgetClosable
-            | QDockWidget.DockWidgetMovable
-            | QDockWidget.DockWidgetFloatable
-        )
-
-        self.all_managed_docks = [
-            self.sidebarDock,
-            self.viewerDock,
-            self.lensEditorDock,
-            self.systemPropertiesDock,
-            self.analysisPanelDock,
-            # self.optimizationPanelDock,
-            # we will support the optimiziation feature later on
-            self.terminalDock,
-        ]
 
     def _apply_revised_default_dock_layout(self):
         """Applies the default docking layout to the main window.
@@ -468,41 +296,14 @@ class MainWindow(QMainWindow):
         and tabbing them to create a functional and organized user interface.
         This is called on first launch and when resetting the layout.
         """
-        for dock in self.all_managed_docks:
-            if dock:
-                dock.setFloating(False)
-                dock.show()
+        self.panel_manager.setup_default_layout()
 
-        # 1. Place the Sidebar on the far left.
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.sidebarDock)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.lensEditorDock)
-        self.splitDockWidget(
-            self.lensEditorDock, self.analysisPanelDock, Qt.Orientation.Horizontal
-        )
-        self.splitDockWidget(
-            self.lensEditorDock, self.viewerDock, Qt.Orientation.Vertical
-        )
-        self.splitDockWidget(
-            self.analysisPanelDock, self.terminalDock, Qt.Orientation.Vertical
-        )
-        # self.tabifyDockWidget(self.analysisPanelDock, self.optimizationPanelDock)
-        # we will support this later on
-        self.tabifyDockWidget(self.analysisPanelDock, self.systemPropertiesDock)
-
-        self.sidebarDock.raise_()
-        self.lensEditorDock.raise_()
-        self.systemPropertiesDock.raise_()
-        self.viewerDock.raise_()
-        self.analysisPanelDock.raise_()
-
-        if self.viewerPanel.viewer2D and hasattr(
-            self.viewerPanel.viewer2D, "plot_optic"
-        ):
-            self.viewerPanel.viewer2D.plot_optic()
-        if self.viewerPanel.viewer3D and hasattr(
-            self.viewerPanel.viewer3D, "render_optic"
-        ):
-            self.viewerPanel.viewer3D.render_optic()
+        # Initial plot/render
+        viewer_panel = self.panel_manager.viewer_panel
+        if viewer_panel.viewer2D and hasattr(viewer_panel.viewer2D, "plot_optic"):
+            viewer_panel.viewer2D.plot_optic()
+        if viewer_panel.viewer3D and hasattr(viewer_panel.viewer3D, "render_optic"):
+            viewer_panel.viewer3D.render_optic()
 
     def showEvent(self, event: QResizeEvent):
         """Handles the window show event.
@@ -516,23 +317,27 @@ class MainWindow(QMainWindow):
         """
         super().showEvent(event)
         if not self._initial_narrow_check_done:
-            if hasattr(self, "sidebar_content_widget") and self.sidebar_content_widget:
+            sidebar_widget = self.panel_manager.sidebar_content_widget
+            sidebar_dock = self.panel_manager.sidebar
+            if hasattr(self, "panel_manager") and sidebar_widget and sidebar_dock:
                 if self.width() < (SIDEBAR_MAX_WIDTH + 300):
-                    self.sidebar_content_widget.force_set_collapse_state(True)
-                    if self.sidebarDock.width() > SIDEBAR_MIN_WIDTH:
+                    sidebar_widget.force_set_collapse_state(True)
+                    if sidebar_dock.width() > SIDEBAR_MIN_WIDTH:
                         self.resizeDocks(
-                            [self.sidebarDock], [SIDEBAR_MIN_WIDTH], Qt.Horizontal
+                            [sidebar_dock], [SIDEBAR_MIN_WIDTH], Qt.Horizontal
                         )
                 else:
-                    self.sidebar_content_widget.force_set_collapse_state(False)
-                    if self.sidebarDock.width() < 150:
-                        self.resizeDocks([self.sidebarDock], [150], Qt.Horizontal)
+                    sidebar_widget.force_set_collapse_state(False)
+                    if sidebar_dock.width() < 150:
+                        self.resizeDocks([sidebar_dock], [150], Qt.Horizontal)
             self._initial_narrow_check_done = True
 
-        if hasattr(self, "darkThemeAction") and hasattr(self, "lightThemeAction"):
+        dark_theme_action = self.action_manager.get_action("dark_theme")
+        light_theme_action = self.action_manager.get_action("light_theme")
+        if dark_theme_action and light_theme_action:
             is_dark = self.current_theme_path == THEME_DARK_PATH
-            self.darkThemeAction.setChecked(is_dark)
-            self.lightThemeAction.setChecked(not is_dark)
+            dark_theme_action.setChecked(is_dark)
+            light_theme_action.setChecked(not is_dark)
 
     def _connect_dock_animations(self):
         """Connects dock widget view actions to an animation handler.
@@ -541,9 +346,9 @@ class MainWindow(QMainWindow):
         toggle view action and reconnects it to a custom slot that provides a
         fade-in/out animation for a smoother user experience.
         """
-        if not hasattr(self, "all_managed_docks"):
+        if not hasattr(self, "panel_manager"):
             return
-        for dock_widget_ref in self.all_managed_docks:
+        for dock_widget_ref in self.panel_manager.get_all_docks():
             if dock_widget_ref:
                 action = dock_widget_ref.toggleViewAction()
                 if action:
@@ -555,90 +360,51 @@ class MainWindow(QMainWindow):
                         )
                     )
 
-    def _clone_analysis_window(self):
-        """Creates a new, independent AnalysisPanel in a floating dock widget.
-
-        This allows the user to have multiple analysis windows open simultaneously,
-        for example, to compare results with different settings.
-        """
-        cloned_panel = AnalysisPanel(self.connector)
-        cloned_panel.update_theme_icons(self.current_theme_path)
-
-        new_dock = QDockWidget("Analysis-Cloned", self)
-        new_dock.setObjectName("ClonedAnalysisDock")
-        new_dock.setWidget(cloned_panel)
-
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, new_dock)
-        new_dock.setFloating(True)
-        new_dock.resize(self.analysisPanelDock.size())
-
-        new_dock.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        new_dock.customContextMenuRequested.connect(
-            lambda pos, dock=new_dock: self._show_dock_context_menu(pos, dock)
-        )
-
-    def _show_dock_context_menu(self, position, dock_widget):
-        """Creates and shows a right-click context menu for a dock widget.
-
-        This menu provides standard actions like docking/undocking and custom
-        actions like cloning the window.
-
-        Args:
-            position: The position where the right-click occurred.
-            dock_widget: The QDockWidget that was right-clicked.
-        """
-        menu = QMenu()
-
-        menu.addAction(dock_widget.toggleViewAction())
-        menu.addSeparator()
-        clone_action = menu.addAction("Clone Window")
-
-        action = menu.exec(dock_widget.mapToGlobal(position))
-
-        if action == clone_action and isinstance(dock_widget.widget(), AnalysisPanel):
-            self._clone_analysis_window()
-
     def _populate_main_menu_bar(self, menu_bar: QMenuBar):
         """Populates the main menu bar with actions and sub-menus.
 
         Args:
             menu_bar: The QMenuBar instance to populate.
         """
-        fileMenu = menu_bar.addMenu("&File")
-        fileMenu.addAction(self.newAction)
-        fileMenu.addAction(self.openAction)
-        fileMenu.addAction(self.saveAction)
-        fileMenu.addAction(self.saveAsAction)
-        fileMenu.addSeparator()
-        fileMenu.addAction(self.exitAction)
+        am = self.action_manager
+        file_menu = menu_bar.addMenu("&File")
+        file_menu.addActions(am.get_actions("new", "open", "save", "save_as"))
+        file_menu.addSeparator()
+        import_menu = file_menu.addMenu("&Import")
+        import_menu.addActions(am.get_actions("import_zemax", "import_codev"))
+        export_menu = file_menu.addMenu("&Export")
+        export_menu.addActions(am.get_actions("export_zemax", "export_codev"))
+        file_menu.addSeparator()
+        file_menu.addAction(am.get_action("exit"))
 
-        editMenu = menu_bar.addMenu("&Edit")
-        editMenu.addAction(self.undoAction)
-        editMenu.addAction(self.redoAction)
+        edit_menu = menu_bar.addMenu("&Edit")
+        edit_menu.addActions(am.get_actions("undo", "redo"))
 
-        viewMenu = menu_bar.addMenu("&View")
-        viewMenu.addAction(self.dockAllAction)
-        viewMenu.addAction(self.resetLayoutAction)
-        viewMenu.addSeparator()
-        themeMenu = viewMenu.addMenu("&Theme")
-        themeMenu.addAction(self.darkThemeAction)
-        themeMenu.addAction(self.lightThemeAction)
-        viewMenu.addSeparator()
+        view_menu = menu_bar.addMenu("&View")
+        view_menu.addActions(am.get_actions("dock_all", "reset_layout"))
+        view_menu.addSeparator()
+        theme_menu = view_menu.addMenu("&Theme")
+        theme_menu.addActions(am.get_actions("dark_theme", "light_theme"))
+        view_menu.addSeparator()
 
-        if hasattr(self, "terminalDock") and self.terminalDock:
-            self.terminalDock.toggleViewAction().setText("Toggle Scripts Terminal")
-            viewMenu.addAction(self.terminalDock.toggleViewAction())
+        view_menu.addSeparator()
 
-        for dock in self.all_managed_docks:
-            if dock and dock.toggleViewAction():
-                dock.toggleViewAction().setText(f"Toggle {dock.windowTitle()}")
-                viewMenu.addAction(dock.toggleViewAction())
+        # Add toggle actions for all managed docks
+        if hasattr(self, "panel_manager"):
+            for dock in self.panel_manager.get_all_docks():
+                if dock and dock.toggleViewAction():
+                    # Create a friendlier name for the menu
+                    action_text = f"Toggle {dock.windowTitle()}"
+                    if "Sidebar" in dock.objectName():
+                        action_text = "Toggle Navigation Sidebar"
+                    dock.toggleViewAction().setText(action_text)
+                    view_menu.addAction(dock.toggleViewAction())
 
         self._populate_gallery_menu(menu_bar)
 
         menu_bar.addMenu("&Run")
-        helpMenu = menu_bar.addMenu("&Help")
-        helpMenu.addAction(self.aboutAction)
+        help_menu = menu_bar.addMenu("&Help")
+        help_menu.addAction(am.get_action("about"))
 
     def _populate_quick_actions_toolbar(self, toolbar: QToolBar):
         """Populates the quick actions toolbar with common actions.
@@ -646,105 +412,24 @@ class MainWindow(QMainWindow):
         Args:
             toolbar: The QToolBar instance to populate.
         """
-        toolbar.addAction(self.newAction)
-        toolbar.addAction(self.openAction)
-        toolbar.addAction(self.saveAction)
+        am = self.action_manager
+        toolbar.addActions(am.get_actions("new", "open", "save"))
         toolbar.addSeparator()
-        toolbar.addAction(self.loadLayout1Action)
-        toolbar.addAction(self.loadLayout2Action)
-        toolbar.addAction(self.saveLayoutAction)
+        toolbar.addActions(
+            am.get_actions("load_layout_1", "load_layout_2", "save_layout")
+        )
         toolbar.addSeparator()
-        toolbar.addAction(self.dockAllAction)
-        toolbar.addAction(self.resetLayoutAction)
+        toolbar.addActions(am.get_actions("dock_all", "reset_layout"))
 
-    def _create_actions(self):
-        """Creates all QAction objects used in menus and toolbars."""
-        self.newAction = QAction(
-            "&New System",
-            self,
-            shortcut=QKeySequence.New,
-            triggered=self.new_system_action,
-        )
-        self.openAction = QAction(
-            "&Open System...",
-            self,
-            shortcut=QKeySequence.Open,
-            triggered=self.open_system_action,
-        )
-        self.saveAction = QAction(
-            "&Save System",
-            self,
-            shortcut=QKeySequence.Save,
-            triggered=self.save_system_action,
-        )
-        self.saveAsAction = QAction(
-            "Save System &As...",
-            self,
-            shortcut=QKeySequence.SaveAs,
-            triggered=self.save_system_as_action,
-        )
-        self.exitAction = QAction(
-            "E&xit", self, shortcut="Ctrl+Q", triggered=self.close
-        )
-
-        self.loadLayout1Action = QAction("1", self, triggered=self.load_layout_1_slot)
-        self.loadLayout1Action.setToolTip("Load Layout from Slot 1")
-        self.loadLayout2Action = QAction("2", self, triggered=self.load_layout_2_slot)
-        self.loadLayout2Action.setToolTip("Load Layout from Slot 2")
-        self.saveLayoutAction = QAction(
-            "Save Current Layout", self, triggered=self.save_layout_slot
-        )
-        self.saveLayoutAction.setToolTip(
-            "Save current window layout to next available slot (1 or 2)"
-        )
-        self.loadLayout1Action.setEnabled(
-            self.settings.contains("Layouts/Config1Geometry")
-        )
-        self.loadLayout2Action.setEnabled(
-            self.settings.contains("Layouts/Config2Geometry")
-        )
-
-        self.dockAllAction = QAction(
-            "Dock All Windows", self, triggered=self.reset_windows_action
-        )
-        self.resetLayoutAction = QAction(
-            "Reset Window Layout", self, triggered=self.reset_windows_action
-        )
-
-        self.themeActionGroup = QActionGroup(self)
-        self.themeActionGroup.setExclusive(True)
-        self.darkThemeAction = QAction("Dark Theme", self, checkable=True)
-        self.darkThemeAction.triggered.connect(
-            lambda: self.switch_theme(THEME_DARK_PATH)
-        )
-        self.themeActionGroup.addAction(self.darkThemeAction)
-        self.lightThemeAction = QAction("Light Theme", self, checkable=True)
-        self.lightThemeAction.triggered.connect(
-            lambda: self.switch_theme(THEME_LIGHT_PATH)
-        )
-        self.themeActionGroup.addAction(self.lightThemeAction)
-
-        self.aboutAction = QAction(
-            "&About Optiland GUI", self, triggered=self.about_action
-        )
-        self.undoAction = QAction(
-            "&Undo", self, shortcut=QKeySequence.Undo, triggered=self.connector.undo
-        )
-        self.undoAction.setEnabled(False)
-        self.redoAction = QAction(
-            "&Redo", self, shortcut=QKeySequence.Redo, triggered=self.connector.redo
-        )
-        self.redoAction.setEnabled(False)
-        self.connector.undoStackAvailabilityChanged.connect(self.undoAction.setEnabled)
-        self.connector.redoStackAvailabilityChanged.connect(self.redoAction.setEnabled)
-
-    def _handle_maximize_restore(self):
+    def _handle_maximize_restore(self) -> None:
+        """Toggle between maximized and normal window states."""
         if self.isMaximized():
             self.showNormal()
         else:
             self.showMaximized()
 
-    def changeEvent(self, event: QEvent):
+    def changeEvent(self, event: QEvent) -> None:
+        """Update the maximize button state when the window state changes."""
         super().changeEvent(event)
         if event.type() == QEvent.Type.WindowStateChange and (
             hasattr(self, "custom_title_bar_widget") and self.custom_title_bar_widget
@@ -753,17 +438,22 @@ class MainWindow(QMainWindow):
                 self.isMaximized()
             )
 
-    def load_stylesheets(self):
+    def load_stylesheets(self) -> None:
+        """Load and apply the current theme and sidebar stylesheets."""
         style_str = ""
+        # The .qss files contain non-ASCII glyphs (e.g. the dropdown arrow);
+        # decode as UTF-8 so the read does not fall back to the platform
+        # default (cp1252/cp936 on Windows), which would raise and leave the
+        # app unstyled.
         try:
-            with open(self.current_theme_path) as f_theme:
+            with open(self.current_theme_path, encoding="utf-8") as f_theme:
                 style_str += f_theme.read()
         except Exception as e:
             print(f"Error loading main theme {self.current_theme_path}: {e}")
 
         if os.path.exists(SIDEBAR_QSS_PATH):
             try:
-                with open(SIDEBAR_QSS_PATH) as f_sidebar:
+                with open(SIDEBAR_QSS_PATH, encoding="utf-8") as f_sidebar:
                     style_str += "\n" + f_sidebar.read()
 
             except Exception as e:
@@ -771,20 +461,24 @@ class MainWindow(QMainWindow):
 
         self.setStyleSheet(style_str)
 
-        theme_name = "dark" if self.current_theme_path == THEME_DARK_PATH else "light"
+        is_dark = self.current_theme_path == THEME_DARK_PATH
+        theme_name = "dark" if is_dark else "light"
         gui_plot_utils.apply_gui_matplotlib_styles(theme=theme_name)
+        # Also apply the new theme-specific rcParams overrides
+        apply_plot_theme(is_dark)
 
         if hasattr(self, "custom_title_bar_widget"):
             self.custom_title_bar_widget.setStyleSheet(style_str)
 
-        if hasattr(self, "darkThemeAction") and hasattr(self, "lightThemeAction"):
-            is_dark = self.current_theme_path == THEME_DARK_PATH
-            self.darkThemeAction.setChecked(is_dark)
-            self.lightThemeAction.setChecked(not is_dark)
+        dark_theme_action = self.action_manager.get_action("dark_theme")
+        light_theme_action = self.action_manager.get_action("light_theme")
+        if dark_theme_action and light_theme_action:
+            dark_theme_action.setChecked(is_dark)
+            light_theme_action.setChecked(not is_dark)
 
-    def _update_project_name_in_title_bar(self):
+    def _update_project_name_in_title_bar(self) -> None:
+        """Update the project name displayed in the custom title bar."""
         if hasattr(self, "custom_title_bar_widget") and self.custom_title_bar_widget:
-            # New logic starts here
             display_name = "UnnamedProject.json"
             current_file = self.connector.get_current_filepath()
             is_modified = self.connector.is_modified()
@@ -847,7 +541,15 @@ class MainWindow(QMainWindow):
             animation.start(QPropertyAnimation.DeleteWhenStopped)
             self.dock_animations[dock_widget] = animation
 
-    def animate_dock_toggle(self, dock_widget, show_state_after_toggle):
+    def animate_dock_toggle(
+        self, dock_widget: QDockWidget, show_state_after_toggle: bool
+    ) -> None:
+        """Toggle a dock widget visibility with a slide/fade animation.
+
+        Args:
+            dock_widget: The dock widget to show or hide.
+            show_state_after_toggle: ``True`` to show, ``False`` to hide.
+        """
         animation_duration = 150
         easing_curve = QEasingCurve.InOutQuad
         is_left_or_right_dock = self.dockWidgetArea(dock_widget) in [
@@ -856,11 +558,15 @@ class MainWindow(QMainWindow):
         ]
 
         # Determine the dimension to animate
-        if dock_widget == self.sidebarDock and self.sidebar_content_widget:
+        if (
+            hasattr(self, "panel_manager")
+            and dock_widget == self.panel_manager.sidebar
+            and self.panel_manager.sidebar_content_widget
+        ):
             original_dimension = (
-                self.sidebar_content_widget.maximumWidth()
-                if not self.sidebar_content_widget._is_collapsed
-                else self.sidebar_content_widget.minimumWidth()
+                self.panel_manager.sidebar_content_widget.maximumWidth()
+                if not self.panel_manager.sidebar_content_widget._is_collapsed
+                else self.panel_manager.sidebar_content_widget.minimumWidth()
             )
         else:
             default_size = 300 if is_left_or_right_dock else 200
@@ -896,58 +602,63 @@ class MainWindow(QMainWindow):
             )
 
     @Slot(str)
-    def switch_theme(self, theme_path):
+    def switch_theme(self, theme_path: str) -> None:
+        """Switch the application theme to *theme_path*.
+
+        Args:
+            theme_path: Path to the QSS theme file to apply.
+        """
         if theme_path != self.current_theme_path:
             self.current_theme_path = theme_path
             self.load_stylesheets()
             theme_name = "dark" if "dark" in theme_path else "light"
-            if hasattr(self, "sidebar_content_widget"):
-                self.sidebar_content_widget.update_icons(theme_name)
-            if hasattr(self, "analysisPanel"):
-                self.analysisPanel.update_theme_icons(theme_name)
+
+            if hasattr(self, "panel_manager"):
+                self.panel_manager.update_theme(theme_name)
             if hasattr(self, "custom_title_bar_widget"):
                 self.custom_title_bar_widget.update_theme_icons(theme_name)
-            if hasattr(self, "viewerPanel"):
-                self.viewerPanel.update_theme(theme_name)
-            if hasattr(self, "pythonTerminal"):
-                self.pythonTerminal.set_theme(theme_name)
 
     @Slot()
-    def refresh_all_gui_panels(self):
+    def refresh_all_gui_panels(self) -> None:
+        """Re-emit :attr:`opticChanged` to refresh all connected panels."""
         self.connector.opticChanged.emit()
 
     @Slot()
-    def new_system_action(self):
+    def new_system_action(self) -> None:
+        """Slot for the *New System* action."""
         self.connector.new_system()
         self._update_project_name_in_title_bar()
-        print("Main Window: New System action triggered")
+        logger.debug("New System action triggered")
 
     @Slot()
-    def open_system_action(self):
+    def open_system_action(self) -> None:
+        """Slot for the *Open System* action — shows a file chooser dialog."""
         filepath, _ = QFileDialog.getOpenFileName(
             self,
             "Open Optiland System",
             "",
-            "Optiland JSON Files (*.json);;All Files (*)",
+            "Optiland JSON Files (*.json);;Zemax Files (*.zmx);;All Files (*)",
         )
         if filepath:
             self.connector.load_optic_from_file(filepath)
             self._update_project_name_in_title_bar()
-            print(f"Main Window: Open System action triggered - {filepath}")
+            logger.debug("Open System action triggered: %s", filepath)
 
     @Slot()
-    def save_system_action(self):
+    def save_system_action(self) -> None:
+        """Slot for the *Save System* action — saves to the current file path."""
         current_path = self.connector.get_current_filepath()
         if current_path:
             self.connector.save_optic_to_file(current_path)
             self._update_project_name_in_title_bar()
-            print(f"Main Window: Save System action triggered - {current_path}")
+            logger.debug("Save System action triggered: %s", current_path)
         else:
             self.save_system_as_action()
 
     @Slot()
-    def save_system_as_action(self):
-        filepath, _ = QFileDialog.getSaveFileName(
+    def save_system_as_action(self) -> None:
+        """Slot for *Save System As* — prompts for a file path."""
+        filepath, selected_filter = QFileDialog.getSaveFileName(
             self,
             "Save Optiland System As...",
             "",
@@ -956,12 +667,89 @@ class MainWindow(QMainWindow):
         if filepath:
             if (
                 not filepath.lower().endswith(".json")
-                and "(*.json)" in _.split(";;")[0]
+                and "(*.json)" in selected_filter.split(";;")[0]
             ):
                 filepath += ".json"
             self.connector.save_optic_to_file(filepath)
             self._update_project_name_in_title_bar()
-            print(f"Main Window: Save System As action triggered - {filepath}")
+            logger.debug("Save System As action triggered: %s", filepath)
+
+    def _confirm_discard_changes(self) -> bool:
+        """Prompt the user to confirm discarding unsaved changes.
+
+        Returns:
+            ``True`` if the user confirms (or there are no unsaved changes),
+            ``False`` if the user cancels.
+        """
+        if not self.connector.is_modified():
+            return True
+        reply = QMessageBox.question(
+            self,
+            "Unsaved Changes",
+            "The current system has unsaved changes. "
+            "Importing will replace it. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        return reply == QMessageBox.StandardButton.Yes
+
+    @Slot()
+    def import_zemax_action(self):
+        """Show a file dialog and import a Zemax .zmx file."""
+        if not self._confirm_discard_changes():
+            return
+        filepath, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import Zemax File",
+            "",
+            "Zemax Files (*.zmx);;All Files (*)",
+        )
+        if filepath:
+            self.connector.import_zemax(filepath)
+            self._update_project_name_in_title_bar()
+
+    @Slot()
+    def import_codev_action(self):
+        """Show a file dialog and import a CODE V .seq file."""
+        if not self._confirm_discard_changes():
+            return
+        filepath, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import CODE V File",
+            "",
+            "CODE V Files (*.seq);;All Files (*)",
+        )
+        if filepath:
+            self.connector.import_codev(filepath)
+            self._update_project_name_in_title_bar()
+
+    @Slot()
+    def export_zemax_action(self):
+        """Show a file dialog and export the current system as a Zemax .zmx file."""
+        filepath, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export to Zemax",
+            "",
+            "Zemax Files (*.zmx);;All Files (*)",
+        )
+        if filepath:
+            if not filepath.lower().endswith(".zmx"):
+                filepath += ".zmx"
+            self.connector.export_zemax(filepath)
+
+    @Slot()
+    def export_codev_action(self):
+        """Show a file dialog and export the current system as a CODE V .seq file."""
+        filepath, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export to CODE V",
+            "",
+            "CODE V Files (*.seq);;All Files (*)",
+        )
+        if filepath:
+            if not filepath.lower().endswith(".seq"):
+                filepath += ".seq"
+            self.connector.export_codev(filepath)
 
     @Slot()
     def about_action(self):
@@ -1002,15 +790,14 @@ class MainWindow(QMainWindow):
         self.about_dialog.exec()
 
     @Slot()
-    def reset_windows_action(self):
-        print(
-            "Main Window: Reset Windows action triggered - resetting to "
-            "revised default layout."
-        )
+    def reset_windows_action(self) -> None:
+        """Reset the dock layout to the application default."""
+        logger.debug("Reset Windows action triggered.")
         self._apply_revised_default_dock_layout()
-        for dock in self.all_managed_docks:
-            if dock and dock.toggleViewAction():
-                dock.toggleViewAction().setChecked(True)
+        if hasattr(self, "panel_manager"):
+            for dock in self.panel_manager.get_all_docks():
+                if dock and dock.toggleViewAction():
+                    dock.toggleViewAction().setChecked(True)
 
     @Slot()
     def save_layout_slot(self):
@@ -1019,22 +806,23 @@ class MainWindow(QMainWindow):
         dock_toolbar_state = self.saveState()
         self.settings.setValue(f"Layouts/Config{target_slot}Geometry", window_geometry)
         self.settings.setValue(f"Layouts/Config{target_slot}State", dock_toolbar_state)
-        QMessageBox.information(
-            self,
-            "Layout Saved",
-            f"The current window layout was saved to configuration - {target_slot}",
-        )
+        if self.toast_manager:
+            self.toast_manager.notify(
+                f"Layout saved to configuration — {target_slot}", "success"
+            )
         self.next_save_slot_index = 2 if target_slot == 1 else 1
         self.settings.setValue("Layouts/NextSaveSlot", self.next_save_slot_index)
-        self.loadLayout1Action.setEnabled(
-            self.settings.contains("Layouts/Config1Geometry")
-        )
-        self.loadLayout2Action.setEnabled(
-            self.settings.contains("Layouts/Config2Geometry")
-        )
-        print(
-            f"Layout saved to slot {target_slot}. Next save will be to slot "
-            "{self.next_save_slot_index}."
+        load_layout_1 = self.action_manager.get_action("load_layout_1")
+        if load_layout_1:
+            load_layout_1.setEnabled(self.settings.contains("Layouts/Config1Geometry"))
+
+        load_layout_2 = self.action_manager.get_action("load_layout_2")
+        if load_layout_2:
+            load_layout_2.setEnabled(self.settings.contains("Layouts/Config2Geometry"))
+        logger.debug(
+            "Layout saved to slot %d. Next save will be slot %d.",
+            target_slot,
+            self.next_save_slot_index,
         )
 
     def _load_layout_from_slot(self, slot_number):
@@ -1047,276 +835,60 @@ class MainWindow(QMainWindow):
                 dock_toolbar_state, QByteArray
             ):
                 if not self.restoreGeometry(window_geometry):
-                    print(
-                        "Warning: Failed to restore window geometry from "
-                        "slot {slot_number}."
+                    logger.warning(
+                        "Failed to restore window geometry from slot %d.",
+                        slot_number,
                     )
                 if not self.restoreState(dock_toolbar_state):
-                    print(
-                        "Warning: Failed to restore dock/toolbar state from "
-                        "slot {slot_number}."
+                    logger.warning(
+                        "Failed to restore dock/toolbar state from slot %d.",
+                        slot_number,
                     )
-                QMessageBox.information(
-                    self,
-                    "Layout Loaded",
-                    f"Layout from configuration - {slot_number} has been loaded.",
-                )
+                if self.toast_manager:
+                    self.toast_manager.notify(
+                        f"Layout from configuration — {slot_number} loaded.", "success"
+                    )
             else:
-                QMessageBox.warning(
-                    self,
-                    "Load Error",
-                    f"Invalid layout data found in configuration - {slot_number}.",
-                )
+                if self.toast_manager:
+                    self.toast_manager.notify(
+                        f"Invalid layout data in configuration — {slot_number}.",
+                        "warning",
+                    )
         else:
-            QMessageBox.information(
-                self,
-                "Load Layout",
-                f"No layout saved in configuration - {slot_number}.",
-            )
-
-    # logic related to freely moving the main window
-    def mousePressEvent(self, event):
-        """Handle mouse press events for window dragging and resizing."""
-        if event.button() == Qt.LeftButton:
-            cursor_pos = event.position().toPoint()
-            self.resize_area = self._get_resize_area(cursor_pos)
-
-            if self.resize_area:
-                self.is_resizing = True
-            # Check for dragging the title bar
-            elif self.custom_title_bar_widget:
-                titlebar_rect = self.custom_title_bar_widget.rect()
-                global_pos = self.custom_title_bar_widget.mapToGlobal(QPoint(0, 0))
-                window_pos = self.mapFromGlobal(global_pos)
-                titlebar_rect.moveTo(window_pos)
-
-                if titlebar_rect.contains(cursor_pos) and not self.isMaximized():
-                    self.is_moving = True
-                    self.drag_position = (
-                        event.globalPosition().toPoint()
-                        - self.frameGeometry().topLeft()
-                    )
-
-            self.start_geometry = self.geometry()
-            self.start_pos = event.globalPosition().toPoint()
-
-    def mouseMoveEvent(self, event):
-        """Handle mouse move events for window dragging, resizing, and AeroSnap."""
-        cursor_pos = event.position().toPoint()
-        global_pos = event.globalPosition().toPoint()
-
-        # Update cursor based on position
-        self.updateCursorShape(cursor_pos)
-
-        if self.is_resizing and not self.isMaximized():
-            # Handle resizing
-            diff = global_pos - self.start_pos
-            new_geometry = QRect(self.start_geometry)
-
-            if self.resize_area in ["top_left", "top", "top_right"]:
-                new_geometry.setTop(self.start_geometry.top() + diff.y())
-            if self.resize_area in ["bottom_left", "bottom", "bottom_right"]:
-                new_geometry.setBottom(self.start_geometry.bottom() + diff.y())
-            if self.resize_area in ["top_left", "left", "bottom_left"]:
-                new_geometry.setLeft(self.start_geometry.left() + diff.x())
-            if self.resize_area in ["top_right", "right", "bottom_right"]:
-                new_geometry.setRight(self.start_geometry.right() + diff.x())
-
-            # Enforce minimum size
-            if (
-                new_geometry.width() >= self.minimumWidth()
-                and new_geometry.height() >= self.minimumHeight()
-            ):
-                self.setGeometry(new_geometry)
-
-        elif self.is_moving and not self.isMaximized():
-            # Handle window movement with AeroSnap
-            self.move(global_pos - self.drag_position)
-
-            # AeroSnap implementation
-            screen = self.screen()
-            screen_geometry = screen.availableGeometry()
-
-            # Detect screen edges for snapping
-            at_top_edge = global_pos.y() <= screen_geometry.top() + 5
-            at_left_edge = global_pos.x() <= screen_geometry.left() + 5
-            at_right_edge = global_pos.x() >= screen_geometry.right() - 5
-
-            # Apply cursor feedback for AeroSnap zones
-            if at_top_edge or at_left_edge or at_right_edge:
-                self.setCursor(Qt.ArrowCursor)
-                # Show right-half preview outline if needed
-
-    def mouseReleaseEvent(self, event):
-        """Handle mouse release events and implement AeroSnap actions."""
-        if event.button() == Qt.LeftButton:
-            # Implement AeroSnap functionality
-            if self.is_moving and not self.isMaximized():
-                screen = self.screen()
-                screen_geometry = screen.availableGeometry()
-                global_pos = event.globalPosition().toPoint()
-
-                # Detect screen edges for snapping actions
-                at_top_edge = global_pos.y() <= screen_geometry.top() + 5
-                at_left_edge = global_pos.x() <= screen_geometry.left() + 5
-                at_right_edge = global_pos.x() >= screen_geometry.right() - 5
-
-                if at_top_edge:
-                    # Maximize window
-                    self.showMaximized()
-                elif at_left_edge:
-                    # Snap to left half
-                    self.showNormal()
-                    new_geometry = QRect(
-                        screen_geometry.left(),
-                        screen_geometry.top(),
-                        screen_geometry.width() // 2,
-                        screen_geometry.height(),
-                    )
-                    self.setGeometry(new_geometry)
-                elif at_right_edge:
-                    # Snap to right half
-                    self.showNormal()
-                    new_geometry = QRect(
-                        screen_geometry.left() + screen_geometry.width() // 2,
-                        screen_geometry.top(),
-                        screen_geometry.width() // 2,
-                        screen_geometry.height(),
-                    )
-                    self.setGeometry(new_geometry)
-
-            # Reset states
-            self.is_moving = False
-            self.is_resizing = False
-            self.setCursor(Qt.ArrowCursor)
-
-    def _get_resize_area(self, pos: QPoint) -> str | None:
-        """Determines which resize area the mouse cursor is in."""
-        rect = self.rect()
-        grip = self.grip_size
-
-        if QRect(0, 0, grip, grip).contains(pos):
-            return "top_left"
-        if QRect(rect.width() - grip, 0, grip, grip).contains(pos):
-            return "top_right"
-        if QRect(0, rect.height() - grip, grip, grip).contains(pos):
-            return "bottom_left"
-        if QRect(rect.width() - grip, rect.height() - grip, grip, grip).contains(pos):
-            return "bottom_right"
-        if QRect(grip, 0, rect.width() - 2 * grip, grip).contains(pos):
-            return "top"
-        if QRect(0, grip, grip, rect.height() - 2 * grip).contains(pos):
-            return "left"
-        if QRect(
-            rect.width() - grip, grip, rect.width(), rect.height() - 2 * grip
-        ).contains(pos):
-            return "right"
-        if QRect(grip, rect.height() - grip, rect.width() - 2 * grip, grip).contains(
-            pos
-        ):
-            return "bottom"
-
-        return None
-
-    def updateCursorShape(self, pos):
-        """Update the cursor shape based on the mouse position."""
-        if self.isMaximized():
-            self.setCursor(Qt.ArrowCursor)
-            return
-
-        resize_area = self._get_resize_area(pos)
-
-        if resize_area in ("top_left", "bottom_right"):
-            self.setCursor(Qt.SizeFDiagCursor)
-        elif resize_area in ("top_right", "bottom_left"):
-            self.setCursor(Qt.SizeBDiagCursor)
-        elif resize_area in ("top", "bottom"):
-            self.setCursor(Qt.SizeVerCursor)
-        elif resize_area in ("left", "right"):
-            self.setCursor(Qt.SizeHorCursor)
-        else:
-            self.setCursor(Qt.ArrowCursor)
-
-    def keyPressEvent(self, event):
-        """Handle key events for window management shortcuts."""
-        # ctrl key + Left/Right/Up/Down for window snapping
-        if event.modifiers() & Qt.ControlModifier:
-            screen = self.screen()
-            screen_geometry = screen.availableGeometry()
-
-            if event.key() == Qt.Key_Left:
-                # Snap to left half
-                self.showNormal()
-                self.setGeometry(
-                    QRect(
-                        screen_geometry.left(),
-                        screen_geometry.top(),
-                        screen_geometry.width() // 2,
-                        screen_geometry.height(),
-                    )
+            if self.toast_manager:
+                self.toast_manager.notify(
+                    f"No layout saved in configuration — {slot_number}.", "info"
                 )
-            elif event.key() == Qt.Key_Right:
-                # Snap to right half
-                self.showNormal()
-                self.setGeometry(
-                    QRect(
-                        screen_geometry.left() + screen_geometry.width() // 2,
-                        screen_geometry.top(),
-                        screen_geometry.width() // 2,
-                        screen_geometry.height(),
-                    )
-                )
-            elif event.key() == Qt.Key_Up:
-                # Maximize
-                self.showMaximized()
-            elif event.key() == Qt.Key_Down:
-                # Restore/minimize
-                if self.isMaximized():
-                    self.showNormal()
-                else:
-                    self.showMinimized()
-        else:
-            super().keyPressEvent(event)
 
     @Slot()
-    def load_layout_1_slot(self):
-        print("Loading layout from slot 1...")
+    def load_layout_1_slot(self) -> None:
+        """Load the window layout saved in slot 1."""
+        logger.debug("Loading layout from slot 1.")
         self._load_layout_from_slot(1)
 
     @Slot()
-    def load_layout_2_slot(self):
-        print("Loading layout from slot 2...")
+    def load_layout_2_slot(self) -> None:
+        """Load the window layout saved in slot 2."""
+        logger.debug("Loading layout from slot 2.")
         self._load_layout_from_slot(2)
 
-    @Slot(str)
-    def on_sidebar_menu_selected(self, button_name):
-        dock_map = {
-            "analysis": self.analysisPanelDock,
-            "scripts": self.terminalDock,
-            "design": self.lensEditorDock,
-        }
-        dock = dock_map.get(button_name)
-        if dock:
-            dock.show()
-            dock.raise_()
-
-    def closeEvent(self, event: QEvent):
-        print("Main Window: Closing application.")
-        self.pythonTerminal.shutdown_kernel()
+    def closeEvent(self, event: QEvent) -> None:
+        """Shut down the Jupyter kernel and accept the close event."""
+        logger.debug("Closing application.")
+        if hasattr(self, "panel_manager") and self.panel_manager.python_terminal:
+            self.panel_manager.python_terminal.shutdown_kernel()
         event.accept()
 
     @Slot()
     def show_settings_wip(self):
         """Shows a 'Work in Progress' message for the settings panel."""
-        QMessageBox.information(
-            self,
-            "Work in Progress",
-            "The settings panel is currently under development.",
-        )
+        if self.toast_manager:
+            self.toast_manager.notify(
+                "The settings panel is currently under development.", "info"
+            )
 
-    # logic to load samples from the samples folder in optiland
-    def _populate_gallery_menu(self, menu_bar: QMenuBar):
-        """Creates the 'Gallery' menu by inspecting the samples package."""
+    def _populate_gallery_menu(self, menu_bar: QMenuBar) -> None:
+        """Create the 'Gallery' menu by inspecting the samples package."""
         gallery_menu = menu_bar.addMenu("&Gallery")
         samples_menu = gallery_menu.addMenu("&Samples")
 
@@ -1342,16 +914,113 @@ class MainWindow(QMainWindow):
                 )
                 submenu.addAction(action)
 
-    def _load_sample_action(self, optic_class: type[Optic]):
-        """Instantiates and loads the selected sample class."""
+    def _register_palette_commands(self) -> None:
+        """Populate the :class:`CommandRegistry` with app-level commands."""
+        reg = self.command_registry
+        am = self.action_manager
+
+        # --- File actions ---
+        _file_cmds = [
+            ("New", "Create a new optical system", "new", "Ctrl+N", "File"),
+            ("Open", "Open an existing system file", "open", "Ctrl+O", "File"),
+            ("Save", "Save the current system", "save", "Ctrl+S", "File"),
+            ("Save As", "Save to a new file", "save_as", "", "File"),
+        ]
+        for name, desc, action_key, shortcut, cat in _file_cmds:
+            action = am.get_action(action_key)
+            if action:
+                reg.register(
+                    PaletteCommand(
+                        name=name,
+                        description=desc,
+                        callback=action.trigger,
+                        shortcut=shortcut,
+                        category=cat,
+                    )
+                )
+
+        # --- View / theme ---
+        dark_action = am.get_action("dark_theme")
+        light_action = am.get_action("light_theme")
+        if dark_action:
+            reg.register(
+                PaletteCommand(
+                    "Dark Theme",
+                    "Switch to dark mode",
+                    dark_action.trigger,
+                    category="Settings",
+                )
+            )
+        if light_action:
+            reg.register(
+                PaletteCommand(
+                    "Light Theme",
+                    "Switch to light mode",
+                    light_action.trigger,
+                    category="Settings",
+                )
+            )
+
+        reset_action = am.get_action("reset_layout")
+        if reset_action:
+            reg.register(
+                PaletteCommand(
+                    "Reset Layout",
+                    "Reset to default dock layout",
+                    reset_action.trigger,
+                    category="Settings",
+                )
+            )
+
+        # --- Analysis types ---
+        if hasattr(self, "panel_manager") and self.panel_manager.analysis_panel:
+            ap = self.panel_manager.analysis_panel
+            for analysis_name in ap._analysis_class_map:
+                reg.register(
+                    PaletteCommand(
+                        name=f"Run {analysis_name}",
+                        description=f"Open Analysis panel and run {analysis_name}",
+                        callback=lambda n=analysis_name: (
+                            self._run_analysis_from_palette(n)
+                        ),
+                        keywords=["analysis", analysis_name.lower()],
+                        category="Analysis",
+                    )
+                )
+
+    def _run_analysis_from_palette(self, analysis_name: str) -> None:
+        """Show the analysis panel and run *analysis_name*."""
+        pm = self.panel_manager
+        if hasattr(pm, "analysis_dock") and pm.analysis_dock:
+            pm.analysis_dock.show()
+            pm.analysis_dock.raise_()
+        if hasattr(pm, "analysis_panel") and pm.analysis_panel:
+            ap = pm.analysis_panel
+            ap.analysisTypeCombo.setCurrentText(analysis_name)
+            ap.run_analysis_slot()
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        """Reposition toasts when the window resizes."""
+        super().resizeEvent(event)
+        if self.toast_manager:
+            self.toast_manager.reposition()
+        if self.command_palette and self.command_palette._visible:
+            self.command_palette._reposition()
+
+    def _load_sample_action(self, optic_class: type[Optic]) -> None:
+        """Instantiate and load the selected sample class.
+
+        Args:
+            optic_class: The sample :class:`~optiland.optic.Optic` subclass to load.
+        """
         try:
             optic_instance = optic_class()
             self.connector.load_optic_from_object(optic_instance)
             print(f"Loaded sample: {optic_class.__name__}")
 
         except Exception as e:
-            QMessageBox.critical(
-                self,
-                "Sample Load Error",
-                f"Could not load sample '{optic_class.__name__}':\n{e}",
-            )
+            msg = f"Could not load sample '{optic_class.__name__}': {e}"
+            if self.toast_manager:
+                self.toast_manager.notify(msg, "error")
+            else:
+                QMessageBox.critical(self, "Sample Load Error", msg)

@@ -16,16 +16,17 @@ from typing import TYPE_CHECKING, Literal
 import optiland.backend as be
 
 from ..fields.field_types import AngleField
+from .reference_geometry import PlanarReference, ReferenceGeometry, SphericalReference
 from .wavefront_data import WavefrontData
 
 if TYPE_CHECKING:
-    from optiland._types import BEArray
+    from optiland._types import BEArrayT
     from optiland.distribution import BaseDistribution
     from optiland.optic.optic import Optic
-    from optiland.rays.base import BaseRays
     from optiland.rays.real_rays import RealRays
 
-WavefrontStrategyType = Literal["chief_ray", "centroid_sphere", "best_fit_sphere"]
+WavefrontStrategyType = Literal["chief_ray", "centroid", "best_fit"]
+ReferenceType = Literal["sphere", "plane"]
 
 
 class ReferenceStrategy(ABC):
@@ -39,12 +40,20 @@ class ReferenceStrategy(ABC):
     Args:
         optic (Optic): The optical system to analyze.
         distribution (Distribution): The pupil sampling distribution.
+        reference_type (str): The type of reference geometry ("sphere" or "plane").
     """
 
-    def __init__(self, optic: Optic, distribution: BaseDistribution, **kwargs) -> None:
+    def __init__(
+        self,
+        optic: Optic,
+        distribution: BaseDistribution,
+        reference_type: ReferenceType = "sphere",
+        **kwargs,
+    ) -> None:
         self.optic = optic
         self.distribution = distribution
-        self.n_image = optic.n()[-1]
+        self.reference_type = reference_type
+        self.n_image = optic.surfaces.n(optic.primary_wavelength)[-1]
 
     @abstractmethod
     def compute_wavefront_data(
@@ -65,63 +74,24 @@ class ReferenceStrategy(ABC):
         """
         pass
 
-    def _opd_image_to_xp(
-        self,
-        rays_at_image: RealRays,
-        xc: float,
-        yc: float,
-        zc: float,
-        R: float,
-        wavelength: float,
-    ) -> float:
-        """Computes propagation distance from image plane to exit pupil sphere.
+    @abstractmethod
+    def _create_reference_geometry(self, rays: RealRays) -> ReferenceGeometry:
+        """Creates the reference geometry based on the traced rays.
 
         Args:
-            rays_at_image (object): An object with ray data attributes (x, y, z,
-                L, M, N) at the final image surface.
-            xc (float): The x-coordinate of the reference sphere center.
-            yc (float): The y-coordinate of the reference sphere center.
-            zc (float): The z-coordinate of the reference sphere center.
-            R (float): The radius of the reference sphere.
-            wavelength (float): The wavelength of the light.
+            rays (RealRays): The traced rays at the image surface.
 
         Returns:
-            float: The optical path length from the image surface to the
-                   reference sphere.
+            ReferenceGeometry: The computed reference geometry (sphere or plane).
         """
-        xr, yr, zr = rays_at_image.x, rays_at_image.y, rays_at_image.z
-        L, M, N = -rays_at_image.L, -rays_at_image.M, -rays_at_image.N
-
-        a = L**2 + M**2 + N**2
-        b = 2 * (L * (xr - xc) + M * (yr - yc) + N * (zr - zc))
-        c = (
-            xr**2
-            + yr**2
-            + zr**2
-            - 2 * (xr * xc + yr * yc + zr * zc)
-            + xc**2
-            + yc**2
-            + zc**2
-            - R**2
-        )
-        d = b**2 - 4 * a * c
-        d = be.where(d < 0, 0, d)  # Ensure non-negative for sqrt
-        t = (-b - be.sqrt(d)) / (2 * a)
-
-        # If the first solution for t is negative, the ray is pointing away
-        # from the sphere, so we take the other root.
-        mask = t < 0
-        t = be.where(mask, (-b + be.sqrt(d)) / (2 * a), t)
-
-        return self.n_image * t
 
     def _correct_tilt(
         self,
         field: tuple[float, float],
-        opd: BEArray,
-        x: BEArray | float | None = None,
-        y: BEArray | float | None = None,
-    ) -> BEArray:
+        opd: BEArrayT,
+        x: BEArrayT | float | None = None,
+        y: BEArrayT | float | None = None,
+    ) -> BEArrayT:
         """Corrects for tilt in the OPD based on the field angle.
 
         This step is needed because, in the case of angular fields, rays launch from a
@@ -139,7 +109,10 @@ class ReferenceStrategy(ABC):
         Returns:
             ndarray: The OPD array with tilt correction applied.
         """
-        if not isinstance(self.optic.field_definition, AngleField):
+        if not isinstance(self.optic.fields.field_definition, AngleField):
+            return opd
+
+        if not self.optic.object_surface.is_infinite:
             return opd
 
         hx, hy = field
@@ -165,25 +138,32 @@ class ReferenceStrategy(ABC):
         tilt = ux * X_m + uy * Y_m
         return opd + tilt
 
+    def _opd_image_to_xp(
+        self,
+        rays: RealRays,
+        xc: float,
+        yc: float,
+        zc: float,
+        R: float,
+        wavelength: float,
+    ) -> BEArrayT:
+        """Calculate OPD from image to exit pupil sphere (Legacy helper)."""
+        ref = SphericalReference((xc, yc, zc), R)
+        return ref.path_length(rays, 1.0)
+
 
 class ChiefRayStrategy(ReferenceStrategy):
     """Calculates wavefront using the chief ray as the reference."""
 
     def __init__(self, optic: Optic, distribution: BaseDistribution, **kwargs) -> None:
         super().__init__(optic, distribution, **kwargs)
-        self.pupil_z = optic.paraxial.XPL() + optic.surface_group.positions[-1]
+        self.pupil_z = optic.paraxial.XPL() + optic.surfaces.positions[-1]
+        self._chief_ray = None  # Cache for single field calculation usage
 
     def compute_wavefront_data(
         self, field: tuple[float, float], wavelength: float
     ) -> WavefrontData:
         """Computes wavefront data using the chief ray reference method.
-
-        This method preserves the original calculation logic:
-        1. Trace the chief ray to define the reference sphere.
-        2. Calculate the reference OPD from this chief ray.
-        3. Trace the full set of rays for the field.
-        4. Compute the OPD for all rays relative to the reference sphere.
-        5. Normalize the final OPD map using the chief ray's reference OPD.
 
         Args:
             field (tuple[float, float]): The field coordinates to analyze.
@@ -193,23 +173,24 @@ class ChiefRayStrategy(ReferenceStrategy):
             WavefrontData: A data object containing the results.
         """
         # 1. Trace chief ray and determine reference sphere
-        chief_ray = self.optic.trace_generic(
+        self._chief_ray = self.optic.trace_generic(
             *field, Px=0.0, Py=0.0, wavelength=wavelength
         )
-        xc, yc, zc, R = self._calculate_sphere_from_chief_ray(chief_ray)
+        geometry = self._create_reference_geometry(self._chief_ray)
 
         # 2. Calculate reference OPD from the chief ray
-        opd_img_ref = self._opd_image_to_xp(chief_ray, xc, yc, zc, R, wavelength)
-        opd_ref = chief_ray.opd - opd_img_ref
+        opd_img_ref = geometry.path_length(self._chief_ray, self.n_image)
+        opd_ref = self._chief_ray.opd - opd_img_ref
         opd_ref = self._correct_tilt(field, opd_ref, x=0, y=0)
 
         # 3. Trace the full grid of rays for the field
         rays = self.optic.trace(*field, wavelength, None, self.distribution)
-        intensity = self.optic.surface_group.intensity[-1, :]
+        intensity = self.optic.surfaces.intensity[-1, :]
 
         # 4. Compute OPD for all rays
-        opd_img = self._opd_image_to_xp(rays, xc, yc, zc, R, wavelength)
+        opd_img = geometry.path_length(rays, self.n_image)
         opd = rays.opd - opd_img
+
         opd = self._correct_tilt(field, opd)
 
         # 5. Normalize OPD and calculate pupil coordinates
@@ -219,39 +200,107 @@ class ChiefRayStrategy(ReferenceStrategy):
         pupil_y = rays.y - t * rays.M
         pupil_z = rays.z - t * rays.N
 
+        valid_mask = (
+            be.isfinite(opd_wv)
+            & be.isfinite(pupil_x)
+            & be.isfinite(pupil_y)
+            & be.isfinite(pupil_z)
+            & be.isfinite(intensity)
+        )
+        if not be.any(valid_mask):
+            raise ValueError("No valid ray samples found for chief-ray wavefront.")
+        opd_wv = be.where(valid_mask, opd_wv, be.zeros_like(opd_wv))
+        pupil_x = be.where(valid_mask, pupil_x, be.zeros_like(pupil_x))
+        pupil_y = be.where(valid_mask, pupil_y, be.zeros_like(pupil_y))
+        pupil_z = be.where(valid_mask, pupil_z, be.zeros_like(pupil_z))
+        intensity = be.where(valid_mask, intensity, be.zeros_like(intensity))
+
+        # 6. Handle polarization data if available
+        kwargs = {}
+        prt_matrix = getattr(rays, "p", None)
+        exit_fields = getattr(rays, "get_exit_fields", None)
+
+        if prt_matrix is not None and exit_fields:
+            kwargs["prt_matrix"] = prt_matrix
+            kwargs["E_exits"] = exit_fields(self.optic.polarization_state)
+
         return WavefrontData(
             pupil_x=pupil_x,
             pupil_y=pupil_y,
             pupil_z=pupil_z,
             opd=opd_wv,
             intensity=intensity,
-            radius=R,
+            radius=geometry.radius,
+            **kwargs,
         )
 
-    def _calculate_sphere_from_chief_ray(
-        self, chief_ray: BaseRays
-    ) -> tuple[float, float, float, float]:
-        """Determine reference sphere center and radius from a chief ray."""
-        x, y, z = chief_ray.x, chief_ray.y, chief_ray.z
+    def _create_reference_geometry(self, rays: RealRays) -> ReferenceGeometry:
+        """Creates reference geometry from cached chief ray."""
+        x, y, z = rays.x, rays.y, rays.z
         if be.size(x) != 1:
             raise ValueError("Chief ray cannot be determined. It must be traced alone.")
+
+        if self.reference_type == "sphere":
+            return self._create_spherical_ref(x, y, z)
+        elif self.reference_type == "plane":
+            return self._create_planar_ref(x, y, z, rays.L, rays.M, rays.N)
+        else:
+            raise ValueError(f"Unknown reference type: {self.reference_type}")
+
+    def _create_spherical_ref(
+        self, x: BEArrayT, y: BEArrayT, z: BEArrayT
+    ) -> SphericalReference:
+        """Create a spherical reference geometry.
+
+        Args:
+            x (BEArrayT): The x-coordinate of the reference point.
+            y (BEArrayT): The y-coordinate of the reference point.
+            z (BEArrayT): The z-coordinate of the reference point.
+
+        Returns:
+            SphericalReference: The spherical reference geometry.
+        """
         R = be.sqrt(x**2 + y**2 + (z - self.pupil_z) ** 2)
-        return x, y, z, R.item()
+        return SphericalReference((x.item(), y.item(), z.item()), R.item())
+
+    def _calculate_sphere_from_chief_ray(
+        self, chief_ray: RealRays
+    ) -> tuple[float, float, float, float]:
+        """Legacy wrapper for _create_reference_geometry."""
+        ref = self._create_reference_geometry(chief_ray)
+        if isinstance(ref, SphericalReference):
+            return ref.center[0], ref.center[1], ref.center[2], ref.radius
+        raise ValueError("Reference geometry is not a sphere.")
+
+    def _create_planar_ref(
+        self,
+        x: BEArrayT,
+        y: BEArrayT,
+        z: BEArrayT,
+        L: BEArrayT,
+        M: BEArrayT,
+        N: BEArrayT,
+    ) -> PlanarReference:
+        """Create a planar reference geometry.
+
+        Args:
+            x (BEArrayT): The x-coordinate of the reference point.
+            y (BEArrayT): The y-coordinate of the reference point.
+            z (BEArrayT): The z-coordinate of the reference point.
+            L (BEArrayT): The x-direction cosine of the plane normal.
+            M (BEArrayT): The y-direction cosine of the plane normal.
+            N (BEArrayT): The z-direction cosine of the plane normal.
+
+        Returns:
+            PlanarReference: The planar reference geometry.
+        """
+        return PlanarReference(
+            (x.item(), y.item(), z.item()), (L.item(), M.item(), N.item())
+        )
 
 
-class CentroidReferenceSphereStrategy(ReferenceStrategy):
-    """Wavefront analysis strategy using a centroid-anchored reference sphere.
-
-    This strategy computes the wavefront error relative to a reference sphere
-    whose center is fixed at the centroid of ray intersections with the image
-    surface. The radius is determined by fitting the wavefront points with
-    this fixed center.
-
-    This method is robust for:
-      * Off-axis fields
-      * Asymmetric pupils
-      * Systems with obscurations
-      * Arbitrary optical configurations (no reliance on paraxial tracing)
+class CentroidStrategy(ReferenceStrategy):
+    """Wavefront analysis strategy using a centroid-anchored reference.
 
     Args:
         optic: The optical system under analysis.
@@ -273,7 +322,7 @@ class CentroidReferenceSphereStrategy(ReferenceStrategy):
     def compute_wavefront_data(
         self, field: tuple[float, float], wavelength: float
     ) -> WavefrontData:
-        """Computes wavefront data using a centroid-anchored reference sphere.
+        """Computes wavefront data using a centroid-anchored reference.
 
         Args:
             field: Tuple (Hx, Hy) of field coordinates.
@@ -288,13 +337,11 @@ class CentroidReferenceSphereStrategy(ReferenceStrategy):
         # 2. Tilt correction in object space (assures rays have identical starting OPL)
         rays.opd = self._correct_tilt(field, rays.opd)
 
-        # 3. Determine reference sphere center and radius
-        center_x, center_y, center_z, radius = self._calculate_reference_sphere(rays)
+        # 3. Determine reference geometry
+        geometry = self._create_reference_geometry(rays)
 
-        # 4. Compute OPD from image surface to reference sphere
-        opd_img = self._opd_image_to_xp(
-            rays, center_x, center_y, center_z, radius, wavelength
-        )
+        # 4. Compute OPD from image surface to reference geometry
+        opd_img = geometry.path_length(rays, self.n_image)
         opd = rays.opd - opd_img
 
         # 5. Remove piston by subtracting mean OPD
@@ -307,11 +354,20 @@ class CentroidReferenceSphereStrategy(ReferenceStrategy):
             )
         opd_waves = (mean_opd - opd) / (wavelength * 1e-3)  # wavelength: µm to mm
 
-        # 6. Compute pupil coordinates (intersection with reference sphere)
+        # 6. Compute pupil coordinates (intersection with reference sphere/plane)
         t = opd_img / self.n_image
         pupil_x = rays.x - t * rays.L
         pupil_y = rays.y - t * rays.M
         pupil_z = rays.z - t * rays.N
+
+        # 7. Handle polarization data if available
+        kwargs = {}
+        prt_matrix = getattr(rays, "p", None)
+        exit_fields = getattr(rays, "get_exit_fields", None)
+
+        if prt_matrix is not None and exit_fields:
+            kwargs["prt_matrix"] = prt_matrix
+            kwargs["E_exits"] = exit_fields(self.optic.polarization_state)
 
         return WavefrontData(
             pupil_x=pupil_x,
@@ -319,7 +375,8 @@ class CentroidReferenceSphereStrategy(ReferenceStrategy):
             pupil_z=pupil_z,
             opd=opd_waves,
             intensity=rays.i,
-            radius=radius,
+            radius=geometry.radius,
+            **kwargs,
         )
 
     def _points_from_rays(self, rays: RealRays) -> tuple[be.ndarray, be.ndarray]:
@@ -342,7 +399,7 @@ class CentroidReferenceSphereStrategy(ReferenceStrategy):
             & (rays.i != 0)
         )
         if not be.any(valid):
-            raise ValueError("No valid ray samples found for best-fit sphere.")
+            raise ValueError("No valid ray samples found for best-fit geometry.")
 
         p = be.stack((rays.x, rays.y, rays.z), axis=1)[valid]
         d = be.stack((rays.L, rays.M, rays.N), axis=1)[valid]
@@ -350,22 +407,19 @@ class CentroidReferenceSphereStrategy(ReferenceStrategy):
         pts = p - s[:, None] * d
         return pts, valid
 
-    def _calculate_reference_sphere(
-        self, rays: RealRays
-    ) -> tuple[float, float, float, float]:
-        """Computes center and radius for the centroid-anchored reference sphere.
+    def _calculate_weights(
+        self, rays: RealRays, image_points: be.ndarray, valid_mask: be.ndarray
+    ) -> be.ndarray:
+        """Calculates weights for centroid or fitting based on ray intensity.
 
         Args:
-            rays: Traced rays at the image surface.
+            rays (RealRays): The traced rays.
+            image_points (be.ndarray): The points on the image surface.
+            valid_mask (be.ndarray): Mask of valid rays.
 
         Returns:
-            Tuple[float, float, float, float]: (center_x, center_y, center_z, radius)
+            be.ndarray: The array of weights.
         """
-        wavefront_points, valid_mask = self._points_from_rays(rays)
-
-        # Image-plane intersection points
-        image_points = be.stack((rays.x, rays.y, rays.z), axis=1)[valid_mask]
-
         # Initialize weights
         intensity = rays.i
         weights = intensity[valid_mask]
@@ -374,131 +428,228 @@ class CentroidReferenceSphereStrategy(ReferenceStrategy):
         if total_weight == 0:
             weights = be.ones_like(weights)
             total_weight = be.sum(weights)
-        else:
-            weights = be.ones((image_points.shape[0],))
-            total_weight = be.sum(weights)
 
-        # Weighted centroid of image-plane points
-        centroid = be.sum(image_points * weights[:, None], axis=0) / total_weight
-
-        # Optional robust trimming to remove extreme outliers in centroid
+        # Robust trimming logic
         if self.robust_trim_std and self.robust_trim_std > 0:
-            distances_img = be.linalg.norm(image_points - centroid, axis=1)
+            # Centroid for internal trimming calc
+            temp_centroid = (
+                be.sum(image_points * weights[:, None], axis=0) / total_weight
+            )
+            distances_img = be.linalg.norm(image_points - temp_centroid, axis=1)
             mean_d = be.mean(distances_img)
             std_d = be.std(distances_img)
             if std_d > 0:
                 keep_mask = distances_img <= (mean_d + self.robust_trim_std * std_d)
                 if be.sum(keep_mask) >= 4:
                     weights = weights * be.array(keep_mask)
-                    total_weight = be.sum(weights)
-                    centroid = (
-                        be.sum(image_points * weights[:, None], axis=0) / total_weight
-                    )
 
-        # Radius: weighted mean distance from fixed centroid to wavefront points
-        distances_wf = be.linalg.norm(wavefront_points - centroid, axis=1)
-        radius = float(be.sum(weights * distances_wf) / be.sum(weights))
+        return weights
 
-        return float(centroid[0]), float(centroid[1]), float(centroid[2]), radius
-
-
-class BestFitSphereStrategy(CentroidReferenceSphereStrategy):
-    """Wavefront analysis strategy using a best-fit reference sphere.
-
-    This strategy computes the wavefront error relative to a reference sphere
-    that is determined by a least-squares fit to the wavefront points.
-    Unlike its parent class, `CentroidReferenceSphereStrategy`, it does not
-    fix the sphere's center at the image-plane centroid, but rather finds
-    the optimal center and radius simultaneously.
-
-    Note that this method ignores the location of the image surface. It
-    is not sensitive to defocus, tilt or piston effects, as these are naturally
-    removed in the fitting process.
-
-    This method is generally more accurate for systems with significant
-    wavefront aberrations where the center of curvature deviates from the
-    image centroid.
-    """
-
-    def __init__(self, optic: Optic, distribution: BaseDistribution, **kwargs) -> None:
-        """Initializes the BestFitSphereStrategy.
+    def _create_reference_geometry(self, rays: RealRays) -> ReferenceGeometry:
+        """Determine reference geometry using centroid method.
 
         Args:
-            optic: The optical system to analyze.
-            distribution: The pupil sampling distribution.
+            rays (RealRays): The traced rays at the image surface.
+
+        Returns:
+            ReferenceGeometry: The determined reference geometry.
         """
-        super().__init__(optic, distribution, **kwargs)
-        self.center = None
+        wavefront_points, valid_mask = self._points_from_rays(rays)
+        image_points = be.stack((rays.x, rays.y, rays.z), axis=1)[valid_mask]
+
+        weights = self._calculate_weights(rays, image_points, valid_mask)
+        total_weight = be.sum(weights)
+
+        centroid = be.sum(image_points * weights[:, None], axis=0) / total_weight
+
+        if self.reference_type == "sphere":
+            return self._create_spherical_ref(wavefront_points, centroid, weights)
+        elif self.reference_type == "plane":
+            return self._create_planar_ref(centroid, rays, valid_mask, weights)
+        else:
+            raise ValueError(f"Unknown reference type: {self.reference_type}")
+
+    def _create_spherical_ref(
+        self, wavefront_points: be.ndarray, centroid: be.ndarray, weights: be.ndarray
+    ) -> SphericalReference:
+        """Create a spherical reference geometry using centroid and weights.
+
+        Args:
+            wavefront_points (be.ndarray): The points on the wavefront.
+            centroid (be.ndarray): The centroid of image points.
+            weights (be.ndarray): The weights for each point.
+
+        Returns:
+            SphericalReference: The spherical reference geometry.
+        """
+        distances_wf = be.linalg.norm(wavefront_points - centroid, axis=1)
+        radius = (be.sum(weights * distances_wf) / be.sum(weights)).item()
+        return SphericalReference(
+            (centroid[0].item(), centroid[1].item(), centroid[2].item()), radius
+        )
 
     def _calculate_reference_sphere(
         self, rays: RealRays
     ) -> tuple[float, float, float, float]:
-        """Computes the best-fit sphere (center and radius) for the wavefront.
+        """Legacy wrapper for _create_reference_geometry."""
+        ref = self._create_reference_geometry(rays)
+        if isinstance(ref, SphericalReference):
+            return ref.center[0], ref.center[1], ref.center[2], ref.radius
+        raise ValueError("Reference geometry is not a sphere.")
 
-        This method solves a linear least-squares problem to find the sphere
-        that best fits the 3D wavefront points derived from the ray data.
+    def _create_planar_ref(
+        self,
+        centroid: be.ndarray,
+        rays: RealRays,
+        valid_mask: be.ndarray,
+        weights: be.ndarray,
+    ) -> PlanarReference:
+        """Create a planar reference geometry using mean direction.
 
         Args:
-            rays: Traced rays at the image surface.
+            centroid (be.ndarray): The centroid of image points.
+            rays (RealRays): The traced rays.
+            valid_mask (be.ndarray): Mask of valid rays.
+            weights (be.ndarray): The weights for each point.
 
         Returns:
-            Tuple[float, float, float, float]: (center_x, center_y, center_z, radius)
+            PlanarReference: The planar reference geometry.
+        """
+        L, M, N = rays.L[valid_mask], rays.M[valid_mask], rays.N[valid_mask]
+        directions = be.stack((L, M, N), axis=1)
+        mean_direction = be.sum(directions * weights[:, None], axis=0) / be.sum(weights)
+        norm = be.linalg.norm(mean_direction)
+        if norm > 0:
+            mean_direction = mean_direction / norm
+
+        return PlanarReference(
+            (centroid[0].item(), centroid[1].item(), centroid[2].item()),
+            (
+                mean_direction[0].item(),
+                mean_direction[1].item(),
+                mean_direction[2].item(),
+            ),
+        )
+
+
+class BestFitStrategy(CentroidStrategy):
+    """Wavefront analysis strategy using a best-fit reference geometry.
+
+    This strategy computes the wavefront error relative to a reference
+    that is determined by a least-squares fit to the wavefront points.
+    """
+
+    def __init__(self, optic: Optic, distribution: BaseDistribution, **kwargs) -> None:
+        super().__init__(optic, distribution, **kwargs)
+        self.center = None
+
+    def _create_reference_geometry(self, rays: RealRays) -> ReferenceGeometry:
+        """Determine reference geometry using best-fit method.
+
+        Args:
+            rays (RealRays): The traced rays at the image surface.
+
+        Returns:
+            ReferenceGeometry: The determined reference geometry.
         """
         wavefront_points, _ = self._points_from_rays(rays)
 
-        # Ensure there are enough points for a stable fit
         if wavefront_points.shape[0] < 4:
-            raise ValueError("Need at least 4 valid ray samples for a best-fit sphere.")
+            raise ValueError("Need at least 4 valid ray samples for best-fit.")
 
         x = wavefront_points[:, 0]
         y = wavefront_points[:, 1]
         z = wavefront_points[:, 2]
 
-        # Set up the linear system Ax = b to solve for the sphere parameters.
-        # The equation of a sphere is (x-xc)^2 + (y-yc)^2 + (z-zc)^2 = R^2.
-        # This can be rearranged into a linear form:
-        # 2*x*xc + 2*y*yc + 2*z*zc + (R^2 - xc^2 - yc^2 - zc^2) = x^2 + y^2 + z^2
+        if self.reference_type == "sphere":
+            return self._create_spherical_ref(x, y, z)
+        elif self.reference_type == "plane":
+            return self._create_planar_ref(wavefront_points)
+        else:
+            raise ValueError(f"Unknown reference type: {self.reference_type}")
+
+    def _create_spherical_ref(
+        self, x: be.ndarray, y: be.ndarray, z: be.ndarray
+    ) -> SphericalReference:
+        """Create a spherical reference geometry using least-squares fit.
+
+        Args:
+            x (be.ndarray): The x-coordinates of wavefront points.
+            y (be.ndarray): The y-coordinates of wavefront points.
+            z (be.ndarray): The z-coordinates of wavefront points.
+
+        Returns:
+            SphericalReference: The best-fit spherical reference geometry.
+        """
+        # Sphere fit
         A = be.stack([x, y, z, be.ones_like(x)], axis=1)
         b = x**2 + y**2 + z**2
-
-        # Solve the system using a numerically stable least-squares solver.
         try:
             c, _, _, _ = be.linalg.lstsq(A, b, rcond=None)
         except be.linalg.LinAlgError as e:
             raise RuntimeError(f"Least-squares sphere fit failed: {e}") from e
 
-        # Extract the sphere's center (xc, yc, zc) and radius R from the solution.
         xc = c[0] / 2
         yc = c[1] / 2
         zc = c[2] / 2
         radius = be.sqrt(c[3] + xc**2 + yc**2 + zc**2)
+        self.center = (xc.item(), yc.item(), zc.item())
+        return SphericalReference(self.center, radius.item())
 
-        # Save the computed center as an attribute.
-        self.center = (float(xc), float(yc), float(zc))
+    def _create_planar_ref(self, wavefront_points: be.ndarray) -> PlanarReference:
+        """Create a planar reference geometry using least-squares fit.
 
-        return self.center[0], self.center[1], self.center[2], float(radius)
+        Args:
+            wavefront_points (be.ndarray): The points on the wavefront.
+
+        Returns:
+            PlanarReference: The best-fit planar reference geometry.
+        """
+        # Plane fit: Ax + By + Cz + D = 0
+        # Center data
+        centroid = be.mean(wavefront_points, axis=0)
+        centered_points = wavefront_points - centroid
+
+        # SVD
+        u, s, vh = be.linalg.svd(centered_points, full_matrices=False)
+        # Normal is the last row of vh (corresponding to smallest singular value)
+        normal = vh[-1, :]
+
+        return PlanarReference(
+            (centroid[0].item(), centroid[1].item(), centroid[2].item()),
+            (normal[0].item(), normal[1].item(), normal[2].item()),
+        )
 
 
 STRATEGIES: dict[WavefrontStrategyType, type[ReferenceStrategy]] = {
     "chief_ray": ChiefRayStrategy,
-    "centroid_sphere": CentroidReferenceSphereStrategy,
-    "best_fit_sphere": BestFitSphereStrategy,
+    "centroid_sphere": CentroidStrategy,  # Kept for backward compat
+    "centroid": CentroidStrategy,
+    "best_fit_sphere": BestFitStrategy,  # Kept for backward compat
+    "best_fit": BestFitStrategy,
 }
+
+
+# Backward compatibility aliases
+CentroidReferenceSphereStrategy = CentroidStrategy
+BestFitSphereStrategy = BestFitStrategy
 
 
 def create_strategy(
     strategy_name: WavefrontStrategyType,
     optic: Optic,
     distribution: BaseDistribution,
+    reference_type: ReferenceType = "sphere",
     **kwargs,
 ) -> ReferenceStrategy:
     """Factory function to create a wavefront calculation strategy.
 
     Args:
-        strategy_name (str): The name of the strategy ("chief_ray", "centroid_sphere",
-            "best_fit_sphere").
+        strategy_name (str): The name of the strategy ("chief_ray", "centroid",
+            "best_fit").
         optic (Optic): The optical system.
         distribution (Distribution): The pupil sampling distribution.
+        reference_type (str): "sphere" or "plane".
 
     Returns:
         ReferenceStrategy: An instance of the requested strategy.
@@ -509,6 +660,8 @@ def create_strategy(
     strategy_class = STRATEGIES.get(strategy_name)
 
     if strategy_class:
-        return strategy_class(optic, distribution, **kwargs)
+        return strategy_class(
+            optic, distribution, reference_type=reference_type, **kwargs
+        )
     else:
         raise ValueError(f"Unknown wavefront strategy: {strategy_name}")

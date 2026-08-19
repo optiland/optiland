@@ -15,4 +15,5 @@
    .. autosummary::
    
       FFTPSF
+      ScalarFFTPSF
    

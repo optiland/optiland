@@ -23,6 +23,8 @@ if TYPE_CHECKING:
 class DiffractiveInteractionModel(RefractiveReflectiveModel):
     """Interaction model for diffraction."""
 
+    interaction_type = "diffractive"
+
     def interact_real_rays(self, rays: RealRays) -> RealRays:
         """Interact with real rays, causing diffraction.
 

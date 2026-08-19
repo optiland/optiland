@@ -1,0 +1,12 @@
+! FNO aperture and angle fields test
+FNO 4.0
+WL 550.0
+REF 1
+XAN 0.0 0.0
+YAN 0.0 5.0
+
+SO 0.0 1e10
+S  100.0 10.0  1.5168:64.17
+  STO
+S  -100.0 95.0
+SI 0.0 0.0

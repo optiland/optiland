@@ -1,9 +1,13 @@
-from unittest.mock import patch, MagicMock
+from __future__ import annotations
+
+from unittest.mock import MagicMock, patch
 
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 
 import optiland.backend as be
 from optiland import analysis
@@ -12,6 +16,8 @@ from optiland.optic import Optic
 from optiland.physical_apertures import RectangularAperture
 from optiland.rays import RealRays
 from optiland.samples.objectives import CookeTriplet, TripletTelescopeObjective
+from optiland.sources import SMFSource
+from optiland.utils import FieldPoint, WavelengthPoint
 
 from .utils import assert_allclose
 
@@ -32,35 +38,33 @@ def telescope_objective():
 def triplet_four_fields():
     lens = Optic()
 
-    lens.surface_group.surfaces = []
-
-    lens.add_surface(index=0, radius=be.inf, thickness=be.inf)
-    lens.add_surface(index=1, radius=22.01359, thickness=3.25896, material="SK16")
-    lens.add_surface(index=2, radius=-435.76044, thickness=6.00755)
-    lens.add_surface(
+    lens.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+    lens.surfaces.add(index=1, radius=22.01359, thickness=3.25896, material="SK16")
+    lens.surfaces.add(index=2, radius=-435.76044, thickness=6.00755)
+    lens.surfaces.add(
         index=3,
         radius=-22.21328,
         thickness=0.99997,
         material=("F2", "schott"),
     )
-    lens.add_surface(index=4, radius=20.29192, thickness=4.75041, is_stop=True)
-    lens.add_surface(index=5, radius=79.68360, thickness=2.95208, material="SK16")
-    lens.add_surface(index=6, radius=-18.39533, thickness=42.20778)
-    lens.add_surface(index=7)
+    lens.surfaces.add(index=4, radius=20.29192, thickness=4.75041, is_stop=True)
+    lens.surfaces.add(index=5, radius=79.68360, thickness=2.95208, material="SK16")
+    lens.surfaces.add(index=6, radius=-18.39533, thickness=42.20778)
+    lens.surfaces.add(index=7)
 
     lens.set_aperture(aperture_type="EPD", value=10)
 
-    lens.set_field_type(field_type="angle")
-    lens.add_field(y=0)
-    lens.add_field(y=10)
-    lens.add_field(y=15)
-    lens.add_field(y=20)
+    lens.fields.set_type(field_type="angle")
+    lens.fields.add(y=0)
+    lens.fields.add(y=10)
+    lens.fields.add(y=15)
+    lens.fields.add(y=20)
 
-    lens.add_wavelength(value=0.48)
-    lens.add_wavelength(value=0.55, is_primary=True)
-    lens.add_wavelength(value=0.65)
+    lens.wavelengths.add(value=0.48)
+    lens.wavelengths.add(value=0.55, is_primary=True)
+    lens.wavelengths.add(value=0.65)
 
-    lens.update_paraxial()
+    lens.updater.update_paraxial()
     return lens
 
 
@@ -73,13 +77,13 @@ class TestCookeTripetSpotDiagram:
         assert_allclose(geo_radius[0][1], 0.00628645771124)
         assert_allclose(geo_radius[0][2], 0.00931911440064)
 
-        assert_allclose(geo_radius[1][0], 0.03717783072826)
-        assert_allclose(geo_radius[1][1], 0.03864613392848)
-        assert_allclose(geo_radius[1][2], 0.04561512437816)
+        assert_allclose(geo_radius[1][0], 0.03928464835617618)
+        assert_allclose(geo_radius[1][1], 0.04075295155639047)
+        assert_allclose(geo_radius[1][2], 0.04772194200606705)
 
-        assert_allclose(geo_radius[2][0], 0.01951655430245)
-        assert_allclose(geo_radius[2][1], 0.02342659090311)
-        assert_allclose(geo_radius[2][2], 0.03747033587405)
+        assert_allclose(geo_radius[2][0], 0.018909146395329878)
+        assert_allclose(geo_radius[2][1], 0.022501847359635008)
+        assert_allclose(geo_radius[2][2], 0.036545592330568866)
 
     def test_spot_rms_radius(self, set_test_backend, cooke_triplet):
         spot = analysis.SpotDiagram(cooke_triplet)
@@ -89,13 +93,13 @@ class TestCookeTripetSpotDiagram:
         assert_allclose(rms_radius[0][1], 0.004293689564257)
         assert_allclose(rms_radius[0][2], 0.006195618755672)
 
-        assert_allclose(rms_radius[1][0], 0.015694600107671)
-        assert_allclose(rms_radius[1][1], 0.016786721284464)
-        assert_allclose(rms_radius[1][2], 0.019109151416248)
+        assert_allclose(rms_radius[1][0], 0.01582480029344623)
+        assert_allclose(rms_radius[1][1], 0.016918412809703662)
+        assert_allclose(rms_radius[1][2], 0.019221165873836682)
 
-        assert_allclose(rms_radius[2][0], 0.013229165357157)
-        assert_allclose(rms_radius[2][1], 0.012081348897953)
-        assert_allclose(rms_radius[2][2], 0.013596802321537)
+        assert_allclose(rms_radius[2][0], 0.013236232767092956)
+        assert_allclose(rms_radius[2][1], 0.012116688566406967)
+        assert_allclose(rms_radius[2][2], 0.013648684944411313)
 
     def test_airy_disc(self, set_test_backend, cooke_triplet):
         spot = analysis.SpotDiagram(cooke_triplet)
@@ -116,8 +120,8 @@ class TestCookeTripetSpotDiagram:
 
         assert fig is not None
         assert len(axes) > 0
-        assert isinstance(fig, plt.Figure)
-        assert all(isinstance(ax, plt.Axes) for ax in axes)
+        assert isinstance(fig, Figure)
+        assert all(isinstance(ax, Axes) for ax in axes)
         plt.close(fig)
 
     def test_view_spot_diagram(self, set_test_backend, cooke_triplet):
@@ -125,8 +129,8 @@ class TestCookeTripetSpotDiagram:
         fig, axes = spot.view()
         assert fig is not None
         assert len(axes) > 0
-        assert isinstance(fig, plt.Figure)
-        assert all(isinstance(ax, plt.Axes) for ax in axes)
+        assert isinstance(fig, Figure)
+        assert all(isinstance(ax, Axes) for ax in axes)
         plt.close(fig)
 
     def test_view_spot_diagram_larger_fig(self, set_test_backend, cooke_triplet):
@@ -134,8 +138,8 @@ class TestCookeTripetSpotDiagram:
         fig, axes = spot.view(figsize=(20, 10))
         assert fig is not None
         assert len(axes) > 0
-        assert isinstance(fig, plt.Figure)
-        assert all(isinstance(ax, plt.Axes) for ax in axes)
+        assert isinstance(fig, Figure)
+        assert all(isinstance(ax, Axes) for ax in axes)
         plt.close(fig)
 
 
@@ -145,8 +149,8 @@ class TestTripletSpotDiagram:
         fig, axes = spot.view()
         assert fig is not None
         assert len(axes) > 0
-        assert isinstance(fig, plt.Figure)
-        assert all(isinstance(ax, plt.Axes) for ax in axes)
+        assert isinstance(fig, Figure)
+        assert all(isinstance(ax, Axes) for ax in axes)
         plt.close(fig)
 
     def test_view_spot_diagram_larger_fig(self, set_test_backend, triplet_four_fields):
@@ -154,8 +158,8 @@ class TestTripletSpotDiagram:
         fig, axes = spot.view(figsize=(20, 10))
         assert fig is not None
         assert len(axes) > 0
-        assert isinstance(fig, plt.Figure)
-        assert all(isinstance(ax, plt.Axes) for ax in axes)
+        assert isinstance(fig, Figure)
+        assert all(isinstance(ax, Axes) for ax in axes)
         plt.close(fig)
 
 
@@ -181,8 +185,8 @@ class TestCookeTripletEncircledEnergy:
         fig, ax = encircled_energy.view()
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
     def test_view_encircled_energy_larger_fig(self, set_test_backend, cooke_triplet):
@@ -190,8 +194,8 @@ class TestCookeTripletEncircledEnergy:
         fig, ax = encircled_energy.view(figsize=(20, 10))
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
     def test_view_encircled_energy_larger_fig(self, set_test_backend, cooke_triplet):
@@ -199,8 +203,8 @@ class TestCookeTripletEncircledEnergy:
         fig, ax = encircled_energy.view(figsize=(20, 10))
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
 
@@ -414,8 +418,8 @@ class TestCookeTripletRayFan:
         fig, axes = ray_fan.view()
         assert fig is not None
         assert len(axes) > 0
-        assert isinstance(fig, plt.Figure)
-        assert all(isinstance(ax, plt.Axes) for ax in axes)
+        assert isinstance(fig, Figure)
+        assert all(isinstance(ax, Axes) for ax in axes)
         plt.close(fig)
 
     def test_view_ray_fan_larger_fig(self, set_test_backend, cooke_triplet):
@@ -423,8 +427,8 @@ class TestCookeTripletRayFan:
         fig, axes = ray_fan.view(figsize=(20, 10))
         assert fig is not None
         assert len(axes) > 0
-        assert isinstance(fig, plt.Figure)
-        assert all(isinstance(ax, plt.Axes) for ax in axes)
+        assert isinstance(fig, Figure)
+        assert all(isinstance(ax, Axes) for ax in axes)
         plt.close(fig)
 
 
@@ -434,8 +438,8 @@ class TestTelescopeTripletYYbar:
         fig, ax = yybar.view()
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
     def test_view_yybar_larger_fig(self, set_test_backend, telescope_objective):
@@ -443,8 +447,8 @@ class TestTelescopeTripletYYbar:
         fig, ax = yybar.view(figsize=(12.4, 10))
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
 
@@ -482,8 +486,8 @@ class TestTelescopeTripletDistortion:
         fig, ax = dist.view()
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
     def test_view_distortion_larger_fig(self, set_test_backend, telescope_objective):
@@ -491,8 +495,8 @@ class TestTelescopeTripletDistortion:
         fig, ax = dist.view(figsize=(12.4, 10))
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
     def test_view_distortion_larger_fig(self, set_test_backend, telescope_objective):
@@ -500,8 +504,8 @@ class TestTelescopeTripletDistortion:
         fig, ax = dist.view(figsize=(12.4, 10))
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
     def test_view_distortion_larger_fig(self, set_test_backend, telescope_objective):
@@ -509,8 +513,8 @@ class TestTelescopeTripletDistortion:
         fig, ax = dist.view(figsize=(12.4, 10))
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
 
@@ -567,8 +571,8 @@ class TestTelescopeTripletGridDistortion:
         fig, ax = dist.view()
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
     def test_view_grid_distortion_larger_fig(
@@ -578,8 +582,8 @@ class TestTelescopeTripletGridDistortion:
         fig, ax = dist.view(figsize=(12.4, 10))
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
 
@@ -588,7 +592,7 @@ class TestTelescopeTripletFieldCurvature:
         field_curvature = analysis.FieldCurvature(telescope_objective)
         assert field_curvature.optic == telescope_objective
         assert (
-            field_curvature.wavelengths
+            [wp.value for wp in field_curvature.wavelengths]
             == telescope_objective.wavelengths.get_wavelengths()
         )
         assert field_curvature.num_points == 128
@@ -601,7 +605,7 @@ class TestTelescopeTripletFieldCurvature:
             wavelengths=[0.5, 0.6],
         )
         assert field_curvature.optic == telescope_objective
-        assert field_curvature.wavelengths == [0.5, 0.6]
+        assert [wp.value for wp in field_curvature.wavelengths] == [0.5, 0.6]
         assert field_curvature.num_points == 128
 
     def test_field_curvature_init_with_num_points(
@@ -614,7 +618,7 @@ class TestTelescopeTripletFieldCurvature:
         )
         assert field_curvature.optic == telescope_objective
         assert (
-            field_curvature.wavelengths
+            [wp.value for wp in field_curvature.wavelengths]
             == telescope_objective.wavelengths.get_wavelengths()
         )
         assert field_curvature.num_points == num_points
@@ -629,7 +633,7 @@ class TestTelescopeTripletFieldCurvature:
             num_points=num_points,
         )
         assert field_curvature.optic == telescope_objective
-        assert field_curvature.wavelengths == [0.55]
+        assert [wp.value for wp in field_curvature.wavelengths] == [0.55]
         assert field_curvature.num_points == num_points
 
     def test_field_curvature_view(self, set_test_backend, telescope_objective):
@@ -637,8 +641,8 @@ class TestTelescopeTripletFieldCurvature:
         fig, ax = field_curvature.view()
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
     def test_field_curvature_generate_data(self, set_test_backend, telescope_objective):
@@ -698,8 +702,8 @@ class TestSpotVsField:
         fig, ax = spot_vs_field.view()
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
     def test_view_spot_vs_field_larger_fig(self, set_test_backend, telescope_objective):
@@ -707,8 +711,8 @@ class TestSpotVsField:
         fig, ax = spot_vs_field.view(figsize=(12.4, 10))
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
 
@@ -740,8 +744,8 @@ class TestWavefrontErrorVsField:
         fig, ax = wavefront_error_vs_field.view()
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
     def test_view_wave_larger_fig(self, set_test_backend, telescope_objective):
@@ -751,8 +755,8 @@ class TestWavefrontErrorVsField:
         fig, ax = wavefront_error_vs_field.view(figsize=(12.4, 10))
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
 
@@ -760,8 +764,8 @@ class TestPupilAberration:
     def test_initialization(self, set_test_backend, telescope_objective):
         pupil_ab = analysis.PupilAberration(telescope_objective)
         assert pupil_ab.optic == telescope_objective
-        assert pupil_ab.fields == [(0.0, 0.0), (0.0, 0.7), (0.0, 1.0)]
-        assert pupil_ab.wavelengths == [0.4861, 0.5876, 0.6563]
+        assert [fp.coord for fp in pupil_ab.fields] == [(0.0, 0.0), (0.0, 0.7), (0.0, 1.0)]
+        assert [wp.value for wp in pupil_ab.wavelengths] == [0.4861, 0.5876, 0.6563]
         assert pupil_ab.num_points == 257  # num_points is forced to be odd
 
     def test_generate_data(self, set_test_backend, telescope_objective):
@@ -784,7 +788,7 @@ class TestPupilAberration:
         assert fig is not None
         assert axes is not None
         assert len(axes) == 3
-        assert isinstance(fig, plt.Figure)
+        assert isinstance(fig, Figure)
         plt.close(fig)
 
 
@@ -798,8 +802,8 @@ def test_generate_field_data_local(set_test_backend, cooke_triplet):
     spot = analysis.SpotDiagram(cooke_triplet, coordinates="local")
 
     # Pick the first field and wavelength
-    field = spot.fields[0]
-    wavelength = spot.wavelengths[0]
+    field = spot.fields[0].coord
+    wavelength = spot.wavelengths[0].value
 
     data = spot._generate_field_data(
         field,
@@ -812,8 +816,8 @@ def test_generate_field_data_local(set_test_backend, cooke_triplet):
     plot_x = data.x
     plot_y = data.y
     # intensity = data.intensity # if needed for future assertions
-    global_x = spot.optic.surface_group.x[-1, :]
-    global_y = spot.optic.surface_group.y[-1, :]
+    global_x = spot.optic.surfaces.x[-1, :]
+    global_y = spot.optic.surfaces.y[-1, :]
     assert_allclose(plot_x, global_x)
     assert_allclose(plot_y, global_y)
 
@@ -822,8 +826,8 @@ def test_generate_field_data_global(set_test_backend, cooke_triplet):
     spot = analysis.SpotDiagram(cooke_triplet, coordinates="global")
 
     # Pick the first field and wavelength
-    field = spot.fields[0]
-    wavelength = spot.wavelengths[0]
+    field = spot.fields[0].coord
+    wavelength = spot.wavelengths[0].value
 
     data = spot._generate_field_data(
         field,
@@ -836,8 +840,8 @@ def test_generate_field_data_global(set_test_backend, cooke_triplet):
     plot_x = data.x
     plot_y = data.y
     # intensity = data.intensity # if needed for future assertions
-    global_x = spot.optic.surface_group.x[-1, :]
-    global_y = spot.optic.surface_group.y[-1, :]
+    global_x = spot.optic.surfaces.x[-1, :]
+    global_y = spot.optic.surfaces.y[-1, :]
     assert_allclose(plot_x, global_x)
     assert_allclose(plot_y, global_y)
 
@@ -847,17 +851,17 @@ def test_system_irradiance_v1():
     class TestSystemIrradianceV1(Optic):
         def __init__(self):
             super().__init__()
-            self.add_surface(index=0, thickness=be.inf)
-            self.add_surface(index=1, thickness=0, is_stop=True)
-            self.add_surface(index=2, thickness=10)
-            self.add_surface(index=3)  # image
+            self.surfaces.add(index=0, thickness=be.inf)
+            self.surfaces.add(index=1, thickness=0, is_stop=True)
+            self.surfaces.add(index=2, thickness=10)
+            self.surfaces.add(index=3)  # image
             detector_size = RectangularAperture(
                 x_max=2.5, x_min=-2.5, y_max=2.5, y_min=-2.5
             )
-            self.surface_group.surfaces[-1].aperture = detector_size
-            self.add_wavelength(0.55)
-            self.set_field_type("angle")
-            self.add_field(y=0)
+            self.surfaces[-1].aperture = detector_size
+            self.wavelengths.add(0.55)
+            self.fields.set_type("angle")
+            self.fields.add(y=0)
             self.set_aperture("EPD", 5.0)
 
     return TestSystemIrradianceV1()
@@ -868,9 +872,9 @@ def perfect_mirror_system():
     class PerfectMirror(Optic):
         def __init__(self):
             super().__init__()
-            self.add_surface(index=0, thickness=be.inf)
-            self.add_surface(index=1, thickness=50)
-            self.add_surface(
+            self.surfaces.add(index=0, thickness=be.inf)
+            self.surfaces.add(index=1, thickness=50)
+            self.surfaces.add(
                 index=2,
                 thickness=-25,
                 radius=-50,
@@ -878,14 +882,14 @@ def perfect_mirror_system():
                 material="mirror",
                 is_stop=True,
             )
-            self.add_surface(index=3)  # image
+            self.surfaces.add(index=3)  # image
             detector_size = RectangularAperture(
                 x_max=2.5, x_min=-2.5, y_max=2.5, y_min=-2.5
             )
-            self.surface_group.surfaces[-1].aperture = detector_size
-            self.add_wavelength(0.55)
-            self.set_field_type("angle")
-            self.add_field(y=0)
+            self.surfaces[-1].aperture = detector_size
+            self.wavelengths.add(0.55)
+            self.fields.set_type("angle")
+            self.fields.add(y=0)
             self.set_aperture("EPD", 5.0)
 
     return PerfectMirror()
@@ -935,7 +939,7 @@ class TestIncoherentIrradiance:
         fig, axes = irr_uniform.view()
         assert fig is not None
         assert axes is not None
-        assert isinstance(fig, plt.Figure)
+        assert isinstance(fig, Figure)
         assert len(axes) > 0
         plt.close(fig)
 
@@ -995,7 +999,7 @@ class TestIncoherentIrradiance:
         fig, axes = irr_analysis.view()
         assert fig is not None
         assert axes is not None
-        assert isinstance(fig, plt.Figure)
+        assert isinstance(fig, Figure)
         assert len(axes) > 0
 
         plt.close(fig)
@@ -1049,7 +1053,7 @@ class TestIncoherentIrradiance:
         fig, axes = irr_apodized.view()
         assert fig is not None
         assert axes is not None
-        assert isinstance(fig, plt.Figure)
+        assert isinstance(fig, Figure)
         assert len(axes) > 0
         plt.close(fig)
 
@@ -1103,7 +1107,7 @@ class TestIncoherentIrradiance:
         fig, axes = irr_perfect.view()
         assert fig is not None
         assert axes is not None
-        assert isinstance(fig, plt.Figure)
+        assert isinstance(fig, Figure)
         assert len(axes) > 0
 
         plt.close(fig)
@@ -1143,7 +1147,7 @@ class TestIncoherentIrradiance:
         fig, axes = irr_apodized.view(cross_section=("cross-x", res_val[0] // 2))
         assert fig is not None
         assert axes is not None
-        assert isinstance(fig, plt.Figure)
+        assert isinstance(fig, Figure)
         assert len(axes) > 0
 
         plt.close(fig)
@@ -1151,7 +1155,7 @@ class TestIncoherentIrradiance:
         fig, axes = irr_apodized.view(cross_section=("cross-y", None))
         assert fig is not None
         assert axes is not None
-        assert isinstance(fig, plt.Figure)
+        assert isinstance(fig, Figure)
         assert len(axes) > 0
 
         plt.close(fig)
@@ -1161,7 +1165,7 @@ class TestIncoherentIrradiance:
         )
         assert fig is not None
         assert axes is not None
-        assert isinstance(fig, plt.Figure)
+        assert isinstance(fig, Figure)
         assert len(axes) > 0
 
         plt.close(fig)
@@ -1180,13 +1184,13 @@ class TestIncoherentIrradiance:
         class TestSystemNoAperture(Optic):
             def __init__(self):
                 super().__init__()
-                self.add_surface(index=0, thickness=be.inf)
-                self.add_surface(index=1, thickness=0, is_stop=True)
-                self.add_surface(index=2, thickness=10)
-                self.add_surface(index=3)  # Image plane, no aperture
-                self.add_wavelength(0.55)
-                self.set_field_type("angle")
-                self.add_field(y=0)
+                self.surfaces.add(index=0, thickness=be.inf)
+                self.surfaces.add(index=1, thickness=0, is_stop=True)
+                self.surfaces.add(index=2, thickness=10)
+                self.surfaces.add(index=3)  # Image plane, no aperture
+                self.wavelengths.add(0.55)
+                self.fields.set_type("angle")
+                self.fields.add(y=0)
                 self.set_aperture("EPD", 5.0)
 
         optic_no_ap = TestSystemNoAperture()
@@ -1219,7 +1223,7 @@ class TestIncoherentIrradiance:
         fig, axes = irr.view()
         assert fig is not None
         assert axes is not None
-        assert isinstance(fig, plt.Figure)
+        assert isinstance(fig, Figure)
         assert len(axes) > 0
 
         plt.close(fig)
@@ -1232,7 +1236,7 @@ class TestIncoherentIrradiance:
         fig, axes = irr.view(cmap="viridis", normalize=False)
         assert fig is not None
         assert axes is not None
-        assert isinstance(fig, plt.Figure)
+        assert isinstance(fig, Figure)
         assert len(axes) > 0
 
         plt.close(fig)
@@ -1241,7 +1245,7 @@ class TestIncoherentIrradiance:
         fig, axes = irr.view(cross_section=("cross-x", 0), normalize=True, cmap="magma")
         assert fig is not None
         assert axes is not None
-        assert isinstance(fig, plt.Figure)
+        assert isinstance(fig, Figure)
         assert len(axes) > 0
 
         plt.close(fig)
@@ -1260,7 +1264,7 @@ class TestIncoherentIrradiance:
         )  # Index out of bounds
         assert fig is not None
         assert axes is not None
-        assert isinstance(fig, plt.Figure)
+        assert isinstance(fig, Figure)
         assert len(axes) > 0
         plt.close(fig)
         mock_print.assert_any_call(
@@ -1273,7 +1277,7 @@ class TestIncoherentIrradiance:
         )  # Index out of bounds
         assert fig is not None
         assert axes is not None
-        assert isinstance(fig, plt.Figure)
+        assert isinstance(fig, Figure)
         assert len(axes) > 0
         plt.close(fig)
         mock_print.assert_any_call(
@@ -1284,7 +1288,7 @@ class TestIncoherentIrradiance:
         fig, axes = irr.view(cross_section="invalid")
         assert fig is not None
         assert axes is not None
-        assert isinstance(fig, plt.Figure)
+        assert isinstance(fig, Figure)
         assert len(axes) > 0
         plt.close(fig)
         mock_print.assert_any_call(
@@ -1294,7 +1298,7 @@ class TestIncoherentIrradiance:
         fig, axes = irr.view(cross_section=("cross-x",))
         assert fig is not None
         assert axes is not None
-        assert isinstance(fig, plt.Figure)
+        assert isinstance(fig, Figure)
         assert len(axes) > 0
         plt.close(fig)
         mock_print.assert_any_call(
@@ -1304,7 +1308,7 @@ class TestIncoherentIrradiance:
         fig, axes = irr.view(cross_section=(123, "cross-y"))
         assert fig is not None
         assert axes is not None
-        assert isinstance(fig, plt.Figure)
+        assert isinstance(fig, Figure)
         assert len(axes) > 0
         plt.close(fig)
         mock_print.assert_any_call(
@@ -1349,7 +1353,7 @@ class TestIncoherentIrradiance:
         fig, axes = irr.view(normalize=False)  # Test the vmin=vmax branch in plotting
         assert fig is not None
         assert axes is not None
-        assert isinstance(fig, plt.Figure)
+        assert isinstance(fig, Figure)
         assert len(axes) > 0
         plt.close(fig)
 
@@ -1358,7 +1362,7 @@ class TestIncoherentIrradiance:
         fig, axes = irr.view(normalize=False)
         assert fig is not None
         assert axes is not None
-        assert isinstance(fig, plt.Figure)
+        assert isinstance(fig, Figure)
         assert len(axes) > 0
         plt.close(fig)
 
@@ -1367,7 +1371,7 @@ class TestIncoherentIrradiance:
         fig, axes = irr.view(normalize=True)
         assert fig is not None
         assert axes is not None
-        assert isinstance(fig, plt.Figure)
+        assert isinstance(fig, Figure)
         assert len(axes) > 0
         plt.close(fig)
 
@@ -1404,24 +1408,23 @@ class TestIncoherentIrradiance:
         be.grad_mode.enable()
         # Create a simple system with a parameter that requires gradients
         optic_sys = Optic()
-        optic_sys.add_surface(index=0, thickness=be.inf)
         # Make RADIUS a tensor that requires gradients, as changing it will
         # affect the final irradiance.
         radius_tensor = be.array(20.0)
         radius_tensor.requires_grad = True
-        optic_sys.add_surface(index=0, thickness=be.inf)
-        optic_sys.add_surface(
+        optic_sys.surfaces.add(index=0, thickness=be.inf)
+        optic_sys.surfaces.add(
             index=1, thickness=7, radius=radius_tensor, is_stop=True, material="bk7"
         )
-        optic_sys.add_surface(index=2, thickness=10)
-        optic_sys.add_surface(index=3)
+        optic_sys.surfaces.add(index=2, thickness=10)
+        optic_sys.surfaces.add(index=3)
         detector_size = RectangularAperture(
             x_max=2.5, x_min=-2.5, y_max=2.5, y_min=-2.5
         )
-        optic_sys.surface_group.surfaces[-1].aperture = detector_size
-        optic_sys.add_wavelength(0.55)
-        optic_sys.set_field_type("angle")
-        optic_sys.add_field(y=0)
+        optic_sys.surfaces[-1].aperture = detector_size
+        optic_sys.wavelengths.add(0.55)
+        optic_sys.fields.set_type("angle")
+        optic_sys.fields.add(y=0)
         optic_sys.set_aperture("EPD", 5.0)
 
         # Perform analysis
@@ -1434,9 +1437,51 @@ class TestIncoherentIrradiance:
         loss = be.sum(irr_map**2)
         loss.backward()
 
-        grad = optic_sys.surface_group.surfaces[1].geometry.radius.grad
+        grad = optic_sys.surfaces[1].geometry.radius.grad
         assert grad is not None
         assert be.to_numpy(grad) != 0
+
+    def test_irradiance_autodiff_matches_xy_indexing(
+        self, set_test_backend, test_system_irradiance_v1
+    ):
+        if be.get_backend() != "torch":
+            pytest.skip("Autodiff test only runs for torch backend")
+
+        optic_sys = test_system_irradiance_v1
+        res = (4, 6)
+        x_centers = np.array([-1.875, -0.625, 0.625, 1.875])
+        y_centers = np.array([-2.0833333333333335, -1.25, -0.4166666666666667])
+        x_coords = np.repeat(x_centers, len(y_centers))
+        y_coords = np.tile(y_centers, len(x_centers))
+        intensities = np.arange(1, x_coords.size + 1, dtype=float)
+
+        def make_rays():
+            num_rays = x_coords.size
+            return RealRays(
+                x=be.array(x_coords),
+                y=be.array(y_coords),
+                z=be.zeros((num_rays,)),
+                L=be.zeros((num_rays,)),
+                M=be.zeros((num_rays,)),
+                N=be.ones((num_rays,)),
+                intensity=be.array(intensities),
+                wavelength=be.full((num_rays,), 0.55),
+            )
+
+        be.grad_mode.disable()
+        irr_hist = analysis.IncoherentIrradiance(
+            optic_sys, res=res, user_initial_rays=make_rays()
+        )
+        hist_map = be.to_numpy(irr_hist.data[0][0][0])
+
+        be.grad_mode.enable()
+        irr_grad = analysis.IncoherentIrradiance(
+            optic_sys, res=res, user_initial_rays=make_rays()
+        )
+        grad_map = be.to_numpy(irr_grad.data[0][0][0])
+
+        assert grad_map.shape == hist_map.shape == res
+        assert_allclose(grad_map, hist_map, atol=1e-9)
 
 
 def test_incoherent_irradiance_initialization(
@@ -1463,7 +1508,7 @@ def test_incoherent_irradiance_initialization(
     assert irr.px_size == (0.1, 0.1)
     assert irr.detector_surface == -1
     assert irr.fields == optic.fields.get_field_coords()
-    assert irr.wavelengths == optic.wavelengths.get_wavelengths()
+    assert [wp.value for wp in irr.wavelengths] == optic.wavelengths.get_wavelengths()
     assert irr.user_initial_rays is None
     assert len(irr.data) == len(optic.fields.get_field_coords())
     assert len(irr.data[0]) == len(optic.wavelengths.get_wavelengths())
@@ -1480,7 +1525,7 @@ def test_view_normalize_true_peak_zero(set_test_backend, test_system_irradiance_
     fig, axes = irr.view(normalize=True)  # Should handle peak_val = 0
     assert fig is not None
     assert axes is not None
-    assert isinstance(fig, plt.Figure)
+    assert isinstance(fig, Figure)
     assert len(axes) > 0
     plt.close(fig)
 
@@ -1731,9 +1776,9 @@ class TestThroughFocusSpotDiagram:
         fig, axes = tf_spot.view()
         assert fig is not None
         assert axes is not None
-        assert isinstance(fig, plt.Figure)
+        assert isinstance(fig, Figure)
         assert len(axes) > 0
-        assert all(isinstance(ax, plt.Axes) for ax in axes)
+        assert all(isinstance(ax, Axes) for ax in axes)
         plt.close(fig)
 
     def test_view_with_all_zero_intensities(self, tf_spot):
@@ -1746,13 +1791,24 @@ class TestThroughFocusSpotDiagram:
 
         assert fig is not None
         assert axes is not None
-        assert isinstance(fig, plt.Figure)
+        assert isinstance(fig, Figure)
         assert len(axes) > 0
-        assert all(isinstance(ax, plt.Axes) for ax in axes)
+        assert all(isinstance(ax, Axes) for ax in axes)
         plt.close(fig)
 
 
 def read_zmx_file(file_path, skip_lines, cols=(0, 1)):
+    import os
+
+    if not os.path.exists(file_path):
+        this_dir = os.path.dirname(os.path.abspath(__file__))
+        if file_path.startswith("tests/") or file_path.startswith("tests\\"):
+            candidate = os.path.join(this_dir, file_path[6:])
+        else:
+            candidate = os.path.join(this_dir, file_path)
+        if os.path.exists(candidate):
+            file_path = candidate
+
     try:
         data = np.loadtxt(
             file_path, skiprows=skip_lines, usecols=cols, encoding="utf-16"
@@ -1766,90 +1822,17 @@ def read_zmx_file(file_path, skip_lines, cols=(0, 1)):
         return None, None
 
 
-class ExtendedSource:
-    """
-    It generates rays based on a Gaussian distribution defined by the source parameters.
-    """
-
-    def __init__(self, mfd=10.4, wavelength=1.55, total_power=1.0):
-        """
-        Initializes the ExtendedSource with source-specific parameters.
-
-        Args:
-            mfd (float): Mode Field Diameter in micrometers (µm).
-            wavelength (float): Wavelength of the source in micrometers (µm).
-            total_power (float): Total optical power of the source in Watts (W).
-        """
-        self.mfd = mfd
-        self.wavelength = wavelength
-        self.total_power = total_power
-
-        w0_um = self.mfd / 2.0
-        s_L_rad = self.wavelength / (
-            be.pi * w0_um
-        )  # 1/e^2 angular radius in L-space (radians)
-
-        # convert units for Optiland
-        s_x_mm = w0_um * 1e-3
-
-        # importance sampling
-        self.sigma_spatial_mm = s_x_mm / 2.0
-        self.sigma_angular_rad = s_L_rad / 2.0
-
-    def generate_rays(self, num_rays):
-        """
-        Returns:
-            RealRays: An object containing the generated rays.
-        """
-        # generate ray coordinates and angles
-        x_start = be.random_normal(loc=0.0, scale=self.sigma_spatial_mm, size=num_rays)
-        y_start = be.random_normal(loc=0.0, scale=self.sigma_spatial_mm, size=num_rays)
-        z_start = be.zeros(num_rays)
-
-        L_initial = be.random_normal(
-            loc=0.0, scale=self.sigma_angular_rad, size=num_rays
-        )
-        M_initial = be.random_normal(
-            loc=0.0, scale=self.sigma_angular_rad, size=num_rays
-        )
-
-        # filter for possible rays
-        valid_mask = L_initial**2 + M_initial**2 < 1.0
-        x_start, y_start, z_start = (
-            x_start[valid_mask],
-            y_start[valid_mask],
-            z_start[valid_mask],
-        )
-        L_initial, M_initial = L_initial[valid_mask], M_initial[valid_mask]
-
-        num_valid_rays = be.size(L_initial)
-
-        # calculate power per ray
-        power_per_ray = self.total_power / num_valid_rays
-        intensity_power_array = be.full((num_valid_rays,), power_per_ray)
-
-        N_initial = be.sqrt(
-            be.maximum(be.array(0.0), 1.0 - L_initial**2 - M_initial**2)
-        )
-        wavelength_array = be.full((num_valid_rays,), self.wavelength)
-
-        rays = RealRays(
-            x=x_start,
-            y=y_start,
-            z=z_start,
-            L=L_initial,
-            M=M_initial,
-            N=N_initial,
-            intensity=intensity_power_array,
-            wavelength=wavelength_array,
-        )
-        return rays
-
-
 @pytest.fixture
 def extended_source():
-    """Fixture to provide an instance of ExtendedSource."""
-    return ExtendedSource(mfd=10.4, wavelength=1.55, total_power=1.0)
+    """Fixture to provide an instance of SMFSource."""
+    # Using default behavior: divergence calculated from MFD and Wavelength
+    # This matches the diffraction-limited physics of a perfect Gaussian beam.
+    return SMFSource(
+        mfd_um=10.4,
+        wavelength_um=1.55,
+        total_power=1.0,
+        # divergence_deg_1e2 is calculated automatically
+    )
 
 
 @pytest.fixture
@@ -1864,23 +1847,23 @@ def system_1():
 
             self.set_aperture(aperture_type="objectNA", value=0.095)
 
-            self.set_field_type(field_type="angle")
-            self.add_field(y=0)
+            self.fields.set_type(field_type="angle")
+            self.fields.add(y=0)
 
-            self.add_wavelength(value=1.55, is_primary=True)
+            self.wavelengths.add(value=1.55, is_primary=True)
 
             H_K3 = Material("H-K3", reference="cdgm")
 
             apt_detector = RectangularAperture(-30, 30, -30, 30)
 
-            self.add_surface(index=0, thickness=0)
-            self.add_surface(index=1, thickness=0.01)
-            self.add_surface(index=2, thickness=129.6554)
-            self.add_surface(
+            self.surfaces.add(index=0, thickness=0)
+            self.surfaces.add(index=1, thickness=0.01)
+            self.surfaces.add(index=2, thickness=129.6554)
+            self.surfaces.add(
                 index=3, thickness=4, radius=131.9743, is_stop=True, material=H_K3
             )
-            self.add_surface(index=4, thickness=10.0, radius=-131.9743)
-            self.add_surface(index=5, aperture=apt_detector)
+            self.surfaces.add(index=4, thickness=10.0, radius=-131.9743)
+            self.surfaces.add(index=5, aperture=apt_detector)
 
     return TestSystemForIntensity()
 
@@ -1961,7 +1944,7 @@ class TestRadiantIntensity:
         fig, axes = radiant_intensity.view()
         assert fig is not None
         assert axes is not None
-        assert isinstance(fig, plt.Figure)
+        assert isinstance(fig, Figure)
         assert isinstance(axes, np.ndarray)
         plt.close(fig)
 
@@ -1975,7 +1958,7 @@ class TestRadiantIntensity:
         fig, axes = radiant_intensity.view(cross_section=("cross-x", None))
         assert fig is not None
         assert axes is not None
-        assert isinstance(fig, plt.Figure)
+        assert isinstance(fig, Figure)
         assert isinstance(axes, np.ndarray)
         plt.close(fig)
 
@@ -2005,23 +1988,22 @@ class TestRadiantIntensity:
         be.grad_mode.enable()
 
         optic_sys = Optic()
-        optic_sys.add_surface(index=0, thickness=be.inf)
 
         radius_tensor = be.array(20.0)
         radius_tensor.requires_grad = True
-        optic_sys.add_surface(index=0, thickness=be.inf)
-        optic_sys.add_surface(
+        optic_sys.surfaces.add(index=0, thickness=be.inf)
+        optic_sys.surfaces.add(
             index=1, thickness=7, radius=radius_tensor, is_stop=True, material="bk7"
         )
-        optic_sys.add_surface(index=2, thickness=10)
-        optic_sys.add_surface(index=3)
+        optic_sys.surfaces.add(index=2, thickness=10)
+        optic_sys.surfaces.add(index=3)
         detector_size = RectangularAperture(
             x_max=2.5, x_min=-2.5, y_max=2.5, y_min=-2.5
         )
-        optic_sys.surface_group.surfaces[-1].aperture = detector_size
-        optic_sys.add_wavelength(0.55)
-        optic_sys.set_field_type("angle")
-        optic_sys.add_field(y=0)
+        optic_sys.surfaces[-1].aperture = detector_size
+        optic_sys.wavelengths.add(0.55)
+        optic_sys.fields.set_type("angle")
+        optic_sys.fields.add(y=0)
         optic_sys.set_aperture("EPD", 5.0)
 
         user_rays = _create_square_grid_rays(10, -2.5, 2.5)
@@ -2043,7 +2025,7 @@ class TestRadiantIntensity:
         loss = be.sum(int_map**2)
         loss.backward()
 
-        grad = optic_sys.surface_group.surfaces[1].geometry.radius.grad
+        grad = optic_sys.surfaces[1].geometry.radius.grad
         assert grad is not None
         assert be.to_numpy(grad) != 0
 
@@ -2077,11 +2059,13 @@ class TestCookeTripletBestFitRayFan:
         """
         cooke_triplet = CookeTriplet()
         num_points = 33
-        
+
         # Perform both standard and best-fit analyses for comparison
-        fan_best_fit = analysis.BestFitRayFan(cooke_triplet, num_points=num_points, num_rays_for_fit=5)
+        fan_best_fit = analysis.BestFitRayFan(
+            cooke_triplet, num_points=num_points, num_rays_for_fit=5
+        )
         fan_standard = analysis.RayFan(cooke_triplet, num_points=num_points)
-        
+
         data_best_fit = fan_best_fit.data
         data_standard = fan_standard.data
 
@@ -2092,19 +2076,21 @@ class TestCookeTripletBestFitRayFan:
         assert len(data_best_fit["Py"]) == num_points
 
         # Check data for an off-axis field and primary wavelength
-        field_key = f"{cooke_triplet.fields.get_field_coords()[1]}" # e.g., "(0.0, 0.7)"
+        field_key = (
+            f"{cooke_triplet.fields.get_field_coords()[1]}"  # e.g., "(0.0, 0.7)"
+        )
         wave_key = f"{cooke_triplet.primary_wavelength}"
 
         x_best_fit = data_best_fit[field_key][wave_key]["x"]
         x_standard = data_standard[field_key][wave_key]["x"]
-        
+
         y_best_fit = data_best_fit[field_key][wave_key]["y"]
         y_standard = data_standard[field_key][wave_key]["y"]
 
         # Assert that the data is valid (not all NaN)
         assert not be.all(be.isnan(x_best_fit))
         assert not be.all(be.isnan(y_best_fit))
-        
+
         # Crucially, assert that the best-fit data is similar to the standard ray fan data
         assert_allclose(x_best_fit, x_standard)
         assert_allclose(y_best_fit[0], -0.0268906245)
@@ -2115,8 +2101,8 @@ class TestCookeTripletBestFitRayFan:
         fig, axes = ray_fan.view()
         assert fig is not None
         assert len(axes) > 0
-        assert isinstance(fig, plt.Figure)
-        assert all(isinstance(ax, plt.Axes) for ax in axes)
+        assert isinstance(fig, Figure)
+        assert all(isinstance(ax, Axes) for ax in axes)
         plt.close(fig)
 
     def test_remove_distortion_with_invalid_central_ray(self, set_test_backend):
@@ -2129,21 +2115,25 @@ class TestCookeTripletBestFitRayFan:
         # We don't need a real optic, just the structure to call the method
         mock_optic = MagicMock()
         mock_optic.primary_wavelength = 0.55
-        
+
         # Instantiate RayFan, it will be our object under test
         fan = analysis.BestFitRayFan(mock_optic, num_points=5)
-        fan.fields = [(0.0, 0.7)]
-        fan.wavelengths = [0.55]
+        fan.fields = [FieldPoint(coord=(0.0, 0.7), weight=1.0)]
+        fan.wavelengths = [WavelengthPoint(value=0.55, weight=1.0)]
 
         # 2. Manually construct the input data dictionary
         center_idx = fan.num_points // 2  # This will be index 2 for num_points=5
-        
+
         # Create intensity arrays where the central ray has zero intensity
         intensity_with_obscuration = be.array([1.0, 1.0, 0.0, 1.0, 1.0])
-        
+
         # Create coordinate arrays with known values
-        x_coords = be.array([10.0, 20.0, 999.0, 30.0, 40.0]) # 999 is a dummy for the invalid ray
-        y_coords = be.array([-4.0, -2.0, 888.0, 2.0, 4.0])   # 888 is a dummy for the invalid ray
+        x_coords = be.array(
+            [10.0, 20.0, 999.0, 30.0, 40.0]
+        )  # 999 is a dummy for the invalid ray
+        y_coords = be.array(
+            [-4.0, -2.0, 888.0, 2.0, 4.0]
+        )  # 888 is a dummy for the invalid ray
 
         fan.data = {
             "(0.0, 0.7)": {
@@ -2165,7 +2155,7 @@ class TestCookeTripletBestFitRayFan:
         # Expected y_offset = mean([-4, -2, 2, 4]) = 0
         expected_x_offset = 25.0
         expected_y_offset = 0.0
-        
+
         expected_x_final = x_coords - expected_x_offset
         expected_y_final = y_coords - expected_y_offset
 

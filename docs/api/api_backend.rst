@@ -8,6 +8,7 @@ computational engines for ray tracing and other calculations.
    :toctree: backend/
    :caption: Backend Modules
 
+   backend.base
    backend.numpy_backend
    backend.torch_backend
    backend.utils

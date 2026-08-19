@@ -18,6 +18,7 @@ properties of the optical system and provides interfaces to core functionalities
    distribution
    jones
    pickup
+   plugins
    scatter
    utils
    wavelength

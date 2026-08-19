@@ -70,6 +70,19 @@ class OddAsphere(EvenAsphere):
     def __str__(self):
         return "Odd Asphere"
 
+    def scale(self, scale_factor: float):
+        """Scale the geometry parameters.
+
+        Args:
+            scale_factor (float): The factor by which to scale the geometry.
+        """
+        # Skip EvenAsphere.scale as it incorrectly scales coefficients for OddAsphere
+        # Call the next class in MRO after EvenAsphere (NewtonRaphson -> Standard)
+        super(EvenAsphere, self).scale(scale_factor)
+        for i in range(len(self.coefficients)):
+            # C_i' = C_i * s^(1 - (i+1))
+            self.coefficients[i] *= scale_factor ** (1 - (i + 1))
+
     def sag(self, x=0, y=0):
         """Calculates the sag of the asphere at the given coordinates.
 
@@ -84,7 +97,7 @@ class OddAsphere(EvenAsphere):
         r2 = be.array(x**2 + y**2)
         r = be.sqrt(r2)
         z = r2 / (self.radius * (1 + be.sqrt(1 - (1 + self.k) * r2 / self.radius**2)))
-        for i, Ci in enumerate(self.c):
+        for i, Ci in enumerate(self.coefficients):
             z = z + Ci * r ** (i + 1)
 
         return z
@@ -111,7 +124,7 @@ class OddAsphere(EvenAsphere):
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            for i, Ci in enumerate(self.c):
+            for i, Ci in enumerate(self.coefficients):
                 x_term = (i + 1) * x * Ci * r ** (i - 1)
                 y_term = (i + 1) * y * Ci * r ** (i - 1)
 
@@ -128,3 +141,12 @@ class OddAsphere(EvenAsphere):
         nz = -1 / mag
 
         return nx, ny, nz
+
+    def flip(self):
+        """Flip the geometry.
+
+        Changes the sign of the radius of curvature and the signs of coefficients.
+        The conic constant remains unchanged.
+        """
+        self.radius = -self.radius
+        self.coefficients = [-c for c in self.coefficients]

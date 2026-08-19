@@ -1,15 +1,19 @@
+from __future__ import annotations
+
+from contextlib import nullcontext as does_not_raise
 from unittest.mock import patch
 
 import matplotlib
 import matplotlib.pyplot as plt
-import optiland.backend as be
 import pytest
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 
-from contextlib import nullcontext as does_not_raise
-
+import optiland.backend as be
 from optiland.psf import FFTPSF
 from optiland.psf.fft import calculate_grid_size
 from optiland.samples.objectives import CookeTriplet
+
 from .utils import assert_allclose
 
 matplotlib.use("Agg")  # use non-interactive backend for testing
@@ -138,8 +142,8 @@ def test_view(projection, log, make_fftpsf, set_test_backend):
     fig, ax = fftpsf.view(projection=projection, log=log)
     assert fig is not None
     assert ax is not None
-    assert isinstance(fig, plt.Figure)
-    assert isinstance(ax, plt.Axes)
+    assert isinstance(fig, Figure)
+    assert isinstance(ax, Axes)
     plt.close(fig)
 
 
@@ -193,7 +197,7 @@ def test_view_oversampling(projection, make_fftpsf):
 
 def test_get_units_finite_obj(make_fftpsf):
     def tweak(optic):
-        optic.surface_group.surfaces[0].geometry.cs.z = -be.array(1e6)
+        optic.surfaces[0].geometry.cs.z = -be.array(1e6)
 
     fftpsf = make_fftpsf(field=(0, 1), tweak_optic=tweak)
     image = be.zeros((128, 128))
@@ -213,12 +217,11 @@ def test_psf_log_tick_formatter(make_fftpsf):
 
 def test_invalid_working_FNO(make_fftpsf):
     def tweak(optic):
-        optic.surface_group.surfaces[0].geometry.cs.z = -be.array(1e100)
+        optic.surfaces[0].geometry.cs.z = -be.array(1e100)
 
-    fftpsf = make_fftpsf(field=(0, 1), tweak_optic=tweak)
+    # Error now surfaces at construction, not at .view().
     with pytest.raises(ValueError):
-        fig, ax = fftpsf.view()
-        plt.close(fig)
+        make_fftpsf(field=(0, 1), tweak_optic=tweak)
 
 
 def test_interpolate_zoom_factor_one(make_fftpsf):

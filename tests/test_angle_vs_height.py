@@ -1,17 +1,21 @@
 """Tests for the Incident Angle vs. Height Plot Analysis module."""
 
-from unittest.mock import patch, MagicMock
+from __future__ import annotations
+
+from unittest.mock import patch
 
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 
 import optiland.backend as be
 from optiland.analysis.angle_vs_height import (
+    BaseAngleVsHeightAnalysis,
     FieldIncidentAngleVsHeight,
     PupilIncidentAngleVsHeight,
-    BaseAngleVsHeightAnalysis,
 )
 from optiland.samples.objectives import CookeTriplet
 
@@ -43,7 +47,7 @@ class TestPupilIncidentAngleVsHeight:
         assert analysis.optic is cooke_triplet
         assert analysis.surface_idx == -2
         assert analysis.axis == 0
-        assert analysis.wavelengths == [0.55]
+        assert [wp.value for wp in analysis.wavelengths] == [0.55]
         assert analysis.field == (0.1, 0.2)
         assert analysis.num_points == 64
 
@@ -135,7 +139,9 @@ class TestFieldIncidentAngleVsHeight:
         assert analysis.optic is cooke_triplet
         assert analysis.surface_idx == -1
         assert analysis.axis == 1
-        assert analysis.wavelengths == [cooke_triplet.primary_wavelength]
+        assert [wp.value for wp in analysis.wavelengths] == [
+            cooke_triplet.primary_wavelength
+        ]
         assert analysis.pupil == (0.0, 0.0)
         assert analysis.num_points == 128
 
@@ -206,8 +212,8 @@ class TestFieldIncidentAngleVsHeight:
         fig, ax = analysis.view()
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
 
@@ -250,16 +256,16 @@ class TestAngleVsHeightErrors:
             # Case 1: Field is scanned (PupilIncidentAngleVsHeight)
             pupil_scan_analysis = PupilIncidentAngleVsHeight(cooke_triplet, axis=0)
             pupil_scan_analysis.view()
-            # Get the keyword arguments from the last call to the mock
-            kwargs = mock_plot.call_args.kwargs
-            assert "Normalized Pupil Coordinate (Px)" in kwargs["color_label"]
+            # Get the plot spec passed to the last call to the mock
+            plot_spec = mock_plot.call_args.args[0]
+            assert "Normalized Pupil Coordinate (Px)" in plot_spec.color_label
 
             mock_plot.reset_mock()
 
             # Case 2: Pupil is scanned (FieldIncidentAngleVsHeight)
             field_scan_analysis = FieldIncidentAngleVsHeight(cooke_triplet, axis=1)
             field_scan_analysis.view()
-            kwargs = mock_plot.call_args.kwargs
-            assert "Normalized Field Coordinate (Hy)" in kwargs["color_label"]
+            plot_spec = mock_plot.call_args.args[0]
+            assert "Normalized Field Coordinate (Hy)" in plot_spec.color_label
 
         plt.close("all")

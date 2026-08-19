@@ -9,13 +9,21 @@ Kramer Harrison, 2025
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Literal
+
 import matplotlib.pyplot as plt
 import numpy as np
 
 from optiland import backend as be
 from optiland.zernike import ZernikeFringe, ZernikeNoll, ZernikeStandard
 
-ZERNIKE_CLASSES = {
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
+
+    from optiland._types import BEArray, ScalarOrArray
+
+ZERNIKE_CLASSES: dict[str, type[ZernikeFringe | ZernikeStandard | ZernikeNoll]] = {
     "fringe": ZernikeFringe,
     "standard": ZernikeStandard,
     "noll": ZernikeNoll,
@@ -48,10 +56,10 @@ class ZernikeFit:
 
     def __init__(
         self,
-        x,
-        y,
-        z,
-        zernike_type: str = "fringe",
+        x: ScalarOrArray,
+        y: ScalarOrArray,
+        z: ScalarOrArray,
+        zernike_type: Literal["fringe", "standard", "noll"] = "fringe",
         num_terms: int = 36,
     ):
         # Convert inputs to backend tensors and flatten
@@ -76,13 +84,15 @@ class ZernikeFit:
                 f"Choose from: {list(ZERNIKE_CLASSES)}"
             )
         self.zernike_type = zernike_type
-        self.zernike = ZERNIKE_CLASSES[zernike_type](be.ones(num_terms))
+        self.zernike: ZernikeFringe | ZernikeStandard | ZernikeNoll = ZERNIKE_CLASSES[
+            zernike_type
+        ](be.ones([num_terms]))
 
         # Fit coefficients
         self._fit()
 
     @property
-    def coeffs(self):
+    def coeffs(self) -> BEArray:
         """
         Tensor: The fitted Zernike coefficients.
         """
@@ -109,12 +119,12 @@ class ZernikeFit:
 
     def view(
         self,
-        fig_to_plot_on: plt.Figure = None,
+        fig_to_plot_on: Figure | None = None,
         projection: str = "2d",
         num_points: int = 128,
         figsize: tuple[float, float] = (7, 5.5),
         z_label: str = "OPD (waves)",
-    ) -> tuple[plt.Figure, plt.Axes]:
+    ) -> tuple[Figure, Axes]:
         """
         Visualize the fitted Zernike surface.
 
@@ -138,9 +148,9 @@ class ZernikeFit:
             current_fig = fig_to_plot_on
             current_fig.clear()
             ax = (
-                current_fig.add_subplot(111, figsize=figsize)
+                current_fig.add_subplot(111)
                 if projection == "2d"
-                else current_fig.add_subplot(111, figsize=figsize, projection="3d")
+                else current_fig.add_subplot(111, projection="3d")
             )
         else:
             current_fig, ax = (
@@ -179,7 +189,7 @@ class ZernikeFit:
 
     def view_residual(
         self,
-        fig_to_plot_on: plt.Figure = None,
+        fig_to_plot_on: Figure | None = None,
         figsize: tuple[float, float] = (7, 5.5),
         z_label: str = "Residual (waves)",
     ):
@@ -206,7 +216,7 @@ class ZernikeFit:
         if is_gui_embedding:
             current_fig = fig_to_plot_on
             current_fig.clear()
-            ax = current_fig.add_subplot(111, figsize=figsize)
+            ax = current_fig.add_subplot(111)
 
         else:
             current_fig, ax = plt.subplots(figsize=figsize)
@@ -228,9 +238,7 @@ class ZernikeFit:
             current_fig.canvas.draw_idle()
         return current_fig, ax
 
-    def _plot_2d(
-        self, fig: plt.Figure, ax: plt.Axes, z: np.ndarray, z_label: str
-    ) -> None:
+    def _plot_2d(self, fig: Figure, ax: Axes, z: np.ndarray, z_label: str) -> None:
         """Plot a 2D representation of the given data.
 
         Args:
@@ -250,8 +258,8 @@ class ZernikeFit:
 
     def _plot_3d(
         self,
-        fig: plt.Figure,
-        ax: plt.Axes,
+        fig: Figure,
+        ax: Axes,
         x: np.ndarray,
         y: np.ndarray,
         z: np.ndarray,
@@ -260,8 +268,8 @@ class ZernikeFit:
         """Plot a 3D surface plot of the given data.
 
         Args:
-            fig (plt.Figure): The figure to plot on.
-            ax (plt.Axes): The axes to plot on.
+            fig (Figure): The figure to plot on.
+            ax (Axes): The axes to plot on.
             x (numpy.ndarray): Array of x-coordinates.
             y (numpy.ndarray): Array of y-coordinates.
             z (numpy.ndarray): Array of z-coordinates.

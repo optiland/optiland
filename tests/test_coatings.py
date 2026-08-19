@@ -1,9 +1,10 @@
-from copy import deepcopy
+from __future__ import annotations
 
-import optiland.backend as be
 import pytest
 
+import optiland.backend as be
 from optiland import coatings, materials, rays
+
 from .utils import assert_allclose
 
 
@@ -128,6 +129,21 @@ class TestSimpleCoating:
             "reflectance": 0.5,
         }
 
+    def test_from_dict(self, set_test_backend):
+        coating_dict = {
+            "type": "SimpleCoating",
+            "transmittance": 0.3,
+            "reflectance": 0.5,
+        }
+        coating = coatings.SimpleCoating.from_dict(coating_dict)
+        assert coating.transmittance == 0.3
+        assert coating.reflectance == 0.5
+
+        # Also test BaseCoating.from_dict
+        base_coating = coatings.BaseCoating.from_dict(coating_dict)
+        assert base_coating.transmittance == 0.3
+        assert base_coating.reflectance == 0.5
+
 
 class TestFresnelCoating:
     def test_reflect(self, set_test_backend, rays_parallel_polarized):
@@ -181,3 +197,109 @@ class TestFresnelCoating:
         coating_dict = coating.to_dict()
         coating2 = coatings.FresnelCoating.from_dict(coating_dict)
         assert coating2.to_dict() == coating.to_dict()
+
+
+class TestPolarizerCoating:
+    def test_init(self, set_test_backend):
+        coating = coatings.PolarizerCoating(axis=(0.0, 1.0, 0.0))
+        assert coating.axis == (0.0, 1.0, 0.0)
+        assert coating.jones is not None
+
+    def test_to_dict(self, set_test_backend):
+        coating = coatings.PolarizerCoating(axis=(0.0, 1.0, 0.0))
+        assert coating.to_dict() == {
+            "type": "PolarizerCoating",
+            "axis": [0.0, 1.0, 0.0],
+        }
+
+    def test_from_dict(self, set_test_backend):
+        coating_dict = {
+            "type": "PolarizerCoating",
+            "axis": (0.0, 1.0, 0.0),
+        }
+        coating = coatings.PolarizerCoating.from_dict(coating_dict)
+        assert coating.axis == (0.0, 1.0, 0.0)
+
+        # test fallback
+        coating_dict_2 = {"type": "PolarizerCoating"}
+        coating2 = coatings.PolarizerCoating.from_dict(coating_dict_2)
+        assert coating2.axis == (1.0, 0.0, 0.0)
+
+
+class TestRetarderCoating:
+    def test_init(self, set_test_backend):
+        coating = coatings.RetarderCoating(retardance=1.57, axis=(0.0, 1.0, 0.0))
+        assert coating.retardance == 1.57
+        assert coating.axis == (0.0, 1.0, 0.0)
+        assert coating.jones is not None
+
+    def test_to_dict(self, set_test_backend):
+        coating = coatings.RetarderCoating(retardance=1.57, axis=(0.0, 1.0, 0.0))
+        assert coating.to_dict() == {
+            "type": "RetarderCoating",
+            "retardance": 1.57,
+            "axis": [0.0, 1.0, 0.0],
+        }
+
+    def test_from_dict(self, set_test_backend):
+        coating_dict = {
+            "type": "RetarderCoating",
+            "retardance": 1.57,
+            "axis": (0.0, 1.0, 0.0),
+        }
+        coating = coatings.RetarderCoating.from_dict(coating_dict)
+        assert coating.retardance == 1.57
+        assert coating.axis == (0.0, 1.0, 0.0)
+
+        # test fallback
+        coating_dict_2 = {"type": "RetarderCoating", "retardance": 1.57}
+        coating2 = coatings.RetarderCoating.from_dict(coating_dict_2)
+        assert coating2.axis == (1.0, 0.0, 0.0)
+
+
+class TestThinFilmCoatings:
+    def test_jones_thin_film_matrix_transmit_and_reflect(
+        self, set_test_backend, rays_parallel_polarized
+    ):
+        air = materials.IdealMaterial(n=1.0)
+        glass = materials.IdealMaterial(n=1.5)
+        stack = coatings.ThinFilmStack(air, glass)
+        stack.add_layer_nm(materials.IdealMaterial(n=1.3), 120.0, name="L1")
+
+        jones_tf = coatings.JonesThinFilm(stack)
+
+        j_transmit = jones_tf.calculate_matrix(rays_parallel_polarized, reflect=False)
+        j_reflect = jones_tf.calculate_matrix(rays_parallel_polarized, reflect=True)
+
+        assert j_transmit.shape == (10, 3, 3)
+        assert j_reflect.shape == (10, 3, 3)
+
+    def test_thin_film_coating_init_and_interaction(
+        self, set_test_backend, rays_parallel_polarized
+    ):
+        air = materials.IdealMaterial(n=1.0)
+        glass = materials.IdealMaterial(n=1.5)
+        layer_mat = materials.IdealMaterial(n=1.3)
+
+        coating = coatings.ThinFilmCoating(
+            material_pre=air,
+            material_post=glass,
+            layers=[(layer_mat, 95.0, "L1")],
+        )
+
+        assert len(coating.stack.layers) == 1
+        assert coating.jones is not None
+
+        nx = be.zeros_like(rays_parallel_polarized.x)
+        ny = be.zeros_like(rays_parallel_polarized.y)
+        nz = be.ones_like(rays_parallel_polarized.z)
+
+        state = rays.PolarizationState(is_polarized=False)
+        rays_r = coating.reflect(rays_parallel_polarized, nx, ny, nz)
+        rays_r.update_intensity(state)
+
+        rays_t = coating.transmit(rays_parallel_polarized, nx, ny, nz)
+        rays_t.update_intensity(state)
+
+        assert be.all(rays_r.i >= 0)
+        assert be.all(rays_t.i >= 0)

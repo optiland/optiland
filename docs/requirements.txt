@@ -2,6 +2,6 @@ sphinx==7.4.7
 sphinx-rtd-theme==2.0.0
 nbsphinx==0.9.5
 sphinx-gallery==0.17.1
-Pygments==2.18.0
+Pygments==2.20.0
 ipython==8.26.0
 pandoc

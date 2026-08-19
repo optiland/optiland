@@ -18,6 +18,7 @@ that require a numerical solution to find the intersection point with a ray.
    geometries.forbes
    geometries.odd_asphere
    geometries.newton_raphson
+   geometries.nurbs
    geometries.plane
    geometries.plane_grating
    geometries.polynomial

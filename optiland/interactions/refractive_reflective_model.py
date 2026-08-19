@@ -19,13 +19,15 @@ if TYPE_CHECKING:
 class RefractiveReflectiveModel(BaseInteractionModel):
     """Interaction model for standard refraction and reflection."""
 
+    interaction_type = "refractive_reflective"
+
     def to_dict(self):
         """Returns a dictionary representation of the model."""
         return super().to_dict()
 
     def flip(self):
         """Flip the interaction model."""
-        self.material_pre, self.material_post = self.material_post, self.material_pre
+        pass
 
     def interact_real_rays(self, rays: RealRays) -> RealRays:
         """Interact with real rays, causing refraction or reflection.

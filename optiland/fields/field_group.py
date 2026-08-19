@@ -8,9 +8,14 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
-import optiland.backend as be
+from typing import TYPE_CHECKING
 
-from .field import Field
+import optiland.backend as be
+from optiland.fields.field import Field
+from optiland.fields.field_types import BaseFieldDefinition
+
+if TYPE_CHECKING:
+    from optiland._types import ScalarOrArray
 
 
 class FieldGroup:
@@ -31,7 +36,30 @@ class FieldGroup:
 
     def __init__(self):
         self.fields = []
+        self.field_definition: BaseFieldDefinition | None = None
         self.telecentric = False
+
+    def require_definition(self) -> BaseFieldDefinition:
+        """Return the field definition, or raise if none has been set.
+
+        Field coordinates cannot be interpreted without a field type, so
+        ray tracing fails with an opaque ``AttributeError`` if this is
+        skipped. This turns that into an actionable message.
+
+        Returns:
+            The active field definition.
+
+        Raises:
+            ValueError: If no field type has been set on the system.
+        """
+        if self.field_definition is None:
+            raise ValueError(
+                "No field type is defined on the optical system, so field "
+                "coordinates cannot be interpreted. Set one with "
+                "lens.fields.set_type('angle') for an object at infinity, or "
+                "lens.fields.set_type('object_height') for a finite object."
+            )
+        return self.field_definition
 
     @property
     def x_fields(self):
@@ -56,11 +84,22 @@ class FieldGroup:
     @property
     def max_field(self):
         """float: Maximum radial field value."""
+        if not self.fields:
+            return 0.0
         return be.max(be.sqrt(self.x_fields**2 + self.y_fields**2))
 
     @property
     def num_fields(self):
         """int: number of fields in field group"""
+        return len(self.fields)
+
+    def __getitem__(self, index):
+        return self.fields[index]
+
+    def __iter__(self):
+        return iter(self.fields)
+
+    def __len__(self):
         return len(self.fields)
 
     @property
@@ -104,7 +143,7 @@ class FieldGroup:
         vy_new = result[..., 1]
         return vx_new, vy_new
 
-    def get_field_coords(self):
+    def get_field_coords(self) -> list[tuple[ScalarOrArray, ScalarOrArray]]:
         """Returns the coordinates of the fields.
 
         If the maximum field size is 0, it returns a single coordinate (0, 0).
@@ -112,7 +151,7 @@ class FieldGroup:
         based on the maximum field size.
 
         Returns:
-            list[tuple[float, float]]: A list of tuples, where each tuple
+            A list of tuples, where each tuple
             contains the (normalized_x, normalized_y) coordinates of a field.
 
         """
@@ -124,16 +163,48 @@ class FieldGroup:
             for x, y in zip(self.x_fields, self.y_fields, strict=False)
         ]
 
-    def add_field(self, field):
+    @property
+    def weights(self) -> tuple[float, ...]:
+        """tuple[float, ...]: Weights for all fields as a tuple."""
+        return tuple(field.weight for field in self.fields)
+
+    def add(
+        self,
+        y: float,
+        x: float = 0.0,
+        vx: float = 0.0,
+        vy: float = 0.0,
+        weight: float = 1.0,
+    ):
         """Add a field to the list of fields.
 
         Args:
-            field: The field to be added.
+            y: The y-coordinate of the field.
+            x: The x-coordinate of the field.
+                Defaults to 0.0.
+            vx: The x-component of the field's vignetting
+                factor. Defaults to 0.0.
+            vy: The y-component of the field's vignetting
+                factor. Defaults to 0.0.
+            weight: Non-negative relative importance scalar (default 1.0). A
+                weight of 0.0 means this field is excluded from optimization
+                and weighted analysis but is still present in standalone
+                analysis outputs. Negative values raise ValueError.
 
         """
-        self.fields.append(field)
+        new_field = Field(x, y, vx, vy, weight)
+        self.fields.append(new_field)
 
-    def get_field(self, field_number):
+    def set_type(self, field_type: str) -> None:
+        """Set the type of field used in the optical system.
+
+        Args:
+            field_type: The type of field, e.g., 'angle',
+                'object_height', or 'paraxial_image_height'.
+        """
+        self.field_definition = BaseFieldDefinition.create(field_type)
+
+    def get_field(self, field_number: int) -> Field:
         """Retrieve the field at the specified field_number.
 
         Args:
@@ -147,6 +218,18 @@ class FieldGroup:
 
         """
         return self.fields[field_number]
+
+    def remove(self, field_number: int) -> None:
+        """Remove the field at the specified field_number.
+
+        Args:
+            field_number (int): The index of the field to remove.
+
+        Raises:
+            IndexError: If the field_number is out of range.
+
+        """
+        self.fields.pop(field_number)
 
     def set_telecentric(self, is_telecentric):
         """Specify whether the system is telecentric in object space.
@@ -165,10 +248,16 @@ class FieldGroup:
             dict: A dictionary representation of the field group.
 
         """
-        return {
+        data = {
             "fields": [field.to_dict() for field in self.fields],
             "telecentric": self.telecentric,
+            "field_definition": (
+                self.field_definition.to_dict()
+                if self.field_definition is not None
+                else None
+            ),
         }
+        return data
 
     @classmethod
     def from_dict(cls, data):
@@ -183,6 +272,17 @@ class FieldGroup:
         """
         field_group = cls()
         for field_dict in data["fields"]:
-            field_group.add_field(Field.from_dict(field_dict))
+            field_group.add(
+                y=field_dict.get("y", 0.0),
+                x=field_dict.get("x", 0.0),
+                vx=field_dict.get("vx", 0.0),
+                vy=field_dict.get("vy", 0.0),
+                weight=field_dict.get("weight", 1.0),
+            )
         field_group.set_telecentric(data["telecentric"])
+
+        if data.get("field_definition"):
+            field_group.field_definition = BaseFieldDefinition.from_dict(
+                data["field_definition"]
+            )
         return field_group

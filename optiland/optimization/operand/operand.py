@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from optiland._suggest import did_you_mean
 from optiland.optimization.operand.aberration import AberrationOperand
 from optiland.optimization.operand.lens import LensOperand
 from optiland.optimization.operand.paraxial import ParaxialOperand
@@ -72,6 +73,7 @@ METRIC_DICT = {
     "real_x_intercept_lcs": RayOperand.x_intercept_lcs,
     "real_y_intercept_lcs": RayOperand.y_intercept_lcs,
     "real_z_intercept_lcs": RayOperand.z_intercept_lcs,
+    "clearance": RayOperand.clearance,
     "real_L": RayOperand.L,
     "real_M": RayOperand.M,
     "real_N": RayOperand.N,
@@ -114,6 +116,13 @@ class OperandRegistry:
             func (function): The function to be registered.
             overwrite (bool): Whether to overwrite an existing registration.
 
+        Example:
+            >>> def my_operand(optic, surface_number):
+            ...     return optic.surfaces[surface_number].geometry.radius
+            >>> operand_registry.register("my_radius", my_operand)
+            >>> # Now usable in OptimizationProblem:
+            >>> # problem.add_operand("my_radius", target=10.0, input_data={...})
+
         """
         if name in self._registry and not overwrite:
             raise ValueError(f'Operand "{name}" is already registered.')
@@ -136,6 +145,10 @@ class OperandRegistry:
 
         """
         return name in self._registry
+
+    def __iter__(self):
+        """Iterate over the registered operand names."""
+        return iter(self._registry)
 
     def __repr__(self):
         return f"OperandRegistry({list(self._registry.keys())})"
@@ -206,7 +219,12 @@ class Operand:
         metric_function = operand_registry.get(self.operand_type)
         if metric_function:
             return metric_function(**self.input_data)
-        raise ValueError(f"Unknown operand type: {self.operand_type}")
+        raise ValueError(
+            f"Unknown operand type {self.operand_type!r}."
+            f"{did_you_mean(str(self.operand_type), operand_registry)} "
+            "List the registered operands with "
+            "list(optiland.optimization.operand_registry)."
+        )
 
     def delta_target(self):
         """Calculate the difference between the value and target"""
@@ -230,6 +248,50 @@ class Operand:
         if self.min_val is not None or self.max_val is not None:
             return self.delta_ineq()
         raise ValueError(f"{self.operand_type} operand cannot compute delta")
+
+    def effective_weight(self, optic=None) -> float:
+        """Return the total scaling factor this operand contributes.
+
+        This is ``operand.weight × field_weight × wavelength_weight``,
+        where field and wavelength weights come from the optic's current
+        field/wavelength definitions. If the operand references a field or
+        wavelength index, the corresponding weight is looked up from the
+        optic. User-specified raw coordinates default to weight=1.0.
+
+        The optic is resolved in the following order:
+
+            1. The ``optic`` argument (if provided).
+            2. ``self.input_data["optic"]`` (the standard operand convention).
+            3. Falls back to field_w = wl_w = 1.0 when no optic is available.
+
+        Args:
+            optic: The optic this operand will be evaluated against.  If
+                None, the optic is read from ``self.input_data``.
+
+        Returns:
+            The effective scalar multiplier for this operand's contribution.
+        """
+        import contextlib
+
+        if optic is None and self.input_data:
+            optic = self.input_data.get("optic")
+
+        field_w = 1.0
+        wl_w = 1.0
+
+        if optic is not None:
+            field_idx = self.input_data.get("field") if self.input_data else None
+            wl_idx = self.input_data.get("wavelength") if self.input_data else None
+
+            if field_idx is not None and isinstance(field_idx, int):
+                with contextlib.suppress(IndexError):
+                    field_w = optic.fields.fields[field_idx].weight
+
+            if wl_idx is not None and isinstance(wl_idx, int):
+                with contextlib.suppress(IndexError):
+                    wl_w = optic.wavelengths.wavelengths[wl_idx].weight
+
+        return self.weight * field_w * wl_w
 
     def fun(self):
         """Calculate the objective function value"""

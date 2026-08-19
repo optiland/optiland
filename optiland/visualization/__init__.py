@@ -1,3 +1,7 @@
+"""Visualization package for Optiland.
+
+Kramer Harrison, 2025
+"""
 # flake8: noqa
 
 from .analysis import SurfaceSagViewer

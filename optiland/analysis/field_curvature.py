@@ -7,12 +7,18 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import matplotlib.pyplot as plt
 import numpy as np
 
 import optiland.backend as be
 
 from .base import BaseAnalysis
+
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
 
 
 class FieldCurvature(BaseAnalysis):
@@ -42,8 +48,12 @@ class FieldCurvature(BaseAnalysis):
         super().__init__(optic, wavelengths)
 
     def view(
-        self, fig_to_plot_on: plt.Figure = None, figsize: tuple[float, float] = (8, 5.5)
-    ) -> tuple[plt.Figure, plt.Axes]:
+        self,
+        fig_to_plot_on: Figure | None = None,
+        figsize: tuple[float, float] = (8, 5.5),
+        *,
+        show: bool = True,
+    ) -> tuple[Figure, Axes]:
         """Displays a plot of the field curvature analysis.
 
         Args:
@@ -51,6 +61,8 @@ class FieldCurvature(BaseAnalysis):
                 If None, a new figure will be created. Defaults to None.
             figsize (tuple[float, float], optional): The size of the figure.
                 Defaults to (8, 5.5).
+            show (bool): If True (default), calls plt.show(). Set False for
+                headless use.
         Returns:
             tuple: The current figure and its axes.
         """
@@ -66,14 +78,14 @@ class FieldCurvature(BaseAnalysis):
         field = be.linspace(0, self.optic.fields.max_field, self.num_points)
         field_np = be.to_numpy(field)
 
-        for k, wavelength in enumerate(self.wavelengths):
+        for k, wp in enumerate(self.wavelengths):
             dk_np_tan = be.to_numpy(self.data[k][0])
             ax.plot(
                 dk_np_tan,
                 field_np,
                 f"C{k}",
                 zorder=10,
-                label=f"{wavelength:.4f} µm, Tangential",
+                label=f"{wp.value:.4f} µm, Tangential",
             )
             dk_np_sag = be.to_numpy(self.data[k][1])
             ax.plot(
@@ -81,7 +93,7 @@ class FieldCurvature(BaseAnalysis):
                 field_np,
                 f"C{k}--",
                 zorder=10,
-                label=f"{wavelength:.4f} µm, Sagittal",
+                label=f"{wp.value:.4f} µm, Sagittal",
             )
 
         ax.set_xlabel("Image Plane Delta (mm)")
@@ -99,6 +111,8 @@ class FieldCurvature(BaseAnalysis):
 
         if is_gui_embedding and hasattr(current_fig, "canvas"):
             current_fig.canvas.draw_idle()
+        if show and not is_gui_embedding:
+            plt.show()
         return current_fig, ax
 
     def _generate_data(self):
@@ -111,7 +125,8 @@ class FieldCurvature(BaseAnalysis):
 
         """
         data = []
-        for wavelength in self.wavelengths:
+        for wp in self.wavelengths:
+            wavelength = wp.value
             tangential = self._intersection_parabasal_tangential(wavelength)
             sagittal = self._intersection_parabasal_sagittal(wavelength)
 
@@ -139,17 +154,17 @@ class FieldCurvature(BaseAnalysis):
 
         self.optic.trace_generic(Hx, Hy, Px, Py, wavelength=wavelength)
 
-        M1 = self.optic.surface_group.M[-1, ::2]
-        N1 = self.optic.surface_group.N[-1, ::2]
+        M1 = self.optic.surfaces.M[-1, ::2]
+        N1 = self.optic.surfaces.N[-1, ::2]
 
-        M2 = self.optic.surface_group.M[-1, 1::2]
-        N2 = self.optic.surface_group.N[-1, 1::2]
+        M2 = self.optic.surfaces.M[-1, 1::2]
+        N2 = self.optic.surfaces.N[-1, 1::2]
 
-        y01 = self.optic.surface_group.y[-1, ::2]
-        z01 = self.optic.surface_group.z[-1, ::2]
+        y01 = self.optic.surfaces.y[-1, ::2]
+        z01 = self.optic.surfaces.z[-1, ::2]
 
-        y02 = self.optic.surface_group.y[-1, 1::2]
-        z02 = self.optic.surface_group.z[-1, 1::2]
+        y02 = self.optic.surfaces.y[-1, 1::2]
+        z02 = self.optic.surfaces.z[-1, 1::2]
 
         t1 = (M2 * z01 - M2 * z02 - N2 * y01 + N2 * y02) / (M1 * N2 - M2 * N1)
 
@@ -175,17 +190,17 @@ class FieldCurvature(BaseAnalysis):
 
         self.optic.trace_generic(Hx, Hy, Px, Py, wavelength=wavelength)
 
-        L1 = self.optic.surface_group.L[-1, ::2]
-        N1 = self.optic.surface_group.N[-1, ::2]
+        L1 = self.optic.surfaces.L[-1, ::2]
+        N1 = self.optic.surfaces.N[-1, ::2]
 
-        L2 = self.optic.surface_group.L[-1, 1::2]
-        N2 = self.optic.surface_group.N[-1, 1::2]
+        L2 = self.optic.surfaces.L[-1, 1::2]
+        N2 = self.optic.surfaces.N[-1, 1::2]
 
-        x01 = self.optic.surface_group.x[-1, ::2]
-        z01 = self.optic.surface_group.z[-1, ::2]
+        x01 = self.optic.surfaces.x[-1, ::2]
+        z01 = self.optic.surfaces.z[-1, ::2]
 
-        x02 = self.optic.surface_group.x[-1, 1::2]
-        z02 = self.optic.surface_group.z[-1, 1::2]
+        x02 = self.optic.surfaces.x[-1, 1::2]
+        z02 = self.optic.surfaces.z[-1, 1::2]
 
         t2 = (L2 * z01 - L2 * z02 - N2 * x01 + N2 * x02) / (L1 * N2 - L2 * N1)
 

@@ -11,60 +11,124 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from scipy.spatial.transform import Rotation as R
 
 import optiland.backend as be
 from optiland.rays import RealRays
 
+if TYPE_CHECKING:
+    import numpy as np
+    from numpy.typing import NDArray
+
+    from optiland._types import BEArray, ScalarOrArray
+
 
 class CoordinateSystem:
     """Represents a coordinate system in 3D space.
 
-    Args:
-        x (float): The x-coordinate of the origin.
-        y (float): The y-coordinate of the origin.
-        z (float): The z-coordinate of the origin.
-        rx (float): The rotation around the x-axis.
-        ry (float): The rotation around the y-axis.
-        rz (float): The rotation around the z-axis.
-        reference_cs (CoordinateSystem): The reference coordinate system.
-
     Attributes:
-        x (float): The x-coordinate of the origin.
-        y (float): The y-coordinate of the origin.
-        z (float): The z-coordinate of the origin.
-        rx (float): The rotation around the x-axis.
-        ry (float): The rotation around the y-axis.
-        rz (float): The rotation around the z-axis.
-        reference_cs (CoordinateSystem): The reference coordinate system.
-
+        x: The x-coordinate of the origin.
+        y: The y-coordinate of the origin.
+        z: The z-coordinate of the origin.
+        rx: The rotation around the x-axis.
+        ry: The rotation around the y-axis.
+        rz: The rotation around the z-axis.
+        reference_cs: The reference coordinate system.
     """
 
     def __init__(
         self,
-        x: float = 0,
-        y: float = 0,
-        z: float = 0,
-        rx: float = 0,
-        ry: float = 0,
-        rz: float = 0,
-        reference_cs: CoordinateSystem = None,
+        x: ScalarOrArray = 0,
+        y: ScalarOrArray = 0,
+        z: ScalarOrArray = 0,
+        rx: ScalarOrArray = 0,
+        ry: ScalarOrArray = 0,
+        rz: ScalarOrArray = 0,
+        reference_cs: CoordinateSystem | None = None,
     ):
-        self.x = be.array(x)
-        self.y = be.array(y)
-        self.z = be.array(z)
+        """Initialize a orthogonal coordinate system.
 
-        self.rx = be.array(rx)
-        self.ry = be.array(ry)
-        self.rz = be.array(rz)
+        Args:
+            x: The x-coordinate of the origin.
+            y: The y-coordinate of the origin.
+            z: The z-coordinate of the origin.
+            rx: The rotation around the x-axis.
+            ry: The rotation around the y-axis.
+            rz: The rotation around the z-axis.
+            reference_cs: The reference coordinate system.
+        """
+
+        self.x = x
+        self.y = y
+        self.z = z
+
+        self.rx = rx
+        self.ry = ry
+        self.rz = rz
 
         self.reference_cs = reference_cs
 
-    def localize(self, rays):
+    @property
+    def x(self) -> BEArray:
+        """The x-coordinate of the origin, as a backend array."""
+        return self._x
+
+    @x.setter
+    def x(self, value: ScalarOrArray) -> None:
+        self._x = be.array(value)
+
+    @property
+    def y(self) -> BEArray:
+        """The y-coordinate of the origin, as a backend array."""
+        return self._y
+
+    @y.setter
+    def y(self, value: ScalarOrArray) -> None:
+        self._y = be.array(value)
+
+    @property
+    def z(self) -> BEArray:
+        """The z-coordinate of the origin, as a backend array."""
+        return self._z
+
+    @z.setter
+    def z(self, value: ScalarOrArray) -> None:
+        self._z = be.array(value)
+
+    @property
+    def rx(self) -> BEArray:
+        """The rotation around the x-axis, as a backend array."""
+        return self._rx
+
+    @rx.setter
+    def rx(self, value: ScalarOrArray) -> None:
+        self._rx = be.array(value)
+
+    @property
+    def ry(self) -> BEArray:
+        """The rotation around the y-axis, as a backend array."""
+        return self._ry
+
+    @ry.setter
+    def ry(self, value: ScalarOrArray) -> None:
+        self._ry = be.array(value)
+
+    @property
+    def rz(self) -> BEArray:
+        """The rotation around the z-axis, as a backend array."""
+        return self._rz
+
+    @rz.setter
+    def rz(self, value: ScalarOrArray) -> None:
+        self._rz = be.array(value)
+
+    def localize(self, rays: RealRays):
         """Localizes the rays in the coordinate system.
 
         Args:
-            rays (RealRays): The rays to be localized.
+            rays: The rays to be localized.
 
         """
         if self.reference_cs:
@@ -78,11 +142,11 @@ class CoordinateSystem:
         if self.rx:
             rays.rotate_x(-self.rx)
 
-    def globalize(self, rays):
+    def globalize(self, rays: RealRays):
         """Globalizes the rays from the coordinate system.
 
         Args:
-            rays (RealRays): The rays to be globalized.
+            rays: The rays to be globalized.
 
         """
         if self.rx:
@@ -97,24 +161,22 @@ class CoordinateSystem:
             self.reference_cs.globalize(rays)
 
     @property
-    def position_in_gcs(self):
+    def position_in_gcs(self) -> tuple[BEArray, BEArray, BEArray]:
         """Returns the position of the coordinate system in the global coordinate
             system.
 
         Returns:
-            tuple: The x, y, and z coordinates of the position.
-
+            A tuple containing the x, y, and z coordinates of the position.
         """
         vector = RealRays(0, 0, 0, 0, 0, 1, 1, 1)
         self.globalize(vector)
         return vector.x, vector.y, vector.z
 
-    def get_rotation_matrix(self):
+    def get_rotation_matrix(self) -> BEArray:
         """Get the rotation matrix of the coordinate system
 
         Returns:
-            be.ndarray: The rotation matrix of the coordinate system.
-
+            The rotation matrix of the coordinate system.
         """
         rx, ry, rz = self.rx, self.ry, self.rz
 
@@ -134,12 +196,11 @@ class CoordinateSystem:
 
         return R
 
-    def get_effective_transform(self):
+    def get_effective_transform(self) -> tuple[BEArray, BEArray]:
         """Get the effective translation and rotation matrix of the CS
 
         Returns:
-            tuple: The effective translation and rotation matrix
-
+            A tuple containing the effective translation and rotation matrix
         """
         translation = be.array([self.x.item(), self.y.item(), self.z.item()])
         if self.reference_cs is None:
@@ -157,16 +218,15 @@ class CoordinateSystem:
 
         return eff_translation, eff_rot_mat
 
-    def get_effective_rotation_euler(self):
+    def get_effective_rotation_euler(self) -> NDArray[np.floating]:
         """Get the effective rotation in Euler angles.
 
         The Euler angles are returned in 'xyz' order.
 
         Returns:
-            np.ndarray: A NumPy array containing the effective rotation as Euler
+            A NumPy array containing the effective rotation as Euler
                 angles (rx, ry, rz). Note: This returns a NumPy array due to
                 the use of SciPy for the conversion.
-
         """
         _, eff_rot_mat = self.get_effective_transform()
         # Convert the effective rotation matrix back to Euler angles
@@ -175,34 +235,32 @@ class CoordinateSystem:
         matrix = be.to_numpy(eff_rot_mat)
         return R.from_matrix(matrix).as_euler("xyz")
 
-    def to_dict(self):
+    def to_dict(self) -> dict:
         """Convert the coordinate system to a dictionary.
 
         Returns:
-            dict: The dictionary representation of the coordinate system.
-
+            The dictionary representation of the coordinate system.
         """
         return {
-            "x": float(self.x),
-            "y": float(self.y),
-            "z": float(self.z),
-            "rx": float(self.rx),
-            "ry": float(self.ry),
-            "rz": float(self.rz),
+            "x": float(self.x.item()),
+            "y": float(self.y.item()),
+            "z": float(self.z.item()),
+            "rx": float(self.rx.item()),
+            "ry": float(self.ry.item()),
+            "rz": float(self.rz.item()),
             "reference_cs": self.reference_cs.to_dict() if self.reference_cs else None,
         }
 
     @classmethod
-    def from_dict(cls, data):
+    def from_dict(cls, data: dict) -> CoordinateSystem:
         """Create a coordinate system from a dictionary.
 
         Args:
-            data (dict): The dictionary representation of the coordinate
+            data: The dictionary representation of the coordinate
                 system.
 
         Returns:
-            CoordinateSystem: The coordinate system.
-
+            The coordinate system instance defined by the provided dictionary.
         """
         reference_cs = (
             cls.from_dict(data["reference_cs"]) if data["reference_cs"] else None

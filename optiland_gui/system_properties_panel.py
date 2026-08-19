@@ -10,6 +10,7 @@ tree to switch between different property editors.
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, Slot
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QHeaderView,
+    QLabel,
     QPushButton,
     QSizePolicy,
     QStackedWidget,
@@ -31,8 +33,22 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from optiland.fields import (
+    AngleField,
+    ObjectHeightField,
+    ParaxialImageHeightField,
+    RealImageHeightField,
+)
+
 if TYPE_CHECKING:
     from .optiland_connector import OptilandConnector
+
+_FIELD_TYPE_MAP: dict[type, str] = {
+    AngleField: "angle",
+    ObjectHeightField: "object_height",
+    ParaxialImageHeightField: "paraxial_image_height",
+    RealImageHeightField: "real_image_height",
+}
 
 
 class SystemPropertiesPanel(QWidget):
@@ -93,10 +109,12 @@ class SystemPropertiesPanel(QWidget):
         self.apertureEditor = ApertureEditor(self.connector)
         self.fieldsEditor = FieldsEditor(self.connector)
         self.wavelengthsEditor = WavelengthsEditor(self.connector)
+        self.polarizationEditor = PolarizationEditor(self.connector)
 
         self.add_nav_item("Aperture", self.apertureEditor)
         self.add_nav_item("Fields", self.fieldsEditor)
         self.add_nav_item("Wavelengths", self.wavelengthsEditor)
+        self.add_nav_item("Polarization", self.polarizationEditor)
 
     def add_nav_item(self, name, widget):
         """
@@ -129,6 +147,7 @@ class SystemPropertiesPanel(QWidget):
         self.apertureEditor.load_data()
         self.fieldsEditor.load_data()
         self.wavelengthsEditor.load_data()
+        self.polarizationEditor.load_data()
 
 
 class PropertyEditorBase(QWidget):
@@ -188,9 +207,7 @@ class ApertureEditor(PropertyEditorBase):
         layout.setSpacing(10)
 
         self.cmbApertureType = QComboBox()
-        self.cmbApertureType.addItems(
-            ["EPD", "imageFNO", "objectNA", "float_by_stop_size"]
-        )
+        self.cmbApertureType.addItems(self.connector.get_aperture_types())
         layout.addRow("Aperture Type:", self.cmbApertureType)
 
         self.spnApertureValue = QDoubleSpinBox()
@@ -259,7 +276,8 @@ class FieldsEditor(PropertyEditorBase):
         """Creates the field type dropdown menu."""
         form_layout = QFormLayout()
         self.cmbFieldType = QComboBox()
-        self.cmbFieldType.addItems(["angle", "object_height"])
+        for _display, key in self.connector.get_field_types():
+            self.cmbFieldType.addItem(_display, userData=key)
         form_layout.addRow("Field Type:", self.cmbFieldType)
         parent_layout.addLayout(form_layout)
 
@@ -291,14 +309,20 @@ class FieldsEditor(PropertyEditorBase):
         """Loads field data from the current optical system into the table."""
         self.is_loading = True
         optic = self.connector.get_optic()
-        if optic and optic.field_type:
-            self.cmbFieldType.setCurrentText(optic.field_type)
+        if optic and optic.fields and optic.fields.field_definition:
+            key = _FIELD_TYPE_MAP.get(type(optic.fields.field_definition))
+            if key is not None:
+                for i in range(self.cmbFieldType.count()):
+                    if self.cmbFieldType.itemData(i) == key:
+                        self.cmbFieldType.setCurrentIndex(i)
+                        break
 
         self.tableFields.setRowCount(0)
         if optic and optic.fields:
             num_fields = optic.fields.num_fields
             self.tableFields.setRowCount(num_fields)
             for i, field_obj in enumerate(optic.fields.fields):
+                self.tableFields.setVerticalHeaderItem(i, QTableWidgetItem(str(i)))
                 self.tableFields.setItem(i, 0, QTableWidgetItem(str(field_obj.x)))
                 self.tableFields.setItem(i, 1, QTableWidgetItem(str(field_obj.y)))
                 self.tableFields.setItem(i, 2, QTableWidgetItem(str(field_obj.vx)))
@@ -312,14 +336,17 @@ class FieldsEditor(PropertyEditorBase):
             return
         optic = self.connector.get_optic()
         if optic:
-            new_type = self.cmbFieldType.currentText()
+            new_type = self.cmbFieldType.currentData()
+            if new_type is None:
+                return
             try:
-                optic.set_field_type(new_type)
+                optic.fields.set_type(new_type)
                 self.connector.opticChanged.emit()
                 print(f"Field type changed to: {new_type}")
             except ValueError as e:
                 print(f"Field Type Error: {e}")
-                self.cmbFieldType.setCurrentText(optic.field_type)
+                # Revert UI to match model state
+                self.load_data()
 
     @Slot()
     def add_field(self):
@@ -334,7 +361,7 @@ class FieldsEditor(PropertyEditorBase):
                 else 0.0
             )
 
-            optic.add_field(y=y_val)
+            optic.fields.add(y=y_val)
             self.load_data()
             self.connector.opticChanged.emit()
             print("Field added.")
@@ -457,6 +484,7 @@ class WavelengthsEditor(PropertyEditorBase):
             num_wl = optic.wavelengths.num_wavelengths
             self.tableWavelengths.setRowCount(num_wl)
             for i, wl_obj in enumerate(optic.wavelengths.wavelengths):
+                self.tableWavelengths.setVerticalHeaderItem(i, QTableWidgetItem(str(i)))
                 self.tableWavelengths.setItem(
                     i, 0, QTableWidgetItem(f"{wl_obj.value:.4f}")
                 )
@@ -479,7 +507,7 @@ class WavelengthsEditor(PropertyEditorBase):
         optic = self.connector.get_optic()
         if optic:
             is_new_primary = optic.wavelengths.num_wavelengths == 0
-            optic.add_wavelength(0.6328, is_primary=is_new_primary, unit="um")
+            optic.wavelengths.add(0.6328, is_primary=is_new_primary, unit="um")
             self.load_data()
             self.connector.opticChanged.emit()
             print("Wavelength added.")
@@ -553,3 +581,176 @@ class WavelengthsEditor(PropertyEditorBase):
                 print("Wavelength table changes applied.")
         else:
             self.load_data()
+
+
+class PolarizationEditor(PropertyEditorBase):
+    """A widget for configuring the polarization state of the optical system.
+
+    Provides a combobox to select between Ignore, Unpolarized, or Polarized
+    and four numeric inputs for Ex, Ey, Phase X, and Phase Y.
+    Phase values are shown in degrees; they are converted to radians before
+    being passed to the core.
+
+    When mode is not "Polarized", all four spin boxes are disabled.
+    Validation errors are shown via an inline error label instead of a dialog.
+    """
+
+    def init_ui(self) -> None:
+        """Initializes the polarization editor UI."""
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(10)
+
+        layout_mode = QHBoxLayout()
+        layout_mode.addWidget(QLabel("Mode:"))
+        self.cmbMode = QComboBox()
+        self.cmbMode.addItems(["Ignore", "Unpolarized", "Polarized"])
+        layout_mode.addWidget(self.cmbMode)
+        layout_mode.addStretch()
+        main_layout.addLayout(layout_mode)
+
+        form = QFormLayout()
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setSpacing(8)
+
+        self.spnEx = self._make_spinbox()
+        self.spnEy = self._make_spinbox()
+        self.spnPhaseX = self._make_angle_spinbox()
+        self.spnPhaseY = self._make_angle_spinbox()
+
+        form.addRow("Ex:", self.spnEx)
+        form.addRow("Ey:", self.spnEy)
+        form.addRow("Phase X (°):", self.spnPhaseX)
+        form.addRow("Phase Y (°):", self.spnPhaseY)
+        main_layout.addLayout(form)
+
+        self.lblError = QLabel()
+        self.lblError.setWordWrap(True)
+        self.lblError.setStyleSheet("color: red;")
+        self.lblError.hide()
+        main_layout.addWidget(self.lblError)
+
+        self.btnApply = QPushButton("Apply Polarization")
+        main_layout.addWidget(self.btnApply)
+        main_layout.addStretch()
+
+        self.cmbMode.currentIndexChanged.connect(self._on_mode_changed)
+        self.btnApply.clicked.connect(self.apply_polarization)
+
+        self._set_inputs_enabled(False)
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _make_spinbox(self) -> QDoubleSpinBox:
+        """Return a QDoubleSpinBox suitable for Ex / Ey amplitude."""
+        spn = QDoubleSpinBox()
+        spn.setDecimals(6)
+        spn.setRange(-1e9, 1e9)
+        spn.setSingleStep(0.1)
+        return spn
+
+    def _make_angle_spinbox(self) -> QDoubleSpinBox:
+        """Return a QDoubleSpinBox suitable for phase angles in degrees."""
+        spn = QDoubleSpinBox()
+        spn.setDecimals(4)
+        spn.setRange(-360.0, 360.0)
+        spn.setSingleStep(1.0)
+        spn.setSuffix(" °")
+        return spn
+
+    def _set_inputs_enabled(self, enabled: bool) -> None:
+        """Enable or disable the four numeric spin boxes."""
+        for spn in (self.spnEx, self.spnEy, self.spnPhaseX, self.spnPhaseY):
+            spn.setEnabled(enabled)
+
+    # ------------------------------------------------------------------
+    # Slots
+    # ------------------------------------------------------------------
+
+    @Slot(int)
+    def _on_mode_changed(self, index: int) -> None:
+        """Enable/disable numeric inputs when the combo box changes."""
+        self._set_inputs_enabled(index == 2)
+        self.lblError.hide()
+
+    @Slot()
+    def load_data(self) -> None:
+        """Load the current polarization state from the optic into the UI."""
+        self.is_loading = True
+        optic = self.connector.get_optic()
+        self.lblError.hide()
+
+        if optic is None:
+            self.cmbMode.setCurrentIndex(0)
+            self._set_inputs_enabled(False)
+            self.is_loading = False
+            return
+
+        pol = optic.polarization
+        if pol == "ignore" or pol is None:
+            self.cmbMode.setCurrentIndex(0)
+            self._set_inputs_enabled(False)
+            self.spnEx.setValue(0.0)
+            self.spnEy.setValue(0.0)
+            self.spnPhaseX.setValue(0.0)
+            self.spnPhaseY.setValue(0.0)
+        elif hasattr(pol, "is_polarized"):
+            if pol.is_polarized:
+                self.cmbMode.setCurrentIndex(2)
+                self._set_inputs_enabled(True)
+                # Ex / Ey may be backend tensors; convert to plain float
+                self.spnEx.setValue(float(pol.Ex))
+                self.spnEy.setValue(float(pol.Ey))
+                self.spnPhaseX.setValue(math.degrees(float(pol.phase_x)))
+                self.spnPhaseY.setValue(math.degrees(float(pol.phase_y)))
+            else:
+                self.cmbMode.setCurrentIndex(1)
+                self._set_inputs_enabled(False)
+                self.spnEx.setValue(0.0)
+                self.spnEy.setValue(0.0)
+                self.spnPhaseX.setValue(0.0)
+                self.spnPhaseY.setValue(0.0)
+        else:
+            self.cmbMode.setCurrentIndex(0)
+            self._set_inputs_enabled(False)
+            self.spnEx.setValue(0.0)
+            self.spnEy.setValue(0.0)
+            self.spnPhaseX.setValue(0.0)
+            self.spnPhaseY.setValue(0.0)
+
+        self.is_loading = False
+
+    @Slot()
+    def apply_polarization(self) -> None:
+        """Read the form and apply the polarization state to the optic."""
+        if self.is_loading:
+            return
+        self.lblError.hide()
+
+        mode_idx = self.cmbMode.currentIndex()
+        if mode_idx == 0:
+            mode = "ignore"
+        elif mode_idx == 1:
+            mode = "unpolarized"
+        else:
+            mode = "polarized"
+
+        if mode == "polarized":
+            Ex = self.spnEx.value()
+            Ey = self.spnEy.value()
+            phase_x_deg = self.spnPhaseX.value()
+            phase_y_deg = self.spnPhaseY.value()
+        else:
+            Ex = Ey = phase_x_deg = phase_y_deg = None
+
+        try:
+            self.connector.set_polarization_state(
+                mode, Ex, Ey, phase_x_deg, phase_y_deg
+            )
+            # Reload to display the normalized values the core computed
+            self.load_data()
+        except ValueError as exc:
+            self.lblError.setText(str(exc))
+            self.lblError.show()

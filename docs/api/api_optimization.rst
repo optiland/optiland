@@ -6,6 +6,8 @@ provides a set of tools for optimizing optical systems. It includes a variety of
 such as gradient-based and evolutionary algorithms, as well as tools for defining optimization variables
 and objectives.
 
+For thin film and coating specific optimization (e.g., Needle Synthesis), see the :doc:`api_thin_film` module.
+
 The optimization module is divided into four subcategories:
 
 1. Core Functionalities - Problem definition and optimizers
@@ -26,6 +28,7 @@ Core Functionalities
    optimization.optimizer.scipy.differential_evolution
    optimization.optimizer.scipy.dual_annealing
    optimization.optimizer.scipy.least_squares
+   optimization.optimizer.scipy.orthogonal_descent
    optimization.optimizer.scipy.shgo
    optimization.optimizer.scipy.glass_expert
    optimization.optimizer.torch.base
@@ -68,6 +71,7 @@ The `optimization.variable` subpackage contains the following modules:
    optimization.variable.index
    optimization.variable.material
    optimization.variable.norm_radius
+   optimization.variable.nurbs
    optimization.variable.polynomial_coeff
    optimization.variable.radius
    optimization.variable.reciprocal_radius

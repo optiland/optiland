@@ -7,9 +7,15 @@ Kramer Harrison, 2025
 
 from __future__ import annotations
 
-from optiland.solves.chief_ray_height import ChiefRayHeightSolve
-from optiland.solves.marginal_ray_height import MarginalRayHeightSolve
+from optiland.solves.curvature import (
+    ChiefRayAngleCurvatureSolve,
+    MarginalRayAngleCurvatureSolve,
+)
 from optiland.solves.quick_focus import QuickFocusSolve
+from optiland.solves.thickness import (
+    ChiefRayHeightThicknessSolve,
+    MarginalRayHeightThicknessSolve,
+)
 
 
 class SolveFactory:
@@ -20,9 +26,15 @@ class SolveFactory:
     """
 
     _solve_map = {
-        "marginal_ray_height": MarginalRayHeightSolve,
+        "marginal_ray_height": MarginalRayHeightThicknessSolve,
+        "marginal_ray_height_thickness": MarginalRayHeightThicknessSolve,
         "quick_focus": QuickFocusSolve,
-        "chief_ray_height": ChiefRayHeightSolve,
+        "chief_ray_height": ChiefRayHeightThicknessSolve,
+        "chief_ray_height_thickness": ChiefRayHeightThicknessSolve,
+        "marginal_ray_angle": MarginalRayAngleCurvatureSolve,
+        "marginal_ray_angle_curvature": MarginalRayAngleCurvatureSolve,
+        "chief_ray_angle": ChiefRayAngleCurvatureSolve,
+        "chief_ray_angle_curvature": ChiefRayAngleCurvatureSolve,
     }
 
     @staticmethod

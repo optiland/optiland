@@ -9,12 +9,19 @@ Kramer Harrison, 2025
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import optiland.backend as be
 from optiland.distribution import create_distribution
 from optiland.rays import PolarizedRays, RayGenerator
+from optiland.raytrace.base import BaseRayTracer
+
+if TYPE_CHECKING:
+    from optiland._types import DistributionType
+    from optiland.distribution import BaseDistribution
 
 
-class RealRayTracer:
+class RealRayTracer(BaseRayTracer):
     """Class to trace real rays through an optical system
 
     This class is responsible for building rays (via a ray generator) and tracing these
@@ -25,10 +32,38 @@ class RealRayTracer:
     """
 
     def __init__(self, optic):
-        self.optic = optic
+        super().__init__(optic)
         self.ray_generator = RayGenerator(optic)
+        self.ray_aiming_config = {
+            "mode": "paraxial",
+            "max_iter": 10,
+            "tol": 1e-6,
+        }
 
-    def trace(self, Hx, Hy, wavelength, num_rays=100, distribution="hexapolar"):
+    def set_aiming(self, mode: str, max_iter: int = 10, tol: float = 1e-6, **kwargs):
+        """Configure the ray aiming strategy.
+
+        Args:
+            mode: The aiming mode ("paraxial", "iterative", "robust").
+            max_iter: Maximum iterations for iterative solvers.
+            tol: Convergence tolerance for iterative solvers.
+            **kwargs: Additional configuration parameters.
+        """
+        self.ray_aiming_config = {
+            "mode": mode,
+            "max_iter": max_iter,
+            "tol": tol,
+            **kwargs,
+        }
+
+    def trace(
+        self,
+        Hx,
+        Hy,
+        wavelength,
+        num_rays: int | None = 100,
+        distribution: DistributionType | BaseDistribution | None = "hexapolar",
+    ):
         """Trace a distribution of rays through the optical system.
 
         Args:
@@ -66,13 +101,20 @@ class RealRayTracer:
         rays = self.ray_generator.generate_rays(
             Hx_full, Hy_full, Px_full, Py_full, wavelength
         )
-        self.optic.surface_group.trace(rays)
+        self.optic.surfaces.trace(rays)
+
+        # Propagate to the image surface
+        if self.optic.image_surface:
+            last_surface = self.optic.surfaces[-1]
+            last_surface.material_post.propagation_model.propagate(
+                rays, last_surface.thickness
+            )
 
         if isinstance(rays, PolarizedRays):
             rays.update_intensity(self.optic.polarization_state)
 
         # update ray intensity
-        self.optic.surface_group.intensity[-1, :] = rays.i
+        self.optic.surfaces.intensity[-1, :] = rays.i
 
         return rays
 
@@ -99,10 +141,16 @@ class RealRayTracer:
         Hx, Hy, Px, Py = self._validate_array_size(Hx, Hy, Px, Py)
 
         rays = self.ray_generator.generate_rays(Hx, Hy, Px, Py, wavelength)
-        rays = self.optic.surface_group.trace(rays)
+        self.optic.surfaces.trace(rays)
+
+        # Propagate to the image surface
+        last_surface = self.optic.surfaces[-1]
+        last_surface.material_post.propagation_model.propagate(
+            rays, last_surface.thickness
+        )
 
         # update intensity
-        self.optic.surface_group.intensity[-1, :] = rays.i
+        self.optic.surfaces.intensity[-1, :] = rays.i
 
         return rays
 
@@ -122,7 +170,10 @@ class RealRayTracer:
         valid_y = be.all((y >= -1) & (y <= 1))
         if not (valid_x and valid_y):
             raise ValueError(
-                f"Normalized {coord_type} coordinates must be within (-1, 1)"
+                f"Normalized {coord_type} coordinates must lie within "
+                f"[-1, 1], got x={x!r}, y={y!r}. These are normalized "
+                f"coordinates: {coord_type} extremes are +/-1, not physical "
+                "units."
             )
 
     def _validate_array_size(self, *arrays):

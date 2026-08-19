@@ -90,9 +90,9 @@ class TestOpticalSystemModule:
 
         with pytest.warns(UserWarning, match="Gradient tracking is enabled"):
             _ = OpticalSystemModule(lens, problem)
-        
+
         assert be.grad_mode.requires_grad
-        be.grad_mode.enable() # Ensure it's enabled for subsequent tests
+        be.grad_mode.enable()  # Ensure it's enabled for subsequent tests
 
     def test_init_parameter_creation(self):
         """
@@ -103,7 +103,7 @@ class TestOpticalSystemModule:
 
         assert isinstance(module.params, nn.ParameterList)
         assert len(module.params) == len(problem.variables)
-        
+
         initial_val = problem.variables[0].value
         assert be.isclose(module.params[0].data, be.array(initial_val))
 
@@ -113,10 +113,10 @@ class TestOpticalSystemModule:
         """
         problem, lens = setup_problem()
         module = OpticalSystemModule(lens, problem)
-        
+
         expected_loss = problem.sum_squared()
         actual_loss = module._default_loss()
-        
+
         assert be.isclose(expected_loss, actual_loss)
 
     def test_sync_params_to_problem_and_bounds(self):
@@ -131,10 +131,10 @@ class TestOpticalSystemModule:
         # Test clamping to the maximum bound
         with torch.no_grad():
             module.params[0].data.fill_(20.0)
-        
+
         module._sync_params_to_problem()
         module.apply_bounds()
-        
+
         assert be.isclose(module.params[0].data, be.array(max_b))
 
         # Test clamping to the minimum bound
@@ -143,7 +143,7 @@ class TestOpticalSystemModule:
 
         module._sync_params_to_problem()
         module.apply_bounds()
-        
+
         assert be.isclose(module.params[0].data, be.array(min_b))
 
     def test_forward_pass_and_optimization(self):
@@ -176,11 +176,71 @@ class TestOpticalSystemModule:
         Test that a custom objective function is used correctly in the forward pass.
         """
         problem, lens = setup_problem()
-        
+
         # A simple custom objective that returns a constant
         custom_fn = lambda: torch.tensor(123.45, dtype=torch.float64)
-        
+
         module = OpticalSystemModule(lens, problem, objective_fn=custom_fn)
-        
+
         loss = module.forward()
         assert be.isclose(loss, torch.tensor(123.45, dtype=torch.float64))
+
+    def test_multiple_thickness_variables_all_get_gradients(self):
+        """
+        Regression test for issue #569: when more than one thickness variable
+        is optimized simultaneously, every thickness must receive a non-zero
+        gradient. Previously only the last thickness variable's gradient
+        survived because ``set_thickness`` called ``positions.detach()`` on
+        every invocation, which also severed the in-iteration gradient path
+        introduced by earlier thickness updates in the same forward pass.
+        """
+        from optiland import optic
+
+        be.grad_mode.enable()
+        lens = optic.Optic()
+        lens.surfaces.add(index=0, thickness=be.inf)
+        lens.surfaces.add(
+            index=1, thickness=7, radius=1000, material="N-SF11", is_stop=True,
+        )
+        lens.surfaces.add(index=2, thickness=30, radius=-1000)
+        lens.surfaces.add(index=3)
+        lens.set_aperture(aperture_type="EPD", value=15)
+        lens.fields.set_type(field_type="angle")
+        lens.fields.add(y=0)
+        lens.wavelengths.add(value=0.55, is_primary=True)
+
+        problem = OptimizationProblem()
+        input_data = {
+            "optic": lens,
+            "surface_number": -1,
+            "Hx": 0, "Hy": 0,
+            "num_rays": 5,
+            "wavelength": 0.55,
+            "distribution": "hexapolar",
+        }
+        problem.add_operand(
+            "rms_spot_size", target=0, weight=1, input_data=input_data,
+        )
+        problem.add_variable(lens, "radius", surface_number=1)
+        problem.add_variable(lens, "thickness", surface_number=1)
+        problem.add_variable(lens, "radius", surface_number=2)
+        problem.add_variable(lens, "thickness", surface_number=2)
+
+        module = OpticalSystemModule(lens, problem)
+        params = list(module.parameters())
+        # Ordering matches add_variable above.
+        thick1_param = params[1]
+        thick2_param = params[3]
+
+        loss = module()
+        loss.backward()
+
+        # Both thickness gradients must exist and be non-zero.
+        assert thick1_param.grad is not None, (
+            "thickness1 grad is None — issue #569 not fixed"
+        )
+        assert thick2_param.grad is not None
+        assert thick1_param.grad.item() != 0.0, (
+            "thickness1 grad is zero — issue #569 not fixed"
+        )
+        assert thick2_param.grad.item() != 0.0

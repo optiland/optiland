@@ -1,8 +1,41 @@
-# flake8: noqa
+from __future__ import annotations
 
-from optiland.solves.base import BaseSolve
-from optiland.solves.chief_ray_height import ChiefRayHeightSolve
-from optiland.solves.factory import SolveFactory
-from optiland.solves.marginal_ray_height import MarginalRayHeightSolve
-from optiland.solves.quick_focus import QuickFocusSolve
-from optiland.solves.solve_manager import SolveManager
+from .base import BaseSolve
+from .curvature import (
+    ChiefRayAngleCurvatureSolve,
+    CurvatureSolve,
+    MarginalRayAngleCurvatureSolve,
+)
+from .factory import SolveFactory
+from .quick_focus import QuickFocusSolve
+from .solve_manager import SolveManager
+from .thickness import (
+    ChiefRayHeightThicknessSolve,
+    MarginalRayHeightThicknessSolve,
+    ThicknessSolve,
+)
+
+# Backwards compatibility aliases
+RayHeightSolveBase = ThicknessSolve
+MarginalRayHeightSolve = MarginalRayHeightThicknessSolve
+ChiefRayHeightSolve = ChiefRayHeightThicknessSolve
+MarginalRayAngleSolve = MarginalRayAngleCurvatureSolve
+ChiefRayAngleSolve = ChiefRayAngleCurvatureSolve
+
+__all__ = [
+    "BaseSolve",
+    "ThicknessSolve",
+    "MarginalRayHeightThicknessSolve",
+    "MarginalRayHeightSolve",
+    "ChiefRayHeightThicknessSolve",
+    "ChiefRayHeightSolve",
+    "CurvatureSolve",
+    "MarginalRayAngleCurvatureSolve",
+    "MarginalRayAngleSolve",
+    "ChiefRayAngleCurvatureSolve",
+    "ChiefRayAngleSolve",
+    "QuickFocusSolve",
+    "SolveFactory",
+    "SolveManager",
+    "RayHeightSolveBase",
+]

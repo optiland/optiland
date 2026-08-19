@@ -52,20 +52,20 @@ class PolynomialCoeffVariable(VariableBehavior):
             float: The current value of the polynomial coefficient.
 
         """
-        surf = self._surfaces.surfaces[self.surface_number]
+        surf = self._surfaces[self.surface_number]
         i, j = self.coeff_index
         try:
-            value = surf.geometry.c[i][j]
+            value = surf.geometry.coefficients[i][j]
         except IndexError:
-            pad_width_i = max(0, i + 1 - surf.geometry.c.shape[0])
-            pad_width_j = max(0, j + 1 - surf.geometry.c.shape[1])
+            pad_width_i = max(0, i + 1 - surf.geometry.coefficients.shape[0])
+            pad_width_j = max(0, j + 1 - surf.geometry.coefficients.shape[1])
             c_new = np.pad(
-                surf.geometry.c,
+                surf.geometry.coefficients,
                 pad_width=((0, pad_width_i), (0, pad_width_j)),
                 mode="constant",
                 constant_values=0,
             )
-            surf.geometry.c = c_new
+            surf.geometry.coefficients = c_new
             value = 0
         return value
 
@@ -76,21 +76,21 @@ class PolynomialCoeffVariable(VariableBehavior):
             new_value (float): The new value of the polynomial coefficient.
 
         """
-        surf = self.optic.surface_group.surfaces[self.surface_number]
+        surf = self.optic.surfaces[self.surface_number]
         i, j = self.coeff_index
         try:
-            surf.geometry.c[i][j] = new_value
+            surf.geometry.coefficients[i][j] = new_value
         except IndexError:
-            pad_width_i = max(0, i + 1 - surf.geometry.c.shape[0])
-            pad_width_j = max(0, j + 1 - surf.geometry.c.shape[1])
+            pad_width_i = max(0, i + 1 - surf.geometry.coefficients.shape[0])
+            pad_width_j = max(0, j + 1 - surf.geometry.coefficients.shape[1])
             c_new = np.pad(
-                surf.geometry.c,
+                surf.geometry.coefficients,
                 pad_width=((0, pad_width_i), (0, pad_width_j)),
                 mode="constant",
                 constant_values=0,
             )
             c_new[i][j] = new_value
-            surf.geometry.c = c_new
+            surf.geometry.coefficients = c_new
 
     def __str__(self):
         """Return a string representation of the variable.

@@ -40,7 +40,8 @@ class ZernikeOPD(ZernikeFit, OPD):
             Defaults to "chief_ray".
         remove_tilt (bool): If True, removes tilt and piston from the OPD data.
             Defaults to False.
-        **kwargs: Additional keyword arguments passed to the strategy.
+        **kwargs: Additional keyword arguments passed to the strategy, including the
+            `afocal` boolean flag to indicate if the system is afocal.
 
     """
 

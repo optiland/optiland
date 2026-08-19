@@ -15,7 +15,9 @@
    .. autosummary::
    
       BestFitSphereStrategy
+      BestFitStrategy
       CentroidReferenceSphereStrategy
+      CentroidStrategy
       ChiefRayStrategy
       ReferenceStrategy
    

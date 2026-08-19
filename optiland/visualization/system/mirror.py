@@ -29,7 +29,7 @@ class Mirror3D(Surface3D):
     def __init__(self, surface, extent):
         super().__init__(surface, extent)
 
-    def _configure_material(self, actor):
+    def _configure_material(self, actor, theme=None):
         """Configures the material properties of the mirror surface.
 
         Args:

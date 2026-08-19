@@ -18,4 +18,4 @@ Your Project Here?
 
 Do you maintain a tool or library that uses Optiland? We’d love to hear about it!
 
-Feel free to open an issue, discussion, or pull request on the `Optiland GitHub repository <https://github.com/HarrisonKramer/optiland>`_ to have your project featured here.
+Feel free to open an issue, discussion, or pull request on the `Optiland GitHub repository <https://github.com/optiland/optiland>`_ to have your project featured here.

@@ -174,6 +174,20 @@ class BiconicGeometry(NewtonRaphsonGeometry):
     def __str__(self) -> str:
         return "Biconic"
 
+    def scale(self, scale_factor: float):
+        """Scale the geometry parameters.
+
+        Args:
+            scale_factor (float): The factor by which to scale the geometry.
+        """
+        # Scale radii
+        self.Rx = self.Rx * scale_factor
+        self.Ry = self.Ry * scale_factor
+
+        # Update curvatures
+        self.cx = be.where(be.isinf(self.Rx) | (self.Rx == 0), 0.0, 1.0 / self.Rx)
+        self.cy = be.where(be.isinf(self.Ry) | (self.Ry == 0), 0.0, 1.0 / self.Ry)
+
     def to_dict(self) -> dict:
         """Converts the geometry to a dictionary.
 

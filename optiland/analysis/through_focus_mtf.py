@@ -9,6 +9,8 @@ Kramer Harrison, 2025
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.interpolate import make_interp_spline
@@ -16,6 +18,10 @@ from scipy.interpolate import make_interp_spline
 import optiland.backend as be
 from optiland.analysis.through_focus import ThroughFocusAnalysis
 from optiland.mtf.sampled import SampledMTF
+
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
 
 
 class ThroughFocusMTF(ThroughFocusAnalysis):
@@ -96,7 +102,8 @@ class ThroughFocusMTF(ThroughFocusAnalysis):
              {'tangential': 0.3, 'sagittal': 0.28}]  # Field 2
         """
         results_at_this_focus = []
-        for field_coord in self.fields:
+        for fp in self.fields:
+            field_coord = fp.coord
             sampled_mtf = SampledMTF(
                 optic=self.optic,
                 field=field_coord,
@@ -117,8 +124,12 @@ class ThroughFocusMTF(ThroughFocusAnalysis):
         return results_at_this_focus
 
     def view(
-        self, fig_to_plot_on: plt.Figure = None, figsize: tuple[float, float] = (12, 4)
-    ) -> tuple[plt.Figure, plt.Axes]:
+        self,
+        fig_to_plot_on: Figure | None = None,
+        figsize: tuple[float, float] = (12, 4),
+        *,
+        show: bool = True,
+    ) -> tuple[Figure, Axes]:
         """
         Visualizes the through-focus Modulation Transfer Function (MTF) results for
         each analyzed field.
@@ -139,17 +150,19 @@ class ThroughFocusMTF(ThroughFocusAnalysis):
         figsize : tuple of float, optional
             Size of the figure to create if `fig_to_plot_on` is None.
             Default is (12, 4).
+        show : bool, optional
+            If True (default), calls plt.show(). Set False for headless use.
 
         Returns
         -------
-        tuple[plt.Figure, plt.Axes]
+        tuple[Figure, Axes]
             The matplotlib Figure and Axes objects containing the plot.
 
         Notes
         -----
-        - Spline smoothing uses cubic splines if at least 4 data points are available,
-        linear splines for 2-3 points, and raw data is plotted if fewer points
-        are present.
+        - Spline smoothing uses cubic splines if at least 4 data points are
+          available, linear splines for 2-3 points, and raw data is plotted
+          if fewer points are present.
         - The legend displays the field coordinates (Hx, Hy) for each curve.
         - The plot includes grid lines and is formatted for clarity.
         """
@@ -166,7 +179,8 @@ class ThroughFocusMTF(ThroughFocusAnalysis):
         np_nominal_focus = be.to_numpy(be.asarray(self.nominal_focus))
         defocus_values_np = np_positions - np_nominal_focus
 
-        for i_field, field_coord in enumerate(self.fields):
+        for i_field, fp in enumerate(self.fields):
+            field_coord = fp.coord
             mtf_t_values = be.to_numpy(
                 be.asarray(
                     [
@@ -261,5 +275,6 @@ class ThroughFocusMTF(ThroughFocusAnalysis):
 
         if is_gui_embedding and hasattr(current_fig, "canvas"):
             current_fig.canvas.draw_idle()
-
+        if show and not is_gui_embedding:
+            plt.show()
         return current_fig, ax

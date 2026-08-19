@@ -10,9 +10,8 @@ is commonly used to put the image plane at the paraxial image location.
    :caption: Solve Modules
 
    solves.base
-   solves.chief_ray_height
+   solves.curvature
    solves.factory
-   solves.marginal_ray_height
    solves.quick_focus
-   solves.ray_height_base
    solves.solve_manager
+   solves.thickness

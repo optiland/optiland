@@ -37,9 +37,20 @@ def load_obj_from_json(cls, filepath):
     """
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"File '{filepath}' does not exist.")
-    with open(filepath) as f:
+    with open(filepath, encoding="utf-8") as f:
         data = json.load(f)
     return cls.from_dict(data)
+
+
+class OptilandEncoder(json.JSONEncoder):
+    """Custom JSON encoder to handle tensor/array serialization across backends."""
+
+    def default(self, obj):
+        if hasattr(obj, "tolist") and callable(obj.tolist):
+            return obj.tolist()
+        elif hasattr(obj, "item") and callable(obj.item):
+            return obj.item()
+        return super().default(obj)
 
 
 def save_obj_to_json(obj, filepath):
@@ -55,8 +66,8 @@ def save_obj_to_json(obj, filepath):
         filepath: The path to the JSON file.
 
     """
-    with open(filepath, "w") as f:
-        json.dump(obj.to_dict(), f, indent=4)
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(obj.to_dict(), f, indent=4, cls=OptilandEncoder)
 
 
 def load_optiland_file(filepath):

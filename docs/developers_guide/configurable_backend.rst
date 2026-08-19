@@ -47,7 +47,7 @@ The NumPy backend provides pure-CPU execution and leverages Numba JIT compilatio
    y = be.sin(x)                   # trigonometric
    total = be.sum(y)               # reduction
 
-Because of automatic patching, you do not need to re‑implement any basic routines in `numpy_backend.py`.
+Because of automatic patching, you do not need to re‑implement any basic routines in the `NumpyBackend` class.
 
 PyTorch Backend
 ---------------
@@ -102,17 +102,16 @@ When extending Optiland, always import operations from `optiland.backend` to ens
    def my_custom_metric(x, y):
        return dot(x, y) / sqrt(dot(x, x) * dot(y, y))
 
-If you define a function that relies on a backend-specific feature, add it to both `numpy_backend.py` and `torch_backend.py`, following the existing patterns.
+If you define a function that relies on a backend-specific feature, add it to the `NumpyBackend` and `TorchBackend` classes, as well as the `AbstractBackend` interface, following the existing patterns.
 
 Backend Implementation Details
 ------------------------------
 
-- **Dynamic function patching**  
-  A metaprogramming layer inspects NumPy’s namespace and re‑exports core ufuncs and functions into the NumPy backend module automatically.
-- **Explicit registration for PyTorch**  
-  The PyTorch backend manually maps dozens of functions (including tensor creation, indexing, linear algebra, etc.), as well as defines custom functions not directly available in PyTorch.
-- **Error handling**  
-  If you call a backend operation that isn’t yet implemented in the active backend, Optiland will raise a clear `AttributeError` pointing to the missing function.
+- **Dynamic Dispatch**: The backend uses a `__getattr__` function to dynamically dispatch calls to the active backend class instance.
+- **Abstract Backend**: The `backend.base.AbstractBackend` class defines the contract and common interfaces for all backends.
+- **NumPy Backend**: The `backend.numpy_backend.NumpyBackend` class defines a `_lib` attribute that points to the `numpy` library, allowing for a fallback to the NumPy namespace for functions not explicitly defined.
+- **PyTorch Backend**: The `backend.torch_backend.TorchBackend` class explicitly defines or maps all supported functions to PyTorch operations.
+- **`to_numpy` Utility**: The `optiland.backend.utils` module provides a `to_numpy` function to convert backend-specific arrays to NumPy arrays.
 
 Best Practices
 --------------
@@ -120,6 +119,7 @@ Best Practices
 - **Use `be.*` everywhere**. Never import `np` or `torch` directly in Optiland modules - you’ll break backend neutrality. There are exceptions, but they are rare.
 - **Test on both backends**. Our CI includes pytest fixtures that run the full test suite under both NumPy and PyTorch modes. If you add a new feature, follow existing testing patterns to ensure it works on both backends.
 - **Document backend-specific behavior**. If a function has different characteristics, note it in the docstring.
+- **Use `to_numpy` for conversions**: When you need to convert a backend array to a NumPy array (e.g., for plotting), use the `to_numpy` function from `optiland.backend.utils`.
 
 Troubleshooting
 ---------------
@@ -138,3 +138,18 @@ Potential Future Backends
 
 .. note::
    For new contributions or questions about the backend layer, please open an issue or pull request on our GitHub repository. We welcome feedback and improvements!
+
+How to Extend This
+------------------
+
+**Scenario:** Add a backend-agnostic utility function to Optiland.
+
+**Step 1:** Write the function using only ``import optiland.backend as be`` — never import
+``numpy`` or ``torch`` directly inside Optiland modules.
+**Step 2:** If the function needs a backend-specific API (e.g., ``torch.autograd.grad``), add
+abstract and concrete implementations to ``AbstractBackend``, ``NumpyBackend``, and
+``TorchBackend`` in ``optiland/backend/``.
+**Step 3:** Test on both backends using the ``set_test_backend`` fixture from
+``tests/conftest.py`` and ``assert_allclose`` from ``tests/utils.py``.
+
+For step-by-step guidance, see :ref:`extension_recipes`.

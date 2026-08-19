@@ -8,6 +8,7 @@ Kramer Harrison, 2025
 from __future__ import annotations
 
 from abc import abstractmethod
+from typing import TYPE_CHECKING
 from warnings import warn
 
 import matplotlib.pyplot as plt
@@ -19,6 +20,14 @@ from scipy.ndimage import zoom
 import optiland.backend as be
 from optiland.utils import get_working_FNO, resolve_wavelength
 from optiland.wavefront import Wavefront
+
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
+    from mpl_toolkits.mplot3d import Axes3D
+
+    from optiland.fields import Field
+    from optiland.optic import Optic
 
 
 def replace_nonpositive(image, min_value=1e-9):
@@ -66,8 +75,8 @@ class BasePSF(Wavefront):
 
     def __init__(
         self,
-        optic,
-        field,
+        optic: Optic,
+        field: Field,
         wavelength: str | float,
         num_rays=128,
         strategy="chief_ray",
@@ -89,13 +98,13 @@ class BasePSF(Wavefront):
 
     def view(
         self,
-        fig_to_plot_on: plt.Figure = None,
+        fig_to_plot_on: Figure | None = None,
         projection: str = "2d",
         log: bool = False,
         figsize: tuple = (7, 5.5),
         threshold: float = 0.05,
         num_points: int = 128,
-    ) -> tuple[plt.Figure, plt.Axes]:
+    ) -> tuple[Figure, Axes]:
         """Visualizes the PSF.
 
         Args:
@@ -125,9 +134,9 @@ class BasePSF(Wavefront):
             current_fig = fig_to_plot_on
             current_fig.clear()
             ax = (
-                current_fig.add_subplot(111, figsize=figsize)
+                current_fig.add_subplot(111)
                 if projection == "2d"
-                else current_fig.add_subplot(111, figsize=figsize, projection="3d")
+                else current_fig.add_subplot(111, projection="3d")
             )
         else:
             current_fig, ax = (
@@ -199,8 +208,8 @@ class BasePSF(Wavefront):
 
     def _plot_2d(
         self,
-        fig: plt.Figure,
-        ax: plt.Axes,
+        fig: Figure,
+        ax: Axes,
         image: np.ndarray,
         log: bool,
         x_extent: float,
@@ -244,8 +253,8 @@ class BasePSF(Wavefront):
 
     def _plot_3d(
         self,
-        fig: plt.Figure,
-        ax: plt.Axes,
+        fig: Figure,
+        ax: Axes3D,
         image: np.ndarray,
         log: bool,
         x_extent: float,
@@ -319,7 +328,7 @@ class BasePSF(Wavefront):
         linear_value = 10**value
         return f"{linear_value:.1e}"
 
-    def _annotate_original_size(self, fig: plt.Figure, original_size):
+    def _annotate_original_size(self, fig: Figure, original_size):
         """Annotates the original size of the zoomed PSF in the bottom right corner."""
         text = f"Original Size: {original_size[0]}×{original_size[1]}"
         fig.text(
@@ -423,9 +432,8 @@ class BasePSF(Wavefront):
         if self.psf is None:
             raise RuntimeError("PSF has not been computed.")
 
-        center_x = self.psf.shape[0] // 2
-        center_y = self.psf.shape[1] // 2
-        return self.psf[center_x, center_y] / 100
+        strehl = be.max(self.psf) / 100
+        return float(be.to_numpy(strehl).item())
 
     def _get_working_FNO(self):
         """Calculates the working F-number of the optical system for the
@@ -445,4 +453,6 @@ class BasePSF(Wavefront):
         Returns:
             float: The working F-number.
         """
-        return get_working_FNO(self.optic, self.fields[0], self.wavelengths[0])
+        return get_working_FNO(
+            self.optic, self.fields[0].coord, self.wavelengths[0].value
+        )

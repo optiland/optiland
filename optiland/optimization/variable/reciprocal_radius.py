@@ -66,7 +66,7 @@ class ReciprocalRadiusVariable(VariableBehavior):
         """
         # Allow zero but handle appropriately
         new_radius = be.inf if new_value == 0 else 1.0 / new_value
-        self.optic.set_radius(new_radius, self.surface_number)
+        self.optic.updater.set_radius(new_radius, self.surface_number)
 
     def __str__(self):
         """Return a string representation of the variable.

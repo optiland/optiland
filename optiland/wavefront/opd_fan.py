@@ -100,10 +100,10 @@ class OPDFan(Wavefront):
         if is_gui_embedding:
             current_fig = cast("Figure", fig_to_plot_on)
             current_fig.clear()
-            axs = current_fig.add_subplot(
+            current_fig.set_size_inches(figsize[0], num_rows * figsize[1])
+            axs = current_fig.subplots(
                 nrows=len(self.fields),
                 ncols=2,
-                figsize=(figsize[0], num_rows * figsize[1]),
                 sharex=True,
                 sharey=True,
             )
@@ -136,7 +136,7 @@ class OPDFan(Wavefront):
                     be.to_numpy(self.pupil_coord),
                     be.to_numpy(wy),
                     zorder=3,
-                    label=f"{wavelength:.4f} µm",
+                    label=f"{wavelength.value:.4f} µm",
                 )
                 axs[i, 0].grid()
                 axs[i, 0].axhline(y=0, lw=1, color="gray")
@@ -144,13 +144,14 @@ class OPDFan(Wavefront):
                 axs[i, 0].set_xlabel("$P_y$")
                 axs[i, 0].set_ylabel("Wavefront Error (waves)")
                 axs[i, 0].set_xlim((-1, 1))
-                axs[i, 0].set_title(f"Hx: {field[0]:.3f}, Hy: {field[1]:.3f}")
+                Hx, Hy = field.coord
+                axs[i, 0].set_title(f"Hx: {Hx:.3f}, Hy: {Hy:.3f}")
 
                 axs[i, 1].plot(
                     be.to_numpy(self.pupil_coord),
                     be.to_numpy(wx),
                     zorder=3,
-                    label=f"{wavelength:.4f} µm",
+                    label=f"{wavelength.value:.4f} µm",
                 )
                 axs[i, 1].grid()
                 axs[i, 1].axhline(y=0, lw=1, color="gray")
@@ -158,7 +159,7 @@ class OPDFan(Wavefront):
                 axs[i, 1].set_xlabel("$P_x$")
                 axs[i, 1].set_ylabel("Wavefront Error (waves)")
                 axs[i, 1].set_xlim((-1, 1))
-                axs[i, 1].set_title(f"Hx: {field[0]:.3f}, Hy: {field[1]:.3f}")
+                axs[i, 1].set_title(f"Hx: {Hx:.3f}, Hy: {Hy:.3f}")
 
         axs[-1, -1].legend(loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=3)
         current_fig.subplots_adjust(top=1)

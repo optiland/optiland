@@ -26,9 +26,9 @@ class CoatingFactory:
     generated coatings based on material interactions.
 
     Methods:
-        create_coating(coating: str | BaseCoating, material_pre: BaseMaterial,
-                       material_post: BaseMaterial) -> BaseCoating | None:
-            Creates a coating instance based on the given input.
+        See :meth:`create` for creating a coating instance based on the
+        given input.
+
     """
 
     @staticmethod

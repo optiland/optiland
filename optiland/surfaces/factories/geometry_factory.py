@@ -10,18 +10,22 @@ Kramer Harrison, 2025
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import fields
 from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
+import optiland.plugins as plugins
+from optiland._suggest import options_hint
 from optiland.geometries import (
     BiconicGeometry,
     ChebyshevPolynomialGeometry,
     EvenAsphere,
     ForbesQ2dGeometry,
-    ForbesQbfsGeometry,
+    ForbesQNormalSlopeGeometry,
     ForbesSolverConfig,  # forbes
     ForbesSurfaceConfig,  # forbes
+    GridSagGeometry,
+    NurbsGeometry,
     OddAsphere,
     Plane,
     PlaneGrating,
@@ -31,74 +35,37 @@ from optiland.geometries import (
     ToroidalGeometry,
     ZernikePolynomialGeometry,
 )
+from optiland.surfaces.factories.geometry_configs import (
+    BiconicConfig,
+    ChebyshevConfig,
+    EvenAsphereConfig,
+    ForbesQ2dConfig,
+    ForbesQbfsConfig,
+    GratingConfig,
+    GridSagConfig,
+    NurbsConfig,
+    OddAsphereConfig,
+    PlaneConfig,
+    PolynomialConfig,
+    StandardConfig,
+    ToroidalConfig,
+    ZernikeConfig,
+    config_registry,
+)
 
 if TYPE_CHECKING:
-    from optiland._types import ZernikeType
+    from collections.abc import Callable
+
     from optiland.coordinate_system import CoordinateSystem
 
 
-@dataclass
-class GeometryConfig:
-    """Configuration parameters for creating a surface geometry.
-
-    Attributes:
-        radius (float): radius of curvature of the geometry (R = 1/c).
-                        Defaults to be.inf.
-        conic (float): conic constant (k) of the geometry. Defaults to 0.0.
-        grating_order (int): order of the grating. Defaults to 0.
-        grating_period (float): period of the grating. Defaults to be.inf.
-        groove_orientation_angle (float): angle of the groove orientation.
-                                        Defaults to 0.0.
-        coefficients (list): list of geometry coefficients. Defaults to empty list.
-        tol (float): tolerance to use for Newton-Raphson method. Defaults to 1e-6.
-        max_iter (int): maximum number of iterations to use for Newton-Raphson method.
-            Defaults to 100.
-        norm_x (float): normalization factor in x. Defaults to 1.0.
-        norm_y (float): normalization factor in y. Defaults to 1.0.
-        norm_radius (float): normalization radius. Defaults to 1.0.
-        radius_x (float): radius of curvature in x for biconic.
-                          Defaults to be.inf.
-        radius_y (float): radius of curvature in y for biconic or YZ radius for
-            toroidal. Defaults to be.inf.
-        conic_x (float): conic constant in x for biconic. Defaults to 0.0.
-        conic_y (float): conic constant in y for biconic. Defaults to 0.0.
-        toroidal_coeffs_poly_y (list): toroidal YZ polynomial coefficients.
-                                    Defaults to empty list.
-        zernike_type (str): type of Zernike polynomial to use. Defaults to "fringe".
-        radial_terms (dict): radial terms for Forbes Q-BFS surfaces.
-        freeform_coeffs (dict): freeform coefficients for Forbes Q-2D surfaces.
-    """
-
-    radius: float = be.inf
-    conic: float = 0.0
-    grating_order: int = 0
-    grating_period: float = be.inf
-    groove_orientation_angle: float = 0.0
-    coefficients: list[float] = field(default_factory=list)
-    tol: float = 1e-6
-    max_iter: int = 100
-    norm_x: float = 1.0
-    norm_y: float = 1.0
-    norm_radius: float = 1.0
-    # Biconic and Toroidal parameters
-    radius_x: float = be.inf  # Used by Biconic and Toroidal (as radius_x)
-    radius_y: float = be.inf  # Used by Biconic and Toroidal (as radius_yz)
-    conic_x: float = 0.0  # Used by Biconic
-    conic_y: float = 0.0  # Used by Biconic
-    toroidal_coeffs_poly_y: list[float] = field(default_factory=list)
-    zernike_type: ZernikeType = "fringe"
-    # Forbes parameters
-    radial_terms: dict[int, float] = field(default_factory=dict)
-    freeform_coeffs: dict[tuple[str, int, int], float] = field(default_factory=dict)
-
-
-def _create_plane(cs: CoordinateSystem, config: GeometryConfig):
+def _create_plane(cs: CoordinateSystem, config: PlaneConfig):
     """
     Create a planar geometry
 
     Args:
         cs (CoordinateSystem): coordinate system of the geometry.
-        config (GeometryConfig): configuration of the geometry.
+        config (PlaneConfig): configuration of the geometry.
 
     Returns:
         Plane
@@ -106,13 +73,13 @@ def _create_plane(cs: CoordinateSystem, config: GeometryConfig):
     return Plane(coordinate_system=cs)
 
 
-def _create_standard(cs: CoordinateSystem, config: GeometryConfig):
+def _create_standard(cs: CoordinateSystem, config: StandardConfig):
     """
     Create a standard geometry
 
     Args:
         cs (CoordinateSystem): coordinate system of the geometry.
-        config (GeometryConfig): configuration of the geometry.
+        config (StandardConfig): configuration of the geometry.
 
     Returns:
         StandardGeometry or Plane
@@ -125,13 +92,13 @@ def _create_standard(cs: CoordinateSystem, config: GeometryConfig):
     )
 
 
-def _create_even_asphere(cs: CoordinateSystem, config: GeometryConfig):
+def _create_even_asphere(cs: CoordinateSystem, config: EvenAsphereConfig):
     """
     Create an even asphere geometry
 
     Args:
         cs (CoordinateSystem): coordinate system of the geometry.
-        config (GeometryConfig): configuration of the geometry.
+        config (EvenAsphereConfig): configuration of the geometry.
 
     Returns:
         EvenAsphere
@@ -146,13 +113,13 @@ def _create_even_asphere(cs: CoordinateSystem, config: GeometryConfig):
     )
 
 
-def _create_odd_asphere(cs: CoordinateSystem, config: GeometryConfig):
+def _create_odd_asphere(cs: CoordinateSystem, config: OddAsphereConfig):
     """
     Create an odd asphere geometry
 
     Args:
         cs (CoordinateSystem): coordinate system of the geometry.
-        config (GeometryConfig): configuration of the geometry.
+        config (OddAsphereConfig): configuration of the geometry.
 
     Returns:
         OddAsphere
@@ -167,13 +134,13 @@ def _create_odd_asphere(cs: CoordinateSystem, config: GeometryConfig):
     )
 
 
-def _create_polynomial(cs: CoordinateSystem, config: GeometryConfig):
+def _create_polynomial(cs: CoordinateSystem, config: PolynomialConfig):
     """
     Create a polynomial geometry
 
     Args:
         cs (CoordinateSystem): coordinate system of the geometry.
-        config (GeometryConfig): configuration of the geometry.
+        config (PolynomialConfig): configuration of the geometry.
 
     Returns:
         PolynomialGeometry
@@ -188,13 +155,13 @@ def _create_polynomial(cs: CoordinateSystem, config: GeometryConfig):
     )
 
 
-def _create_grating(cs: CoordinateSystem, config: GeometryConfig):
+def _create_grating(cs: CoordinateSystem, config: GratingConfig):
     """
     Create a grating geometry
 
     Args:
         cs (CoordinateSystem): coordinate system of the geometry.
-        config (GeometryConfig): configuration of the geometry.
+        config (GratingConfig): configuration of the geometry.
 
     Returns:
         StandardGratingGeometry
@@ -217,13 +184,13 @@ def _create_grating(cs: CoordinateSystem, config: GeometryConfig):
     )
 
 
-def _create_chebyshev(cs: CoordinateSystem, config: GeometryConfig):
+def _create_chebyshev(cs: CoordinateSystem, config: ChebyshevConfig):
     """
     Create a Chebyshev geometry
 
     Args:
         cs (CoordinateSystem): coordinate system of the geometry.
-        config (GeometryConfig): configuration of the geometry.
+        config (ChebyshevConfig): configuration of the geometry.
 
     Returns:
         ChebyshevPolynomialGeometry
@@ -240,13 +207,13 @@ def _create_chebyshev(cs: CoordinateSystem, config: GeometryConfig):
     )
 
 
-def _create_zernike(cs: CoordinateSystem, config: GeometryConfig):
+def _create_zernike(cs: CoordinateSystem, config: ZernikeConfig):
     """
     Create a Zernike geometry
 
     Args:
         cs (CoordinateSystem): coordinate system of the geometry.
-        config (GeometryConfig): configuration of the geometry.
+        config (ZernikeConfig): configuration of the geometry.
 
     Returns:
         ZernikePolynomialGeometry
@@ -263,13 +230,13 @@ def _create_zernike(cs: CoordinateSystem, config: GeometryConfig):
     )
 
 
-def _create_biconic(cs: CoordinateSystem, config: GeometryConfig):
+def _create_biconic(cs: CoordinateSystem, config: BiconicConfig):
     """
     Create a biconic geometry
 
     Args:
         cs (CoordinateSystem): coordinate system of the geometry.
-        config (GeometryConfig): configuration of the geometry.
+        config (BiconicConfig): configuration of the geometry.
 
     Returns:
         BiconicGeometry
@@ -293,13 +260,13 @@ def _create_biconic(cs: CoordinateSystem, config: GeometryConfig):
     )
 
 
-def _create_toroidal(cs: CoordinateSystem, config: GeometryConfig):
+def _create_toroidal(cs: CoordinateSystem, config: ToroidalConfig):
     """
     Create a Toroidal geometry
 
     Args:
         cs (CoordinateSystem): coordinate system of the geometry.
-        config (GeometryConfig): configuration of the geometry.
+        config (ToroidalConfig): configuration of the geometry.
 
     Returns:
         ToroidalGeometry
@@ -316,8 +283,12 @@ def _create_toroidal(cs: CoordinateSystem, config: GeometryConfig):
     )
 
 
-def _create_forbes_qbfs(cs: CoordinateSystem, config: GeometryConfig):
-    """Create a Forbes (Q-BFS) Geometry."""
+def _create_forbes_qbfs(cs: CoordinateSystem, config: ForbesQbfsConfig):
+    """Create a Forbes Q (slope-orthogonal) Geometry.
+
+    Note: The surface type key \"forbes_qbfs\" is retained for backward
+    compatibility, but the canonical class is now ForbesQNormalSlopeGeometry.
+    """
     surface_config = ForbesSurfaceConfig(
         radius=config.radius,
         conic=config.conic,
@@ -326,14 +297,14 @@ def _create_forbes_qbfs(cs: CoordinateSystem, config: GeometryConfig):
     )
     solver_config = ForbesSolverConfig(tol=config.tol, max_iter=config.max_iter)
 
-    return ForbesQbfsGeometry(
+    return ForbesQNormalSlopeGeometry(
         cs,
         surface_config=surface_config,
         solver_config=solver_config,
     )
 
 
-def _create_forbes_q2d(cs: CoordinateSystem, config: GeometryConfig):
+def _create_forbes_q2d(cs: CoordinateSystem, config: ForbesQ2dConfig):
     """Create a Forbes (Q-2D) geometry."""
     surface_config = ForbesSurfaceConfig(
         radius=config.radius,
@@ -350,13 +321,49 @@ def _create_forbes_q2d(cs: CoordinateSystem, config: GeometryConfig):
     )
 
 
-def _create_paraxial(cs: CoordinateSystem, config: GeometryConfig):
+def _create_nurbs(cs: CoordinateSystem, config: NurbsConfig):
+    """Create a NURBS geometry."""
+
+    return NurbsGeometry(
+        cs,
+        config.radius,
+        config.conic,
+        config.nurbs_norm_x,
+        config.nurbs_norm_y,
+        config.nurbs_x_center,
+        config.nurbs_y_center,
+        config.control_points,
+        config.weights,
+        config.u_degree,
+        config.v_degree,
+        config.u_knots,
+        config.v_knots,
+        config.n_points_u,
+        config.n_points_v,
+        config.tol,
+        config.max_iter,
+    )
+
+
+def _create_grid_sag(cs: CoordinateSystem, config: GridSagConfig):
+    """Create a Grid Sag geometry."""
+    return GridSagGeometry(
+        coordinate_system=cs,
+        x_coordinates=config.x_coordinates,
+        y_coordinates=config.y_coordinates,
+        sag_values=config.sag_values,
+        tol=config.tol,
+        max_iter=config.max_iter,
+    )
+
+
+def _create_paraxial(cs: CoordinateSystem, config: PlaneConfig):
     """
     Create a paraxial geometry, which is simply a planar surface.
 
     Args:
         cs (CoordinateSystem): coordinate system of the geometry.
-        config (GeometryConfig): configuration of the geometry.
+        config (PlaneConfig): configuration of the geometry.
 
     Returns:
         Plane
@@ -369,38 +376,81 @@ geometry_mapper = {
     "chebyshev": _create_chebyshev,
     "even_asphere": _create_even_asphere,
     "grating": _create_grating,
+    "grid_sag": _create_grid_sag,
     "odd_asphere": _create_odd_asphere,
     "paraxial": _create_paraxial,
+    "plane": _create_plane,
     "polynomial": _create_polynomial,
     "standard": _create_standard,
     "toroidal": _create_toroidal,
     "zernike": _create_zernike,
     "forbes_qbfs": _create_forbes_qbfs,
     "forbes_q2d": _create_forbes_q2d,
+    "nurbs": _create_nurbs,
 }
 
 
 class GeometryFactory:
     """Factory for creating surface geometry objects based on configuration."""
 
+    @classmethod
+    def register(
+        cls,
+        name: str,
+        create_fn: Callable,
+        config_cls: type,
+        *,
+        overwrite: bool = False,
+    ) -> None:
+        """Register a new geometry type.
+
+        Args:
+            name: The surface_type string key (e.g. 'even_asphere').
+            create_fn: A function ``(cs, config) -> geometry`` instance.
+            config_cls: A dataclass whose fields define the accepted kwargs.
+            overwrite: Allow replacing an existing registration.
+
+        Raises:
+            ValueError: If name is already registered and overwrite is False.
+        """
+        if name in geometry_mapper and not overwrite:
+            raise ValueError(
+                f"Geometry type '{name}' is already registered. "
+                "Pass overwrite=True to replace it."
+            )
+        geometry_mapper[name] = create_fn
+        config_registry[name] = config_cls
+
     @staticmethod
-    def create(surface_type: str, cs: Any, config: GeometryConfig) -> Any:
+    def create(surface_type: str, cs: Any, **kwargs: Any) -> Any:
         """
         Create and return a geometry object based on the surface type and configuration.
-
         Args:
             surface_type (str): The type of surface (e.g., 'standard', 'even_asphere').
             cs: The coordinate system for the geometry.
-            config (GeometryConfig): Configuration parameters for the geometry.
-
+            **kwargs: Configuration parameters for the geometry.
         Returns:
             The constructed geometry object.
-
         Raises:
             ValueError: If the surface type is not recognized.
         """
         try:
+            config_cls = config_registry[surface_type]
             create_fn = geometry_mapper[surface_type]
         except KeyError as err:
-            raise ValueError(f"Surface type '{surface_type}' not recognized.") from err
+            plugins.load_plugins(plugins.SURFACES_GROUP)
+            try:
+                config_cls = config_registry[surface_type]
+                create_fn = geometry_mapper[surface_type]
+            except KeyError:
+                raise ValueError(
+                    f"Unknown surface type, got {surface_type!r}."
+                    f"{options_hint(str(surface_type), geometry_mapper)}"
+                ) from err
+
+        # Filter kwargs to only include those relevant to the specific config class
+        config_fields = {f.name for f in fields(config_cls)}
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k in config_fields}
+
+        config = config_cls(**filtered_kwargs)
         return create_fn(cs, config)

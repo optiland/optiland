@@ -7,6 +7,7 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+import numpy as np  # noqa: TC002
 import vtk
 
 import optiland.backend as be
@@ -58,19 +59,53 @@ def transform_3d(actor, surface):
         The transformed actor with the applied rotation and translation.
 
     """
-    # Get the effective rotation and translation of the surface
     cs = surface.geometry.cs
-    rx, ry, rz = cs.get_effective_rotation_euler()
-    translation, _ = cs.get_effective_transform()
-    dx, dy, dz = translation
+    translation, rot_mat = cs.get_effective_transform()
+    dx, dy, dz = be.to_numpy(translation)
+    rot = be.to_numpy(rot_mat)
 
-    # Apply the rotation and translation to the actor
-    actor.RotateZ(be.degrees(rz))
-    actor.RotateY(be.degrees(ry))
-    actor.RotateX(be.degrees(rx))
-    actor.SetPosition(dx, dy, dz)
+    # Build 4×4 homogeneous matrix [[R, t], [0, 1]] and apply as UserMatrix.
+    # This avoids the rotation-matrix → Euler round-trip that triggers SciPy's
+    # gimbal-lock warning when ry ≈ ±90°.
+    vtk_matrix = vtk.vtkMatrix4x4()
+    vtk_matrix.Identity()
+    for i in range(3):
+        for j in range(3):
+            vtk_matrix.SetElement(i, j, float(rot[i, j]))
+    vtk_matrix.SetElement(0, 3, float(dx))
+    vtk_matrix.SetElement(1, 3, float(dy))
+    vtk_matrix.SetElement(2, 3, float(dz))
+
+    actor.SetUserMatrix(vtk_matrix)
 
     return actor
+
+
+def project_rays(
+    xs: np.ndarray,
+    ys: np.ndarray,
+    zs: np.ndarray,
+    projection: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Project 3D ray coordinates onto the chosen 2D plane.
+
+    Args:
+        xs: X coordinates, shape (N,).
+        ys: Y coordinates, shape (N,).
+        zs: Z coordinates, shape (N,).
+        projection: One of ``'YZ'``, ``'XZ'``, ``'XY'``.
+
+    Returns:
+        (horizontal, vertical) coordinate arrays for the projection plane.
+        YZ → (z, y), XZ → (z, x), XY → (x, y).
+    """
+    proj = projection.upper()
+    if proj == "YZ":
+        return zs, ys
+    if proj == "XZ":
+        return zs, xs
+    # XY
+    return xs, ys
 
 
 def revolve_contour(x, y, z):

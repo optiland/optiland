@@ -9,5 +9,6 @@
    .. autosummary::
    
       ForbesQ2dCoeffVariable
+      ForbesQNormalSlopeCoeffVariable
       ForbesQbfsCoeffVariable
    

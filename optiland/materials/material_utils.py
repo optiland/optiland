@@ -1,16 +1,23 @@
+"""Utility functions for working with materials."""
+
 from __future__ import annotations
 
 import csv
 import warnings
 from importlib import resources
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import matplotlib.pyplot as plt
 import yaml
+from matplotlib.axes import Axes
 from scipy.cluster.vq import kmeans2
 
 import optiland.backend as be
 from optiland.materials.material import Material
+
+if TYPE_CHECKING:
+    from matplotlib.figure import Figure
 
 
 def glasses_selection(
@@ -37,7 +44,8 @@ def glasses_selection(
     """
 
     csv_path = resources.files("optiland.database").joinpath("catalog_nk.csv")
-    catalogs = [c.lower() for c in catalogs]
+    if catalogs is not None:
+        catalogs = [c.lower() for c in catalogs]
     glasses = set()
 
     with open(csv_path, encoding="utf-8") as file:
@@ -150,7 +158,9 @@ def downsample_glass_map(glass_dict: dict, num_glasses_to_keep: int) -> dict:
     labels = be.array(labels)
     for cluster_index in range(num_glasses_to_keep):
         # Get indices of glasses in this cluster
-        cluster_indices = be.where(labels == cluster_index)[0]
+        mask = labels == cluster_index
+        indices = be.arange_indices(be.size(labels))
+        cluster_indices = indices[mask]
 
         # Extract cluster points
         cluster_points = be.array(glass_data[cluster_indices])
@@ -372,13 +382,94 @@ def find_closest_glass(nd_vd: tuple, catalog: list[str], plot_map: bool = False)
     return closest_glass
 
 
+def _resolve_nk_wavelength_range(
+    material: Material, wavelength_range: tuple[float, float] | None
+) -> tuple[float, float, tuple[float, float]]:
+    """Validate and default the (min_wl, max_wl) plot range for ``plot_nk``."""
+    min_wl = material.material_data.get("min_wavelength")
+    max_wl = material.material_data.get("max_wavelength")
+
+    if min_wl is None or max_wl is None:
+        raise ValueError(
+            "Failed to fetch minimum and maximum wavelength from material."
+        )
+
+    if wavelength_range is None:
+        wavelength_range = (min_wl, max_wl)
+    if len(wavelength_range) != 2:
+        raise ValueError("wavelength_range must be a tuple of (min_wl, max_wl)")
+
+    return min_wl, max_wl, wavelength_range
+
+
+def _resolve_nk_axes(
+    ax: Axes | tuple[Axes, Axes] | None,
+) -> tuple[Figure, Axes, Axes]:
+    """Resolve the ``ax`` argument of ``plot_nk`` into ``(fig, ax_n, ax_k)``."""
+    if ax is None:
+        fig, ax_n = plt.subplots()
+        ax_k = ax_n.twinx()
+    elif (
+        isinstance(ax, tuple) and len(ax) == 2 and all(isinstance(a, Axes) for a in ax)
+    ):
+        ax_n, ax_k = ax
+        fig = ax_n.figure
+    elif isinstance(ax, Axes):
+        ax_n = ax
+        ax_k = ax.twinx()
+        fig = ax_n.figure
+    else:
+        raise ValueError(
+            f"Invalid ax argument should be None, a tuple of (ax_n, ax_k), or "
+            f"a single Axes instance. Here : {type(ax)}"
+        )
+    return fig, ax_n, ax_k
+
+
+def _shade_nk_out_of_bounds(
+    ax_n: Axes,
+    min_wl: float,
+    max_wl: float,
+    wavelength_range: tuple[float, float],
+) -> None:
+    """Warn and red-shade any part of ``wavelength_range`` outside the data."""
+    if min_wl <= wavelength_range[0] and max_wl >= wavelength_range[1]:
+        return
+
+    warnings.warn(
+        "Specified wavelength_range is outside the material's available range. "
+        "Red shading will indicate out-of-bounds regions.",
+        UserWarning,
+        stacklevel=3,
+    )
+    if min_wl > wavelength_range[0]:
+        ax_n.axvspan(
+            min_wl,
+            wavelength_range[0],
+            facecolor="red",
+            alpha=0.15,
+            label="Out of bounds",
+        )
+    if max_wl < wavelength_range[1]:
+        ax_n.axvspan(wavelength_range[1], max_wl, facecolor="red", alpha=0.15)
+
+
+def _set_nk_title(ax_n: Axes, material: Material) -> None:
+    """Set the plot title from the material's catalog name and reference."""
+    full_name = material.material_data.get("category_name_full", "")
+    ref = material.material_data.get("reference", "")
+    full_name = full_name.replace("<sub>", "$_{")
+    full_name = full_name.replace("</sub>", "}$")
+    ax_n.set_title(f"{full_name} - {ref}")
+
+
 def plot_nk(
     material: Material,
-    wavelength_range: tuple = None,
-    ax: plt.Axes | tuple[plt.Axes, plt.Axes] = None,
+    wavelength_range: tuple[float, float] | None = None,
+    ax: Axes | tuple[Axes, Axes] | None = None,
     n_sample: int = 800,
     share_yscale: bool = False,
-) -> tuple[plt.Figure, list[plt.Axes]]:
+) -> tuple[Figure, tuple[Axes, Axes]]:
     """
     Plot the refractive index (n) and extinction coefficient (k) of a material
     versus wavelength.
@@ -395,61 +486,18 @@ def plot_nk(
         share_yscale (bool): Whether to share the y-axis scale between n and k plots.
 
     Returns:
-        tuple[plt.Figure, list[plt.Axes]]: The figure and axes objects ([ax_n, ax_k])
+        A tuple containing the figure and a list of two axes objects
 
     Example:
     >>> mat = Material("BK7", reference="SCHOTT")
     >>> plot_nk(mat, wavelength_range=(0.4, 0.7))
 
     """
-
-    # gather wavelength range information
-    min_wl = material.material_data.get("min_wavelength")
-    max_wl = material.material_data.get("max_wavelength")
-
-    # Check if the specified wavelength_range is valid
-    if wavelength_range is None:
-        wavelength_range = (min_wl, max_wl)
-    if len(wavelength_range) != 2:
-        raise ValueError("wavelength_range must be a tuple of (min_wl, max_wl)")
-
-    if ax is None:
-        fig, ax_n = plt.subplots()
-        ax_k = ax_n.twinx()
-    elif (
-        isinstance(ax, tuple)
-        and len(ax) == 2
-        and all(isinstance(a, plt.Axes) for a in ax)
-    ):
-        ax_n, ax_k = ax
-    elif isinstance(ax, plt.Axes):
-        ax_n = ax
-        ax_k = ax.twinx()
-    else:
-        raise ValueError(
-            f"Invalid ax argument should be None, a tuple of (ax_n, ax_k), or "
-            f"a single Axes instance. Here : {type(ax)}"
-        )
-
-    # Check if the specified wavelength_range is valid
-    if min_wl > wavelength_range[0] or max_wl < wavelength_range[1]:
-        warnings.warn(
-            "Specified wavelength_range is outside the material's available range. "
-            "Red shading will indicate out-of-bounds regions.",
-            UserWarning,
-            stacklevel=2,
-        )
-        # Shade the out-of-bounds region
-        if min_wl > wavelength_range[0]:
-            ax_n.axvspan(
-                min_wl,
-                wavelength_range[0],
-                facecolor="red",
-                alpha=0.15,
-                label="Out of bounds",
-            )
-        if max_wl < wavelength_range[1]:
-            ax_n.axvspan(wavelength_range[1], max_wl, facecolor="red", alpha=0.15)
+    min_wl, max_wl, wavelength_range = _resolve_nk_wavelength_range(
+        material, wavelength_range
+    )
+    fig, ax_n, ax_k = _resolve_nk_axes(ax)
+    _shade_nk_out_of_bounds(ax_n, min_wl, max_wl, wavelength_range)
 
     # Plot n and k
     wl = be.linspace(*wavelength_range, n_sample)
@@ -464,12 +512,7 @@ def plot_nk(
     ax_k.set_ylabel("$k$", color="k")
     ax_k.tick_params(axis="y", labelcolor="k")
 
-    # title stuff
-    full_name = material.material_data.get("category_name_full", "")
-    ref = material.material_data.get("reference", "")
-    full_name = full_name.replace("<sub>", "$_{")
-    full_name = full_name.replace("</sub>", "}$")
-    ax_n.set_title(f"{full_name} - {ref}")
+    _set_nk_title(ax_n, material)
 
     ax_n.set_xlim(wavelength_range)
     ax_k.set_xlim(wavelength_range)
@@ -485,4 +528,4 @@ def plot_nk(
     lines2, labels2 = ax_k.get_legend_handles_labels()
     ax_n.legend(lines + lines2, labels + labels2)
 
-    return fig, [ax_n, ax_k]
+    return fig, (ax_n, ax_k)

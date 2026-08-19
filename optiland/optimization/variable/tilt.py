@@ -50,7 +50,7 @@ class TiltVariable(VariableBehavior):
             float: The current tilt value.
 
         """
-        surf = self._surfaces.surfaces[self.surface_number]
+        surf = self._surfaces[self.surface_number]
         if self.axis == "x":
             return surf.geometry.cs.rx
         elif self.axis == "y":
@@ -63,7 +63,7 @@ class TiltVariable(VariableBehavior):
             new_value (float): The new tilt value.
 
         """
-        surf = self._surfaces.surfaces[self.surface_number]
+        surf = self._surfaces[self.surface_number]
         if self.axis == "x":
             surf.geometry.cs.rx = new_value
         elif self.axis == "y":

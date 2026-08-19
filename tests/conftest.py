@@ -1,5 +1,19 @@
+from __future__ import annotations
+
 import pytest
+
 import optiland.backend as be
+
+
+def pytest_addoption(parser):
+    """Register the --update-golden flag used by the regression snapshot suite."""
+    parser.addoption(
+        "--update-golden",
+        action="store_true",
+        default=False,
+        help="Regenerate tests/regression/fixtures/*.json instead of comparing "
+        "against them.",
+    )
 
 
 @pytest.fixture(params=be.list_available_backends(), ids=lambda b: f"backend={b}")

@@ -13,10 +13,18 @@ Kramer Harrison, 2024
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
 import matplotlib.pyplot as plt
 
 import optiland.backend as be
+
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
+
+    from optiland._types import BEArray
+    from optiland.rays import RealRays
 
 
 class BaseAperture(ABC):
@@ -36,7 +44,7 @@ class BaseAperture(ABC):
 
     @property
     @abstractmethod
-    def extent(self):
+    def extent(self) -> tuple[float, float, float, float]:
         """Returns the extent of the aperture.
 
         Returns:
@@ -46,7 +54,7 @@ class BaseAperture(ABC):
         # pragma: no cover
 
     @abstractmethod
-    def contains(self, x, y):
+    def contains(self, x: BEArray, y: BEArray) -> BEArray:
         """Checks if the given point is inside the aperture.
 
         Args:
@@ -60,7 +68,7 @@ class BaseAperture(ABC):
         """
         # pragma: no cover
 
-    def clip(self, rays):
+    def clip(self, rays: RealRays):
         """Clips the given rays based on the aperture's shape.
 
         Args:
@@ -74,7 +82,7 @@ class BaseAperture(ABC):
         rays.clip(~inside)
 
     @abstractmethod
-    def scale(self, scale_factor):
+    def scale(self, scale_factor: float):
         """Scales the aperture by the given factor.
 
         Args:
@@ -83,7 +91,7 @@ class BaseAperture(ABC):
         """
         # pragma: no cover
 
-    def to_dict(self):
+    def to_dict(self) -> dict:
         """Convert the aperture to a dictionary.
 
         Returns:
@@ -93,7 +101,7 @@ class BaseAperture(ABC):
         return {"type": self.__class__.__name__}
 
     @classmethod
-    def from_dict(cls, data):
+    def from_dict(cls, data: dict) -> BaseAperture:
         """Create an aperture from a dictionary representation.
 
         Args:
@@ -110,16 +118,16 @@ class BaseAperture(ABC):
         self,
         nx: int = 256,
         ny: int = 256,
-        ax: plt.Axes = None,
+        ax: Axes | None = None,
         buffer: float = 1.1,
         **kwargs,
-    ) -> tuple[plt.Figure, plt.Axes]:
+    ) -> tuple[Figure, Axes]:
         """Visualize the aperture.
 
         Args:
             nx (int): The number of points in the x-direction.
             ny (int): The number of points in the y-direction.
-            ax (plt.Axes): The axes to plot on.
+            ax (Axes): The axes to plot on.
             buffer (float): The buffer around the aperture.
             **kwargs: Additional keyword arguments to pass to the plot
                 function.
@@ -135,10 +143,14 @@ class BaseAperture(ABC):
         y_max = y_max * buffer
         if ax is None:
             fig, ax = plt.subplots()
+        else:
+            fig = ax.get_figure()
+
         x = be.linspace(x_min, x_max, nx)
         y = be.linspace(y_min, y_max, ny)
         X, Y = be.meshgrid(x, y)
         Z = self.contains(X, Y)
+
         ax.contourf(be.to_numpy(X), be.to_numpy(Y), be.to_numpy(Z), **kwargs)
         ax.set_xlabel("X [mm]")
         ax.set_ylabel("Y [mm]")
@@ -146,19 +158,19 @@ class BaseAperture(ABC):
 
         return fig, ax
 
-    def __or__(self, other):
+    def __or__(self, other) -> UnionAperture:
         """Union: a point is inside if it is in either region."""
         return UnionAperture(self, other)
 
-    def __add__(self, other):
+    def __add__(self, other) -> UnionAperture:
         """Alternative operator for union."""
         return self.__or__(other)
 
-    def __and__(self, other):
+    def __and__(self, other) -> IntersectionAperture:
         """Intersection: a point is inside if it is in both regions."""
         return IntersectionAperture(self, other)
 
-    def __sub__(self, other):
+    def __sub__(self, other) -> DifferenceAperture:
         """Difference: a point is allowed if it is in self but not in other."""
         return DifferenceAperture(self, other)
 
@@ -177,7 +189,7 @@ class BaseBooleanAperture(BaseAperture):
         self.b = b
 
     @property
-    def extent(self):
+    def extent(self) -> tuple[float, float, float, float]:
         """Returns the extent of the aperture.
 
         Returns:
@@ -193,7 +205,7 @@ class BaseBooleanAperture(BaseAperture):
         return x_min, x_max, y_min, y_max
 
     @abstractmethod
-    def contains(self, x, y):
+    def contains(self, x, y) -> BEArray:
         """Checks if the given point is inside the aperture.
 
         Args:
@@ -207,7 +219,7 @@ class BaseBooleanAperture(BaseAperture):
         """
         # pragma: no cover
 
-    def scale(self, scale_factor):
+    def scale(self, scale_factor: float):
         """Scales the aperture by the given factor.
 
         Args:
@@ -217,7 +229,7 @@ class BaseBooleanAperture(BaseAperture):
         self.a.scale(scale_factor)
         self.b.scale(scale_factor)
 
-    def to_dict(self):
+    def to_dict(self) -> dict:
         """Convert the aperture to a dictionary.
 
         Returns:
@@ -229,7 +241,7 @@ class BaseBooleanAperture(BaseAperture):
         return data
 
     @classmethod
-    def from_dict(cls, data):
+    def from_dict(cls, data: dict):
         """Create an aperture from a dictionary representation.
 
         Args:
@@ -256,7 +268,7 @@ class UnionAperture(BaseBooleanAperture):
     def __init__(self, a: BaseAperture, b: BaseAperture):
         super().__init__(a, b)
 
-    def contains(self, x, y):
+    def contains(self, x: BEArray, y: BEArray) -> BEArray:
         """Checks if the given point is inside either aperture.
 
         Args:
@@ -283,7 +295,7 @@ class IntersectionAperture(BaseBooleanAperture):
     def __init__(self, a: BaseAperture, b: BaseAperture):
         super().__init__(a, b)
 
-    def contains(self, x, y):
+    def contains(self, x: BEArray, y: BEArray) -> BEArray:
         """Checks if the given point is inside the aperture.
 
         Args:
@@ -310,7 +322,7 @@ class DifferenceAperture(BaseBooleanAperture):
     def __init__(self, a: BaseAperture, b: BaseAperture):
         super().__init__(a, b)
 
-    def contains(self, x, y):
+    def contains(self, x: BEArray, y: BEArray) -> BEArray:
         """Checks if the given point is inside the aperture.
 
         Args:

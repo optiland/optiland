@@ -3,6 +3,7 @@
 **/.venv/
 **/__pycache__/
 **/jupyter/
+docs/.jupyterlite.doit.db
 build/
 dist/
 **/.ipynb_checkpoints/
@@ -14,6 +15,8 @@ htmlcov/
 .coverage
 **/_build/
 **/auto_examples/
-**/gui/
 sg_execution_times.rst
 .qlty/
+.claude/
+scratch/
+**/*.doit.db

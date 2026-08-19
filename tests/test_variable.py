@@ -1,22 +1,34 @@
-import optiland.backend as be
-import pytest
+from __future__ import annotations
+
 from unittest.mock import patch
 
+import pytest
+
+import optiland.backend as be
 from optiland.coordinate_system import CoordinateSystem
 from optiland.geometries import (
     ChebyshevPolynomialGeometry,
-    ForbesQbfsGeometry,
     ForbesQ2dGeometry,
+    ForbesQbfsGeometry,
+    ForbesSurfaceConfig,
     PolynomialGeometry,
     ZernikePolynomialGeometry,
-    ForbesSurfaceConfig,
 )
-from optiland.optimization import variable, OptimizationProblem, OptimizerGeneric
+from optiland.materials.abbe import AbbeMaterial
+from optiland.optic import Optic
+from optiland.optimization import OptimizationProblem, OptimizerGeneric, variable
+from optiland.optimization.scaling.identity import IdentityScaler
+from optiland.optimization.variable import (
+    AsphereCoeffVariable,
+    DecenterVariable,
+    TiltVariable,
+    Variable,
+    ZernikeCoeffVariable,
+)
+from optiland.optimization.variable.material import MaterialVariable
 from optiland.samples.microscopes import Objective60x, UVReflectingMicroscope
 from optiland.samples.simple import AsphericSinglet, Edmund_49_847
-from optiland.materials.abbe import AbbeMaterial
-from optiland.optimization.variable.material import MaterialVariable
-from optiland.optimization.scaling.identity import IdentityScaler
+
 from .utils import assert_allclose
 
 
@@ -33,13 +45,115 @@ class TestRadiusVariable:
         self.radius_var.update_value(5.0)
         assert_allclose(self.radius_var.get_value(), 5.0)
 
+    def test_rejects_axis_for_standard_geometry(self, set_test_backend):
+        with pytest.raises(ValueError, match="only supported for toroidal"):
+            variable.RadiusVariable(self.optic, 1, axis="x")
+
+
+class TestToroidalRadiusVariable:
+    @pytest.fixture
+    def optic(self, set_test_backend):
+        optic = Optic()
+        optic.surfaces.add(index=0, thickness=be.inf)
+        optic.surfaces.add(
+            index=1,
+            surface_type="toroidal",
+            radius_x=30.0,
+            radius_y=40.0,
+        )
+        return optic
+
+    def test_requires_axis(self, optic):
+        with pytest.raises(ValueError, match="axis.*required"):
+            variable.RadiusVariable(optic, surface_number=1)
+
+    def test_rejects_invalid_axis(self, optic):
+        with pytest.raises(ValueError, match='Invalid axis "z"'):
+            variable.RadiusVariable(optic, surface_number=1, axis="z")
+
+    def test_get_value_by_axis(self, optic):
+        radius_x = variable.RadiusVariable(optic, surface_number=1, axis="x")
+        radius_y = variable.RadiusVariable(optic, surface_number=1, axis="y")
+
+        assert_allclose(radius_x.get_value(), 30.0)
+        assert_allclose(radius_y.get_value(), 40.0)
+
+    @pytest.mark.parametrize(
+        ("axis", "expected"),
+        [
+            ("x", "Radius X, Surface 1"),
+            ("y", "Radius Y, Surface 1"),
+        ],
+    )
+    def test_string_representation(self, optic, axis, expected):
+        radius = variable.RadiusVariable(optic, surface_number=1, axis=axis)
+
+        assert str(radius) == expected
+
+    def test_update_x_radius(self, optic):
+        radius_x = variable.RadiusVariable(optic, surface_number=1, axis="x")
+        radius_x.update_value(35.0)
+
+        geometry = optic.surfaces[1].geometry
+        assert_allclose(geometry.R_rot, 35.0)
+        assert_allclose(geometry.R_yz, 40.0)
+        assert_allclose(geometry.radius, 40.0)
+
+    def test_update_y_radius_keeps_geometry_consistent(self, optic):
+        radius_y = variable.RadiusVariable(optic, surface_number=1, axis="y")
+        radius_y.update_value(50.0)
+
+        geometry = optic.surfaces[1].geometry
+        assert_allclose(geometry.R_rot, 30.0)
+        assert_allclose(geometry.R_yz, 50.0)
+        assert_allclose(geometry.radius, 50.0)
+        assert_allclose(geometry.c_yz, 1.0 / 50.0)
+
+    def test_generic_updater_keeps_y_radius_consistent(self, optic):
+        optic.updater.set_radius(60.0, surface_number=1)
+
+        geometry = optic.surfaces[1].geometry
+        assert_allclose(geometry.R_rot, 30.0)
+        assert_allclose(geometry.R_yz, 60.0)
+        assert_allclose(geometry.radius, 60.0)
+        assert_allclose(geometry.c_yz, 1.0 / 60.0)
+
+    def test_problem_registers_both_radii(self, optic):
+        problem = OptimizationProblem()
+        problem.add_variable(
+            optic,
+            "radius",
+            surface_number=1,
+            axis="x",
+            scaler=IdentityScaler(),
+        )
+        problem.add_variable(
+            optic,
+            "radius",
+            surface_number=1,
+            axis="y",
+            scaler=IdentityScaler(),
+        )
+
+        assert_allclose(problem.variables[0].value, 30.0)
+        assert_allclose(problem.variables[1].value, 40.0)
+
+        problem.variables[0].update(32.0)
+        problem.variables[1].update(45.0)
+
+        geometry = optic.surfaces[1].geometry
+        assert_allclose(geometry.R_rot, 32.0)
+        assert_allclose(geometry.R_yz, 45.0)
+
 
 class TestReciprocalRadiusVariable:
     @pytest.fixture(autouse=True)
     def setup(self):
         self.optic = Edmund_49_847()
         self.reciprocal_radius_var = variable.ReciprocalRadiusVariable(self.optic, 1)
-        self.radius_var = variable.RadiusVariable(self.optic, 1, scaler=IdentityScaler())
+        self.radius_var = variable.RadiusVariable(
+            self.optic, 1, scaler=IdentityScaler()
+        )
         self.problem = OptimizationProblem()
         input_data = {
             "optic": self.optic,
@@ -76,20 +190,20 @@ class TestReciprocalRadiusVariable:
     def test_optimization(self):
         self.problem.add_variable(self.optic, "reciprocal_radius", surface_number=1)
         optimizer = OptimizerGeneric(self.problem)
-        self.optic.set_radius(22.0, 1)
+        self.optic.updater.set_radius(22.0, 1)
         optimizer.optimize(tol=1e-9)
         expected_radius = 19.93
-        optimized_radius = self.optic.surface_group.radii[1]
+        optimized_radius = self.optic.surfaces.radii[1]
         assert_allclose(optimized_radius, expected_radius, atol=5)
 
     def test_optimization_with_flat_surface(self):
         self.problem.add_variable(self.optic, "reciprocal_radius", surface_number=1)
-        self.optic.set_radius(-be.inf, 1)
+        self.optic.updater.set_radius(-be.inf, 1)
         optimizer = OptimizerGeneric(self.problem)
         optimizer.optimize(tol=1e-9)
         optimizer.optimize(tol=1e-9)
         expected_radius = 19.93
-        optimized_radius = self.optic.surface_group.radii[1]
+        optimized_radius = self.optic.surfaces.radii[1]
         assert_allclose(optimized_radius, expected_radius, atol=5)
 
 
@@ -183,8 +297,8 @@ class TestMaterialVariable:
         assert str(self.material_var) == "Material, Surface 1"
 
     def test_init_with_abbe_material(self):
-        abbe = AbbeMaterial(n=(1.5168,), abbe=(64.17,))
-        self.optic.surface_group.surfaces[self.surface_number].material_post = abbe
+        abbe = AbbeMaterial(n=(1.5168,), abbe=(64.17,), model="polynomial")
+        self.optic.surfaces[self.surface_number].material_post = abbe
 
         with (
             patch(
@@ -245,7 +359,7 @@ class TestPolynomialCoeffVariable:
             100,
             coefficients=be.zeros((3, 3)),
         )
-        self.optic.surface_group.surfaces[0].geometry = poly_geo
+        self.optic.surfaces[0].geometry = poly_geo
         self.poly_var = variable.PolynomialCoeffVariable(self.optic, 0, (1, 1))
 
     def test_get_value(self, set_test_backend):
@@ -258,14 +372,14 @@ class TestPolynomialCoeffVariable:
     def test_get_value_index_error(self, set_test_backend):
         self.optic = AsphericSinglet()
         poly_geo = PolynomialGeometry(CoordinateSystem(), 100)
-        self.optic.surface_group.surfaces[0].geometry = poly_geo
+        self.optic.surfaces[0].geometry = poly_geo
         self.poly_var = variable.PolynomialCoeffVariable(self.optic, 0, (1, 1))
         assert self.poly_var.get_value() == 0.0
 
     def test_update_value_index_error(self, set_test_backend):
         self.optic = AsphericSinglet()
         poly_geo = PolynomialGeometry(CoordinateSystem(), 100)
-        self.optic.surface_group.surfaces[0].geometry = poly_geo
+        self.optic.surfaces[0].geometry = poly_geo
         self.poly_var = variable.PolynomialCoeffVariable(self.optic, 0, (1, 1))
         self.poly_var.update_value(1.0)
         assert_allclose(self.poly_var.get_value(), 1.0)
@@ -280,7 +394,7 @@ class TestPolynomialCoeffVariable:
             100,
             coefficients=be.zeros((3, 3)),
         )
-        self.optic.surface_group.surfaces[0].geometry = poly_geo
+        self.optic.surfaces[0].geometry = poly_geo
         self.poly_var = variable.PolynomialCoeffVariable(
             self.optic,
             0,
@@ -299,7 +413,7 @@ class TestChebyshevCoeffVariable:
             100,
             coefficients=be.zeros((3, 3)),
         )
-        self.optic.surface_group.surfaces[0].geometry = poly_geo
+        self.optic.surfaces[0].geometry = poly_geo
         self.poly_var = variable.ChebyshevCoeffVariable(self.optic, 0, (1, 1))
 
     def test_get_value(self, set_test_backend):
@@ -312,14 +426,14 @@ class TestChebyshevCoeffVariable:
     def test_get_value_index_error(self, set_test_backend):
         self.optic = AsphericSinglet()
         poly_geo = ChebyshevPolynomialGeometry(CoordinateSystem(), 100)
-        self.optic.surface_group.surfaces[0].geometry = poly_geo
+        self.optic.surfaces[0].geometry = poly_geo
         self.poly_var = variable.ChebyshevCoeffVariable(self.optic, 0, (1, 1))
         assert self.poly_var.get_value() == 0.0
 
     def test_update_value_index_error(self, set_test_backend):
         self.optic = AsphericSinglet()
         poly_geo = ChebyshevPolynomialGeometry(CoordinateSystem(), 100)
-        self.optic.surface_group.surfaces[0].geometry = poly_geo
+        self.optic.surfaces[0].geometry = poly_geo
         self.poly_var = variable.ChebyshevCoeffVariable(self.optic, 0, (1, 1))
         self.poly_var.update_value(1.0)
         assert_allclose(self.poly_var.get_value(), 1.0)
@@ -337,7 +451,7 @@ class TestZernikeCoeffVariable:
             100,
             coefficients=be.zeros(3),
         )
-        self.optic.surface_group.surfaces[0].geometry = poly_geo
+        self.optic.surfaces[0].geometry = poly_geo
         self.poly_var = variable.ZernikeCoeffVariable(self.optic, 0, 1)
 
     def test_get_value(self, set_test_backend):
@@ -350,14 +464,14 @@ class TestZernikeCoeffVariable:
     def test_get_value_index_error(self, set_test_backend):
         self.optic = AsphericSinglet()
         poly_geo = ZernikePolynomialGeometry(CoordinateSystem(), 100)
-        self.optic.surface_group.surfaces[0].geometry = poly_geo
+        self.optic.surfaces[0].geometry = poly_geo
         self.poly_var = variable.ZernikeCoeffVariable(self.optic, 0, 1)
         assert self.poly_var.get_value() == 0.0
 
     def test_update_value_index_error(self, set_test_backend):
         self.optic = AsphericSinglet()
         poly_geo = ZernikePolynomialGeometry(CoordinateSystem(), 100)
-        self.optic.surface_group.surfaces[0].geometry = poly_geo
+        self.optic.surfaces[0].geometry = poly_geo
         self.poly_var = variable.ZernikeCoeffVariable(self.optic, 0, 1)
         self.poly_var.update_value(1.0)
         assert_allclose(self.poly_var.get_value(), 1.0)
@@ -382,7 +496,10 @@ class TestVariable:
         )
         assert_allclose(radius_var.value, 4.5326)
         captured = capsys.readouterr()
-        assert "Warning: unrecognized_attribute is not a recognized attribute" in captured.out
+        assert (
+            "Warning: unrecognized_attribute is not a recognized attribute"
+            in captured.out
+        )
 
     def test_invalid_type(self, set_test_backend):
         optic = Objective60x()
@@ -421,7 +538,9 @@ class TestTiltVariable:
 
     def test_get_value_no_scaling(self, set_test_backend):
         self.optic = Objective60x()
-        self.tilt_var_x = variable.TiltVariable(self.optic, 1, "x", scaler=IdentityScaler())
+        self.tilt_var_x = variable.TiltVariable(
+            self.optic, 1, "x", scaler=IdentityScaler()
+        )
         assert_allclose(self.tilt_var_x.get_value(), 0.0)
 
 
@@ -446,9 +565,9 @@ class TestDecenterVariable:
         self.decenter_var_y.update_value(5.0)
         assert_allclose(self.decenter_var_y.get_value(), 5.0)
 
-    def test_invalid_axis(self, set_test_backend):
-        with pytest.raises(ValueError):
-            variable.DecenterVariable(self.optic, 1, "z")
+    #    def test_invalid_axis(self, set_test_backend):
+    #        with pytest.raises(ValueError):
+    #            variable.DecenterVariable(self.optic, 1, "z")
 
     def test_str(self, set_test_backend):
         assert str(self.decenter_var_x) == "Decenter X, Surface 1"
@@ -472,7 +591,7 @@ class TestNormalizationRadiusVariable:
         zernike_geo = ZernikePolynomialGeometry(
             CoordinateSystem(), 100, coefficients=be.zeros(3), norm_radius=10.0
         )
-        self.optic.surface_group.surfaces[1].geometry = zernike_geo
+        self.optic.surfaces[1].geometry = zernike_geo
         self.norm_radius_var = variable.NormalizationRadiusVariable(self.optic, 1)
 
     def test_get_value(self, set_test_backend):
@@ -487,20 +606,26 @@ class TestNormalizationRadiusVariable:
 
 
 class TestForbesQbfsCoeffVariable:
+    pytestmark = [
+        pytest.mark.filterwarnings(
+            "ignore:ForbesQbfsGeometry is deprecated:DeprecationWarning"
+        ),
+        pytest.mark.filterwarnings(
+            "ignore:ForbesQbfsCoeffVariable is deprecated:DeprecationWarning"
+        ),
+    ]
+
     @pytest.fixture(autouse=True)
     def setup(self):
         self.optic = AsphericSinglet()
-        
+
         surface_config = ForbesSurfaceConfig(
-            radius=100,
-            terms={1: 0.1, 2: 0.2, 3: 0.3},
-            norm_radius=15.0
+            radius=100, terms={1: 0.1, 2: 0.2, 3: 0.3}, norm_radius=15.0
         )
         forbes_geo = ForbesQbfsGeometry(
-            CoordinateSystem(),
-            surface_config=surface_config
+            CoordinateSystem(), surface_config=surface_config
         )
-        self.optic.surface_group.surfaces[1].geometry = forbes_geo
+        self.optic.surfaces[1].geometry = forbes_geo
         self.forbes_var = variable.ForbesQbfsCoeffVariable(
             self.optic, 1, 1, scaler=IdentityScaler()
         )
@@ -511,7 +636,7 @@ class TestForbesQbfsCoeffVariable:
     def test_update_value(self, set_test_backend):
         self.forbes_var.update_value(0.5)
         assert_allclose(self.forbes_var.get_value(), 0.5)
-        assert_allclose(self.optic.surface_group.surfaces[1].geometry.coeffs_c[1], 0.5)
+        assert_allclose(self.optic.surfaces[1].geometry.coeffs_c[1], 0.5)
 
     def test_update_value_out_of_bounds(self, set_test_backend):
         forbes_var_new = variable.ForbesQbfsCoeffVariable(
@@ -519,20 +644,25 @@ class TestForbesQbfsCoeffVariable:
         )
         forbes_var_new.update_value(0.9)
         assert_allclose(forbes_var_new.get_value(), 0.9)
-        assert len(self.optic.surface_group.surfaces[1].geometry.coeffs_c) == 5
+        assert len(self.optic.surfaces[1].geometry.coeffs_c) == 5
 
     def test_string_representation(self, set_test_backend):
         assert str(self.forbes_var) == "Forbes Q-bfs Coeff n=1, Surface 1"
 
     def test_get_value_nonexistent(self, set_test_backend):
-        var_n0 = variable.ForbesQbfsCoeffVariable(self.optic, 1, 0, scaler=IdentityScaler())
+        var_n0 = variable.ForbesQbfsCoeffVariable(
+            self.optic, 1, 0, scaler=IdentityScaler()
+        )
         assert_allclose(var_n0.get_value(), 0.0)
 
-        var_n5 = variable.ForbesQbfsCoeffVariable(self.optic, 1, 5, scaler=IdentityScaler())
+        var_n5 = variable.ForbesQbfsCoeffVariable(
+            self.optic, 1, 5, scaler=IdentityScaler()
+        )
         assert_allclose(var_n5.get_value(), 0.0)
 
     def test_scaling(self, set_test_backend):
         from optiland.optimization.scaling.linear import LinearScaler
+
         var_scaled = variable.ForbesQbfsCoeffVariable(
             self.optic, 1, 2, scaler=LinearScaler(factor=10.0)
         )
@@ -544,58 +674,52 @@ class TestForbesQ2dCoeffVariable:
     @pytest.fixture(autouse=True)
     def setup(self):
         self.optic = AsphericSinglet()
-        
+
         freeform_coeffs = {
-            ('a', 1, 1): 0.1,
-            ('a', 2, 2): 0.2,
-            ('b', 1, 1): 0.3,
+            ("a", 1, 1): 0.1,
+            ("a", 2, 2): 0.2,
+            ("b", 1, 1): 0.3,
         }
         surface_config = ForbesSurfaceConfig(
-            radius=100,
-            conic=0.0,
-            terms=freeform_coeffs,
-            norm_radius=15.0
+            radius=100, conic=0.0, terms=freeform_coeffs, norm_radius=15.0
         )
         forbes_geo = ForbesQ2dGeometry(
             CoordinateSystem(),
             surface_config=surface_config,
         )
-        self.optic.surface_group.surfaces[1].geometry = forbes_geo
-        
+        self.optic.surfaces[1].geometry = forbes_geo
+
         self.forbes_var = variable.ForbesQ2dCoeffVariable(
-            self.optic, 1, ('a', 2, 2), scaler=IdentityScaler()
+            self.optic, 1, ("a", 2, 2), scaler=IdentityScaler()
         )
 
     def test_get_value(self, set_test_backend):
         assert_allclose(self.forbes_var.get_value(), 0.2)
 
     def test_get_value_nonexistent(self, set_test_backend):
-        
         forbes_var_new = variable.ForbesQ2dCoeffVariable(
-            self.optic, 1, ('a', 1, 3), scaler=IdentityScaler()
+            self.optic, 1, ("a", 1, 3), scaler=IdentityScaler()
         )
         assert_allclose(forbes_var_new.get_value(), 0.0)
 
     def test_update_value_existing(self, set_test_backend):
         self.forbes_var.update_value(0.5)
         assert_allclose(self.forbes_var.get_value(), 0.5)
-        
+
         assert_allclose(
-            self.optic.surface_group.surfaces[1].geometry.freeform_coeffs[('a', 2, 2)], 0.5
+            self.optic.surfaces[1].geometry.freeform_coeffs[("a", 2, 2)],
+            0.5,
         )
 
     def test_update_value__new(self, set_test_backend):
-        
-        key = ('a', 1, 3)
+        key = ("a", 1, 3)
         forbes_var_new = variable.ForbesQ2dCoeffVariable(
             self.optic, 1, key, scaler=IdentityScaler()
         )
         forbes_var_new.update_value(0.9)
         assert_allclose(forbes_var_new.get_value(), 0.9)
-        assert key in self.optic.surface_group.surfaces[1].geometry.freeform_coeffs
-        assert_allclose(
-            self.optic.surface_group.surfaces[1].geometry.freeform_coeffs[key], 0.9
-        )
+        assert key in self.optic.surfaces[1].geometry.freeform_coeffs
+        assert_allclose(self.optic.surfaces[1].geometry.freeform_coeffs[key], 0.9)
 
     def test_string_representation(self, set_test_backend):
         assert str(self.forbes_var) == "Forbes Q-2D Coeff (n=2, m=2, cos), Surface 1"
@@ -605,8 +729,7 @@ class TestForbesQ2dCoeffVariable:
             variable.ForbesQ2dCoeffVariable(self.optic, 1, (1))
 
     def test_get_and_update_sine_term(self, set_test_backend):
-        
-        key = ('b', 1, 1)
+        key = ("b", 1, 1)
         var_sin = variable.ForbesQ2dCoeffVariable(
             self.optic, 1, key, scaler=IdentityScaler()
         )
@@ -615,14 +738,14 @@ class TestForbesQ2dCoeffVariable:
         var_sin.update_value(-0.5)
         assert_allclose(var_sin.get_value(), -0.5)
         assert_allclose(
-            self.optic.surface_group.surfaces[1].geometry.freeform_coeffs[key],
+            self.optic.surfaces[1].geometry.freeform_coeffs[key],
             -0.5,
         )
 
     def test_string_representation_sine(self, set_test_backend):
         """Test the string representation for a sine term."""
-        
-        var_sin = variable.ForbesQ2dCoeffVariable(self.optic, 1, ('b', 1, 1))
+
+        var_sin = variable.ForbesQ2dCoeffVariable(self.optic, 1, ("b", 1, 1))
         assert str(var_sin) == "Forbes Q-2D Coeff (n=1, m=1, sin), Surface 1"
 
 
@@ -704,3 +827,101 @@ class TestVariableManager:
         var_manager.add(optic, "radius", surface_number=1)
         del var_manager[0]
         assert len(var_manager) == 0
+
+
+class TestVariablesExtended:
+    @pytest.fixture
+    def optic(self):
+        optic = Optic()
+        optic.surfaces.add(index=0, surface_type="plane")
+        optic.surfaces.add(index=1, surface_type="standard", radius=100)
+        optic.surfaces.add(
+            index=2, surface_type="even_asphere", radius=50, coefficients=[0.0, 0.1]
+        )
+        optic.surfaces.add(
+            index=3, surface_type="zernike", radius=200, coefficients=[0.0] * 5
+        )
+        return optic
+
+    def test_decenter_variable(self, optic):
+        # Surface 1 is standard
+        var = DecenterVariable(optic, surface_number=1, axis="x")
+        assert var.get_value() == 0.0
+
+        var.update_value(0.5)
+        assert optic.surfaces[1].geometry.cs.x == 0.5
+        assert var.get_value() == 0.5
+
+        # Test y and z
+        var_y = DecenterVariable(optic, surface_number=1, axis="y")
+        var_y.update_value(-0.2)
+        assert optic.surfaces[1].geometry.cs.y == -0.2
+
+        var_z = DecenterVariable(optic, surface_number=1, axis="z")
+        var_z.update_value(1.0)
+        assert optic.surfaces[1].geometry.cs.z == 1.0
+
+    def test_decenter_variable_invalid_axis(self, optic):
+        with pytest.raises(ValueError, match='Invalid axis "r"'):
+            DecenterVariable(optic, surface_number=1, axis="r")
+
+        var = DecenterVariable(optic, surface_number=1, axis="x")
+        var.axis = "r"
+        with pytest.raises(ValueError, match='Invalid axis "r"'):
+            var.get_value()
+        with pytest.raises(ValueError, match='Invalid axis "r"'):
+            var.update_value(1.0)
+
+    def test_tilt_variable(self, optic):
+        var = TiltVariable(optic, surface_number=1, axis="x")
+        var.update_value(0.1)  # radians
+        assert optic.surfaces[1].geometry.cs.rx == 0.1
+
+        var_y = TiltVariable(optic, surface_number=1, axis="y")
+        var_y.update_value(0.2)
+        assert optic.surfaces[1].geometry.cs.ry == 0.2
+
+    def test_tilt_variable_invalid_axis(self, optic):
+        with pytest.raises(ValueError, match='Invalid axis "r"'):
+            TiltVariable(optic, surface_number=1, axis="r")
+
+    def test_asphere_coeff_variable_get_padding(self, optic):
+        # Surface 2 is even_asphere with 2 coeffs
+        var = AsphereCoeffVariable(optic, surface_number=2, coeff_number=5)
+        # Should return 0 and pad
+        val = var.get_value()
+        assert val == 0.0
+        # Check padding happened
+        assert len(optic.surfaces[2].geometry.coefficients) >= 6
+
+    def test_asphere_coeff_variable_update(self, optic):
+        var = AsphereCoeffVariable(optic, surface_number=2, coeff_number=1)
+        var.update_value(0.5)
+        assert optic.surfaces[2].geometry.coefficients[1] == 0.5
+
+    def test_zernike_coeff_variable_padding(self, optic):
+        # Surface 3 is zernike with 5 coeffs (indices 0-4)
+        var = ZernikeCoeffVariable(optic, surface_number=3, coeff_index=10)
+
+        # Test update padding
+        var.update_value(1.5)
+        coeffs = optic.surfaces[3].geometry.coefficients
+        assert len(coeffs) >= 11
+        assert coeffs[10] == 1.5
+
+        # Test get padding
+        var2 = ZernikeCoeffVariable(optic, surface_number=3, coeff_index=15)
+        val = var2.get_value()
+        assert val == 0.0
+        assert len(optic.surfaces[3].geometry.coefficients) >= 16
+
+    def test_variable_wrapper(self, optic):
+        # Test generic Variable wrapper
+        v = Variable(optic, type_name="decenter", surface_number=1, axis="x")
+        v.update(1.0)
+        assert v.value == 1.0
+        assert optic.surfaces[1].geometry.cs.x == 1.0
+
+    def test_variable_wrapper_invalid_type(self, optic):
+        with pytest.raises(ValueError, match="Unknown variable type 'invalid'"):
+            Variable(optic, type_name="invalid")

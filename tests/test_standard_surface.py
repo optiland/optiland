@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import pytest
 
 import optiland.backend as be
@@ -14,27 +16,26 @@ class TestSurface:
     def create_surface(self):
         cs = CoordinateSystem()
         geometry = Plane(cs)
-        material_pre = IdealMaterial(1, 0)
         material_post = IdealMaterial(1.5, 0)
         aperture = None
         coating = SimpleCoating(0.5, 0.5)
         bsdf = None
         interaction_model = RefractiveReflectiveModel(
-            geometry=geometry,
-            material_pre=material_pre,
-            material_post=material_post,
+            parent_surface=None,
             is_reflective=True,
             coating=coating,
             bsdf=bsdf,
         )
-        return Surface(
+        surf = Surface(
             geometry=geometry,
-            material_pre=material_pre,
+            previous_surface=None,
             material_post=material_post,
             is_stop=True,
             aperture=aperture,
             interaction_model=interaction_model,
         )
+        interaction_model.parent_surface = surf
+        return surf
 
     def test_trace_paraxial_rays(self, set_test_backend):
         surface = self.create_surface()
@@ -110,7 +111,6 @@ class TestSurface:
         new_surface = Surface.from_dict(data)
         assert isinstance(new_surface, Surface)
         assert new_surface.geometry.to_dict() == surface.geometry.to_dict()
-        assert new_surface.material_pre.to_dict() == surface.material_pre.to_dict()
         assert new_surface.material_post.to_dict() == surface.material_post.to_dict()
         assert new_surface.is_stop == surface.is_stop
         assert new_surface.aperture == surface.aperture
@@ -140,3 +140,64 @@ class TestSurface:
         del data["type"]
         with pytest.raises(ValueError):
             Surface.from_dict(data)
+
+    def test_listener_registration(self):
+        surf1 = self.create_surface()
+        surf2 = self.create_surface()
+
+        # Test explicit subscribe/unsubscribe (ObserverMixin API)
+        surf1.subscribe(surf2._on_upstream_material_change)
+        assert surf2._on_upstream_material_change in surf1._subscribers
+
+        surf1.unsubscribe(surf2._on_upstream_material_change)
+        assert surf1._subscribers == []
+
+        # Implicit registration when previous_surface is set
+        surf2.previous_surface = surf1
+        assert surf2._on_upstream_material_change in surf1._subscribers
+
+        # Implicit deregistration when previous_surface is reassigned
+        surf3 = self.create_surface()
+        surf2.previous_surface = surf3
+        assert surf1._subscribers == []
+        assert surf2._on_upstream_material_change in surf3._subscribers
+
+    def test_fresnel_coating_material(self):
+        surf1 = self.create_surface()
+        surf2 = self.create_surface()
+        surf1.material_post = IdealMaterial(1.0)
+        surf2.previous_surface = surf1
+        surf2.set_fresnel_coating()
+        assert (
+            surf2.interaction_model.coating.material_pre.to_dict()
+            == IdealMaterial(1.0, 0.0).to_dict()
+        )
+        surf1.material_post = IdealMaterial(1.2, 0.0)
+        assert (
+            surf2.interaction_model.coating.material_pre.to_dict()
+            == IdealMaterial(1.2, 0.0).to_dict()
+        )
+        assert (
+            surf2.interaction_model.coating.material_post.to_dict()
+            == IdealMaterial(1.5, 0.0).to_dict()
+        )
+        surf2.material_post = IdealMaterial(1.0, 0)
+
+        assert (
+            surf2.interaction_model.coating.material_pre.to_dict()
+            == IdealMaterial(1.2, 0.0).to_dict()
+        )
+        assert (
+            surf2.interaction_model.coating.material_post.to_dict()
+            == IdealMaterial(1.0, 0.0).to_dict()
+        )
+
+        surf2.flip()
+        assert (
+            surf2.interaction_model.coating.material_pre.to_dict()
+            == IdealMaterial(1.2, 0.0).to_dict()
+        )
+        assert (
+            surf2.interaction_model.coating.material_post.to_dict()
+            == IdealMaterial(1.2, 0.0).to_dict()
+        )

@@ -10,44 +10,146 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from optiland._suggest import options_hint
 from optiland.interactions.diffractive_model import DiffractiveInteractionModel
+from optiland.interactions.phase_interaction_model import PhaseInteractionModel
 from optiland.interactions.refractive_reflective_model import RefractiveReflectiveModel
 from optiland.interactions.thin_lens_interaction_model import ThinLensInteractionModel
 
 if TYPE_CHECKING:
-    # pragma: no cover
+    from collections.abc import Callable  # pragma: no cover
+
     from optiland.coatings import BaseCoating
-    from optiland.geometries.base import BaseGeometry
     from optiland.interactions.base import BaseInteractionModel
-    from optiland.materials.base import BaseMaterial
     from optiland.scatter import BaseBSDF
+    from optiland.surfaces import Surface
+
+
+def _build_refractive_reflective(
+    parent_surface: Surface | None,
+    is_reflective: bool,
+    coating: BaseCoating | None,
+    bsdf: BaseBSDF | None,
+    **_,
+) -> RefractiveReflectiveModel:
+    return RefractiveReflectiveModel(
+        parent_surface=parent_surface,
+        is_reflective=is_reflective,
+        coating=coating,
+        bsdf=bsdf,
+    )
+
+
+def _build_thin_lens(
+    parent_surface: Surface | None,
+    is_reflective: bool,
+    coating: BaseCoating | None,
+    bsdf: BaseBSDF | None,
+    focal_length: float | None = None,
+    **_,
+) -> ThinLensInteractionModel:
+    if focal_length is None:
+        raise ValueError("Focal length is required for thin lens.")
+    return ThinLensInteractionModel(
+        parent_surface=parent_surface,
+        focal_length=focal_length,
+        is_reflective=is_reflective,
+        coating=coating,
+        bsdf=bsdf,
+    )
+
+
+def _build_diffractive(
+    parent_surface: Surface | None,
+    is_reflective: bool,
+    coating: BaseCoating | None,
+    bsdf: BaseBSDF | None,
+    **_,
+) -> DiffractiveInteractionModel:
+    return DiffractiveInteractionModel(
+        parent_surface=parent_surface,
+        is_reflective=is_reflective,
+        coating=coating,
+        bsdf=bsdf,
+    )
+
+
+def _build_phase(
+    parent_surface: Surface | None,
+    is_reflective: bool,
+    coating: BaseCoating | None,
+    bsdf: BaseBSDF | None,
+    phase_profile=None,
+    **_,
+) -> PhaseInteractionModel:
+    if phase_profile is None:
+        raise ValueError("phase_profile is required for phase interaction.")
+    return PhaseInteractionModel(
+        parent_surface=parent_surface,
+        phase_profile=phase_profile,
+        is_reflective=is_reflective,
+        coating=coating,
+        bsdf=bsdf,
+    )
+
+
+_INTERACTION_REGISTRY: dict[str, Callable] = {
+    "refractive_reflective": _build_refractive_reflective,
+    "thin_lens": _build_thin_lens,
+    "diffractive": _build_diffractive,
+    "phase": _build_phase,
+}
 
 
 class InteractionModelFactory:
     """A factory class for creating interaction model objects."""
 
+    @classmethod
+    def register(
+        cls,
+        name: str,
+        builder: Callable,
+        *,
+        overwrite: bool = False,
+    ) -> None:
+        """Register a new interaction model builder.
+
+        Args:
+            name: The string key used when specifying interaction_type.
+            builder: A callable with signature
+                ``(parent_surface, is_reflective, coating, bsdf, **kwargs)``
+                that returns a ``BaseInteractionModel`` instance.
+            overwrite: Allow replacing an existing registration.
+
+        Raises:
+            ValueError: If name is already registered and overwrite is False.
+        """
+        if name in _INTERACTION_REGISTRY and not overwrite:
+            raise ValueError(
+                f"Interaction model '{name}' is already registered. "
+                "Pass overwrite=True to replace it."
+            )
+        _INTERACTION_REGISTRY[name] = builder
+
     def create(
         self,
+        parent_surface: Surface | None,
         interaction_type: str,
-        geometry: BaseGeometry,
-        material_pre: BaseMaterial,
-        material_post: BaseMaterial,
         is_reflective: bool,
         coating: BaseCoating | None,
         bsdf: BaseBSDF | None,
-        focal_length: float | None = None,
+        **kwargs,
     ) -> BaseInteractionModel:
         """Creates an interaction model object based on the given parameters.
 
         Args:
+            parent_surface: The parent surface (hooked up later in Surface.__init__).
             interaction_type (str): The type of interaction model to create.
-            geometry (BaseGeometry): The geometry of the surface.
-            material_pre (BaseMaterial): The material before the surface.
-            material_post (BaseMaterial): The material after the surface.
             is_reflective (bool): Indicates whether the surface is reflective.
             coating (Optional[BaseCoating]): The coating of the surface.
             bsdf (Optional[BaseBSDF]): The BSDF of the surface.
-            focal_length (Optional[float]): The focal length of the surface.
+            **kwargs: Additional keyword arguments forwarded to the builder
+                (e.g. ``focal_length`` for thin_lens, ``phase_profile`` for phase).
 
         Returns:
             BaseInteractionModel: The created interaction model object.
@@ -55,35 +157,16 @@ class InteractionModelFactory:
         Raises:
             ValueError: If the interaction_type is unknown.
         """
-        if interaction_type == "refractive_reflective":
-            return RefractiveReflectiveModel(
-                geometry=geometry,
-                material_pre=material_pre,
-                material_post=material_post,
-                is_reflective=is_reflective,
-                coating=coating,
-                bsdf=bsdf,
+        if interaction_type not in _INTERACTION_REGISTRY:
+            raise ValueError(
+                f"Unknown interaction_type, got {interaction_type!r}."
+                f"{options_hint(str(interaction_type), _INTERACTION_REGISTRY)}"
             )
-        elif interaction_type == "thin_lens":
-            if focal_length is None:
-                raise ValueError("Focal length is required for thin lens.")
-            return ThinLensInteractionModel(
-                focal_length=focal_length,
-                geometry=geometry,
-                material_pre=material_pre,
-                material_post=material_post,
-                is_reflective=is_reflective,
-                coating=coating,
-                bsdf=bsdf,
-            )
-        elif interaction_type == "diffractive":
-            return DiffractiveInteractionModel(
-                geometry=geometry,
-                material_pre=material_pre,
-                material_post=material_post,
-                is_reflective=is_reflective,
-                coating=coating,
-                bsdf=bsdf,
-            )
-        else:
-            raise ValueError(f"Unknown interaction_type: {interaction_type}")
+        builder = _INTERACTION_REGISTRY[interaction_type]
+        return builder(
+            parent_surface=parent_surface,
+            is_reflective=is_reflective,
+            coating=coating,
+            bsdf=bsdf,
+            **kwargs,
+        )

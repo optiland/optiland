@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import pytest
+
 from optiland.optic import Optic
 from optiland.utils import resolve_fields, resolve_wavelength, resolve_wavelengths
 
@@ -6,23 +9,26 @@ from optiland.utils import resolve_fields, resolve_wavelength, resolve_wavelengt
 @pytest.fixture
 def optic():
     o = Optic()
-    o.add_wavelength(value=0.5, is_primary=True)
-    o.add_wavelength(value=0.6)
-    o.add_field(y=0)
-    o.add_field(y=1)
+    o.wavelengths.add(value=0.5, is_primary=True)
+    o.wavelengths.add(value=0.6)
+    o.fields.add(y=0)
+    o.fields.add(y=1)
     return o
 
 
 def test_resolve_wavelengths_all(optic):
-    assert resolve_wavelengths(optic, "all") == [0.5, 0.6]
+    result = resolve_wavelengths(optic, "all")
+    assert [wp.value for wp in result] == [0.5, 0.6]
 
 
 def test_resolve_wavelengths_primary(optic):
-    assert resolve_wavelengths(optic, "primary") == [0.5]
+    result = resolve_wavelengths(optic, "primary")
+    assert [wp.value for wp in result] == [0.5]
 
 
 def test_resolve_wavelengths_list(optic):
-    assert resolve_wavelengths(optic, [0.7, 0.8]) == [0.7, 0.8]
+    result = resolve_wavelengths(optic, [0.7, 0.8])
+    assert [wp.value for wp in result] == [0.7, 0.8]
 
 
 def test_resolve_wavelengths_invalid_string(optic):
@@ -36,11 +42,13 @@ def test_resolve_wavelengths_invalid_type(optic):
 
 
 def test_resolve_fields_all(optic):
-    assert resolve_fields(optic, "all") == [(0.0, 0.0), (0.0, 1.0)]
+    result = resolve_fields(optic, "all")
+    assert [fp.coord for fp in result] == [(0.0, 0.0), (0.0, 1.0)]
 
 
 def test_resolve_fields_list(optic):
-    assert resolve_fields(optic, [(0.1, 0.2)]) == [(0.1, 0.2)]
+    result = resolve_fields(optic, [(0.1, 0.2)])
+    assert [fp.coord for fp in result] == [(0.1, 0.2)]
 
 
 def test_resolve_fields_invalid_string(optic):
@@ -50,7 +58,7 @@ def test_resolve_fields_invalid_string(optic):
 
 def test_resolve_fields_invalid_type(optic):
     with pytest.raises(TypeError):
-        resolve_fields(optic, 123)
+        resolve_fields(optic, {"invalid": "type"})
 
 
 def test_resolve_wavelength_primary(optic):

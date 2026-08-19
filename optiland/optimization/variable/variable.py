@@ -11,17 +11,22 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from optiland._suggest import options_hint
 from optiland.optimization.variable.asphere_coeff import AsphereCoeffVariable
 from optiland.optimization.variable.chebyshev_coeff import ChebyshevCoeffVariable
 from optiland.optimization.variable.conic import ConicVariable
 from optiland.optimization.variable.decenter import DecenterVariable
 from optiland.optimization.variable.forbes_coeff import (
     ForbesQ2dCoeffVariable,
-    ForbesQbfsCoeffVariable,
+    ForbesQNormalSlopeCoeffVariable,
 )
 from optiland.optimization.variable.index import IndexVariable
 from optiland.optimization.variable.material import MaterialVariable
 from optiland.optimization.variable.norm_radius import NormalizationRadiusVariable
+from optiland.optimization.variable.nurbs import (
+    NurbsPointsVariable,
+    NurbsWeightsVariable,
+)
 from optiland.optimization.variable.polynomial_coeff import PolynomialCoeffVariable
 from optiland.optimization.variable.radius import RadiusVariable
 from optiland.optimization.variable.reciprocal_radius import ReciprocalRadiusVariable
@@ -40,6 +45,7 @@ class Variable:
     optical system optimization. It acts as a wrapper around specific variable
     behaviors defined in separate modules, and can be used with multiple optimization
     backends.
+
     Args:
         optic (OpticalSystem): The optical system to which the variable
             belongs.
@@ -131,9 +137,12 @@ class Variable:
             "chebyshev_coeff": ChebyshevCoeffVariable,
             "zernike_coeff": ZernikeCoeffVariable,
             "reciprocal_radius": ReciprocalRadiusVariable,
-            "forbes_qbfs_coeff": ForbesQbfsCoeffVariable,
+            "forbes_qbfs_coeff": ForbesQNormalSlopeCoeffVariable,  # canonical
+            "forbes_qnormalslope_coeff": ForbesQNormalSlopeCoeffVariable,
             "forbes_q2d_coeff": ForbesQ2dCoeffVariable,
             "norm_radius": NormalizationRadiusVariable,
+            "nurbs_control_point": NurbsPointsVariable,
+            "nurbs_weight": NurbsWeightsVariable,
         }
 
         variable_class = variable_types.get(self.type)
@@ -141,7 +150,10 @@ class Variable:
         # Instantiate the class if it exists
         if variable_class:
             return variable_class(**behavior_kwargs)
-        raise ValueError(f'Invalid variable type "{self.type}"')
+        raise ValueError(
+            f"Unknown variable type {self.type!r}."
+            f"{options_hint(str(self.type), variable_types, max_listed=20)}"
+        )
 
     @property
     def value(self):
@@ -177,7 +189,16 @@ class Variable:
             ValueError: If the variable type is invalid.
 
         """
+        import optiland.backend as be
+
+        if isinstance(new_value, list | tuple):
+            new_value = new_value[0]
+
         unscaled_value = self.variable.inverse_scale(new_value)
+
+        if hasattr(unscaled_value, "ndim") and unscaled_value.ndim > 0:
+            unscaled_value = be.ravel(unscaled_value)[0]
+
         self.variable.update_value(unscaled_value)
 
     def reset(self):

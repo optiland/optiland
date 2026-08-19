@@ -30,13 +30,14 @@ class CoordinateSystemFactory:
             index (int): The index of the surface within the optical system.
             surface_group (SurfaceGroup): The group containing all surfaces.
             **kwargs: Additional keyword arguments specifying position and rotation.
+
                 - x (float): X-coordinate (if absolute positioning is used).
                 - y (float): Y-coordinate (if absolute positioning is used).
                 - z (float): Z-coordinate (if absolute positioning is used).
                 - dx (float): X displacement relative to the previous surface.
                 - dy (float): Y displacement relative to the previous surface.
-                - thickness (float): Thickness of the surface (if relative positioning
-                    is used).
+                - thickness (float): Thickness of the surface (if relative
+                  positioning is used).
                 - rx (float): Rotation about the X-axis.
                 - ry (float): Rotation about the Y-axis.
                 - rz (float): Rotation about the Z-axis.
@@ -77,9 +78,15 @@ class CoordinateSystemFactory:
                 z = 0  # first surface, always at zero
             else:
                 prev_surface = surface_group.surfaces[index - 1]
-                z_prev_surface = prev_surface.geometry.cs.z
-                thickness_after_prev_surface = prev_surface.thickness
-                z = z_prev_surface + thickness_after_prev_surface
+                z_prev = prev_surface.geometry.cs.z
+                t_prev = prev_surface.thickness
+                # Extract plain floats so the new coordinate is a leaf scalar,
+                # not a non-leaf tensor created by arithmetic on traced values.
+                if hasattr(z_prev, "item"):
+                    z_prev = z_prev.item()
+                if hasattr(t_prev, "item"):
+                    t_prev = t_prev.item()
+                z = float(z_prev) + float(t_prev)
 
         rx = kwargs.get("rx", 0)
         ry = kwargs.get("ry", 0)

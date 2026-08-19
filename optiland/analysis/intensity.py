@@ -9,12 +9,17 @@ Manuel Fragata Mendes, June 2025
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 
 import optiland.backend as be
+from optiland.analysis.base import BaseAnalysis
 
-from .base import BaseAnalysis
+if TYPE_CHECKING:
+    from optiland._types import BEArray, DistributionType, ScalarOrArray
+    from optiland.optic import Optic
 
 
 class RadiantIntensity(BaseAnalysis):
@@ -37,24 +42,26 @@ class RadiantIntensity(BaseAnalysis):
         angle_Y_min (float): Minimum Y-angle in degrees for binning.
         angle_Y_max (float): Maximum Y-angle in degrees for binning.
         reference_surface_index (int): Index of the surface *after* which ray
-                                       directions are considered.
+            directions are considered.
         fields (list): List of field coordinates for analysis.
         wavelengths (list): List of wavelengths for analysis.
         num_rays (int): Number of rays to trace if user_initial_rays is None.
         distribution_name (str): Ray distribution if user_initial_rays is None.
         user_initial_rays (RealRays | None): Optional user-provided initial rays.
-        data (list[list[tuple]]): Stores (intensity_map,
-                                          angle_X_bin_edges, angle_Y_bin_edges,
-                                          angle_X_bin_centers, angle_Y_bin_centers)
-                                  for each (field, wavelength).
-        use_absolute_units (bool): If True (default), calculates intensity in W/sr.
-                                   If False, result is a relative value normalized
-                                   to the peak.
+        source (BaseSource | None): Optional extended source object
+            (e.g., GaussianSource) to generate initial rays automatically.
+            Cannot be used with user_initial_rays. When provided, num_rays
+            determines how many rays to generate.
+        data (list[list[tuple]]): Stores (intensity_map, angle_X_bin_edges,
+            angle_Y_bin_edges, angle_X_bin_centers, angle_Y_bin_centers) for
+            each (field, wavelength).
+        use_absolute_units (bool): If True (default), calculates intensity in
+            W/sr. If False, result is a relative value normalized to the peak.
     """
 
     def __init__(
         self,
-        optic,
+        optic: Optic,
         num_angular_bins_X: int = 101,
         num_angular_bins_Y: int = 101,
         angle_X_min: float = -15.0,
@@ -66,8 +73,10 @@ class RadiantIntensity(BaseAnalysis):
         fields="all",
         wavelengths="all",
         num_rays: int = 100000,
-        distribution: str = "random",
+        distribution: DistributionType = "random",
         user_initial_rays=None,
+        source=None,
+        skip_trace: bool = False,
     ):
         if fields == "all":
             self.fields = optic.fields.get_field_coords()
@@ -75,6 +84,31 @@ class RadiantIntensity(BaseAnalysis):
             if not isinstance(fields, list):
                 fields = [fields]
             self.fields = tuple(fields)
+
+        # Handle source integration
+        if source is not None and user_initial_rays is not None:
+            raise ValueError("Cannot specify both 'source' and 'user_initial_rays'.")
+
+        self.user_initial_rays = user_initial_rays
+        if source is not None:
+            # Generate rays from the extended source
+            self.user_initial_rays = source.generate_rays(num_rays)
+            # When using a source, we treat all rays as a single "field"
+            # The source emission defines the field, not optic.fields
+            self.fields = [(0.0, 0.0)]  # Single dummy field for source rays
+
+        self._initial_ray_data = None
+        if self.user_initial_rays is not None:
+            self._initial_ray_data = {
+                "x": self.user_initial_rays.x,
+                "y": self.user_initial_rays.y,
+                "z": self.user_initial_rays.z,
+                "L": self.user_initial_rays.L,
+                "M": self.user_initial_rays.M,
+                "N": self.user_initial_rays.N,
+                "intensity": self.user_initial_rays.i,
+                "wavelength": self.user_initial_rays.w,
+            }
 
         self.num_angular_bins_X = num_angular_bins_X
         self.num_angular_bins_Y = num_angular_bins_Y
@@ -84,7 +118,7 @@ class RadiantIntensity(BaseAnalysis):
         # for absolute units, we need to ensure the user has provided rays
         # with 'calibrated' power
         self.use_absolute_units = use_absolute_units
-        if self.use_absolute_units and user_initial_rays is None:
+        if self.use_absolute_units and self.user_initial_rays is None:
             print(
                 "Warning: `use_absolute_units` is True, but no `user_initial_rays` "
                 "were provided."
@@ -97,8 +131,8 @@ class RadiantIntensity(BaseAnalysis):
 
         self.reference_surface_index = int(reference_surface_index)
         self.num_rays = num_rays
-        self.distribution_name = distribution
-        self.user_initial_rays = user_initial_rays
+        self.distribution_name: DistributionType = distribution
+        self.skip_trace = skip_trace
 
         super().__init__(optic, wavelengths)
 
@@ -106,25 +140,31 @@ class RadiantIntensity(BaseAnalysis):
         analysis_data = []
         for field_coord in self.fields:
             field_block = []
-            for wl in self.wavelengths:
+            for wp in self.wavelengths:
                 field_block.append(
-                    self._generate_field_wavelength_data(field_coord, wl)
+                    self._generate_field_wavelength_data(field_coord, wp.value)
                 )
             analysis_data.append(field_block)
         return analysis_data
 
-    def _generate_field_wavelength_data(self, field_coord, wavelength):
-        if self.user_initial_rays is None:
-            self.optic.trace(
-                *field_coord,
-                wavelength=wavelength,
-                num_rays=self.num_rays,
-                distribution=self.distribution_name,
-            )
-        else:
-            self.optic.surface_group.trace(self.user_initial_rays)
+    def _generate_field_wavelength_data(
+        self, field_coord: tuple[ScalarOrArray, ScalarOrArray], wavelength: float
+    ) -> tuple[BEArray, BEArray, BEArray, BEArray, BEArray]:
+        if not self.skip_trace:
+            if self.user_initial_rays is None:
+                self.optic.trace(
+                    *field_coord,
+                    wavelength=wavelength,
+                    num_rays=self.num_rays,
+                    distribution=self.distribution_name,
+                )
+            else:
+                from optiland.rays import RealRays
 
-        surf_group = self.optic.surface_group
+                rays_to_trace = RealRays(**self._initial_ray_data)
+                self.optic.surfaces.trace(rays_to_trace)
+
+        surf_group = self.optic.surfaces
         try:
             ref_surf = surf_group.surfaces[self.reference_surface_index]
             L_all, M_all, N_all = ref_surf.L, ref_surf.M, ref_surf.N
@@ -193,13 +233,43 @@ class RadiantIntensity(BaseAnalysis):
                 )
 
         if self.use_absolute_units:
-            delta_angle_X_rad = be.radians(angle_X_bins[1] - angle_X_bins[0])
-            delta_angle_Y_rad = be.radians(angle_Y_bins[1] - angle_Y_bins[0])
-            solid_angle_per_bin_sr = delta_angle_X_rad * delta_angle_Y_rad
+            # 1. Calculate basic bin sizes (radians)
+            dx = be.radians(angle_X_bins[1] - angle_X_bins[0])
+            dy = be.radians(angle_Y_bins[1] - angle_Y_bins[0])
 
+            # 2. Create meshgrid of bin centers (in Radians) for
+            # the Jacobian calculation
+            # Note: We must be careful with tensor shapes here to match
+            # power_map (Y, X)
+            ax_c_rad = be.radians(angle_X_centers)
+            ay_c_rad = be.radians(angle_Y_centers)
+
+            # Create grids. Meshgrid usually returns (Y, X) with
+            # indexing='ij' or 'xy' depending on backend
+            # For safety, let's explicitely broadcast
+            # resulting shape (Y, X) usually
+            AX, AY = be.meshgrid(ax_c_rad, ay_c_rad)
+
+            # 3. Compute Jacobian terms
+            # J = (sec^2(tx) * sec^2(ty)) / (1 + tan^2(tx) + tan^2(ty))^(3/2)
+            tan2_tx = be.tan(AX) ** 2
+            tan2_ty = be.tan(AY) ** 2
+            sec2_tx = 1.0 + tan2_tx  # Identity: sec^2 = 1 + tan^2
+            sec2_ty = 1.0 + tan2_ty
+
+            numerator = sec2_tx * sec2_ty
+            denominator = (1.0 + tan2_tx + tan2_ty) ** 1.5
+
+            jacobian_factor = numerator / denominator
+
+            # 4. Compute true solid angle per bin
+            # d_omega = J * d_theta_x * d_theta_y
+            true_solid_angle_map = jacobian_factor * dx * dy
+
+            # 5. Normalize Power Map
             final_intensity_map = be.where(
-                solid_angle_per_bin_sr > 1e-12,
-                power_map / solid_angle_per_bin_sr,
+                true_solid_angle_map > 1e-12,
+                power_map / true_solid_angle_map,
                 be.zeros_like(power_map),
             )
         else:
@@ -358,6 +428,204 @@ class RadiantIntensity(BaseAnalysis):
 
         return cross_section_title
 
+    def _resolve_cross_section_request(self, cross_section, use_norm):
+        """Validate the ``cross_section`` argument of :meth:`view`.
+
+        Returns:
+            tuple: ``(requested, axis_type, slice_idx, title)`` where
+            ``requested`` is True only if ``cross_section`` was a
+            well-formed ``('cross-x' | 'cross-y', index)`` tuple.
+        """
+        if cross_section is None:
+            return False, None, -1, ""
+
+        if not (isinstance(cross_section, tuple) and len(cross_section) == 2):
+            print(
+                "[RadiantIntensity] Warning: Invalid cross_section type. "
+                "Expected tuple. Defaulting to 2D+cross plot."
+            )
+            return False, None, -1, ""
+
+        axis_type_in, slice_idx_in = cross_section
+        if not (
+            isinstance(axis_type_in, str)
+            and axis_type_in.lower() in ["cross-x", "cross-y"]
+            and (isinstance(slice_idx_in, int) or slice_idx_in is None)
+        ):
+            print(
+                "[RadiantIntensity] Warning: Invalid cross_section format. "
+                "Expected ('cross-x' or 'cross-y', int). "
+                "Defaulting to 2D+cross plot."
+            )
+            return False, None, -1, ""
+
+        axis_type = axis_type_in.lower()
+        slice_idx = slice_idx_in if slice_idx_in is not None else -1
+        title = self._get_cross_section_title(axis_type, slice_idx, normalize=use_norm)
+        return True, axis_type, slice_idx, title
+
+    def _compute_colorbar_range(self, use_norm):
+        """Compute ``(vmin, vmax, label)`` for the intensity colorbar."""
+        if use_norm:
+            return 0.0, 1.0, "Normalized Intensity"
+
+        all_peak_values = self.peak_intensity_values()
+        global_max_val = 0.0
+        if all_peak_values:
+            global_max_val = max(
+                max(be.to_numpy(p) for p in field_peaks)
+                for field_peaks in all_peak_values
+            )
+        if global_max_val == 0:
+            global_max_val = 1.0
+        return 0.0, global_max_val, "Radiant Intensity (W/sr)"
+
+    def _setup_intensity_axes(
+        self,
+        fig_to_plot_on,
+        is_gui_embedding,
+        plot_cross_section,
+        num_fields,
+        num_wavelengths,
+        figsize,
+    ):
+        """Build the figure/axes grid for :meth:`view`.
+
+        Returns ``(fig, axs)`` where ``axs`` holds either a single Axes per
+        (field, wavelength) cell (cross-section-only mode) or a
+        ``[ax_map, ax_cs]`` pair per cell (2D map + cross-section mode).
+        """
+        import numpy as _np  # Local import for plotting
+
+        if is_gui_embedding:
+            fig = fig_to_plot_on
+            fig.clear()  # Clear the figure for new content
+            if plot_cross_section:
+                axs = fig.subplots(
+                    nrows=num_fields, ncols=num_wavelengths, squeeze=False
+                )
+                return fig, axs
+
+            axs = _np.empty((num_fields, num_wavelengths), dtype=object)
+            for f_idx in range(num_fields):
+                for w_idx in range(num_wavelengths):
+                    gs = gridspec.GridSpec(1, 2, width_ratios=[2.5, 1.5], figure=fig)
+                    axs[f_idx, w_idx] = [
+                        fig.add_subplot(gs[0]),
+                        fig.add_subplot(gs[1]),
+                    ]
+            return fig, axs
+
+        if plot_cross_section:
+            fig, axs = plt.subplots(
+                nrows=num_fields,
+                ncols=num_wavelengths,
+                figsize=(figsize[0] * num_wavelengths, figsize[1] * num_fields),
+                squeeze=False,
+                tight_layout=True,
+            )
+            return fig, axs
+
+        fig = plt.figure(
+            figsize=(figsize[0] * num_wavelengths, figsize[1] * num_fields)
+        )
+        axs = _np.empty((num_fields, num_wavelengths), dtype=object)
+        for f_idx in range(num_fields):
+            for w_idx in range(num_wavelengths):
+                gs = gridspec.GridSpecFromSubplotSpec(
+                    1,
+                    2,
+                    width_ratios=[2.5, 1.5],
+                    subplot_spec=gridspec.GridSpec(
+                        num_fields, num_wavelengths, figure=fig
+                    )[f_idx, w_idx],
+                )
+                axs[f_idx, w_idx] = [fig.add_subplot(gs[0]), fig.add_subplot(gs[1])]
+        return fig, axs
+
+    def _plot_intensity_panel(
+        self,
+        fig,
+        ax,
+        f_idx,
+        w_idx,
+        cross_section_request,
+        cmap,
+        cross_section_style,
+        cross_section_color,
+        vmin_plot,
+        vmax_plot,
+        cbar_label,
+    ):
+        """Render one (field, wavelength) panel of :meth:`view`."""
+        requested, cs_axis_type, cs_slice_idx, use_norm, all_peak_values = (
+            cross_section_request
+        )
+
+        intensity_map_be, x_bins_be, y_bins_be, x_centers_be, y_centers_be = self.data[
+            f_idx
+        ][w_idx]
+        intensity_map = be.to_numpy(intensity_map_be)
+        x_bins = be.to_numpy(x_bins_be)
+        y_bins = be.to_numpy(y_bins_be)
+        x_centers = be.to_numpy(x_centers_be)
+        y_centers = be.to_numpy(y_centers_be)
+
+        current_display_map = intensity_map.copy()
+        if use_norm:
+            peak_val = be.to_numpy(all_peak_values[f_idx][w_idx])
+            if peak_val > 1e-9:
+                current_display_map = intensity_map / peak_val
+
+        title = f"Field: {self.fields[f_idx]}, λ={self.wavelengths[w_idx].value:.3f} µm"
+
+        if requested:
+            self._plot_cross_section(
+                ax=ax,
+                intensity_map=current_display_map,
+                x_centers=x_centers,
+                y_centers=y_centers,
+                axis_type=cs_axis_type,
+                slice_idx=cs_slice_idx,
+                title=title,
+                style=cross_section_style,
+                color=cross_section_color,
+                ylabel=cbar_label,
+            )
+            return
+
+        ax_map, ax_cs = ax
+
+        im = ax_map.imshow(
+            current_display_map.T,
+            aspect="auto",
+            origin="lower",
+            extent=[x_bins[0], x_bins[-1], y_bins[0], y_bins[-1]],
+            cmap=cmap,
+            vmin=vmin_plot,
+            vmax=vmax_plot,
+        )
+        ax_map.set_xlabel("X-Angle (degrees)")
+        ax_map.set_ylabel("Y-Angle (degrees)")
+        ax_map.set_title(title)
+        ax_map.grid(True, linestyle=":", alpha=0.7)
+        fig.colorbar(im, ax=ax_map, label=cbar_label, fraction=0.046, pad=0.04)
+
+        central_row_index = current_display_map.shape[1] // 2
+        cross_section_data = current_display_map[:, central_row_index]
+        ax_cs.plot(
+            x_centers,
+            cross_section_data,
+            linestyle=cross_section_style,
+            color=cross_section_color,
+        )
+        ax_cs.set_xlabel("X-Angle (degrees)")
+        ax_cs.set_ylabel(cbar_label)
+        ax_cs.grid(True, linestyle=":", alpha=0.7)
+        ax_cs.set_xlim(x_centers[0], x_centers[-1])
+        ax_cs.set_ylim(bottom=-0.05 * vmax_plot, top=vmax_plot * 1.1)
+        ax_cs.set_title("Central Cross-Section")
+
     def view(
         self,
         fig_to_plot_on=None,
@@ -368,6 +636,7 @@ class RadiantIntensity(BaseAnalysis):
         cross_section_color="red",
         *,
         normalize=None,
+        show: bool = True,
     ):
         """
         Display radiant intensity maps and/or cross-sections.
@@ -400,8 +669,6 @@ class RadiantIntensity(BaseAnalysis):
         axs : numpy.ndarray
             Array of Axes objects for the subplots, or single Axes if only one subplot.
         """
-        import numpy as _np  # Local import for plotting
-
         is_gui_embedding = fig_to_plot_on is not None
         # Fix inverted normalization logic to match IncoherentIrradiance
         use_norm = not self.use_absolute_units if normalize is None else normalize
@@ -414,197 +681,53 @@ class RadiantIntensity(BaseAnalysis):
         if num_fields == 0 or num_wavelengths == 0:
             return None, None
 
-        # Process cross-section request
-        plot_cross_section_requested = False
-        valid_cross_section_request = False
-        cs_axis_type = None
-        cs_slice_idx = -1
-
-        if cross_section is not None:
-            if isinstance(cross_section, tuple) and len(cross_section) == 2:
-                axis_type_in, slice_idx_in = cross_section
-                if (
-                    isinstance(axis_type_in, str)
-                    and axis_type_in.lower() in ["cross-x", "cross-y"]
-                    and (isinstance(slice_idx_in, int) or slice_idx_in is None)
-                ):
-                    plot_cross_section_requested = True
-                    valid_cross_section_request = True
-                    cs_axis_type = axis_type_in.lower()
-                    cs_slice_idx = slice_idx_in if slice_idx_in is not None else -1
-                    # Get cross-section title for main title
-                    cross_section_title = self._get_cross_section_title(
-                        cs_axis_type, cs_slice_idx, normalize=use_norm
-                    )
-                else:
-                    print(
-                        "[RadiantIntensity] Warning: Invalid cross_section format. "
-                        "Expected ('cross-x' or 'cross-y', int). "
-                        "Defaulting to 2D+cross plot."
-                    )
-            else:
-                print(
-                    "[RadiantIntensity] Warning: Invalid cross_section type. "
-                    "Expected tuple. Defaulting to 2D+cross plot."
-                )
-
-        # Calculate global min/max for consistent colorbar
+        requested, cs_axis_type, cs_slice_idx, cross_section_title = (
+            self._resolve_cross_section_request(cross_section, use_norm)
+        )
+        vmin_plot, vmax_plot, cbar_label = self._compute_colorbar_range(use_norm)
         all_peak_values = self.peak_intensity_values()
-        global_max_val = 0.0
 
-        if not use_norm:  # Using absolute units
-            if all_peak_values:
-                global_max_val = max(
-                    max(be.to_numpy(p) for p in field_peaks)
-                    for field_peaks in all_peak_values
-                )
-            if global_max_val == 0:
-                global_max_val = 1.0
-            vmin_plot, vmax_plot = 0.0, global_max_val
-            cbar_label = "Radiant Intensity (W/sr)"
-        else:  # Normalize to peak for relative plot
-            vmin_plot, vmax_plot = 0.0, 1.0
-            cbar_label = "Normalized Intensity"
+        fig, axs = self._setup_intensity_axes(
+            fig_to_plot_on,
+            is_gui_embedding,
+            requested,
+            num_fields,
+            num_wavelengths,
+            figsize,
+        )
 
-        # Set up the figure and axes layout
-        if is_gui_embedding:
-            fig = fig_to_plot_on
-            fig.clear()  # Clear the figure for new content
-            if plot_cross_section_requested and valid_cross_section_request:
-                axs = fig.subplots(
-                    nrows=num_fields,
-                    ncols=num_wavelengths,
-                    squeeze=False,
-                )
-            else:
-                # Use GridSpec for 2D map + cross section layout
-                axs = _np.empty((num_fields, num_wavelengths), dtype=object)
-                for f_idx in range(num_fields):
-                    for w_idx in range(num_wavelengths):
-                        gs = gridspec.GridSpec(
-                            1, 2, width_ratios=[2.5, 1.5], figure=fig
-                        )
-                        axs[f_idx, w_idx] = [
-                            fig.add_subplot(gs[0]),
-                            fig.add_subplot(gs[1]),
-                        ]
-        else:
-            if plot_cross_section_requested and valid_cross_section_request:
-                fig, axs = plt.subplots(
-                    nrows=num_fields,
-                    ncols=num_wavelengths,
-                    figsize=(figsize[0] * num_wavelengths, figsize[1] * num_fields),
-                    squeeze=False,
-                    tight_layout=True,
-                )
-            else:
-                # For 2D map + cross section layout in a grid
-                fig = plt.figure(
-                    figsize=(figsize[0] * num_wavelengths, figsize[1] * num_fields)
-                )
-                axs = _np.empty((num_fields, num_wavelengths), dtype=object)
-                for f_idx in range(num_fields):
-                    for w_idx in range(num_wavelengths):
-                        gs = gridspec.GridSpecFromSubplotSpec(
-                            1,
-                            2,
-                            width_ratios=[2.5, 1.5],
-                            subplot_spec=gridspec.GridSpec(
-                                num_fields, num_wavelengths, figure=fig
-                            )[f_idx, w_idx],
-                        )
-                        ax_map = fig.add_subplot(gs[0])
-                        ax_cs = fig.add_subplot(gs[1])
-                        axs[f_idx, w_idx] = [ax_map, ax_cs]
-
-        # Set main title
         main_title = "Radiant Intensity Analysis"
-        if plot_cross_section_requested and valid_cross_section_request:
+        if requested:
             main_title += cross_section_title
 
-        # Plot the data
+        cross_section_request = (
+            requested,
+            cs_axis_type,
+            cs_slice_idx,
+            use_norm,
+            all_peak_values,
+        )
         for f_idx in range(num_fields):
             for w_idx in range(num_wavelengths):
-                intensity_map_be, x_bins_be, y_bins_be, x_centers_be, y_centers_be = (
-                    self.data[f_idx][w_idx]
+                self._plot_intensity_panel(
+                    fig,
+                    axs[f_idx, w_idx],
+                    f_idx,
+                    w_idx,
+                    cross_section_request,
+                    cmap,
+                    cross_section_style,
+                    cross_section_color,
+                    vmin_plot,
+                    vmax_plot,
+                    cbar_label,
                 )
 
-                intensity_map = be.to_numpy(intensity_map_be)
-                x_bins = be.to_numpy(x_bins_be)
-                y_bins = be.to_numpy(y_bins_be)
-                x_centers = be.to_numpy(x_centers_be)
-                y_centers = be.to_numpy(y_centers_be)
-
-                # Create display map with appropriate normalization
-                current_display_map = intensity_map.copy()
-
-                if use_norm:  # If we're normalizing (normalize=True)
-                    peak_val = be.to_numpy(all_peak_values[f_idx][w_idx])
-                    if peak_val > 1e-9:
-                        current_display_map = intensity_map / peak_val
-
-                # Get the current axes based on the plot type
-                if plot_cross_section_requested and valid_cross_section_request:
-                    ax = axs[f_idx, w_idx]
-                    self._plot_cross_section(
-                        ax=ax,
-                        intensity_map=current_display_map,
-                        x_centers=x_centers,
-                        y_centers=y_centers,
-                        axis_type=cs_axis_type,
-                        slice_idx=cs_slice_idx,
-                        title=f"Field: {self.fields[f_idx]}, "
-                        f"λ={self.wavelengths[w_idx]:.3f} µm",
-                        style=cross_section_style,
-                        color=cross_section_color,
-                        ylabel=cbar_label,
-                    )
-                else:
-                    # 2D map + cross section
-                    ax_map, ax_cs = axs[f_idx, w_idx]
-
-                    # Plot 2D intensity map
-                    im = ax_map.imshow(
-                        current_display_map.T,
-                        aspect="auto",
-                        origin="lower",
-                        extent=[x_bins[0], x_bins[-1], y_bins[0], y_bins[-1]],
-                        cmap=cmap,
-                        vmin=vmin_plot,
-                        vmax=vmax_plot,
-                    )
-                    ax_map.set_xlabel("X-Angle (degrees)")
-                    ax_map.set_ylabel("Y-Angle (degrees)")
-                    ax_map.set_title(
-                        f"Field: {self.fields[f_idx]}, "
-                        f"λ={self.wavelengths[w_idx]:.3f} µm"
-                    )
-                    ax_map.grid(True, linestyle=":", alpha=0.7)  # Add grid to 2D plots
-                    fig.colorbar(
-                        im, ax=ax_map, label=cbar_label, fraction=0.046, pad=0.04
-                    )
-
-                    # Plot cross-section
-                    central_row_index = current_display_map.shape[1] // 2
-                    cross_section_data = current_display_map[:, central_row_index]
-                    ax_cs.plot(
-                        x_centers,
-                        cross_section_data,
-                        linestyle=cross_section_style,
-                        color=cross_section_color,
-                    )
-                    ax_cs.set_xlabel("X-Angle (degrees)")
-                    ax_cs.set_ylabel(cbar_label)
-                    ax_cs.grid(True, linestyle=":", alpha=0.7)
-                    ax_cs.set_xlim(x_centers[0], x_centers[-1])
-                    ax_cs.set_ylim(bottom=-0.05 * vmax_plot, top=vmax_plot * 1.1)
-                    ax_cs.set_title("Central Cross-Section")
-
-        # Set overall title and layout
         fig.suptitle(main_title, fontsize=14)
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
 
         if not is_gui_embedding and hasattr(fig, "canvas"):
             fig.canvas.draw_idle()
-
+        if show and not is_gui_embedding:
+            plt.show()
         return fig, axs

@@ -1,11 +1,429 @@
+from __future__ import annotations
+
+import gc
+import time
+import warnings
 from importlib import resources
+from unittest.mock import MagicMock
+
+import numpy as np
+import pytest
 
 import optiland.backend as be
-import pytest
-import numpy as np
-
 from optiland import materials
+from optiland.materials.base import BaseMaterial
+from optiland.optic import Optic
+
 from .utils import assert_allclose
+
+
+class TestBaseMaterial:
+    def test_caching(self, set_test_backend):
+        class DummyMaterial(BaseMaterial):
+            def _calculate_n(self, wavelength, **kwargs):
+                pass
+
+            def _calculate_k(self, wavelength, **kwargs):
+                pass
+
+        material = DummyMaterial()
+        material._calculate_n = MagicMock(return_value=1.5)
+
+        # Test with scalar value
+        result1 = material.n(0.5, temperature=25)
+        assert result1 == 1.5
+        material._calculate_n.assert_called_once_with(0.5, temperature=25)
+
+        result2 = material.n(0.5, temperature=25)
+        assert result2 == 1.5
+        material._calculate_n.assert_called_once()
+
+        # Test with numpy array
+        wavelength_np = np.array([0.5, 0.6])
+        material.n(wavelength_np, temperature=25)
+        assert material._calculate_n.call_count == 2
+
+        material.n(wavelength_np, temperature=25)
+        assert material._calculate_n.call_count == 2
+
+        # Test with torch tensor if backend is torch
+        if set_test_backend == "torch":
+            # a torch tensor with same values should be a cache hit
+            wavelength_torch = be.asarray(np.array([0.5, 0.6]))
+            material.n(wavelength_torch, temperature=25)
+            assert material._calculate_n.call_count == 2
+
+            # a torch tensor with different values should be a cache miss
+            wavelength_torch_2 = be.asarray(np.array([0.7, 0.8]))
+            material.n(wavelength_torch_2, temperature=25)
+            assert material._calculate_n.call_count == 3
+
+            # and a cache hit
+            material.n(wavelength_torch_2, temperature=25)
+            assert material._calculate_n.call_count == 3
+
+    def test_detach_if_tensor_plain_value(self, set_test_backend):
+        """_detach_if_tensor returns plain values unchanged."""
+        assert BaseMaterial._detach_if_tensor(1.5) == 1.5
+        assert BaseMaterial._detach_if_tensor(None) is None
+
+    def test_large_array_cache_key_runtime_is_sublinear(self, set_test_backend):
+        """Regression guard for O(N) array cache-key construction.
+
+        Large wavelength arrays should use metadata-based keys rather than
+        materializing every array element into a Python tuple.
+        """
+
+        class DummyMaterial(BaseMaterial):
+            def _calculate_n(self, wavelength, **kwargs):
+                return wavelength
+
+            def _calculate_k(self, wavelength, **kwargs):
+                return wavelength
+
+        material = DummyMaterial()
+
+        small = np.linspace(0.45, 0.65, 1_000, dtype=np.float64)
+        large = np.linspace(0.45, 0.65, 200_000, dtype=np.float64)
+
+        # Warm up once to reduce one-time effects.
+        material._create_cache_key(small, temperature=25)
+        material._create_cache_key(large, temperature=25)
+
+        small_iters = 200
+        t0 = time.perf_counter()
+        for _ in range(small_iters):
+            material._create_cache_key(small, temperature=25)
+        small_avg_s = (time.perf_counter() - t0) / small_iters
+
+        large_iters = 5
+        t0 = time.perf_counter()
+        for _ in range(large_iters):
+            material._create_cache_key(large, temperature=25)
+        large_avg_s = (time.perf_counter() - t0) / large_iters
+
+        ratio = large_avg_s / max(small_avg_s, 1e-9)
+        assert ratio < 40.0, (
+            "Large-array cache-key generation appears to scale linearly with array size "
+            f"(ratio={ratio:.2f}, small_avg={small_avg_s:.3e}s, large_avg={large_avg_s:.3e}s)"
+        )
+
+        # Keys should still be deterministic for repeated calls on same input.
+        key1 = material._create_cache_key(large, temperature=25)
+        key2 = material._create_cache_key(large, temperature=25)
+        assert key1 == key2
+
+    def test_large_array_key_is_content_addressed(self, set_test_backend):
+        """#630: the cache key must depend on array *contents*, not on the
+        array's memory location.
+
+        The old key embedded the buffer address, so two equal-content arrays
+        got different keys and -- worse -- a freed array's address could be
+        reused by a different array and collide, leaking the previous
+        wavelength's refractive index. Keying on a content digest makes equal
+        content yield an equal key regardless of identity or address.
+        """
+
+        class DummyMaterial(BaseMaterial):
+            def _calculate_n(self, wavelength, **kwargs):
+                return 1.0
+
+            def _calculate_k(self, wavelength, **kwargs):
+                return 0.0
+
+        material = DummyMaterial()
+
+        n = 2_000  # > _MAX_VALUE_KEY_ARRAY_SIZE -> metadata-key path
+        a = np.linspace(0.45, 0.65, n, dtype=np.float64)
+        b = a.copy()  # identical content, different object and buffer address
+        assert a.__array_interface__["data"][0] != b.__array_interface__["data"][0]
+
+        # Equal content -> equal key. (The location-based key failed this.)
+        assert material._create_cache_key(a) == material._create_cache_key(b)
+
+    def test_large_array_key_distinguishes_unsampled_difference(self, set_test_backend):
+        """The content digest must distinguish arrays that differ only at an
+        index the old 3-point (first/middle/last) sample never inspected --
+        otherwise n() leaks one wavelength's index to another once their
+        buffers alias (issue #630).
+        """
+
+        class DummyMaterial(BaseMaterial):
+            def _calculate_n(self, wavelength, **kwargs):
+                return 1.0
+
+            def _calculate_k(self, wavelength, **kwargs):
+                return 0.0
+
+        material = DummyMaterial()
+
+        n = 2_000
+        a = np.zeros(n, dtype=np.float64)
+        b = np.zeros(n, dtype=np.float64)
+        a[1] = 1.0  # differ only at an interior, unsampled index
+        b[2] = 1.0
+        # endpoints and midpoint coincide -> defeats the old 3-point sample key
+        assert (a[0], a[n // 2], a[-1]) == (b[0], b[n // 2], b[-1])
+
+        assert material._create_cache_key(a) != material._create_cache_key(b)
+
+    def test_large_array_digest_cache_evicts_dead_arrays(self, set_test_backend):
+        """#630: the per-array digest memo is weak -- entries are dropped when
+        the array is collected, so id() reuse cannot surface a stale digest and
+        the memo cannot grow without bound.
+        """
+        from optiland.materials.base import _ARRAY_DIGEST_CACHE
+
+        class DummyMaterial(BaseMaterial):
+            def _calculate_n(self, wavelength, **kwargs):
+                return float(np.asarray(wavelength)[1])
+
+            def _calculate_k(self, wavelength, **kwargs):
+                return 0.0
+
+        material = DummyMaterial()
+        n = 2_000
+
+        gc.collect()
+        baseline = len(_ARRAY_DIGEST_CACHE)
+        for i in range(50):
+            arr = np.zeros(n, dtype=np.float64)
+            arr[1] = float(i)  # content (and so the expected n) differs each round
+            assert material.n(arr) == float(i)  # never a stale cross-array value
+            del arr
+            gc.collect()  # free the buffer so the next array may reuse its address
+
+        gc.collect()
+        assert len(_ARRAY_DIGEST_CACHE) <= baseline + 2
+
+    def test_large_array_key_handles_non_weakref_sequence(self, set_test_backend):
+        """list/tuple wavelengths are content-addressed too, but cannot be
+        weak-referenced, so the digest memo is skipped (no error) while the keys
+        stay correct.
+        """
+
+        class DummyMaterial(BaseMaterial):
+            def _calculate_n(self, wavelength, **kwargs):
+                return 1.0
+
+            def _calculate_k(self, wavelength, **kwargs):
+                return 0.0
+
+        material = DummyMaterial()
+
+        # A list has no .shape, so it takes the metadata-key path; it also can't
+        # be weak-referenced, exercising the memo-skip branch.
+        a = [0.5] * 2_000
+        other = list(a)
+        other[7] = 0.6  # differ at one interior index
+
+        assert material._create_cache_key(a) == material._create_cache_key(list(a))
+        assert material._create_cache_key(a) != material._create_cache_key(other)
+        # tuples take the same (non-weak-referenceable) path without error
+        material._create_cache_key(tuple(a))
+
+    def test_detach_if_tensor_numpy(self, set_test_backend):
+        """_detach_if_tensor returns numpy arrays unchanged."""
+        arr = np.array([1.5, 1.6])
+        result = BaseMaterial._detach_if_tensor(arr)
+        np.testing.assert_array_equal(result, arr)
+
+    def test_requires_grad_plain_value(self, set_test_backend):
+        """_requires_grad returns False for plain values."""
+        assert BaseMaterial._requires_grad(1.5) is False
+        assert BaseMaterial._requires_grad(np.array(1.5)) is False
+
+
+@pytest.mark.skipif(
+    "torch" not in be.list_available_backends(),
+    reason="PyTorch not installed",
+)
+class TestBaseMaterialTorchCaching:
+    """Tests for material caching behavior specific to torch backend.
+
+    These tests verify:
+    - Cached tensors are detached (no stale computation graph)
+    - Repeated forward+backward passes don't raise RuntimeError
+    - Cache is bypassed when the result requires grad (optimizable index)
+    """
+
+    @pytest.fixture(autouse=True)
+    def _setup_torch(self):
+        be.set_backend("torch")
+        be.set_device("cpu")
+        be.grad_mode.enable()
+        be.set_precision("float64")
+        yield
+        be.set_backend("numpy")
+
+    def test_detach_if_tensor_torch(self):
+        """_detach_if_tensor detaches torch tensors."""
+        import torch
+
+        t = torch.tensor(1.5, requires_grad=True) * 2.0  # has grad_fn
+        result = BaseMaterial._detach_if_tensor(t)
+        assert not result.requires_grad
+        assert result.grad_fn is None
+
+    def test_requires_grad_torch(self):
+        """_requires_grad correctly detects torch tensors with grad."""
+        import torch
+
+        leaf = torch.tensor(1.5, requires_grad=True)
+        assert BaseMaterial._requires_grad(leaf) is True
+
+        no_grad = torch.tensor(1.5)
+        assert BaseMaterial._requires_grad(no_grad) is False
+
+    def test_large_array_key_is_content_addressed(self):
+        """#630 (torch): the large-array key is content-addressed, so two
+        tensors with equal content but different storage share a key, and an
+        in-place edit (which bumps tensor._version) invalidates it.
+        """
+        import torch
+
+        class DummyMaterial(BaseMaterial):
+            def _calculate_n(self, wavelength, **kwargs):
+                return 1.0
+
+            def _calculate_k(self, wavelength, **kwargs):
+                return 0.0
+
+        material = DummyMaterial()
+        n = 2_000  # > _MAX_VALUE_KEY_ARRAY_SIZE -> metadata-key path
+
+        t = torch.linspace(0.45, 0.65, n, dtype=torch.float64)
+        t2 = t.clone()  # equal content, different storage / data_ptr
+        assert t.data_ptr() != t2.data_ptr()
+        assert material._create_cache_key(t) == material._create_cache_key(t2)
+
+        # An in-place edit bumps tensor._version, invalidating the cached digest.
+        c = torch.zeros(n, dtype=torch.float64)
+        key_before = material._create_cache_key(c)
+        c[5] += 1.0
+        assert material._create_cache_key(c) != key_before
+
+    def test_cached_value_is_detached_when_no_grad(self):
+        """Cached n/k values must be detached when they don't require grad.
+
+        When grad_mode is off, Sellmeier formula results are torch tensors
+        without requires_grad. These should be cached and detached to prevent
+        stale computation graph references if grad_mode is later re-enabled.
+        """
+        import torch
+
+        be.grad_mode.disable()
+        try:
+            mat = materials.Material("N-BK7")
+            result = mat.n(0.5876)
+
+            # Should be cached since result doesn't require grad
+            assert len(mat._n_cache) > 0, "Result should be cached"
+
+            cached = list(mat._n_cache.values())[0]
+            if isinstance(cached, torch.Tensor):
+                assert cached.grad_fn is None, (
+                    "Cached tensor should be detached (no grad_fn)"
+                )
+        finally:
+            be.grad_mode.enable()
+
+    def test_cache_bypassed_for_real_material_under_grad_mode(self):
+        """Under torch + grad_mode, real material results require_grad=True
+        because be.array() creates grad-enabled tensors. The cache must be
+        bypassed in this case.
+        """
+        mat = materials.Material("N-BK7")
+        mat.n(0.5876)
+
+        assert len(mat._n_cache) == 0, (
+            "Cache should be empty — Sellmeier result requires_grad under "
+            "grad_mode, so caching must be skipped"
+        )
+
+    def test_no_runtime_error_on_repeated_backward(self):
+        """Repeated forward+backward passes must not raise RuntimeError.
+
+        This is the regression test for the 'backward through the graph a
+        second time' error. We simulate a multi-step optimization by calling
+        material.n() repeatedly and computing a loss that flows through it.
+        """
+        import torch
+
+        mat = materials.Material("N-BK7")
+
+        # Simulate multiple optimizer steps
+        param = torch.nn.Parameter(torch.tensor(0.55, dtype=torch.float64))
+
+        for _ in range(3):
+            # Forward: compute n at a wavelength that depends on param
+            n_val = mat.n(param)
+            loss = (n_val - 1.5) ** 2
+            loss.backward()
+
+            with torch.no_grad():
+                param.data -= 0.01 * param.grad
+                param.grad.zero_()
+
+    def test_cache_bypassed_when_result_requires_grad(self):
+        """n() must NOT cache when the result requires_grad.
+
+        If the refractive index itself is an optimization variable (e.g.
+        IdealMaterial with a nn.Parameter index), caching would break
+        gradient flow — grad(loss, n) would always be zero.
+        """
+        import torch
+
+        # Create an IdealMaterial whose index is a nn.Parameter
+        mat = materials.IdealMaterial(n=1.5)
+        mat.index = torch.nn.Parameter(torch.tensor([1.5], dtype=torch.float64))
+
+        # First call — result requires grad, should NOT be cached
+        result1 = mat.n(0.55)
+        assert result1.requires_grad, "Result should require grad"
+        assert len(mat._n_cache) == 0, "Should not cache requires_grad result"
+
+        # Second call — should recompute (not return stale cached value)
+        result2 = mat.n(0.55)
+        assert result2.requires_grad, "Second result should also require grad"
+        assert len(mat._n_cache) == 0, "Cache should still be empty"
+
+        # Verify gradient actually flows through
+        loss = result2.sum()
+        loss.backward()
+        assert mat.index.grad is not None, "Gradient should flow to index"
+        assert mat.index.grad.abs().sum() > 0, "Gradient should be non-zero"
+
+    def test_cache_bypassed_for_k_when_requires_grad(self):
+        """k() has the same bypass logic as n()."""
+        import torch
+
+        mat = materials.IdealMaterial(n=1.5, k=0.1)
+        mat.absorp = torch.nn.Parameter(torch.tensor([0.1], dtype=torch.float64))
+
+        result = mat.k(0.55)
+        assert result.requires_grad
+        assert len(mat._k_cache) == 0
+
+        loss = result.sum()
+        loss.backward()
+        assert mat.absorp.grad is not None
+
+
+def build_model(material: BaseMaterial):
+    lens = Optic()
+
+    lens.fields.set_type("angle")
+    lens.fields.add(0, 0)
+    lens.wavelengths.add(0.550)
+    lens.set_aperture("EPD", 2)
+
+    lens.surfaces.add(index=0)
+    lens.surfaces.add(index=1, material=material, radius=10, thickness=10, is_stop=True)
+    lens.surfaces.add(index=2, radius=-10, thickness=10)
+    lens.surfaces.add(index=3, radius=np.inf)
+
+    return lens
 
 
 class TestIdealMaterial:
@@ -28,6 +446,7 @@ class TestIdealMaterial:
             "index": 1.5,
             "absorp": 0.2,
             "type": materials.IdealMaterial.__name__,
+            "propagation_model": {"class": "HomogeneousPropagation"},
         }
 
     def test_ideal_from_dict(self, set_test_backend):
@@ -36,6 +455,63 @@ class TestIdealMaterial:
         )
         assert material.n(0.5) == 1.5
         assert material.k(0.5) == 0.2
+
+    def test_ray_trace(self, set_test_backend):
+        material = materials.IdealMaterial(n=1.5, k=0.0)
+        lens = build_model(material)
+
+        lens.trace(Hx=0, Hy=0, wavelength=0.55)
+
+
+class TestAbbeMaterial:
+    def test_refractive_index(self, set_test_backend):
+        abbe_material = materials.AbbeMaterial(n=1.5, abbe=50, model="polynomial")
+        wavelength = 0.58756  # in microns
+        value = abbe_material.n(wavelength)
+        assert_allclose(value, 1.4999167964912952)
+
+    def test_extinction_coefficient(self, set_test_backend):
+        abbe_material = materials.AbbeMaterial(n=1.5, abbe=50, model="polynomial")
+        wavelength = 0.58756  # in microns
+        assert abbe_material.k(wavelength) == 0
+
+    def test_coefficients(self, set_test_backend):
+        abbe_material = materials.AbbeMaterial(n=1.5, abbe=50, model="polynomial")
+        # Access the private method on the underlying model (AbbePolynomialModel)
+        coefficients = abbe_material.model._get_coefficients()
+        assert coefficients.shape == (4,)  # Assuming the polynomial is of degree 3
+
+    def test_abbe_to_dict(self, set_test_backend):
+        abbe_material = materials.AbbeMaterial(n=1.5, abbe=50, model="polynomial")
+        abbe_dict = abbe_material.to_dict()
+        assert abbe_dict == {
+            "type": "AbbeMaterial",
+            "index": 1.5,
+            "abbe": 50.0,
+            "model": "polynomial",
+            "propagation_model": {"class": "HomogeneousPropagation"},
+        }
+
+    def test_abbe_from_dict(self, set_test_backend):
+        # Legacy dict without model= key triggers FutureWarning; explicitly consume it.
+        abbe_dict = {"type": "AbbeMaterial", "index": 1.5, "abbe": 50}
+        with pytest.warns(FutureWarning, match="default model for AbbeMaterial"):
+            abbe_material = materials.BaseMaterial.from_dict(abbe_dict)
+        assert abbe_material.index == 1.5
+        assert abbe_material.abbe == 50
+
+    def test_abbe_out_of_bounds_wavelength(self, set_test_backend):
+        abbe_material = materials.AbbeMaterial(n=1.5, abbe=50, model="polynomial")
+        with pytest.raises(ValueError):
+            abbe_material.n(0.3)
+        with pytest.raises(ValueError):
+            abbe_material.n(0.8)
+
+    def test_ray_trace(self, set_test_backend):
+        abbe_material = materials.AbbeMaterial(n=1.5, abbe=50, model="polynomial")
+        lens = build_model(abbe_material)
+
+        lens.trace(Hx=0, Hy=0, wavelength=0.55)
 
 
 class TestMaterialFile:
@@ -53,7 +529,7 @@ class TestMaterialFile:
         # force invalid coefficients to test the exception
         material.coefficients = [1.0, 0.58, 0.12, 0.87]
         with pytest.raises(ValueError):
-            material.n(1.0)
+            material._calculate_n(1.0)
 
     def test_formula_2(self, set_test_backend):
         filename = str(
@@ -72,7 +548,7 @@ class TestMaterialFile:
         # force invalid coefficients to test the exception
         material.coefficients = [1.0, 0.58, 0.12, 0.87]
         with pytest.raises(ValueError):
-            material.n(1.0)
+            material._calculate_n(1.0)
 
     def test_formula_3(self, set_test_backend):
         filename = str(
@@ -92,7 +568,7 @@ class TestMaterialFile:
         # force invalid coefficients to test the exception
         material.coefficients = [1.0, 0.58, 0.12, 0.87]
         with pytest.raises(ValueError):
-            material.n(1.0)
+            material._calculate_n(1.0)
 
     def test_formula_4(self, set_test_backend):
         rel_file = "data-nk/main/CaGdAlO4/Loiko-o.yml"
@@ -109,7 +585,7 @@ class TestMaterialFile:
         # force invalid coefficients to test the exception
         material.coefficients = [1.0, 0.58, 0.12, 0.87]
         with pytest.raises(ValueError):
-            material.n(1.0)
+            material._calculate_n(1.0)
 
     def test_formula_5(self, set_test_backend):
         filename = str(
@@ -129,7 +605,7 @@ class TestMaterialFile:
         # force invalid coefficients to test the exception
         material.coefficients = [1.0, 0.58, 0.12, 0.87]
         with pytest.raises(ValueError):
-            material.n(1.0)
+            material._calculate_n(1.0)
 
     def test_formula_6(self, set_test_backend):
         filename = str(
@@ -149,7 +625,7 @@ class TestMaterialFile:
         # force invalid coefficients to test the exception
         material.coefficients = [1.0, 0.58, 0.12, 0.87]
         with pytest.raises(ValueError):
-            material.n(1.0)
+            material._calculate_n(1.0)
 
     def test_formula_7(self, set_test_backend):
         filename = str(
@@ -171,7 +647,7 @@ class TestMaterialFile:
         # force invalid coefficients to test the exception
         material.coefficients = [1.0, 0.58]
         with pytest.raises(ValueError):
-            material.n(1.0)
+            material._calculate_n(1.0)
 
     def test_formula_8(self, set_test_backend):
         filename = str(
@@ -191,7 +667,7 @@ class TestMaterialFile:
         # force invalid coefficients to test the exception
         material.coefficients = [1.0, 0.58, 0.12]
         with pytest.raises(ValueError):
-            material.n(1.0)
+            material._calculate_n(1.0)
 
     def test_formula_9(self, set_test_backend):
         rel_file = "data-nk/organic/CH4N2O - urea/Rosker-e.yml"
@@ -208,7 +684,7 @@ class TestMaterialFile:
         # force invalid coefficients to test the exception
         material.coefficients = [1.0, 0.58, 0.12, 0.87]
         with pytest.raises(ValueError):
-            material.n(1.0)
+            material._calculate_n(1.0)
 
     def test_tabulated_n(self, set_test_backend):
         rel_file = "data-nk/main/Y3Al5O12/Bond.yml"
@@ -225,7 +701,7 @@ class TestMaterialFile:
         # Test case when no tabulated data available
         material._n = None
         with pytest.raises((ValueError, TypeError)):
-            material.n(1.0)
+            material._calculate_n(1.0)
 
     def test_tabulated_nk(self, set_test_backend):
         rel_file = "data-nk/main/B/Fernandez-Perea.yml"
@@ -258,6 +734,7 @@ class TestMaterialFile:
         assert material.to_dict() == {
             "filename": filename,
             "type": materials.MaterialFile.__name__,
+            "propagation_model": {"class": "HomogeneousPropagation"},
         }
 
     def test_from_dict(self, set_test_backend):
@@ -288,13 +765,15 @@ class TestMaterial:
             )
 
     def test_non_robust_failure(self, set_test_backend):
-        # There are many materials matches for BK7. Without robust search,
-        # this should fail.
+        # There are many materials matches for BK7. Without robust search
+        # (now STRICT), multiple ambiguous exact matches raise ValueError.
         with pytest.raises(ValueError):
             materials.Material("BK7", robust_search=False)
 
-        # There are also many materials matches for BK7 with schott reference.
-        with pytest.raises(ValueError):
+        # With reference="schott", only one exact match remains (N-BK7), so
+        # STRICT policy resolves successfully — no longer raises.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
             materials.Material("BK7", reference="schott", robust_search=False)
 
     def test_min_wavelength_filtering(self, set_test_backend):
@@ -333,9 +812,12 @@ class TestMaterial:
             "filename": material.filename,
             "name": "SF11",
             "reference": None,
-            "robust_search": True,
+            "catalog": None,
+            "match_policy": "warn",
+            "robust_search": None,
             "min_wavelength": None,
             "max_wavelength": None,
+            "propagation_model": {"class": "HomogeneousPropagation"},
         }
 
     def test_from_dict(self, set_test_backend):
@@ -344,47 +826,6 @@ class TestMaterial:
 
     def test_raise_warning(self, set_test_backend):
         materials.Material("LITHOTEC-CAF2")  # prints a warning
-
-
-@pytest.fixture
-def abbe_material():
-    return materials.AbbeMaterial(n=1.5, abbe=50)
-
-
-def test_refractive_index(set_test_backend, abbe_material):
-    wavelength = 0.58756  # in microns
-    value = abbe_material.n(wavelength)
-    assert_allclose(value, 1.4999167964912952)
-
-
-def test_extinction_coefficient(set_test_backend, abbe_material):
-    wavelength = 0.58756  # in microns
-    assert abbe_material.k(wavelength) == 0
-
-
-def test_coefficients(set_test_backend, abbe_material):
-    coefficients = abbe_material._get_coefficients()
-    assert coefficients.shape == (4,)  # Assuming the polynomial is of degree 3
-
-
-def test_abbe_to_dict(set_test_backend, abbe_material):
-    abbe_dict = abbe_material.to_dict()
-    assert abbe_dict == {"type": "AbbeMaterial", "index": 1.5, "abbe": 50}
-
-
-def test_abbe_from_dict(set_test_backend):
-    abbe_dict = {"type": "AbbeMaterial", "index": 1.5, "abbe": 50}
-    abbe_material = materials.BaseMaterial.from_dict(abbe_dict)
-    assert abbe_material.index == 1.5
-    assert abbe_material.abbe == 50
-
-
-def test_abbe_out_of_bounds_wavelength(set_test_backend):
-    abbe_material = materials.AbbeMaterial(n=1.5, abbe=50)
-    with pytest.raises(ValueError):
-        abbe_material.n(0.3)
-    with pytest.raises(ValueError):
-        abbe_material.n(0.8)
 
 
 def test_glasses_selection(set_test_backend):
@@ -448,11 +889,21 @@ def test_find_closest_glass(set_test_backend):
 
 
 def test_plot_nk():
-    import matplotlib.pyplot as plt
+    from matplotlib.figure import Figure
 
     mat = materials.Material("BK7")
     fig, axes = materials.plot_nk(mat, wavelength_range=(0.1, 15))
     assert fig is not None
-    assert isinstance(fig, plt.Figure)
-    assert isinstance(axes, list)
+    assert isinstance(fig, Figure)
+    assert isinstance(axes, tuple)
     assert len(axes) == 2
+
+
+def test___eq__():
+    ideal1 = materials.IdealMaterial(1.0, 0.0)
+    ideal2 = materials.IdealMaterial(1.0, 0.0)
+    ideal3 = materials.IdealMaterial(1.0, 0.1)
+    abbe = materials.AbbeMaterial(1.5, 60.0, model="polynomial")
+    assert ideal1 == ideal2
+    assert ideal1 != ideal3
+    assert abbe != ideal1

@@ -9,16 +9,19 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
 import optiland.backend as be
-from optiland.tolerancing.perturbation import RangeSampler
+from optiland.tolerancing.perturbation import BaseSampler, RangeSampler
 
 if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
+
     from optiland.tolerancing.core import Tolerancing
 
 
@@ -26,26 +29,25 @@ class SensitivityAnalysis:
     """Class for performing sensitivity analysis on a tolerancing system.
 
     Args:
-        tolerancing (Tolerancing): The tolerancing system to perform
-            sensitivity analysis on.
+        tolerancing: The tolerancing system to perform sensitivity analysis on.
+        sampler: Optional sampler strategy. Defaults to RangeSampler, which
+            produces a linear sweep for each perturbation. Provide a different
+            BaseSampler subclass to change the sampling behaviour.
 
     Attributes:
-        tolerancing (Tolerancing): The tolerancing system to perform
-            sensitivity analysis on.
-        operand_names (list): List of operand names in the tolerancing system.
-        _results (pd.DataFrame): DataFrame to store the sensitivity analysis
-            results.
-
-    Methods:
-        run(): Runs the sensitivity analysis.
-        get_results(): Returns the sensitivity analysis results.
-        view(figsize=(2.2, 3), sharex='col', sharey='row'): Visualizes the
-            sensitivity analysis results.
+        tolerancing: The tolerancing system.
+        operand_names: List of operand names in the tolerancing system.
+        _results: DataFrame storing the sensitivity analysis results.
 
     """
 
-    def __init__(self, tolerancing: Tolerancing):
+    def __init__(
+        self,
+        tolerancing: Tolerancing,
+        sampler: BaseSampler | None = None,
+    ) -> None:
         self.tolerancing = tolerancing
+        self._sampler = sampler
         self.operand_names = [
             f"{i}: {operand}" for i, operand in enumerate(tolerancing.operands)
         ]
@@ -122,9 +124,9 @@ class SensitivityAnalysis:
     def view(
         self,
         figsize: tuple[float, float] = (2.5, 3.3),
-        sharex: str = "col",
-        sharey: str = "row",
-    ) -> tuple[plt.Figure, np.ndarray[plt.Axes]]:
+        sharex: Literal["none", "all", "row", "col"] | bool = "col",
+        sharey: Literal["none", "all", "row", "col"] | bool = "row",
+    ) -> tuple[Figure, list[Axes]]:
         """Visualizes the sensitivity analysis results.
 
         Args:

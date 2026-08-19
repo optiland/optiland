@@ -36,20 +36,20 @@ visualizes the system, and traces some rays.
     system = optic.Optic()
 
     # add surfaces to the system
-    system.add_surface(index=0, thickness=np.inf)
-    system.add_surface(index=1, thickness=7, radius=20.0, is_stop=True, material='N-SF11')
-    system.add_surface(index=2, thickness=23.0)
-    system.add_surface(index=3)
+    system.surfaces.add(index=0, thickness=np.inf)
+    system.surfaces.add(index=1, thickness=7, radius=20.0, is_stop=True, material='N-SF11')
+    system.surfaces.add(index=2, thickness=23.0)
+    system.surfaces.add(index=3)
 
     # add aperture
     system.set_aperture(aperture_type='EPD', value=20)
 
     # add field
-    system.set_field_type(field_type='angle')
-    system.add_field(y=0)
+    system.fields.set_type(field_type='angle')
+    system.fields.add(y=0)
 
     # add wavelength
-    system.add_wavelength(value=0.587, is_primary=True)
+    system.wavelengths.add(value=0.587, is_primary=True)
 
     # draw the system in 2D
     system.draw(num_rays=5)

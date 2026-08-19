@@ -38,6 +38,8 @@ Components Explained
      - Adding **operands** to define the merit function.
      - Adding **variables** to define the parameters to optimize.
      - Computing the overall objective function value.
+   - Optionally batching compatible ray operands to avoid redundant traces.
+   - Providing both squared terms (`fun_array`) and residual vectors (`residual_vector`) for least-squares optimizers.
 
 2. **Optimizers**:
 
@@ -49,7 +51,11 @@ Components Explained
      - **Basin Hopping** (global)
      - **SHGO** (global)
      - **Least Squares** (local)
+     - **Orthogonal Descent** (local)
      - **Nelder-Mead**, **Powell**, **BFGS**, **L-BFGS-B**, **COBYLA**, etc. (local optimization, from `scipy.optimize.minimize`)
+     - **CMA-ES** and **Particle Swarm** (custom, gradient-free global optimizers in `optiland.optimization.optimizer.custom`)
+     - **Adam** and **SGD** (PyTorch-native gradient-based optimizers in `optiland.optimization.optimizer.torch`, useful for differentiable/autograd workflows)
+     - **GlassExpert** (mixed continuous/categorical optimizer for glass selection; see below)
    - Users can subclass the base optimizer for custom methods.
 
 3. **Operands and Variables**:
@@ -95,7 +101,7 @@ Typical Optimization Process
 .. code:: python
 
    from optiland.optimization import OptimizationProblem
-   problem = OptimizationProblem(optic)
+   problem = OptimizationProblem()
 
 2. **Add Operands**. Add operands to define the merit function:
 
@@ -113,7 +119,20 @@ Typical Optimization Process
    # Add radius of curvature variable for second surface
    problem.add_variable(lens, 'radius', surface_number=2)
 
-4. **Choose an Optimizer**. Select an optimizer and run the optimization:
+4. **(Optional) Configure Batched Ray Evaluation**. Batching is enabled by default. If you need to compare with legacy per-operand behavior, disable it explicitly:
+
+.. code:: python
+
+   # Squared weighted deltas (used by many optimizers)
+   merit = problem.sum_squared()
+
+   # Unsquared weighted deltas (useful for least-squares style methods)
+   residuals = problem.residual_vector()
+
+   # Disable batching to opt out (legacy per-operand evaluation)
+   problem.disable_batching()
+
+5. **Choose an Optimizer**. Select an optimizer and run the optimization:
 
 .. code:: python
 
@@ -121,13 +140,34 @@ Typical Optimization Process
    optimizer = OptimizerGeneric(problem)
    result = optimizer.optimize()
 
-5. **Review Results**. Print optimization results and visualize performance:
+6. **Review Results**. Print optimization results and visualize performance:
 
 .. code:: python
 
    problem.info()  # print optimization problem details
    print(result)   # standard output from scipy.optimize.minimize
    lens.draw()     # Plot the lens in 2D
+
+
+Batched Ray Evaluation Internals
+--------------------------------
+
+The batching path is implemented by `optiland.optimization.batched_evaluator.BatchedRayEvaluator` and is integrated into `OptimizationProblem` by default. You can opt out with `disable_batching()` and re-enable with `enable_batching()`.
+
+When enabled, the evaluator performs three steps:
+
+1. Group compatible operands that can share the same trace call.
+2. Execute the minimum required set of `trace_generic` and `trace` calls.
+3. Extract per-operand values from shared traced arrays while preserving backend behavior and autograd.
+
+Current batching support includes:
+
+- **Single-ray (`trace_generic`) operands** such as `real_x_intercept`, `real_y_intercept`, `real_z_intercept`, local-coordinate intercept variants, direction cosines (`real_L`, `real_M`, `real_N`), and `AOI`.
+- **Distribution (`trace`) operands** for `rms_spot_size` when trace parameters match.
+
+Operands that are not currently batchable are evaluated through the standard direct path, so mixed merit functions are fully supported.
+
+For PyTorch workflows, this design keeps gradients valid because values are extracted by tensor indexing from traced data (without detaching). For NumPy workflows, behavior remains numerically equivalent to the standard per-operand evaluation path.
 
 
 .. figure:: ../_static/cooke_triplet_starting_point.png
@@ -151,7 +191,7 @@ Understanding Operands
 Operands represent individual components of the merit function. To find the inputs required for a specific operand:
 
 - Refer to the operand registry in the Operand module, or the API documentation.
-- Use operand-specific documentation for parameter details. For example, the RMS spot size requires a field as an input, while the focal length does not. All operands require a target value, weight, and an `Optic` instance.
+- Use operand-specific documentation for parameter details. For example, the RMS spot size requires a field as an input, while the focal length does not. All operands require a target value, weight, and an `Optic` instance. Note that the ``weight`` of an operand dictates its contribution relative to other operands in the merit function. For operands evaluated across the pupil or across a spectrum (e.g., standard RMS Spot Size), the merit function also automatically accounts for the intrinsic ``weight`` assigned to the ``Field`` and ``Wavelength`` objects defined in the ``Optic``.
 
 .. raw:: html
 
@@ -170,6 +210,27 @@ Custom operands, variables and optimization algorithms can be added by subclassi
 
 .. tip::
    See the :ref:`Learning Guide <example_gallery>` for demonstrations of custom optimization algorithms and user-defined operands.
+
+How to Extend This
+------------------
+
+**Scenario:** Add a new optimization operand to Optiland.
+
+**Step 1:** Add a new function to ``optiland/optimization/operand/operand.py`` (or the relevant
+``optiland/optimization/operand/*.py`` module, e.g. ``ray.py``, ``aberration.py``, ``paraxial.py``).
+**Step 2:** Register it either by adding an entry to the ``METRIC_DICT`` dict near the top of
+``operand.py``, or at runtime via ``operand_registry.register(name, func)``.
+**Step 3:** Add tests in ``tests/test_optimization/test_operand.py``.
+
+To add a new **variable type**: subclass ``VariableBehavior`` in
+``optiland/optimization/variable/base.py`` and register the new type in the ``Variable`` class
+(``optiland/optimization/variable/variable.py``).
+
+To add a new **optimizer**: subclass ``OptimizerGeneric`` in
+``optiland/optimization/optimizer/scipy/base.py``.
+
+For step-by-step guidance, see :ref:`extension_recipes`.
+For a worked example, see :doc:`../examples/Tutorial_3c_User_Defined_Optimization`.
 
 
 .. raw:: html
@@ -262,7 +323,7 @@ Also please note that the run duration scales with the number of lenses and the 
 
 **Key Code Aspects**
 
-*   **optiland.optimization.glass_expert.GlassExpert**: The main class implementing the algorithm.
+*   **optiland.optimization.optimizer.scipy.glass_expert.GlassExpert**: The main class implementing the algorithm.
 *   **Material Representation**: Glasses are primarily identified by their names (strings), but their (n_d, V_d) properties are used for neighborhood searches and catalog downsampling. Functions like `get_nd_vd` and `get_neighbour_glasses` from `optiland.materials` are utilized.
 *   **Variable Handling**: GlassExpert temporarily separates continuous and categorical (glass) variables. Continuous optimizations are run only on the continuous set, while glass variables are iteratively substituted.
 *   **run() method**: The primary entry point, which orchestrates the global exploration, local exploration, and final optimization passes. It accepts parameters like `num_neighbours`, `maxiter` (for local optimizations), and `tol`.
@@ -277,4 +338,4 @@ Developers might interact with or extend the GlassExpert in several ways:
 
 GlassExpert provides a powerful way to tackle mixed continuous-categorical optimization problems common in lens design, where selecting the right materials is as critical as defining the right shapes and distances. 
 
-Refer to `Tutorial_7e_Glass_Expert.ipynb <https://optiland.readthedocs.io/en/latest/examples/Tutorial_7e_Glass_Expert.html>`_ for a practical example.
+Refer to :doc:`../examples/Tutorial_3e_Glass_Expert_Categorical_Optimization` for a practical example.

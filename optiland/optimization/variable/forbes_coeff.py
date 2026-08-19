@@ -1,21 +1,26 @@
 """Specialized variable handlers for Forbes polynomial coefficients.
 
 This module provides handlers for Forbes polynomial coefficients,
-distinguishing between rotationally symmetric (Q-bfs) and freeform (Q-2D)
-surfaces.
+distinguishing between rotationally symmetric (slope-orthogonal Q) and
+freeform (Q-2D) surfaces.
 
 Manuel Fragata Mendes, August 2025
 """
 
 from __future__ import annotations
 
-from optiland.geometries.forbes.geometry import ForbesQ2dGeometry, ForbesQbfsGeometry
+import warnings
+
+from optiland.geometries.forbes.geometry import (
+    ForbesQ2dGeometry,
+    ForbesQNormalSlopeGeometry,
+)
 from optiland.optimization.scaling.identity import IdentityScaler
 from optiland.optimization.variable.base import VariableBehavior
 
 
-class ForbesQbfsCoeffVariable(VariableBehavior):
-    """Represents a variable for a Forbes Q-bfs coefficient.
+class ForbesQNormalSlopeCoeffVariable(VariableBehavior):
+    """Represents a variable for a Forbes Q (slope-orthogonal) coefficient.
 
     This variable targets a coefficient for a specific radial order `n`.
 
@@ -24,7 +29,7 @@ class ForbesQbfsCoeffVariable(VariableBehavior):
     """
 
     def __init__(self, optic, surface_number, coeff_number, scaler=None, **kwargs):
-        """Initializes the ForbesQbfsCoeffVariable.
+        """Initializes the ForbesQNormalSlopeCoeffVariable.
 
         Args:
             optic: The optical system.
@@ -39,37 +44,35 @@ class ForbesQbfsCoeffVariable(VariableBehavior):
         self.coeff_number = coeff_number  # the radial order 'n'
 
     def get_value(self):
-        """Gets the value of the nth Q-bfs coefficient.
+        """Gets the value of the nth Q (slope-orthogonal) coefficient.
 
         Returns:
             float: The value of the coefficient.
 
         Raises:
-            TypeError: If the geometry is not a ForbesQbfsGeometry.
+            TypeError: If the geometry is not a ForbesQNormalSlopeGeometry.
         """
-        surf = self._surfaces.surfaces[self.surface_number]
+        surf = self._surfaces[self.surface_number]
         geom = surf.geometry
-        if not isinstance(geom, ForbesQbfsGeometry):
-            raise TypeError("This variable is only for ForbesQbfsGeometry.")
+        if not isinstance(geom, ForbesQNormalSlopeGeometry):
+            raise TypeError("This variable is only for ForbesQNormalSlopeGeometry.")
 
         return geom.radial_terms.get(self.coeff_number, 0.0)
 
     def update_value(self, new_value):
-        """Updates the value of the nth Q-bfs coefficient.
+        """Updates the value of the nth Q (slope-orthogonal) coefficient.
 
         Args:
             new_value (float): The new value for the coefficient.
         """
-        surf = self.optic.surface_group.surfaces[self.surface_number]
+        surf = self.optic.surfaces[self.surface_number]
         geom = surf.geometry
 
         geom.radial_terms[self.coeff_number] = new_value
         geom._prepare_coeffs()
 
     def __str__(self):
-        return (
-            f"Forbes Q-bfs Coeff n={self.coeff_number}, Surface {self.surface_number}"
-        )
+        return f"Forbes Q Coeff n={self.coeff_number}, Surface {self.surface_number}"
 
 
 class ForbesQ2dCoeffVariable(VariableBehavior):
@@ -134,7 +137,7 @@ class ForbesQ2dCoeffVariable(VariableBehavior):
         Raises:
             TypeError: If the geometry is not a ForbesQ2dGeometry.
         """
-        surf = self._surfaces.surfaces[self.surface_number]
+        surf = self._surfaces[self.surface_number]
         geom = surf.geometry
         if not isinstance(geom, ForbesQ2dGeometry):
             raise TypeError("This variable is only for ForbesQ2dGeometry.")
@@ -147,7 +150,7 @@ class ForbesQ2dCoeffVariable(VariableBehavior):
         Args:
             new_value (float): The new value for the coefficient.
         """
-        surf = self.optic.surface_group.surfaces[self.surface_number]
+        surf = self.optic.surfaces[self.surface_number]
         geom = surf.geometry
 
         geom.freeform_coeffs[self.coeff_tuple] = new_value
@@ -158,4 +161,26 @@ class ForbesQ2dCoeffVariable(VariableBehavior):
         return (
             f"Forbes Q-2D Coeff (n={self.n}, m={self.m}, {self.term_type}), "
             f"Surface {self.surface_number}"
+        )
+
+
+class ForbesQbfsCoeffVariable(ForbesQNormalSlopeCoeffVariable):
+    """Deprecated alias for ForbesQNormalSlopeCoeffVariable.
+
+    .. deprecated::
+        Use :class:`ForbesQNormalSlopeCoeffVariable` instead.
+    """
+
+    def __init__(self, optic, surface_number, coeff_number, scaler=None, **kwargs):
+        warnings.warn(
+            "ForbesQbfsCoeffVariable is deprecated; use "
+            "ForbesQNormalSlopeCoeffVariable instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(optic, surface_number, coeff_number, scaler, **kwargs)
+
+    def __str__(self):
+        return (
+            f"Forbes Q-bfs Coeff n={self.coeff_number}, Surface {self.surface_number}"
         )

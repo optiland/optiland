@@ -1,0 +1,27 @@
+// OSLO 5.00 0 0 0
+LEN NEW "Cassegrain Telescope" 1555.556 3
+EBR 200
+DES "Optiland"
+UNI 1
+ANG 0.1
+AIR
+RD 0
+TH 1e+10
+AP 1.745331e+07
+NXT // SRF 1
+RFL
+RD -4000
+TH -1800
+AP 200
+CC -1
+NXT // SRF 2
+RFL
+RD 1400
+TH 2200
+CC -2.5
+NXT // SRF 3
+AIR
+TH 0
+WV 0.55
+WW 1
+END 3

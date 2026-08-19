@@ -8,6 +8,7 @@
 
    .. autosummary::
    
+      is_torch_tensor
       to_numpy
       torch_to_numpy
    

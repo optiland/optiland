@@ -18,11 +18,12 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
     from torch import Tensor
 
-    from optiland._types import ScalarOrArray
+    from optiland._types import ScalarOrArrayT
 
 
 # Conversion functions for backends
 def torch_to_numpy(obj: Tensor) -> NDArray:
+    """Convert a torch Tensor to a NumPy array; raise TypeError otherwise."""
     if importlib.util.find_spec("torch"):
         import torch
 
@@ -34,16 +35,16 @@ def torch_to_numpy(obj: Tensor) -> NDArray:
 CONVERTERS = [torch_to_numpy]
 
 
-def to_numpy(obj: ScalarOrArray) -> NDArray:
+def to_numpy(obj: ScalarOrArrayT) -> NDArray:
     """Converts input scalar or array to NumPy array, regardless of backend."""
     if isinstance(obj, np.ndarray):
         return obj
 
     elif isinstance(obj, int | float | np.number):
-        return np.array([obj])
+        return np.array(obj)
 
     # Handle lists: Iterate and convert elements individually
-    elif isinstance(obj, list):
+    elif isinstance(obj, list | tuple):
         # Recursively call to_numpy on each element to handle tensors correctly
         # This will use the CONVERTERS loop for tensor elements within the list
         # Then, construct a 1D numpy array from the processed scalar elements.
@@ -71,3 +72,19 @@ def to_numpy(obj: ScalarOrArray) -> NDArray:
         except TypeError:
             continue
     raise TypeError(f"Unsupported object type: {type(obj)}")
+
+
+def is_torch_tensor(obj) -> bool:
+    """Checks if an object is a PyTorch tensor.
+
+    Args:
+        obj: The object to check.
+
+    Returns:
+        bool: True if the object is a PyTorch tensor, False otherwise.
+    """
+    if importlib.util.find_spec("torch"):
+        import torch
+
+        return isinstance(obj, torch.Tensor)
+    return False

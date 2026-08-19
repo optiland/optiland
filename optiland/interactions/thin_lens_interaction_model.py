@@ -17,28 +17,25 @@ from optiland.rays.polarized_rays import PolarizedRays
 if TYPE_CHECKING:
     # pragma: no cover
     from optiland.coatings import BaseCoating
-    from optiland.geometries.base import BaseGeometry
-    from optiland.materials.base import BaseMaterial
     from optiland.scatter import BaseBSDF
+    from optiland.surfaces import Surface
 
 
 class ThinLensInteractionModel(BaseInteractionModel):
     """Interaction model for a thin lens."""
 
+    interaction_type = "thin_lens"
+
     def __init__(
         self,
+        parent_surface: Surface | None,
         focal_length: float,
-        geometry: BaseGeometry,
-        material_pre: BaseMaterial,
-        material_post: BaseMaterial,
         is_reflective: bool,
         coating: BaseCoating | None = None,
         bsdf: BaseBSDF | None = None,
     ):
         super().__init__(
-            geometry=geometry,
-            material_pre=material_pre,
-            material_post=material_post,
+            parent_surface=parent_surface,
             is_reflective=is_reflective,
             coating=coating,
             bsdf=bsdf,
@@ -53,8 +50,7 @@ class ThinLensInteractionModel(BaseInteractionModel):
 
     def flip(self):
         """Flip the interaction model."""
-        self.material_pre, self.material_post = self.material_post, self.material_pre
-        self.f = -self.f
+        pass
 
     def interact_real_rays(self, rays):
         """Interacts the rays with the surface by either reflecting or refracting
@@ -70,22 +66,29 @@ class ThinLensInteractionModel(BaseInteractionModel):
             RealRays: The refracted rays.
 
         """
-        # add optical path length - workaround for now
-        # TODO: develop more robust method
-        rays.opd = rays.opd - (rays.x**2 + rays.y**2) / (2 * self.f)
+        h2 = rays.x**2 + rays.y**2
+        rays.opd = rays.opd + self.f - be.copysign(be.sqrt(h2 + self.f**2), self.f)
 
         n1 = self.material_pre.n(rays.w)
+        n2 = n1 if self.is_reflective else self.material_post.n(rays.w)
+        L, M, N = [component / be.abs(rays.N) for component in (rays.L, rays.M, rays.N)]
+        if not be.isinf(self.f):
+            if self.is_reflective:
+                f1 = f2 = -self.f * be.copysign(be.ones_like(rays.N), rays.N)
+            else:
+                f = self.f * be.copysign(be.ones_like(rays.N), rays.N)
+                f1 = f * n1
+                f2 = f * n2
+            L = L * f1 - rays.x
+            M = M * f1 - rays.y
+            N = be.where(rays.N > 0, f2, -f2)
+            if self.f < 0:
+                L = -L
+                M = -M
+                N = -N
 
-        n2 = -n1 if self.is_reflective else self.material_post.n(rays.w)
-
-        ux1 = rays.L / rays.N
-        uy1 = rays.M / rays.N
-
-        ux2 = 1 / n2 * (n1 * ux1 - rays.x / self.f)
-        uy2 = 1 / n2 * (n1 * uy1 - rays.y / self.f)
-
-        L = ux2
-        M = uy2
+        else:
+            N *= n2 / n1
 
         # only normalize if required
         if self.bsdf or self.coating or isinstance(rays, PolarizedRays):
@@ -108,11 +111,13 @@ class ThinLensInteractionModel(BaseInteractionModel):
             # update polarization matrices, if PolarizedRays
             rays.update()
 
-        # paraxial approximation -> direction is not necessarily unit vector
+        if self.is_reflective:
+            N = -N
         rays.L = L
         rays.M = M
-        rays.N = be.ones_like(L)
-        rays.is_normalized = False
+        rays.N = N
+
+        rays.normalize()
 
         return rays
 

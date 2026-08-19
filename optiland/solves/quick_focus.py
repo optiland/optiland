@@ -23,7 +23,7 @@ class QuickFocusSolve(BaseSolve):
 
     def __init__(self, optic, *args):
         self.optic = optic
-        self.num_surfaces = self.optic.surface_group.num_surfaces
+        self.num_surfaces = self.optic.surfaces.num_surfaces
         if self.num_surfaces <= 2:
             raise ValueError("Can not optimize for an empty optical system")
 
@@ -78,4 +78,4 @@ class QuickFocusSolve(BaseSolve):
             wavelength=self.optic.wavelengths.primary_wavelength.value,
         )
 
-        self.optic.surface_group.surfaces[-1].geometry.cs.z = z_focus
+        self.optic.surfaces[-1].geometry.cs.z = z_focus

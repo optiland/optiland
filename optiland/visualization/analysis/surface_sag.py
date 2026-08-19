@@ -74,7 +74,7 @@ class SurfaceSagViewer(BaseViewer):
             fig = plt.figure(figsize=(9, 9))
 
         # Get the surface to analyze
-        surface = self.optic.surface_group.surfaces[surface_index]
+        surface = self.optic.surfaces[surface_index]
 
         # Determine the appropriate grid extent based on the surface aperture
         if max_extent is not None:

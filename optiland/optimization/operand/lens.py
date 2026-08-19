@@ -32,20 +32,42 @@ class LensOperand:
             The edge thickness between the two surfaces.
         """
 
-        surface1 = optic.surface_group.surfaces[surface_number]
-        surface2 = optic.surface_group.surfaces[surface_number + 1]
+        surface1 = optic.surfaces[surface_number]
+        surface2 = optic.surfaces[surface_number + 1]
         semi_apt_1 = surface1.semi_aperture
         semi_apt_2 = surface2.semi_aperture
+
+        # Lazily initialize missing semi-apertures so users do not need to
+        # manually call paraxial updates before optimization.
+        if semi_apt_1 is None or semi_apt_2 is None:
+            try:
+                optic.updater.update_paraxial()
+            except Exception as exc:
+                raise ValueError(
+                    "edge_thickness requires initialized semi-apertures. "
+                    "Set fields/aperture on the optic or set surface "
+                    "semi_apertures explicitly."
+                ) from exc
+
+            semi_apt_1 = surface1.semi_aperture
+            semi_apt_2 = surface2.semi_aperture
+
+        if semi_apt_1 is None or semi_apt_2 is None:
+            raise ValueError(
+                "edge_thickness requires initialized semi-apertures on both "
+                f"surfaces {surface_number} and {surface_number + 1}."
+            )
+
         semi_apt_min = semi_apt_1
 
         if semi_apt_1 != semi_apt_2:
-            # in case of different semi-diameter, take the minimum
-            semi_apt_min = be.minimum(be.array(semi_apt_1), be.array(semi_apt_2))
+            # in case of different semi-diameter, take the maximum
+            semi_apt_min = be.maximum(be.array(semi_apt_1), be.array(semi_apt_2))
 
         sag1 = surface1.geometry.sag(y=semi_apt_min)
         sag2 = surface2.geometry.sag(y=semi_apt_min)
 
-        thickness = optic.surface_group.get_thickness(surface_number)
+        thickness = optic.surfaces.get_thickness(surface_number)
 
         edge_thickness = thickness - sag1 + sag2
         return edge_thickness

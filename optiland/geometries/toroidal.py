@@ -72,7 +72,9 @@ class ToroidalGeometry(NewtonRaphsonGeometry):
         self.R_yz = radius_y
         self.k_yz = conic
 
-        self.coeffs_poly_y = be.asarray([] if coeffs_poly_y is None else coeffs_poly_y)
+        self.coeffs_poly_y = be.asarray(
+            [] if coeffs_poly_y is None else list(coeffs_poly_y)
+        )
 
         self.is_symmetric = False
 
@@ -80,6 +82,33 @@ class ToroidalGeometry(NewtonRaphsonGeometry):
             1.0 / self.R_yz if be.isfinite(self.R_yz) and self.R_yz != 0 else 0.0
         )
         self.eps = 1e-14  # safe div
+
+    def set_radius_x(self, value: float) -> None:
+        """Set the X-Z radius of rotation.
+
+        Args:
+            value: New X-Z radius of rotation.
+        """
+        self.R_rot = be.array(value)
+
+    def set_radius(self, value: float) -> None:
+        """Set the default radius, which is the Y-Z profile radius.
+
+        Args:
+            value: New Y-Z profile radius.
+        """
+        self.set_radius_y(value)
+
+    def set_radius_y(self, value: float) -> None:
+        """Set the Y-Z profile radius and dependent geometry state.
+
+        Args:
+            value: New Y-Z profile radius.
+        """
+        radius = be.array(value)
+        self.R_yz = radius
+        self.radius = radius
+        self.c_yz = 1.0 / radius if be.isfinite(radius) and radius != 0 else 0.0
 
     def _calculate_zy(self, y: be.ndarray) -> be.ndarray:
         """Calculates the sag of the base Y-Z curve.
@@ -255,6 +284,24 @@ class ToroidalGeometry(NewtonRaphsonGeometry):
 
     def __str__(self) -> str:
         return "Toroidal"
+
+    def scale(self, scale_factor: float):
+        """Scale the geometry parameters.
+
+        Args:
+            scale_factor (float): The factor by which to scale the geometry.
+        """
+        super().scale(scale_factor)
+        self.R_rot = self.R_rot * scale_factor
+        self.R_yz = self.R_yz * scale_factor
+
+        self.c_yz = (
+            1.0 / self.R_yz if be.isfinite(self.R_yz) and self.R_yz != 0 else 0.0
+        )
+
+        for i in range(len(self.coeffs_poly_y)):
+            # C_i' = C_i * s^(1 - 2(i+1))
+            self.coeffs_poly_y[i] *= scale_factor ** (1 - 2 * (i + 1))
 
     def to_dict(self) -> dict:
         """Converts the geometry to a dictionary.

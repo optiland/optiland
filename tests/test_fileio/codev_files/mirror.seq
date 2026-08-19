@@ -1,0 +1,10 @@
+! Mirror test (reflective surface)
+EPD 20.0
+WL 550.0
+REF 1
+YAN 0.0
+
+SO 0.0 1e10
+S  -200.0 -100.0  REFL
+  STO
+SI 0.0 0.0

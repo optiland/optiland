@@ -8,10 +8,19 @@ or unique functionality of Optiland.
 
 .. nbgallery::
 
+    miscellaneous/diagnostics_demo
     miscellaneous/combining_lenses
+    miscellaneous/codev_import_demo
+    miscellaneous/oslo_import_demo
     miscellaneous/aperture_demo
     miscellaneous/float_by_stop_size
     miscellaneous/custom_aperture_sizes
     miscellaneous/apodization
     miscellaneous/paraxial_to_thick_lens
     miscellaneous/paraxial_image_height_field
+    miscellaneous/real_image_height_field
+    miscellaneous/themes
+    miscellaneous/lens_draw_projection
+    miscellaneous/ray_aiming
+    miscellaneous/eye
+    miscellaneous/zemax_circular_aperture_demo

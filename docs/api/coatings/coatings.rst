@@ -11,5 +11,9 @@
       BaseCoating
       BaseCoatingPolarized
       FresnelCoating
+      JonesThinFilm
+      PolarizerCoating
+      RetarderCoating
       SimpleCoating
+      ThinFilmCoating
    

@@ -318,6 +318,15 @@ class ViewerPanel(QWidget):
         if self.viewer3D:
             self.viewer3D.render_optic()
 
+    def update_theme(self, theme_name: str):
+        """Updates the theme for all viewers in this panel."""
+        if self.viewer2D:
+            self.viewer2D.update_theme(theme_name)
+        if self.viewer3D:
+            self.viewer3D.update_theme(theme_name)
+        if self.sagViewer:
+            self.sagViewer.update_theme(theme_name)
+
 
 class MatplotlibViewer(QWidget):
     """
@@ -507,10 +516,6 @@ class MatplotlibViewer(QWidget):
             ax.set_xlim(xlim[0] + dx, xlim[1] + dx)
             ax.set_ylim(ylim[0] + dy, ylim[1] + dy)
 
-            # Update the starting position for the next move
-            self._pan_start_x = event.xdata
-            self._pan_start_y = event.ydata
-
             # Redraw the canvas
             self.canvas.draw_idle()
             return  # Skip the coordinate display when panning
@@ -603,14 +608,18 @@ class MatplotlibViewer(QWidget):
                     system_plotter = OptilandOpticalSystemPlotter(
                         optic, rays2d_plotter, projection="2d"
                     )
+                    from optiland.visualization.themes import get_active_theme
+
+                    theme = get_active_theme()
                     rays2d_plotter.plot(
                         self.ax,
                         fields="all",
                         wavelengths="primary",
                         num_rays=num_rays,
                         distribution=distribution,
+                        theme=theme,
                     )
-                    system_plotter.plot(self.ax)
+                    system_plotter.plot(self.ax, theme=theme)
                     self.ax.set_title(
                         f"System: {optic.name} (2D)",
                         color=matplotlib.rcParams["text.color"],
@@ -729,10 +738,14 @@ class VTKViewer(QWidget):
             theme (str, optional): The theme name ('dark' or 'light').
                                    Defaults to "dark".
         """
-        if theme == "dark":
-            self.renderer.SetBackground(0.1, 0.2, 0.4)
-        else:
-            self.renderer.SetBackground(0.8, 0.8, 0.8)
+        from matplotlib.colors import to_rgb
+
+        from optiland.visualization.themes import get_active_theme, set_theme
+
+        set_theme(theme)
+        theme = get_active_theme()
+        background = to_rgb(theme.parameters["axes.facecolor"])
+        self.renderer.SetBackground(*background)
         self.vtkWidget.GetRenderWindow().Render()
 
     def render_optic(self):
@@ -761,15 +774,19 @@ class VTKViewer(QWidget):
                     optic, rays3d_plotter, projection="3d"
                 )
 
+                from optiland.visualization.themes import get_active_theme
+
+                theme = get_active_theme()
                 rays3d_plotter.plot(
                     self.renderer,
                     fields="all",
                     wavelengths="primary",
                     num_rays=24,
                     distribution="ring",
+                    theme=theme,
                 )
 
-                system_plotter.plot(self.renderer)
+                system_plotter.plot(self.renderer, theme=theme)
 
                 if not self.renderer.GetActiveCamera():
                     self.setup_default_camera()

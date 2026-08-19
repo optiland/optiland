@@ -1,0 +1,14 @@
+! Aspheric lens test file
+TITLE 'Aspheric Singlet'
+EPD 5.0
+WL 587.6
+REF 1
+YAN 0.0 3.0
+
+SO 0.0 1e10
+S  50.0 5.0  1.5168:64.17
+  K -0.5
+  A 1.5E-6
+  B -2.3E-9
+S  -80.0 45.0
+SI 0.0 0.0

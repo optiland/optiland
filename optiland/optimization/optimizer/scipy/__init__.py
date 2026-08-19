@@ -6,6 +6,7 @@ from .differential_evolution import DifferentialEvolution
 from .dual_annealing import DualAnnealing
 from .glass_expert import GlassExpert
 from .least_squares import LeastSquares
+from .orthogonal_descent import OrthogonalDescent
 from .shgo import SHGO
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "SHGO",
     "BasinHopping",
     "GlassExpert",
+    "OrthogonalDescent",
 ]

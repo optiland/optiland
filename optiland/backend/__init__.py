@@ -1,165 +1,206 @@
 """
 Backend Module
 
-This module provides a unified interface for performing numerical operations
-using either NumPy or PyTorch as the backend. The default backend is NumPy,
-but it can be switched to PyTorch using the `set_backend` function. Other
-backends may be added in the future.
+Provides a unified module-level interface for numerical operations backed by
+either NumPy or PyTorch. The default backend is NumPy; switch with
+``set_backend('torch')``.
+
+Usage::
+
+    import optiland.backend as be
+    be.set_backend('torch')      # switch to PyTorch
+    x = be.array([1.0, 2.0])    # uses the active backend
+    y = be.sin(x)
+
+Module-level constants (backend-independent)::
+
+    be.inf, be.nan, be.pi, be.newaxis, be.e
+
+Note on ``to_numpy``
+--------------------
+``be.to_numpy`` is a **boundary utility** for converting backend arrays to
+NumPy at system boundaries (tests, IO, visualization). It is not a
+computation function and breaks the backend abstraction. Internal code should
+import it directly from ``optiland.backend.utils``::
+
+    from optiland.backend.utils import to_numpy
+
+Note on thread safety
+---------------------
+``set_backend`` modifies global module state and is **not thread-safe**. It is
+intended to be called once at program startup or at the beginning of a test.
+Concurrent calls from multiple threads are not supported.
 
 Kramer Harrison, 2025
 """
 
-# common aliases for ndarray and array_equal across backends --
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 import numpy as _np
 
-from optiland.backend import numpy_backend
-from optiland.backend.utils import to_numpy  # noqa: F401
-
-try:
-    import torch as _torch
-except ImportError:
-    _torch = None
-
+from optiland._suggest import options_hint
+from optiland.backend.base import BackendCapabilityError  # noqa: F401
+from optiland.backend.numpy_backend import NumpyBackend
+from optiland.backend.utils import is_torch_tensor, to_numpy  # noqa: F401
 
 if TYPE_CHECKING:
-    from optiland._types import BEArray, ScalarOrArray
+    from optiland._types import BEArrayT
+    from optiland.backend.base import AbstractBackend
 
+# ---------------------------------------------------------------------------
+# Backend-independent constants
+# ---------------------------------------------------------------------------
+inf = float("inf")
+nan = float("nan")
+pi = math.pi
+e = math.e
+newaxis = None  # equivalent to np.newaxis
 
+# ---------------------------------------------------------------------------
+# Type aliases
+# ---------------------------------------------------------------------------
 # ndarray: either a NumPy ndarray or a PyTorch Tensor
-ndarray = (_np.ndarray, _torch.Tensor) if _torch is not None else _np.ndarray
-
-# array_equal: dispatch to numpy.array_equal or torch.equal
-_np_equal = _np.array_equal
-_torch_equal = (
-    _torch.equal if (_torch is not None and hasattr(_torch, "equal")) else None
-)
-
-
-def array_equal(a: BEArray, b: BEArray) -> bool:
-    """Elementwise equality test for arrays/tensors in the active backend."""
-    from . import get_backend
-
-    if get_backend() == "torch" and _torch_equal is not None:
-        return _torch_equal(a, b)
-    return _np_equal(a, b)
-
-
-# --- Add explicit type-dispatching functions ---
-# Add explicit implementations for functions that might receive
-# arrays/tensors created when a *different* backend was active
-
-
-def isinf(x: ScalarOrArray) -> ScalarOrArray:
-    """Checks if input is infinity (handles np.ndarray/scalars and torch.Tensor)."""
-    if _torch_available and isinstance(x, _torch.Tensor):
-        # Assumes torch_backend defines isinf (e.g., calling torch.isinf)
-        return _torch.isinf(x)
-    # Fallback to numpy for np.ndarray or Python scalars
-    # Assumes numpy_backend defines isinf (e.g., calling np.isinf)
-    return _np.isinf(x)
-
-
-def isnan(x: ScalarOrArray) -> ScalarOrArray:
-    """Checks if input is NaN (handles np.ndarray/scalars and torch.Tensor)."""
-    if _torch_available and isinstance(x, _torch.Tensor):
-        return _torch.isnan(x)
-
-    return _np.isnan(x)
-
-
 try:
-    from optiland.backend import torch_backend
+    import torch as _torch
 
-    _torch_available = True
-except ImportError:
-    torch_backend = None
-    _torch_available = False
+    ndarray = (_np.ndarray, _torch.Tensor)
+    _torch_importable = True
+except (ImportError, OSError):
+    ndarray = _np.ndarray  # type: ignore[assignment]
+    _torch_importable = False
 
-# Registry for available backends.
-_backends = {
-    "numpy": numpy_backend,
+# NumPy dtype aliases — for compatibility with callers that use be.float32 / be.float64
+float32 = _np.float32
+float64 = _np.float64
+
+# finfo — expose numpy's finfo for machine-epsilon queries
+finfo = _np.finfo
+
+
+def array_equal(a: BEArrayT, b: BEArrayT) -> bool:
+    """Element-wise equality test for arrays/tensors in the active backend.
+
+    Args:
+        a: First array or tensor.
+        b: Second array or tensor.
+
+    Returns:
+        bool: True if a and b are equal element-wise.
+    """
+    if _current_backend == "torch" and _torch_importable:
+        return _torch.equal(a, b)
+    return _np.array_equal(a, b)
+
+
+# ---------------------------------------------------------------------------
+# Backend registry (singletons)
+# ---------------------------------------------------------------------------
+_backends: dict[str, AbstractBackend] = {
+    "numpy": NumpyBackend(),
 }
 
-# Add torch_backend to the registry only if it is available.
-if _torch_available:
-    _backends["torch"] = torch_backend
+try:
+    from optiland.backend.torch_backend import TorchBackend
 
-# Default backend
-_current_backend = "numpy"
+    _backends["torch"] = TorchBackend()
+    _torch_available = True
+except (ImportError, OSError):
+    _torch_available = False
+
+_current_backend: str = "numpy"
+
+
+# ---------------------------------------------------------------------------
+# Backend management
+# ---------------------------------------------------------------------------
 
 
 def set_backend(name: str) -> None:
     """Set the current backend.
 
     Args:
-        name (str): The name of the backend. Must be one of the available backends.
+        name: Backend name. Must be one of the registered backends (see
+            ``list_available_backends()``).
 
     Raises:
         ValueError: If the backend name is not registered.
+
+    Note:
+        This function modifies global module state and is **not thread-safe**.
+        It is intended to be called once at program startup or at the
+        beginning of a test. Concurrent calls from multiple threads are not
+        supported.
     """
     global _current_backend
     if name not in _backends:
+        available = list_available_backends()
         raise ValueError(
-            f'Unknown backend "{name}". Available backends: {list_available_backends()}'
+            f"Unknown backend {name!r}.{options_hint(str(name), available)} "
+            "Install the extra for a missing backend, e.g. "
+            "pip install optiland[torch]."
         )
     _current_backend = name
 
 
 def get_backend() -> str:
-    """Get the name of the current backend."""
+    """Return the name of the current active backend.
+
+    Returns:
+        str: Backend name (e.g. ``'numpy'`` or ``'torch'``).
+    """
     return _current_backend
 
 
-def list_available_backends():
-    """Return a list of all registered backend names."""
+def list_available_backends() -> list[str]:
+    """Return a list of all registered backend names.
+
+    Returns:
+        list[str]: Available backend names.
+    """
     return list(_backends.keys())
 
 
-def __getattr__(name):
-    """Dynamically retrieve attributes (functions/constants) from the current backend.
+# ---------------------------------------------------------------------------
+# Module-level attribute dispatch
+# ---------------------------------------------------------------------------
 
-    When a user accesses an attribute (e.g., be.sin or be.pi), this function
-    tries to retrieve the attribute from the current backend module. If not found,
-    it attempts to retrieve the attribute from an optional `_lib` attribute of the
-    backend module (allowing for a two-level backend organization).
+
+def __getattr__(name: str) -> object:
+    """Delegate attribute access to the active backend instance.
+
+    This enables the ``be.sin(x)``, ``be.array(...)``, etc. call pattern at
+    module level. The active backend instance is an ``AbstractBackend``
+    subclass, so every attribute resolved here is guaranteed by the ABC
+    contract (or raises ``AttributeError`` with a clear message).
+
+    Args:
+        name: Attribute name to resolve.
+
+    Returns:
+        object: The attribute from the active backend.
 
     Raises:
-        AttributeError: If the attribute is not found in the current backend.
+        AttributeError: If the active backend has no such attribute.
     """
     if name in globals():
         return globals()[name]
-
-    backend = _backends[_current_backend]
-
-    # Direct attribute lookup in the backend module.
+    instance = _backends[_current_backend]
     try:
-        return getattr(backend, name)
+        return getattr(instance, name)
     except AttributeError:
-        pass
-
-    # Fallback: check the _lib submodule if it exists.
-    lib = getattr(backend, "_lib", None)
-    if lib:
-        try:
-            return getattr(lib, name)
-        except AttributeError:
-            pass
-
-    raise AttributeError(
-        f"The '{_current_backend}' backend (module {backend.__name__}) "
-        f"has no attribute '{name}'."
-    )
+        raise AttributeError(
+            f"Backend '{_current_backend}' has no attribute '{name}'."
+        ) from None
 
 
-def __dir__():
+def __dir__() -> list[str]:
+    """Extend the module's directory listing to include backend attributes.
+
+    Returns:
+        list[str]: Sorted list of all available names.
     """
-    Extend the module's directory listing to include attributes available in the
-    current backend.
-    """
-    backend = _backends[_current_backend]
-    # Combine the standard globals with the backend's attributes.
-    return sorted(list(globals().keys()) + dir(backend))
+    instance = _backends[_current_backend]
+    return sorted(set(globals().keys()) | set(dir(instance)))

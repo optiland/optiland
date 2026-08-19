@@ -14,8 +14,8 @@ Rays are the fundamental elements of the ray tracing process. A ray consists of 
 - **Direction (L, M, N)**: The ray's unit vector indicating its direction.
 - **Wavelength**: The wavelength of the ray in the system.
 - **Intensity**: The ray's relative intensity.
-- **Optical Path Length (OPL)**: The accumulated path the ray has traveled, weighted by refractive index.
-- **Polarization Matrix (optional)**: A 3x3 matrix representing the transformation of a ray's initial electric field into its final state.
+- **Optical Path Difference (OPD)**: The accumulated path difference of the ray relative to the chief ray.
+- **Polarization Matrix (optional)**: A 3x3 matrix representing the transformation of a ray's initial electric field into its final state. This is used by the `PolarizedRays` class.
 
 .. note::
   In Optiland, all ray attributes are defined as NumPy arrays for efficient computation.
@@ -39,18 +39,19 @@ The ray tracing framework uses a **Ray Generator** to produce rays for tracing. 
 - System properties (e.g., F/#, NA, telecentricity)
 - Apodization (intensity distribution within the pupil)
 
-Generated rays are passed to the **Surface Group** for tracing through the optical system. Each `Optic` instance has both a ray generator and a surface group
-specific to that system.
+Generated rays are passed to the **Surface Group** for tracing through the optical system. Each `Optic` instance has a `ray_tracer` attribute, which in turn contains the `RayGenerator`.
 
 Ray Tracing
 -----------
 For real rays, the ray tracing process is managed by the **RealRayTracer**. The ray tracer is responsible for:
 
-- Generating the appropriate rays based on the selected ray generator.
+- Generating the appropriate rays via its `RayGenerator`.
 - Ray tracing input validation.
 - Propagating rays through the surface group.
 
-For paraxial rays, the **ParaxialRayTracer** is used. This tracer is similar in form to the RealRayTracer but uses simplified equations for faster computations.
+For paraxial rays, there are two primary methods for tracing:
+- The **ParaxialRayTracer** class provides a dedicated tracer for paraxial rays.
+- The `Surface.trace` method can also directly handle `ParaxialRays`, providing an alternative way to trace them.
 
 Tracing Process
 ---------------
@@ -58,7 +59,7 @@ Ray tracing is performed by sequentially propagating rays across the surfaces in
 
 1. Rays are converted into the local coordinate system of the current surface.
 2. Rays intersections with the surface are identified and the ray propagates to the intersection point.
-3. If the surface has a physica aperture, rays may be clipped (intensity set to zero) if they fall outside this aperture.
+3. If the surface has a physical aperture, rays may be clipped (intensity set to zero) if they fall outside this aperture.
 4. The rays interact with the surface, modifying their direction, intensity, polarization matrix, and other attributes.
 5. Ray are transformed back to the global coordinate system.
 6. Ray information (intersection points, intensities, etc.) is recorded on the surface for later analysis and visualization.
@@ -79,3 +80,39 @@ The framework is designed to be extensible:
 - Additional tracing logic can be integrated into the surface `trace` method for specialized applications.
 
 For a practical example of ray tracing, see the :ref:`getting_started` section.
+
+Ray Aiming
+----------
+Optiland implements a flexible **Ray Aiming** system to determine the correct launch coordinates for rays such that they fill the stop surface, even in systems with significant pupil aberrations.
+
+This functionality is managed by the :class:`~optiland.rays.ray_aiming.base.BaseRayAimer` class and its subclasses. The system uses a **Registry Pattern**, allowing users to easily switch strategies or register custom ones.
+
+Available Strategies
+^^^^^^^^^^^^^^^^^^^^
+- **Paraxial**: Standard aiming using paraxial entrance pupil approximation. Fast but less accurate for wide-angle/aberrated systems.
+- **Iterative**: Uses a Newton-Raphson-like iterative solver to refine ray launch coordinates until they hit the physical stop.
+- **Robust**: An extension of the iterative method using **Chief-Ray Calibration** (or Pupil Map). It determines the entrance-pupil center per field first (via field-marching continuation), fits a local 2D affine pupil map from cardinal edge probes, and uses this map to seed a fast and precise 2-DOF Newton-Broyden polish step. This guarantees convergence in highly stressed and wide-angle systems.
+- **Cached**: A wrapper that caches intermediate results from any other strategy. Retained for backward compatibility (explicit ``cache=True``), but retired-by-default for the ``robust`` aimer, which implements its own intrinsic, always-on warm-start ``PupilMapCache``.
+
+Configuration
+^^^^^^^^^^^^^
+Ray aiming is configured via the ray tracer on the `Optic` instance:
+
+.. code-block:: python
+
+    # Enable robust ray aiming
+    optic.ray_tracer.set_aiming(mode="robust", max_iter=20, tol=1e-6)
+
+Custom Aimers
+^^^^^^^^^^^^^
+Users can implement custom strategies by subclassing `BaseRayAimer` and registering them:
+
+.. code-block:: python
+
+    from optiland.rays.ray_aiming import BaseRayAimer, register_aimer
+
+    @register_aimer("my_custom_aimer")
+    class MyAimer(BaseRayAimer):
+        def aim_rays(self, fields, wavelengths, pupil_coords):
+            # Custom logic
+            return x, y, z, L, M, N

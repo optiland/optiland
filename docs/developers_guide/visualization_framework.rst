@@ -22,6 +22,27 @@ The visualization framework is centered around the following key classes:
 
 - **OpticViewer3D**: Handles 3D visualization of an `Optic` instance and its components, enabling interactive exploration of the system layout in three dimensions.
 
+- **InteractionManager**: Manages all interactive features in 2D Matplotlib plots, such as hover-over tooltips for optical components.
+
+- **themes** and **palettes**: Modules that define the styling system. `themes.py` contains the core logic for applying styles, while `palettes.py` defines the color schemes.
+
+Theming and Palettes
+--------------------
+
+A key feature of the 2D visualization framework is its powerful theming engine, which allows for easy customization of plot aesthetics. The system is managed by two core modules:
+
+- **palettes.py**: Defines various color palettes (e.g., 'light', 'dark', 'solarized_light'). Each palette is a dictionary specifying colors for different plot elements like lenses, rays, and backgrounds.
+- **themes.py**: Contains the `set_theme()` and `theme_context()` functions that apply a chosen palette to the Matplotlib rcParams, ensuring all subsequent plots follow the specified style.
+
+This architecture makes it simple to create visually consistent and publication-ready figures.
+
+Interactive Pop-Up Info
+-----------------------
+
+The 2D visualization is now fully interactive. The **InteractionManager** class connects to the Matplotlib figure's event loop and listens for mouse-over events. When the cursor hovers over a plotted artist (like a surface or a ray bundle), the manager identifies the corresponding optical component and displays a pop-up annotation with relevant information.
+
+This feature is enabled by default in `OpticViewer` and provides a powerful way to inspect system properties directly from the plot.
+
 - **OpticalSystem**: Orchestrates the plotting of system components and rays. It identifies system elements such as lenses and mirrors and delegates rendering to specialized component classes.
 
 - **Rays2D and Rays3D**: Responsible for plotting ray paths in 2D and 3D, respectively. These classes are called by the `OpticalSystem` to handle ray visualization.
@@ -53,3 +74,25 @@ The `OpticViewer3D` class includes an optional **dark mode** for 3D plots, offer
 
 .. note::
    The image in the :ref:`developers_guide` shows an example of the dark mode 3D visualization output for a lithographic lens system.
+
+How to Extend This
+------------------
+
+**Scenario:** Add a new 2D or 3D renderer component to Optiland.
+
+**For 2D (Matplotlib):**
+
+**Step 1:** Create a component class in ``optiland/visualization/`` that accepts an ``Optic``
+instance and a Matplotlib ``Axes`` object.
+**Step 2:** Implement a ``draw()`` method that adds Matplotlib artists to the axes.
+**Step 3:** Integrate with ``OpticViewer`` in ``optiland/visualization/system/optic_viewer.py`` if
+the component should appear in the standard ``lens.draw()`` output.
+
+**For 3D (VTK):**
+
+**Step 1:** Create a component class that generates VTK actors (``vtkActor`` or ``vtkAssembly``).
+**Step 2:** Integrate with ``OpticViewer3D`` in ``optiland/visualization/system/optic_viewer_3d.py``.
+
+**Step 3:** Add tests in ``tests/test_visualization/``.
+
+For step-by-step guidance, see :ref:`extension_recipes`.

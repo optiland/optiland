@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import optiland.backend as be
 from optiland import materials
+
 from .utils import assert_allclose
 
 
@@ -71,9 +74,9 @@ class TestMaterialFileThermal:
         temp_c = 30.0
 
         # Calculate with explicit pressure of 1.0
-        n_with_pressure = material.n(wavelength, temp_c, 1.0)
+        n_with_pressure = material.n(wavelength, temperature=temp_c, pressure=1.0)
         # Calculate with pressure=None
-        n_with_none_pressure = material.n(wavelength, temp_c, pressure=None)
+        n_with_none_pressure = material.n(wavelength, temperature=temp_c, pressure=None)
 
         assert n_with_pressure == n_with_none_pressure
 
@@ -91,7 +94,7 @@ class TestMaterialFileThermal:
         # Get the uncorrected value
         base_n = material.n(wavelength, temperature=None)
         # Get the value corrected at the reference temperature
-        calculated_n = material.n(wavelength, temp_c, pressure_atm)
+        calculated_n = material.n(wavelength, temperature=temp_c, pressure=pressure_atm)
 
         # The result should be the same as the base refractive index
         assert_allclose(calculated_n, base_n)
@@ -106,13 +109,17 @@ class TestMaterialFileThermal:
         pressure_atm = 1.2
 
         # Calculate for each wavelength individually
-        n1 = material.n(wavelengths[0], temp_c, pressure_atm)
-        n2 = material.n(wavelengths[1], temp_c, pressure_atm)
-        n3 = material.n(wavelengths[2], temp_c, pressure_atm)
-        expected_n_array = be.array([n1.item(), n2.item(), n3.item()])
+        n1 = material.n(wavelengths[0], temperature=temp_c, pressure=pressure_atm)
+        n2 = material.n(wavelengths[1], temperature=temp_c, pressure=pressure_atm)
+        n3 = material.n(wavelengths[2], temperature=temp_c, pressure=pressure_atm)
+        expected_n_array = be.array(
+            [be.to_numpy(n1).item(), be.to_numpy(n2).item(), be.to_numpy(n3).item()]
+        )
 
         # Calculate with the array directly
-        calculated_n_array = material.n(wavelengths, temp_c, pressure_atm)
+        calculated_n_array = material.n(
+            wavelengths, temperature=temp_c, pressure=pressure_atm
+        )
 
         assert_allclose(calculated_n_array, expected_n_array)
 
@@ -166,5 +173,5 @@ class TestMaterialFileThermal:
         # expected_final_n should be ~1.518490
 
         # --- Comparison ---
-        calculated_n = material.n(wavelength, temp_c, pressure_atm)
+        calculated_n = material.n(wavelength, temperature=temp_c, pressure=pressure_atm)
         assert_allclose(calculated_n, expected_final_n)

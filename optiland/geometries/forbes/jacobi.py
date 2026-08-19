@@ -125,9 +125,18 @@ def _initialize_alphas(s, x, alphas, j=0):
         shape = (len(s), *be.shape(x)) if hasattr(x, "shape") else (len(s),)
         if j != 0:
             shape = (j + 1, *shape)
-        if be.__name__ == "torch":
-            alphas = be.zeros(shape)
-            alphas.requires_grad = False
+        if be.get_backend() == "torch":
+            import torch
+
+            prec = be.get_precision()
+            dtype = torch.float32 if prec == 32 else torch.float64
+            # Ensure alphas doesn't require grad to allow in-place ops
+            alphas = torch.zeros(
+                shape,
+                device=be.get_device(),
+                dtype=dtype,
+                requires_grad=False,
+            )
         else:
             alphas = be.zeros(shape)
     return alphas

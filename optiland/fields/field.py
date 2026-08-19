@@ -12,30 +12,45 @@ class Field:
     """Represents a field with specific properties.
 
     Attributes:
-        x (int): The x-coordinate of the field.
-        y (int): The y-coordinate of the field.
+        x (float): The x-coordinate of the field.
+        y (float): The y-coordinate of the field.
         vx (float): The vignette factor in the x-direction.
         vy (float): The vignette factor in the y-direction.
+        weight (float): The relative importance scalar for this field.
+            Non-negative; 0.0 means excluded from weighted contexts.
 
     """
 
     def __init__(
         self,
-        x=0,
-        y=0,
-        vignette_factor_x=0.0,
-        vignette_factor_y=0.0,
-    ):
+        x: float = 0,
+        y: float = 0,
+        vignette_factor_x: float = 0.0,
+        vignette_factor_y: float = 0.0,
+        weight: float = 1.0,
+    ) -> None:
         self.x = x
         self.y = y
         self.vx = vignette_factor_x
         self.vy = vignette_factor_y
+        self.weight = weight  # uses the validated setter
 
-    def to_dict(self):
+    @property
+    def weight(self) -> float:
+        """float: Non-negative relative importance scalar for this field."""
+        return self._weight
+
+    @weight.setter
+    def weight(self, value: float) -> None:
+        if value < 0:
+            raise ValueError(f"Field weight must be non-negative, got {value}.")
+        self._weight = float(value)
+
+    def to_dict(self) -> dict:
         """Convert the field to a dictionary.
 
         Returns:
-            dict: A dictionary representation of the field.
+            A dictionary representation of the field.
 
         """
         return {
@@ -43,17 +58,18 @@ class Field:
             "y": self.y,
             "vx": self.vx,
             "vy": self.vy,
+            "weight": self.weight,
         }
 
     @classmethod
-    def from_dict(cls, field_dict):
+    def from_dict(cls, field_dict: dict) -> Field:
         """Create a field from a dictionary.
 
         Args:
-            field_dict (dict): A dictionary representation of the field.
+            field_dict: A dictionary representation of the field.
 
         Returns:
-            Field: A field object created from the dictionary.
+            A field object created from the dictionary.
 
         """
         return cls(
@@ -61,4 +77,5 @@ class Field:
             field_dict.get("y", 0),
             field_dict.get("vx", 0.0),
             field_dict.get("vy", 0.0),
+            field_dict.get("weight", 1.0),
         )

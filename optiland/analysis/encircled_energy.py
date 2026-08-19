@@ -7,11 +7,17 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import matplotlib.pyplot as plt
 
 import optiland.backend as be
 
 from .spot_diagram import SpotData, SpotDiagram
+
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
 
 
 class EncircledEnergy(SpotDiagram):
@@ -66,8 +72,12 @@ class EncircledEnergy(SpotDiagram):
         )
 
     def view(
-        self, fig_to_plot_on: plt.Figure = None, figsize: tuple[float, float] = (7, 4.5)
-    ) -> tuple[plt.Figure, plt.Axes]:
+        self,
+        fig_to_plot_on: Figure | None = None,
+        figsize: tuple[float, float] = (7, 4.5),
+        *,
+        show: bool = True,
+    ) -> tuple[Figure, Axes]:
         """Plot the Encircled Energy curve.
 
         Args:
@@ -75,6 +85,8 @@ class EncircledEnergy(SpotDiagram):
                 If None, a new figure is created. Defaults to None.
             figsize (tuple, optional): The size of the figure if a new one is
                 created. Defaults to (7, 4.5).
+            show (bool): If True (default), calls plt.show(). Set False for
+                headless use.
 
         Returns:
             tuple: A tuple containing the figure and axes objects.
@@ -98,7 +110,7 @@ class EncircledEnergy(SpotDiagram):
         ax.legend(bbox_to_anchor=(1.05, 0.5), loc="center left")
         ax.set_xlabel("Radius (mm)")
         ax.set_ylabel("Encircled Energy (-)")
-        ax.set_title(f"Wavelength: {self.wavelengths[0]:.4f} µm")
+        ax.set_title(f"Wavelength: {self.wavelengths[0].value:.4f} µm")
         ax.set_xlim((0, None))
         ax.set_ylim((0, None))
         ax.grid(True)
@@ -106,6 +118,8 @@ class EncircledEnergy(SpotDiagram):
 
         if is_gui_embedding and hasattr(current_fig, "canvas"):
             current_fig.canvas.draw_idle()
+        if show and not is_gui_embedding:
+            plt.show()
         return current_fig, ax
 
     def centroid(self):
@@ -156,7 +170,8 @@ class EncircledEnergy(SpotDiagram):
             # convert both to plain numpy for plotting
             r_np = be.to_numpy(r_step)
             ee_np = be.to_numpy(ee)
-            ax.plot(r_np, ee_np, label=f"Hx: {field[0]:.3f}, Hy: {field[1]:.3f}")
+            Hx, Hy = field.coord
+            ax.plot(r_np, ee_np, label=f"Hx: {Hx:.3f}, Hy: {Hy:.3f}")
 
     def _generate_field_data(
         self,
@@ -181,7 +196,7 @@ class EncircledEnergy(SpotDiagram):
 
         """
         self.optic.trace(*field, wavelength, num_rays, distribution)
-        x = self.optic.surface_group.x[-1, :]
-        y = self.optic.surface_group.y[-1, :]
-        intensity = self.optic.surface_group.intensity[-1, :]
+        x = self.optic.surfaces.x[-1, :]
+        y = self.optic.surfaces.y[-1, :]
+        intensity = self.optic.surfaces.intensity[-1, :]
         return SpotData(x=x, y=y, intensity=intensity)

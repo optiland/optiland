@@ -25,6 +25,7 @@ except (ImportError, ModuleNotFoundError):
 import optiland.backend as be
 
 from ..base import BaseOptimizer
+from ..live_plotter import LiveOptimizationPlotter
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -53,7 +54,8 @@ class TorchBaseOptimizer(BaseOptimizer, ABC):
             be.grad_mode.enable()
 
         # Initialize parameters as torch.nn.Parameter objects
-        initial_params = [var.variable.get_value() for var in self.problem.variables]
+        # Use var.value (scaled) to match the scaled bounds from var.bounds
+        initial_params = [var.value for var in self.problem.variables]
         self.params = [torch.nn.Parameter(be.array(p)) for p in initial_params]
 
     @abstractmethod
@@ -98,6 +100,7 @@ class TorchBaseOptimizer(BaseOptimizer, ABC):
         lr: float = 1e-2,
         gamma: float = 0.99,
         disp: bool = True,
+        plot: bool = False,
         callback: Callable[[int, float], None] | None = None,
     ):
         """
@@ -108,18 +111,25 @@ class TorchBaseOptimizer(BaseOptimizer, ABC):
             lr (float): The learning rate.
             gamma (float): The decay factor for the learning rate.
             disp (bool): Whether to display progress.
+            plot: If True, update live plots during optimization.
             callback (Callable[[int, float], None] | None): A callback function to
                 be called after each step with the current step and loss value.
         """
         optimizer, scheduler = self._create_optimizer_and_scheduler(lr, gamma)
+
+        live_plotter: LiveOptimizationPlotter | None = None
+        if plot:
+            live_plotter = LiveOptimizationPlotter(self)
+            live_plotter.initialize()
 
         with be.grad_mode.temporary_enable():
             for i in range(n_steps):
                 optimizer.zero_grad()
 
                 # 1. Update the model state from the current nn.Parameter values.
+                # Use var.update() which inverse-scales from scaled space
                 for k, param in enumerate(self.params):
-                    self.problem.variables[k].variable.update_value(param)
+                    self.problem.variables[k].update(param)
 
                 # 2. Update any dependent properties.
                 self.problem.update_optics()
@@ -140,6 +150,8 @@ class TorchBaseOptimizer(BaseOptimizer, ABC):
                 # 7. Call the user-provided callback
                 if callback:
                     callback(i, loss.item())
+                if live_plotter is not None:
+                    live_plotter.update()
 
                 # 8. Print loss if display is enabled.
                 if disp and (i % 10 == 0 or i == n_steps - 1):
@@ -147,8 +159,12 @@ class TorchBaseOptimizer(BaseOptimizer, ABC):
 
         # Final update to ensure the model reflects the last optimized state
         for k, param in enumerate(self.params):
-            self.problem.variables[k].variable.update_value(param)
+            self.problem.variables[k].update(param)
         self.problem.update_optics()
+
+        if live_plotter is not None:
+            live_plotter.update()
+            live_plotter.finalize()
 
         final_loss = self.problem.sum_squared().item()
         return SimpleNamespace(fun=final_loss, x=[p.item() for p in self.params])

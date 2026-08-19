@@ -42,11 +42,10 @@ class RayFan(BaseAnalysis):
     """
 
     def __init__(self, optic, fields="all", wavelengths="all", num_points=256):
+        from optiland.utils import resolve_fields
+
         _optic_ref = optic
-        if fields == "all":
-            self.fields = _optic_ref.fields.get_field_coords()
-        else:
-            self.fields = fields
+        self.fields = resolve_fields(_optic_ref, fields)
 
         if num_points % 2 == 0:
             self.num_points = num_points + 1  # force to be odd so a point lies at P=0
@@ -55,10 +54,47 @@ class RayFan(BaseAnalysis):
 
         super().__init__(optic, wavelengths)
 
+    def _plot_ray_fan_field(self, ax_y, ax_x, field, Px, Py) -> None:
+        """Plot the tangential/sagittal ray fan curves for one field."""
+        for wp in self.wavelengths:
+            wavelength = wp.value
+            ex = self.data[f"{field}"][f"{wavelength}"]["x"]
+            ey = self.data[f"{field}"][f"{wavelength}"]["y"]
+            i_x = self.data[f"{field}"][f"{wavelength}"]["intensity_x"]
+            i_y = self.data[f"{field}"][f"{wavelength}"]["intensity_y"]
+            ex[i_x == 0], ey[i_y == 0] = be.nan, be.nan
+
+            ax_y.plot(
+                be.to_numpy(Py),
+                be.to_numpy(ey),
+                zorder=3,
+                label=f"{wavelength:.4f} µm",
+            )
+            ax_x.plot(
+                be.to_numpy(Px),
+                be.to_numpy(ex),
+                zorder=3,
+                label=f"{wavelength:.4f} µm",
+            )
+
+        for ax, xlabel, ylabel in (
+            (ax_y, "$P_y$", "$\\epsilon_y$ (mm)"),
+            (ax_x, "$P_x$", "$\\epsilon_x$ (mm)"),
+        ):
+            ax.grid()
+            ax.axhline(0, lw=1, c="gray")
+            ax.axvline(0, lw=1, c="gray")
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel(ylabel)
+            ax.set_xlim(-1, 1)
+            ax.set_title(f"Hx: {field[0]:.3f}, Hy: {field[1]:.3f}")
+
     def view(
         self,
         fig_to_plot_on: plt.Figure = None,
         figsize: tuple[float, float] = (10, 3.33),
+        *,
+        show: bool = True,
     ):
         """
         Displays the ray fan plot, either in a new window or on a provided GUI figure.
@@ -68,6 +104,8 @@ class RayFan(BaseAnalysis):
                 If None, a new figure will be created. Defaults to None.
             figsize (tuple[float, float], optional): The size of the figure.
                 Defaults to (10, 3.33).
+            show (bool): If True (default), calls plt.show(). Set False for
+                headless use.
         Returns:
             tuple: The current figure and its axes.
         """
@@ -103,43 +141,9 @@ class RayFan(BaseAnalysis):
         axs = np.atleast_2d(axs)
         Px, Py = self.data["Px"], self.data["Py"]
 
-        for k, field in enumerate(self.fields):
-            ax_y, ax_x = axs[k, 0], axs[k, 1]
-            for wavelength in self.wavelengths:
-                ex = self.data[f"{field}"][f"{wavelength}"]["x"]
-                ey = self.data[f"{field}"][f"{wavelength}"]["y"]
-                i_x = self.data[f"{field}"][f"{wavelength}"]["intensity_x"]
-                i_y = self.data[f"{field}"][f"{wavelength}"]["intensity_y"]
-                ex[i_x == 0], ey[i_y == 0] = be.nan, be.nan
-
-                ax_y.plot(
-                    be.to_numpy(Py),
-                    be.to_numpy(ey),
-                    zorder=3,
-                    label=f"{wavelength:.4f} µm",
-                )
-                ax_x.plot(
-                    be.to_numpy(Px),
-                    be.to_numpy(ex),
-                    zorder=3,
-                    label=f"{wavelength:.4f} µm",
-                )
-
-            ax_y.grid()
-            ax_y.axhline(0, lw=1, c="gray")
-            ax_y.axvline(0, lw=1, c="gray")
-            ax_y.set_xlabel("$P_y$")
-            ax_y.set_ylabel("$\\epsilon_y$ (mm)")
-            ax_y.set_xlim(-1, 1)
-            ax_y.set_title(f"Hx: {field[0]:.3f}, Hy: {field[1]:.3f}")
-
-            ax_x.grid()
-            ax_x.axhline(0, lw=1, c="gray")
-            ax_x.axvline(0, lw=1, c="gray")
-            ax_x.set_xlabel("$P_x$")
-            ax_x.set_ylabel("$\\epsilon_x$ (mm)")
-            ax_x.set_xlim(-1, 1)
-            ax_x.set_title(f"Hx: {field[0]:.3f}, Hy: {field[1]:.3f}")
+        for k, fp in enumerate(self.fields):
+            field = fp.coord
+            self._plot_ray_fan_field(axs[k, 0], axs[k, 1], field, Px, Py)
 
         if num_fields > 0:
             handles, labels = axs[0, 0].get_legend_handles_labels()
@@ -155,6 +159,8 @@ class RayFan(BaseAnalysis):
         current_fig.tight_layout()
         if is_gui_embedding and hasattr(current_fig, "canvas"):
             current_fig.canvas.draw_idle()
+        if show and not is_gui_embedding:
+            plt.show()
         return current_fig, current_fig.get_axes()
 
     def _remove_distortion(self, data):
@@ -170,7 +176,8 @@ class RayFan(BaseAnalysis):
         wave_ref = self.optic.primary_wavelength
         center_idx = self.num_points // 2
 
-        for field in self.fields:
+        for fp in self.fields:
+            field = fp.coord
             ref_data_x = data[f"{field}"][f"{wave_ref}"]["x"]
             ref_data_y = data[f"{field}"][f"{wave_ref}"]["y"]
             intensity_x = data[f"{field}"][f"{wave_ref}"]["intensity_x"]
@@ -192,7 +199,8 @@ class RayFan(BaseAnalysis):
                 valid_y = ref_data_y[intensity_y > 0]
                 y_offset = be.mean(valid_y) if be.size(valid_y) > 0 else 0.0
 
-            for wavelength in self.wavelengths:
+            for wp in self.wavelengths:
+                wavelength = wp.value
                 orig_x = data[f"{field}"][f"{wavelength}"]["x"]
                 orig_y = data[f"{field}"][f"{wavelength}"]["y"]
                 data[f"{field}"][f"{wavelength}"]["x"] = orig_x - x_offset
@@ -209,10 +217,12 @@ class RayFan(BaseAnalysis):
         data = {}
         data["Px"] = be.linspace(-1, 1, self.num_points)
         data["Py"] = be.linspace(-1, 1, self.num_points)
-        for field in self.fields:
+        for fp in self.fields:
+            field = fp.coord
             Hx, Hy = field[0], field[1]
             data[f"{field}"] = {}
-            for wavelength in self.wavelengths:
+            for wp in self.wavelengths:
+                wavelength = wp.value
                 data[f"{field}"][f"{wavelength}"] = {}
 
                 rays_x = self.optic.trace(
@@ -306,7 +316,8 @@ class BestFitRayFan(RayFan):
         dist_2d = create_distribution("hexapolar")
         dist_2d.generate_points(self.num_rays_for_fit)
 
-        for field in self.fields:
+        for fp in self.fields:
+            field = fp.coord
             Hx, Hy = field
             data[f"{field}"] = {}
 
@@ -316,7 +327,8 @@ class BestFitRayFan(RayFan):
             strategy.compute_wavefront_data(field, self.optic.primary_wavelength)
             ref_x, ref_y, _ = strategy.center
 
-            for wavelength in self.wavelengths:
+            for wp in self.wavelengths:
+                wavelength = wp.value
                 data[f"{field}"][f"{wavelength}"] = {}
 
                 # 2. Trace the tangential ray fan (along the x-axis of pupil)

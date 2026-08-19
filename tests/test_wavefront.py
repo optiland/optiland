@@ -1,11 +1,17 @@
+from __future__ import annotations
+
 from unittest.mock import patch
 
 import matplotlib
 import matplotlib.pyplot as plt
 import pytest
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
+from mpl_toolkits.mplot3d import Axes3D
 
 import optiland.backend as be
 from optiland import distribution
+from optiland.optic import Optic
 from optiland.samples.eyepieces import EyepieceErfle
 from optiland.samples.objectives import CookeTriplet, DoubleGauss
 from optiland.wavefront import OPD, OPDFan, Wavefront, WavefrontData, ZernikeOPD
@@ -20,8 +26,8 @@ class TestWavefront:
         optic = OpticClass()
         w = Wavefront(optic)
         assert w.num_rays == 12
-        assert w.fields == optic.fields.get_field_coords()
-        assert w.wavelengths == optic.wavelengths.get_wavelengths()
+        assert [fp.coord for fp in w.fields] == optic.fields.get_field_coords()
+        assert [wp.value for wp in w.wavelengths] == optic.wavelengths.get_wavelengths()
         assert isinstance(w.distribution, distribution.HexagonalDistribution)
 
     def test_wavefront_init_custom(self, set_test_backend):
@@ -34,7 +40,7 @@ class TestWavefront:
         )
         assert w.num_rays == 100
         assert isinstance(w.distribution, distribution.RandomDistribution)
-        assert w.wavelengths == [optic.primary_wavelength]
+        assert [wp.value for wp in w.wavelengths] == [optic.primary_wavelength]
 
     def test_generate_data(self, set_test_backend):
         optic = EyepieceErfle()
@@ -54,8 +60,10 @@ class TestOPDFan:
         optic = DoubleGauss()
         opd_fan = OPDFan(optic)
         assert opd_fan.num_rays == 100
-        assert opd_fan.fields == optic.fields.get_field_coords()
-        assert opd_fan.wavelengths == optic.wavelengths.get_wavelengths()
+        assert [fp.coord for fp in opd_fan.fields] == optic.fields.get_field_coords()
+        assert [
+            wp.value for wp in opd_fan.wavelengths
+        ] == optic.wavelengths.get_wavelengths()
         assert isinstance(opd_fan.distribution, distribution.CrossDistribution)
         arr = be.linspace(-1, 1, opd_fan.num_rays)
         assert be.all(opd_fan.pupil_coord == arr)
@@ -67,7 +75,7 @@ class TestOPDFan:
         fig, ax = opd_fan.view()
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
+        assert isinstance(fig, Figure)
         plt.close(fig)
 
     @patch("matplotlib.pyplot.show")
@@ -77,7 +85,7 @@ class TestOPDFan:
         fig, ax = opd_fan.view(figsize=(20, 20))
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
+        assert isinstance(fig, Figure)
         plt.close(fig)
 
 
@@ -86,8 +94,8 @@ class TestOPD:
         optic = EyepieceErfle()
         opd = OPD(optic, (0, 1), 0.55)
         assert opd.num_rays == 15
-        assert opd.fields == [(0, 1)]
-        assert opd.wavelengths == [0.55]
+        assert [fp.coord for fp in opd.fields] == [(0, 1)]
+        assert [wp.value for wp in opd.wavelengths] == [0.55]
         assert isinstance(opd.distribution, distribution.HexagonalDistribution)
 
     @patch("matplotlib.pyplot.show")
@@ -97,8 +105,8 @@ class TestOPD:
         fig, ax = opd.view()
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
     @patch("matplotlib.pyplot.show")
@@ -108,8 +116,8 @@ class TestOPD:
         fig, ax = opd.view(figsize=(20, 20))
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
     @patch("matplotlib.pyplot.show")
@@ -119,8 +127,8 @@ class TestOPD:
         fig, ax = opd.view(projection="3d")
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes3D)
         plt.close(fig)
 
     def test_old_invalid_projection(self, set_test_backend):
@@ -141,8 +149,8 @@ class TestZernikeOPD:
         optic = DoubleGauss()
         zernike_opd = ZernikeOPD(optic, (0, 1), 0.55)
         assert zernike_opd.num_rays == 15
-        assert zernike_opd.fields == [(0, 1)]
-        assert zernike_opd.wavelengths == [0.55]
+        assert [fp.coord for fp in zernike_opd.fields] == [(0, 1)]
+        assert [wp.value for wp in zernike_opd.wavelengths] == [0.55]
         assert isinstance(zernike_opd.distribution, distribution.HexagonalDistribution)
         assert be.allclose(zernike_opd.x, zernike_opd.distribution.x)
         assert be.allclose(zernike_opd.y, zernike_opd.distribution.y)
@@ -157,8 +165,8 @@ class TestZernikeOPD:
         fig, ax = zernike_opd.view()
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
     @patch("matplotlib.pyplot.show")
@@ -168,8 +176,8 @@ class TestZernikeOPD:
         fig, ax = zernike_opd.view(figsize=(20, 20))
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
     @patch("matplotlib.pyplot.show")
@@ -179,8 +187,8 @@ class TestZernikeOPD:
         fig, ax = zernike_opd.view(projection="3d")
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes3D)
         plt.close(fig)
 
     def test_zernike_opd_rms(self, set_test_backend):
@@ -237,3 +245,72 @@ class TestZernikeOPD:
         # x and y tilts swapped
         assert be.isclose(c0[1], c1[2])
         assert be.isclose(c0[2], c1[1])
+
+
+def test_finite_conjugate_angle_field_opd(set_test_backend):
+    """
+    Test that OPD for finite conjugate systems with AngleField is correctly
+    calculated without artificial tilt.
+
+    This was added after a bug was found where the OPD was calculated with an
+    artificial tilt for finite conjugate systems with AngleField.
+    """
+    # Create a simple finite conjugate system
+    optic = Optic()
+    optic.surfaces.add(index=0, thickness=100.0)  # Object to lens
+    optic.surfaces.add(
+        index=1, radius=50.0, thickness=5.0, material="BK7", is_stop=True
+    )
+    optic.surfaces.add(index=2, radius=-50.0, thickness=95.0)  # lens to image
+
+    optic.set_aperture("EPD", 10.0)
+    optic.wavelengths.add(0.55, is_primary=True)
+
+    # 1. Set field type to angle
+    optic.fields.set_type("angle")
+    optic.fields.add(y=5.0)  # 5 degrees
+
+    opd_angle = OPD(
+        optic,
+        field=(0, 1),
+        wavelength="primary",
+        num_rays=10,
+        distribution="line_y",
+        remove_tilt=False,
+    )
+    data_angle = opd_angle.get_data((0, 1), optic.primary_wavelength)
+
+    # 2. Set field type to object height
+    # EPL is at surface 1 (z=0). Object is at z=-100.
+    EPL = optic.paraxial.EPL()
+    obj_z = optic.surfaces.positions[0].item()
+    dist = EPL - obj_z
+    h_obj = dist * be.tan(be.radians(5.0))
+
+    optic2 = Optic()
+    optic2.surfaces.add(index=0, thickness=100.0)
+    optic2.surfaces.add(
+        index=1, radius=50.0, thickness=5.0, material="BK7", is_stop=True
+    )
+    optic2.surfaces.add(index=2, radius=-50.0, thickness=95.0)
+    optic2.set_aperture("EPD", 10.0)
+    optic2.wavelengths.add(0.55, is_primary=True)
+
+    optic2.fields.set_type("object_height")
+    optic2.fields.add(y=h_obj)
+
+    opd_height = OPD(
+        optic2,
+        field=(0, 1),
+        wavelength="primary",
+        num_rays=10,
+        distribution="line_y",
+        remove_tilt=False,
+    )
+    data_height = opd_height.get_data((0, 1), optic2.primary_wavelength)
+
+    # Verify that OPD values are close
+    assert_allclose(data_angle.opd, data_height.opd, atol=1.0)
+
+    # Check RMS
+    assert_allclose(opd_angle.rms(), opd_height.rms(), rtol=0.1)

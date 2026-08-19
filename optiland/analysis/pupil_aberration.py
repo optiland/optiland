@@ -10,12 +10,18 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 import matplotlib.pyplot as plt
 import numpy as np
 
 import optiland.backend as be
 
 from .base import BaseAnalysis
+
+if TYPE_CHECKING:
+    from matplotlib.figure import Figure
+    from numpy.typing import NDArray
 
 
 class PupilAberration(BaseAnalysis):
@@ -44,11 +50,10 @@ class PupilAberration(BaseAnalysis):
         wavelengths: str | list = "all",
         num_points: int = 256,
     ):
+        from optiland.utils import resolve_fields
+
         _optic_ref = optic
-        if fields == "all":
-            self.fields = _optic_ref.fields.get_field_coords()
-        else:
-            self.fields = fields
+        self.fields = resolve_fields(_optic_ref, fields)
 
         if num_points % 2 == 0:
             self.num_points = num_points + 1  # force to be odd so a point lies at P=0
@@ -57,11 +62,41 @@ class PupilAberration(BaseAnalysis):
 
         super().__init__(optic, wavelengths)
 
+    def _plot_pupil_aberration_field(self, ax_y, ax_x, field, Px, Py) -> None:
+        """Plot the Py/Px aberration curves and axis styling for one field."""
+        for wp in self.wavelengths:
+            wavelength = wp.value
+            ex = self.data[f"{field}"][f"{wavelength}"]["x"]
+            ey = self.data[f"{field}"][f"{wavelength}"]["y"]
+            ax_y.plot(
+                be.to_numpy(Py),
+                be.to_numpy(ey),
+                zorder=3,
+                label=f"{wavelength:.4f} µm",
+            )
+            ax_x.plot(
+                be.to_numpy(Px),
+                be.to_numpy(ex),
+                zorder=3,
+                label=f"{wavelength:.4f} µm",
+            )
+
+        for ax, xlabel in ((ax_y, "$P_y$"), (ax_x, "$P_x$")):
+            ax.grid()
+            ax.axhline(0, lw=1, c="gray")
+            ax.axvline(0, lw=1, c="gray")
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel("Pupil Aberration (%)")
+            ax.set_xlim(-1, 1)
+            ax.set_title(f"Hx: {field[0]:.3f}, Hy: {field[1]:.3f}")
+
     def view(
         self,
-        fig_to_plot_on: plt.Figure = None,
+        fig_to_plot_on: Figure | None = None,
         figsize: tuple[float, float] = (10, 3.33),
-    ) -> tuple[plt.Figure, np.ndarray[plt.Axes]]:
+        *,
+        show: bool = True,
+    ) -> tuple[Figure, NDArray[np.object_]]:
         """
         Displays the pupil aberration plots for each field and wavelength.
 
@@ -72,20 +107,22 @@ class PupilAberration(BaseAnalysis):
         figsize : tuple of float, optional
             Size of the figure in inches as (width, height). Used only if a new
             Figure is created.
+        show : bool, optional
+            If True (default), calls plt.show(). Set False for headless use.
 
         Returns
         -------
-        tuple[plt.Figure, list[plt.Axes]]
+        tuple[plt.Figure, list[Axes]]
             The matplotlib Figure and Axes array containing the plots.
 
         Notes
         -----
-        - If `fig_to_plot_on` is provided, the plots are embedded in the given Figure,
-        otherwise a new Figure is created.
-        - For each field, two subplots are created: one for aberration vs $P_y$ and one
-        for aberration vs $P_x$.
-        - If there are no fields to plot, a warning is printed or a message is displayed
-        on the Figure.
+        - If `fig_to_plot_on` is provided, the plots are embedded in the given
+          Figure, otherwise a new Figure is created.
+        - For each field, two subplots are created: one for aberration vs
+          $P_y$ and one for aberration vs $P_x$.
+        - If there are no fields to plot, a warning is printed or a message
+          is displayed on the Figure.
         - A legend is added if there are plotted wavelengths.
         """
         is_gui_embedding = fig_to_plot_on is not None
@@ -120,39 +157,9 @@ class PupilAberration(BaseAnalysis):
         axs = np.atleast_2d(axs)
         Px, Py = self.data["Px"], self.data["Py"]
 
-        for k, field in enumerate(self.fields):
-            ax_y, ax_x = axs[k, 0], axs[k, 1]
-            for wavelength in self.wavelengths:
-                ex = self.data[f"{field}"][f"{wavelength}"]["x"]
-                ey = self.data[f"{field}"][f"{wavelength}"]["y"]
-                ax_y.plot(
-                    be.to_numpy(Py),
-                    be.to_numpy(ey),
-                    zorder=3,
-                    label=f"{wavelength:.4f} µm",
-                )
-                ax_x.plot(
-                    be.to_numpy(Px),
-                    be.to_numpy(ex),
-                    zorder=3,
-                    label=f"{wavelength:.4f} µm",
-                )
-
-            ax_y.grid()
-            ax_y.axhline(0, lw=1, c="gray")
-            ax_y.axvline(0, lw=1, c="gray")
-            ax_y.set_xlabel("$P_y$")
-            ax_y.set_ylabel("Pupil Aberration (%)")
-            ax_y.set_xlim(-1, 1)
-            ax_y.set_title(f"Hx: {field[0]:.3f}, Hy: {field[1]:.3f}")
-
-            ax_x.grid()
-            ax_x.axhline(0, lw=1, c="gray")
-            ax_x.axvline(0, lw=1, c="gray")
-            ax_x.set_xlabel("$P_x$")
-            ax_x.set_ylabel("Pupil Aberration (%)")
-            ax_x.set_xlim(-1, 1)
-            ax_x.set_title(f"Hx: {field[0]:.3f}, Hy: {field[1]:.3f}")
+        for k, fp in enumerate(self.fields):
+            field = fp.coord
+            self._plot_pupil_aberration_field(axs[k, 0], axs[k, 1], field, Px, Py)
 
         if num_fields > 0:
             handles, labels = axs[0, 0].get_legend_handles_labels()
@@ -168,36 +175,41 @@ class PupilAberration(BaseAnalysis):
         current_fig.tight_layout()
         if is_gui_embedding and hasattr(current_fig, "canvas"):
             current_fig.canvas.draw_idle()
+        if show and not is_gui_embedding:
+            plt.show()
         return current_fig, axs
 
-    def _generate_data(self):
+    def _generate_data(self) -> dict[str, Any]:
         """Generate the real pupil aberration data.
 
         Returns:
             dict: The pupil aberration data.
 
         """
-        stop_idx = self.optic.surface_group.stop_index
+        stop_idx = self.optic.surfaces.stop_index
 
-        data = {
+        # Maybe use a data class for complex return values
+        data: dict[str, Any] = {
             "Px": be.linspace(-1, 1, self.num_points),
             "Py": be.linspace(-1, 1, self.num_points),
         }
 
         # determine size of stop
         self.optic.paraxial.trace(0, 1, self.optic.primary_wavelength)
-        d = self.optic.surface_group.y[stop_idx, 0]
+        d = self.optic.surfaces.y[stop_idx, 0]
 
         # Paraxial trace
         self.optic.paraxial.trace(0, data["Py"], self.optic.primary_wavelength)
-        parax_ref = self.optic.surface_group.y[stop_idx, :]
+        parax_ref = self.optic.surfaces.y[stop_idx, :]
 
-        for field in self.fields:
+        for fp in self.fields:
+            field = fp.coord
             Hx = field[0]
             Hy = field[1]
 
             data[f"{field}"] = {}
-            for wavelength in self.wavelengths:
+            for wp in self.wavelengths:
+                wavelength = wp.value
                 data[f"{field}"][f"{wavelength}"] = {}
 
                 # Trace along the x-axis
@@ -208,8 +220,8 @@ class PupilAberration(BaseAnalysis):
                     num_rays=self.num_points,
                     distribution="line_x",
                 )
-                real_x = self.optic.surface_group.x[stop_idx, :]
-                real_int_x = self.optic.surface_group.intensity[stop_idx, :]
+                real_x = self.optic.surfaces.x[stop_idx, :]
+                real_int_x = self.optic.surfaces.intensity[stop_idx, :]
 
                 # Trace along the y-axis
                 self.optic.trace(
@@ -219,8 +231,8 @@ class PupilAberration(BaseAnalysis):
                     num_rays=self.num_points,
                     distribution="line_y",
                 )
-                real_y = self.optic.surface_group.y[stop_idx, :]
-                real_int_y = self.optic.surface_group.intensity[stop_idx, :]
+                real_y = self.optic.surfaces.y[stop_idx, :]
+                real_int_y = self.optic.surfaces.intensity[stop_idx, :]
 
                 # Compute error
                 error_x = (parax_ref - real_x) / d * 100

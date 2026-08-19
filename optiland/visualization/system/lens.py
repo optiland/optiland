@@ -7,12 +7,25 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+import warnings
+from typing import Any
+
+import matplotlib.pyplot as plt
 import numpy as np
 import vtk
 from matplotlib.patches import Polygon
 
 import optiland.backend as be
 from optiland.visualization.system.utils import revolve_contour, transform, transform_3d
+
+
+def _to_float(val: Any, default: float = 0.0) -> float:
+    """Convert a scalar or 0-d backend array to a Python float."""
+    try:
+        arr = be.to_numpy(val)
+        return float(arr.item() if hasattr(arr, "item") else arr)
+    except Exception:
+        return default
 
 
 class Lens2D:
@@ -30,22 +43,143 @@ class Lens2D:
 
     """
 
-    def __init__(self, surfaces):
-        # TODO: raise warning when lens surfaces overlap
+    def __init__(self, surfaces: list[Any]) -> None:
         self.surfaces = surfaces
+        self._check_surface_overlap()
 
-    def plot(self, ax):
+    def _check_surface_overlap(self) -> None:
+        """Check if any neighboring surfaces in the lens physically overlap."""
+        if not self.surfaces or len(self.surfaces) < 2:
+            return
+
+        for k in range(len(self.surfaces) - 1):
+            surf1 = self.surfaces[k]
+            surf2 = self.surfaces[k + 1]
+
+            if not hasattr(surf1, "surf") or not hasattr(surf2, "surf"):
+                continue
+            if not hasattr(surf1.surf, "geometry") or not hasattr(
+                surf2.surf, "geometry"
+            ):
+                continue
+
+            if self._surfaces_overlap(surf1, surf2):
+                warnings.warn(
+                    "Lens surfaces overlap.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                break
+
+    def _surfaces_overlap(self, surf1: Any, surf2: Any) -> bool:
+        """Determine if two neighboring surfaces of a lens physically overlap.
+
+        Note:
+            Overlap sampling is performed along X and Y cross-sections. For
+            non-rotationally-symmetric surfaces (such as Zernike, biconic, or
+            freeform surfaces), off-axis intersections that occur outside these
+            cross-sections may not be detected.
+        """
+        t = _to_float(getattr(surf1.surf, "thickness", 0.0))
+        e1 = _to_float(getattr(surf1, "extent", 0.0))
+        e2 = _to_float(getattr(surf2, "extent", 0.0))
+
+        e_max = max(e1, e2)
+        if not np.isfinite(e_max) or e_max <= 0:
+            grid = np.array([0.0])
+        else:
+            grid = np.linspace(-e_max, e_max, 128)
+
+        # Cross-sectional sampling along Y (x=0) and along X (y=0)
+        pts = [(0.0, float(y)) for y in grid]
+        if e_max > 0:
+            pts.extend([(float(x), 0.0) for x in grid])
+
+        xs = be.array([p[0] for p in pts])
+        ys = be.array([p[1] for p in pts])
+        r = be.sqrt(xs**2 + ys**2)
+
+        # Surface 1 clamped sag
+        if e1 > 0:
+            scale1 = be.where(r > e1, e1 / be.where(r == 0, 1.0, r), 1.0)
+            x1_c, y1_c = xs * scale1, ys * scale1
+        else:
+            x1_c, y1_c = xs, ys
+        z1_loc = surf1.surf.geometry.sag(x1_c, y1_c)
+
+        # Surface 2 clamped sag
+        if e2 > 0:
+            scale2 = be.where(r > e2, e2 / be.where(r == 0, 1.0, r), 1.0)
+            x2_c, y2_c = xs * scale2, ys * scale2
+        else:
+            x2_c, y2_c = xs, ys
+        z2_loc = surf2.surf.geometry.sag(x2_c, y2_c)
+
+        # Transform surface 2 points into global coordinates, then into surface 1 CS
+        x2_g, y2_g, z2_g = transform(xs, ys, z2_loc, surf2.surf, is_global=False)
+        _, _, z2_in_1 = transform(x2_g, y2_g, z2_g, surf1.surf, is_global=True)
+
+        z1_np = be.to_numpy(z1_loc)
+        z2_np = be.to_numpy(z2_in_1)
+
+        finite_mask = np.isfinite(z1_np) & np.isfinite(z2_np)
+        if not np.any(finite_mask):
+            return t <= 0
+
+        z1_np = z1_np[finite_mask]
+        z2_np = z2_np[finite_mask]
+
+        separation = z2_np - z1_np if t >= 0 else z1_np - z2_np
+
+        return bool(np.any(separation <= 0))
+
+    def plot(self, ax, theme=None, projection="YZ"):
         """Plots the lens on the given matplotlib axis.
 
         Args:
             ax (matplotlib.axes.Axes): The matplotlib axis on which the
                 lens will be plotted.
+            theme (Theme, optional): The theme to use for plotting.
+                Defaults to None.
+            projection (str, optional): The projection plane. Must be 'XY',
+                'XZ', or 'YZ'. Defaults to 'YZ'.
 
         """
-        sags = self._compute_sag()
-        self._plot_lenses(ax, sags)
+        if projection == "XY":
+            # For XY projection, draw a circle representing the lens aperture
+            max_extent = self._get_max_extent()
 
-    def _compute_sag(self, apply_transform=True):
+            # Get the center of the first surface in local coordinates (the origin)
+            # and transform it to global coordinates to find the lens center.
+            x_local, y_local, z_local = be.array([0]), be.array([0]), be.array([0])
+            first_surface = self.surfaces[0].surf
+            center_x_global, center_y_global, _ = transform(
+                x_local, y_local, z_local, first_surface, is_global=False
+            )
+
+            facecolor = (0.8, 0.8, 0.8, 0.6)
+            edgecolor = (0.5, 0.5, 0.5)
+            if theme:
+                facecolor = theme.parameters.get("lens.color", facecolor)
+                edgecolor = theme.parameters.get("axes.edgecolor", edgecolor)
+
+            circle = plt.Circle(
+                (
+                    _to_float(center_x_global),
+                    _to_float(center_y_global),
+                ),
+                _to_float(max_extent),
+                facecolor=facecolor,
+                edgecolor=edgecolor,
+                label="Lens",
+            )
+            ax.add_patch(circle)
+            return {circle: self}
+        else:
+            sags = self._compute_sag(projection=projection)
+            return self._plot_lenses(ax, sags, theme=theme, projection=projection)
+
+    def _compute_sag(self, apply_transform=True, projection="YZ"):
         """Computes the sag of the lens in local coordinates and handles
         clipping due to physical apertures.
 
@@ -57,11 +191,13 @@ class Lens2D:
         max_extent = self._get_max_extent()
         sags = []
         for surf in self.surfaces:
-            x, y, z = surf._compute_sag()
+            x, y, z = surf._compute_sag(projection)
 
             # extend surface to max extent
             if surf.extent < max_extent:
-                x, y, z = self._extend_surface(x, y, z, surf.surf, max_extent)
+                x, y, z = self._extend_surface(
+                    x, y, z, surf.surf, max_extent, projection
+                )
 
             # convert to global coordinates
             if apply_transform:
@@ -82,7 +218,7 @@ class Lens2D:
         extents = be.array([surf.extent for surf in self.surfaces])
         return be.nanmax(extents, axis=0)
 
-    def _extend_surface(self, x, y, z, surface, extent):
+    def _extend_surface(self, x, y, z, surface, extent, projection="YZ"):
         """Extends the surface to the maximum extent.
 
         Args:
@@ -91,21 +227,29 @@ class Lens2D:
             z (numpy.ndarray): The z coordinates of the surface.
             surface (Surface): The surface object.
             extent (numpy.ndarray): The maximum extent of the surface.
+            projection (str, optional): The projection plane. Must be 'XY',
+                'XZ', or 'YZ'. Defaults to 'YZ'.
 
         Returns:
             tuple: A tuple containing the extended x, y, and z coordinates.
 
         """
-        y_new = be.array([extent])
-        x = be.concatenate([be.array([0]), x, be.array([0])])
-        y = be.concatenate([-y_new, y, y_new])
-        z = be.concatenate([be.array([z[0]]), z, be.array([z[-1]])])
+        if projection == "XZ":
+            x_new = be.array([extent])
+            x = be.concatenate([-x_new, x, x_new])
+            y = be.concatenate([be.array([0]), y, be.array([0])])
+            z = be.concatenate([be.array([z[0]]), z, be.array([z[-1]])])
+        else:  # YZ
+            y_new = be.array([extent])
+            x = be.concatenate([be.array([0]), x, be.array([0])])
+            y = be.concatenate([-y_new, y, y_new])
+            z = be.concatenate([be.array([z[0]]), z, be.array([z[-1]])])
 
         surface.extent = extent
 
         return x, y, z
 
-    def _plot_single_lens(self, ax, x, y, z):
+    def _plot_single_lens(self, ax, x, y, z, theme=None, projection="YZ"):
         """Plot a single lens on the given matplotlib axis.
 
         Args:
@@ -114,18 +258,58 @@ class Lens2D:
             x (numpy.ndarray): The x coordinates of the lens.
             y (numpy.ndarray): The y coordinates of the lens.
             z (numpy.ndarray): The z coordinates of the lens.
+            theme (Theme, optional): The theme to use for plotting.
+                Defaults to None.
+            projection (str, optional): The projection plane. Must be 'XY',
+                'XZ', or 'YZ'. Defaults to 'YZ'.
 
         """
-        vertices = be.to_numpy(be.column_stack((z, y)))
-        polygon = Polygon(
-            vertices,
-            closed=True,
-            facecolor=(0.8, 0.8, 0.8, 0.6),
-            edgecolor=(0.5, 0.5, 0.5),
-        )
-        ax.add_patch(polygon)
+        facecolor = (0.8, 0.8, 0.8, 0.6)
+        edgecolor = (0.5, 0.5, 0.5)
+        if theme:
+            facecolor = theme.parameters.get("lens.color", facecolor)
+            edgecolor = theme.parameters.get("axes.edgecolor", edgecolor)
 
-    def _plot_lenses(self, ax, sags):
+        if projection == "XZ":
+            vertices = be.to_numpy(be.column_stack((z, x)))
+        else:
+            vertices = be.to_numpy(be.column_stack((z, y)))
+
+        polygons = []
+        for segment in self._finite_vertex_segments(vertices):
+            polygon = Polygon(
+                segment,
+                closed=True,
+                facecolor=facecolor,
+                edgecolor=edgecolor,
+                label="Lens",
+            )
+            ax.add_patch(polygon)
+            polygons.append(polygon)
+        return polygons
+
+    def _finite_vertex_segments(self, vertices):
+        """Split closed polygon vertices into finite contiguous segments."""
+        finite = np.isfinite(vertices).all(axis=1)
+        if finite.all():
+            return [vertices]
+
+        finite_indices = np.flatnonzero(finite)
+        if finite_indices.size == 0:
+            return []
+
+        breaks = np.where(np.diff(finite_indices) > 1)[0] + 1
+        segments = np.split(finite_indices, breaks)
+
+        # The polygon is closed, so finite runs at the start and end are
+        # contiguous across the closing edge and should form one patch.
+        if finite[0] and finite[-1] and len(segments) > 1:
+            segments[0] = np.concatenate([segments[-1], segments[0]])
+            segments = segments[:-1]
+
+        return [vertices[segment] for segment in segments if len(segment) > 2]
+
+    def _plot_lenses(self, ax, sags, theme=None, projection="YZ"):
         """Plot the lenses on the given matplotlib axis.
 
         Args:
@@ -133,8 +317,13 @@ class Lens2D:
                 lenses will be plotted.
             sags (list): A list of tuples containing arrays of x, y, and z
                 coordinates for each surface.
+            theme (Theme, optional): The theme to use for plotting.
+                Defaults to None.
+            projection (str, optional): The projection plane. Must be 'XY',
+                'XZ', or 'YZ'. Defaults to 'YZ'.
 
         """
+        artists = {}
         for k in range(len(sags) - 1):
             x1, y1, z1 = sags[k]
             x2, y2, z2 = sags[k + 1]
@@ -144,7 +333,16 @@ class Lens2D:
             y = be.concatenate([y1, be.flip(y2)])
             z = be.concatenate([z1, be.flip(z2)])
 
-            self._plot_single_lens(ax, x, y, z)
+            artists_for_lens = self._plot_single_lens(
+                ax, x, y, z, theme=theme, projection=projection
+            )
+            if artists_for_lens is None:
+                continue
+            if not isinstance(artists_for_lens, list):
+                artists_for_lens = [artists_for_lens]
+            for artist in artists_for_lens:
+                artists[artist] = self
+        return artists
 
 
 class Lens3D(Lens2D):
@@ -167,7 +365,7 @@ class Lens3D(Lens2D):
 
     """
 
-    def __init__(self, surfaces):
+    def __init__(self, surfaces: list[Any]) -> None:
         super().__init__(surfaces)
 
     @property
@@ -196,21 +394,23 @@ class Lens3D(Lens2D):
                 return False
         return True
 
-    def plot(self, renderer):
+    def plot(self, renderer, theme=None, *args, **kwargs):
         """Plots the lens or surfaces using the provided renderer.
 
         Args:
             renderer: The rendering engine used to plot the lens or surfaces.
+            theme (Theme, optional): The theme to use for plotting.
+                Defaults to None.
 
         """
         if self.is_symmetric:
             sags = self._compute_sag()  # sags are in global coordinates
-            self._plot_lenses(renderer, sags)
+            self._plot_lenses(renderer, sags, theme=theme)
         else:
-            self._plot_surfaces(renderer)
-            self._plot_surface_edges(renderer)
+            self._plot_surfaces(renderer, theme=theme)
+            self._plot_surface_edges(renderer, theme=theme)
 
-    def _plot_single_lens(self, renderer, x, y, z):
+    def _plot_single_lens(self, renderer, x, y, z, theme=None, *args, **kwargs):
         """Plots a single lens by revolving a contour and configuring its
         material. The input coordinates are expected to be in global space.
 
@@ -220,14 +420,16 @@ class Lens3D(Lens2D):
             x (numpy.ndarray): The x-coordinates of the contour points.
             y (numpy.ndarray): The y-coordinates of the contour points.
             z (numpy.ndarray): The z-coordinates of the contour points.
+            theme (Theme, optional): The theme to use for plotting.
+                Defaults to None.
 
         """
         # Points are already global from _compute_sag with apply_transform=True
         actor = revolve_contour(be.to_numpy(x), be.to_numpy(y), be.to_numpy(z))
-        actor = self._configure_material(actor)
+        actor = self._configure_material(actor, theme=theme)
         renderer.AddActor(actor)
 
-    def _configure_material(self, actor):
+    def _configure_material(self, actor, theme=None):
         """Configures the material properties of a given VTK actor.
         This method sets the opacity, color, specular, and specular power
         properties of the provided VTK actor to predefined values.
@@ -235,19 +437,28 @@ class Lens3D(Lens2D):
         Args:
             actor (vtkActor): The VTK actor whose material properties are to
                 be configured.
+            theme (Theme, optional): The theme to use for plotting.
+                Defaults to None.
 
         Returns:
             vtkActor: The VTK actor with updated material properties.
 
         """
+        color = (0.9, 0.9, 1.0)
+        if theme:
+            from matplotlib.colors import to_rgb
+
+            color_hex = theme.parameters.get("lens.color", "#E5E5FF")
+            color = to_rgb(color_hex)
+
         prop = actor.GetProperty()
         prop.SetOpacity(0.5)
-        prop.SetColor(0.9, 0.9, 1.0)
+        prop.SetColor(color)
         prop.SetSpecular(1.0)
         prop.SetSpecularPower(50.0)
         return actor
 
-    def _plot_surfaces(self, renderer):
+    def _plot_surfaces(self, renderer, theme=None):
         """Plots the non-symmetric surfaces of the lens in the given renderer.
 
         This method retrieves a pre-transformed actor for each surface,
@@ -258,6 +469,8 @@ class Lens3D(Lens2D):
         Args:
             renderer (vtkRenderer): The VTK renderer where the surfaces will
                 be added.
+            theme (Theme, optional): The theme to use for plotting.
+                Defaults to None.
 
         """
         max_extent = self._get_max_extent()
@@ -267,14 +480,16 @@ class Lens3D(Lens2D):
             actor = (
                 surface_3d_obj.get_surface()
             )  # retrieves actor from Surface3D (already transformed)
-            actor = self._configure_material(actor)
+            actor = self._configure_material(actor, theme=theme)
             renderer.AddActor(actor)
 
             # Add annulus if surface extent does not extend to lens edge
             if surface_3d_obj.extent < max_extent:
-                self._plot_annulus(surface_3d_obj, renderer)  # Pass renderer
+                self._plot_annulus(
+                    surface_3d_obj, renderer, theme=theme
+                )  # Pass renderer
 
-    def _plot_annulus(self, surface_3d_obj, renderer):
+    def _plot_annulus(self, surface_3d_obj, renderer, theme=None):
         """Plots a VTK annulus for a given surface.
 
         The annulus extends from the surface's current extent to the maximum
@@ -364,11 +579,11 @@ class Lens3D(Lens2D):
         annulus_actor.SetMapper(mapper)
 
         # Configure material properties
-        annulus_actor = self._configure_material(annulus_actor)
+        annulus_actor = self._configure_material(annulus_actor, theme=theme)
         annulus_actor = transform_3d(annulus_actor, surf_props)
         renderer.AddActor(annulus_actor)
 
-    def _get_edge_surface(self, circle1, circle2):
+    def _get_edge_surface(self, circle1, circle2, theme=None):
         """Generates a VTK actor representing the surface between two circles.
 
         Args:
@@ -376,6 +591,8 @@ class Lens3D(Lens2D):
                 circle.
             circle2 (list of tuple): List of points representing the second
                 circle.
+            theme (Theme, optional): The theme to use for plotting.
+                Defaults to None.
 
         Returns:
             vtk.vtkActor: VTK actor representing the surface between the two
@@ -416,11 +633,11 @@ class Lens3D(Lens2D):
 
         actor = vtk.vtkActor()
         actor.SetMapper(mapper)
-        actor = self._configure_material(actor)
+        actor = self._configure_material(actor, theme=theme)
 
         return actor
 
-    def _plot_surface_edges(self, renderer):
+    def _plot_surface_edges(self, renderer, theme=None):
         """Plots the edges of surfaces in a 3D renderer.
 
         This method generates circular edges for each surface. It then
@@ -444,7 +661,7 @@ class Lens3D(Lens2D):
         for k in range(len(circles) - 1):
             circle1 = circles[k]
             circle2 = circles[k + 1]
-            actor = self._get_edge_surface(circle1, circle2)
+            actor = self._get_edge_surface(circle1, circle2, theme=theme)
             renderer.AddActor(actor)
 
     def _get_edge_points(self, surface_obj):

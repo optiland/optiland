@@ -55,6 +55,8 @@ def get_point_gaussian(sigma):  # pragma: no cover
 
 
 def func_wrapper(func, *args):  # pragma: no cover
+    """Wrap a numba-jitted function with its args pre-bound and no arguments."""
+
     @njit(fastmath=True, cache=True)
     def wrapper():
         return func(*args)

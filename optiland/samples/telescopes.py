@@ -1,4 +1,5 @@
-# Defines sample telescope optical systems.
+"""Defines sample telescope optical systems."""
+
 from __future__ import annotations
 
 import optiland.backend as be
@@ -14,12 +15,12 @@ class HubbleTelescope(optic.Optic):
     def __init__(self):
         super().__init__()
 
-        self.add_surface(index=0, radius=be.inf, thickness=be.inf)
-        self.add_surface(index=1, thickness=4910.01016)
+        self.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+        self.surfaces.add(index=1, thickness=4910.01016)
 
         obscuration = physical_apertures.RadialAperture(r_max=be.inf, r_min=177.80035)
 
-        self.add_surface(
+        self.surfaces.add(
             index=2,
             radius=-11040.02286,
             thickness=-4910.01016,
@@ -28,19 +29,19 @@ class HubbleTelescope(optic.Optic):
             conic=-1.001152,
             aperture=obscuration,
         )
-        self.add_surface(
+        self.surfaces.add(
             index=3,
             radius=-1349.31166,
             thickness=6365.20955,
             material="mirror",
             conic=-1.483014,
         )
-        self.add_surface(index=4, radius=-635.38227)
+        self.surfaces.add(index=4, radius=-635.38227)
 
         self.set_aperture(aperture_type="EPD", value=2400)
 
-        self.set_field_type(field_type="angle")
-        self.add_field(y=0)
-        self.add_field(y=0.15)
+        self.fields.set_type(field_type="angle")
+        self.fields.add(y=0)
+        self.fields.add(y=0.15)
 
-        self.add_wavelength(value=0.55, is_primary=True)
+        self.wavelengths.add(value=0.55, is_primary=True)

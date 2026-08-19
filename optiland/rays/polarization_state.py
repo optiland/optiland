@@ -45,10 +45,10 @@ class PolarizationState:
             )
 
         self.is_polarized = is_polarized
-        self.Ex = be.array(Ex) if Ex is not None else None
-        self.Ey = be.array(Ey) if Ey is not None else None
-        self.phase_x = be.array(phase_x) if phase_x is not None else None
-        self.phase_y = be.array(phase_y) if phase_y is not None else None
+        self.Ex = be.cast(Ex) if Ex is not None else None
+        self.Ey = be.cast(Ey) if Ey is not None else None
+        self.phase_x = be.cast(phase_x) if phase_x is not None else None
+        self.phase_y = be.cast(phase_y) if phase_y is not None else None
 
         if self.Ex is not None and self.Ey is not None:
             mag = be.sqrt(self.Ex**2 + self.Ey**2)
@@ -101,44 +101,26 @@ def create_polarization(pol_type: str):
     """
     if pol_type == "unpolarized":
         return PolarizationState(is_polarized=False)
-    if pol_type == "H":
-        Ex = 1
-        Ey = 0
-        phase_x = 0
-        phase_y = 0
-    elif pol_type == "V":
-        Ex = 0
-        Ey = 1
-        phase_x = 0
-        phase_y = 0
-    elif pol_type == "L+45":
-        Ex = 1
-        Ey = 1
-        phase_x = 0
-        phase_y = 0
-    elif pol_type == "L-45":
-        Ex = 1
-        Ey = -1
-        phase_x = 0
-        phase_y = 0
-    elif pol_type == "RCP":
-        Ex = be.sqrt(2) / 2
-        Ey = be.sqrt(2) / 2
-        phase_x = 0
-        phase_y = -be.pi / 2
-    elif pol_type == "LCP":
-        Ex = be.sqrt(2) / 2
-        Ey = be.sqrt(2) / 2
-        phase_x = 0
-        phase_y = be.pi / 2
-    else:
-        raise ValueError(
-            "Invalid polarization type. Must be H, V, L+45, L-45, RCP or LCP.",
+
+    pol_map = {
+        "H": (1.0, 0.0, 0.0, 0.0),
+        "V": (0.0, 1.0, 0.0, 0.0),
+        "L+45": (1.0, 1.0, 0.0, 0.0),
+        "L-45": (1.0, -1.0, 0.0, 0.0),
+        "RCP": (be.sqrt(2) / 2, be.sqrt(2) / 2, 0.0, -be.pi / 2),
+        "LCP": (be.sqrt(2) / 2, be.sqrt(2) / 2, 0.0, be.pi / 2),
+    }
+
+    if pol_type in pol_map:
+        Ex, Ey, phase_x, phase_y = pol_map[pol_type]
+        return PolarizationState(
+            is_polarized=True,
+            Ex=Ex,
+            Ey=Ey,
+            phase_x=phase_x,
+            phase_y=phase_y,
         )
-    return PolarizationState(
-        is_polarized=True,
-        Ex=Ex,
-        Ey=Ey,
-        phase_x=phase_x,
-        phase_y=phase_y,
+
+    raise ValueError(
+        "Invalid polarization type. Must be H, V, L+45, L-45, RCP or LCP.",
     )

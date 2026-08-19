@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import pytest
 
 import optiland.backend as be
+from optiland.materials import IdealMaterial
 from optiland.optic import Optic
 from optiland.paraxial import Paraxial
 from optiland.samples.eyepieces import EyepieceErfle
@@ -26,9 +29,153 @@ from optiland.samples.simple import (
     TelescopeDoublet,
 )
 from optiland.samples.telescopes import HubbleTelescope
+from optiland.surfaces.object_surface import ObjectSurface
+
 from .utils import assert_allclose
 
 # TODO: add tests for non-air object and image spaces
+
+
+class Lens:
+    """Base class to calculate paraxial properties. Formulas from Fundamentals Of
+    Optics, Jenkins & White, 4th ed, Ch. 5.6. Note that a Gaussian coordinate system is
+    used in the source. Variables n1, n2 and n3 are n, n' and n'' in the source, and
+    stand for the refractive index in the object, lens, and image media, respectively.
+    P, P1 and P2 are powers, not principal planes, as per source."""
+
+    n1: float
+    n2: float
+    n3: float
+    d: float
+
+    @property
+    def P1(self):
+        raise NotImplementedError
+
+    @property
+    def P2(self):
+        raise NotImplementedError
+
+    @property
+    def P(self) -> float:
+        return self.P1 + self.P2 - self.d / self.n2 * self.P1 * self.P2
+
+    @property
+    def F1(self) -> float:
+        return -self.n1 / self.P * (1 - self.d / self.n2 * self.P2)
+
+    @property
+    def F2(self) -> float:
+        return self.n3 / self.P * (1 - self.d / self.n2 * self.P1)
+
+    @property
+    def f1(self) -> float:
+        return (
+            -self.n1 / self.P
+        )  # Swapped sign wrt source. Reason: use cartesian coordinates
+
+    @property
+    def f2(self) -> float:
+        return self.n3 / self.P
+
+    @property
+    def PP1(self) -> float:
+        """Principal plane. IN J&W defined wrt first lens surface"""
+        return self.n1 / self.P * self.d / self.n2 * self.P2
+
+    @property
+    def PP2(self) -> float:
+        """Principal plane. IN J&W defined wrt last lens surface"""
+        return -self.n3 / self.P * self.d / self.n2 * self.P1
+
+
+class ThickLens(Lens):
+    """Calculate the properties of an immersed thick lens made of two spherical surfaces with radii
+    r1 and r2, a distance d apart."""
+
+    r1: float
+    r2: float
+
+    def __init__(
+        self, n1: float, n2: float, n3: float, r1: float, r2: float, d: float
+    ) -> None:
+        self.n1, self.n2, self.n3 = n1, n2, n3
+        self.r1, self.r2 = r1, r2
+        self.d = d
+
+    @property
+    def P1(self) -> float:
+        return (self.n2 - self.n1) / self.r1
+
+    @property
+    def P2(self) -> float:
+        return (self.n3 - self.n2) / self.r2
+
+
+class CompoundLens(Lens):
+    """Calculate the properties of a system of two immersed thin lenses with focal lengths
+    f1 and f2, a distance d apart. The focal lengths are the equivalent in air, and the
+    actual focal lengths will be adjusted according to immersion."""
+
+    _f1: float
+    _f2: float
+
+    def __init__(
+        self, n1: float, n2: float, n3: float, f1: float, f2: float, d: float
+    ) -> None:
+        self.n1, self.n2, self.n3 = n1, n2, n3
+        self._f1, self._f2 = f1, f2
+        self.d = d
+
+    @property
+    def P1(self) -> float:
+        return 1 / self._f1
+
+    @property
+    def P2(self) -> float:
+        return 1 / self._f2
+
+
+class Mirror:
+    """Simple class to describe a mirror, uses sign convention as in JAMES P. C.
+    SOUTHALL, MIRRORS, PRISMS AND LENSES, THE MACMILLAN COMPANY, 1918"""
+
+    r: float
+
+    def __init__(self, r: float, n: float) -> None:
+        self.r = r
+        self.n = n
+
+    @property
+    def P(self) -> float:
+        # Sign convention as in source
+        return -2 * self.n / self.r
+
+
+class ThickMirror:
+    """Class to describe a 'Thick Mirror', a mirror with a lens in front of it. The
+    light passes back and forth through the lens after reflecting in the mirror. The
+    formula for the effective power of the system is described in JAMES P. C. SOUTHALL,
+    MIRRORS, PRISMS AND LENSES, THE MACMILLAN COMPANY, 1918, p. 379."""
+
+    lens: ThickLens
+    mirror: Mirror
+
+    def __init__(self, lens: ThickLens, mirror: Mirror, d: float) -> None:
+        self.lens = lens
+        self.mirror = mirror
+        self.d = d
+
+    @property
+    def _c(self) -> float:
+        return (self.d - self.lens.PP2) / self.lens.n3
+
+    @property
+    def P(self) -> float:
+        c = self._c
+        P1 = self.lens.P
+        P2 = self.mirror.P
+        return (1 - c * P1) * (2 * P1 + P2 - c * P1 * P2)
 
 
 def get_optic_data():
@@ -507,7 +654,7 @@ def test_paraxial_init(set_test_backend):
     paraxial = Paraxial(optic)
 
     assert paraxial.optic == optic
-    assert paraxial.surfaces == optic.surface_group
+    assert paraxial.surfaces == optic.surfaces
 
 
 @pytest.mark.parametrize("optic_and_values", get_optic_data(), indirect=True)
@@ -609,30 +756,30 @@ def test_calculate_invariant(optic_and_values):
 def test_EPD_float_by_stop_size_finite(set_test_backend):
     lens = Optic()
 
-    lens.add_surface(index=0, radius=be.inf, thickness=be.inf)
-    lens.add_surface(index=1, radius=22.01359, thickness=3.25896, material="SK16")
-    lens.add_surface(index=2, radius=-435.76044, thickness=6.00755)
-    lens.add_surface(
+    lens.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+    lens.surfaces.add(index=1, radius=22.01359, thickness=3.25896, material="SK16")
+    lens.surfaces.add(index=2, radius=-435.76044, thickness=6.00755)
+    lens.surfaces.add(
         index=3,
         radius=-22.21328,
         thickness=0.99997,
         material=("F2", "schott"),
     )
-    lens.add_surface(index=4, radius=20.29192, thickness=4.75041, is_stop=True)
-    lens.add_surface(index=5, radius=79.68360, thickness=2.95208, material="SK16")
-    lens.add_surface(index=6, radius=-18.39533, thickness=42.20778)
-    lens.add_surface(index=7)
+    lens.surfaces.add(index=4, radius=20.29192, thickness=4.75041, is_stop=True)
+    lens.surfaces.add(index=5, radius=79.68360, thickness=2.95208, material="SK16")
+    lens.surfaces.add(index=6, radius=-18.39533, thickness=42.20778)
+    lens.surfaces.add(index=7)
 
     lens.set_aperture(aperture_type="float_by_stop_size", value=7.6)
 
-    lens.set_field_type(field_type="angle")
-    lens.add_field(y=0)
-    lens.add_field(y=14)
-    lens.add_field(y=20)
+    lens.fields.set_type(field_type="angle")
+    lens.fields.add(y=0)
+    lens.fields.add(y=14)
+    lens.fields.add(y=20)
 
-    lens.add_wavelength(value=0.48)
-    lens.add_wavelength(value=0.55, is_primary=True)
-    lens.add_wavelength(value=0.65)
+    lens.wavelengths.add(value=0.48)
+    lens.wavelengths.add(value=0.55, is_primary=True)
+    lens.wavelengths.add(value=0.65)
 
     assert_allclose(lens.paraxial.EPD(), 9.997764563903155)
 
@@ -640,29 +787,694 @@ def test_EPD_float_by_stop_size_finite(set_test_backend):
 def test_EPD_float_by_stop_size_infinite(set_test_backend):
     lens = Optic()
 
-    lens.add_surface(index=0, radius=be.inf, thickness=10_000)
-    lens.add_surface(index=1, radius=22.01359, thickness=3.25896, material="SK16")
-    lens.add_surface(index=2, radius=-435.76044, thickness=6.00755)
-    lens.add_surface(
+    lens.surfaces.add(index=0, radius=be.inf, thickness=10_000)
+    lens.surfaces.add(index=1, radius=22.01359, thickness=3.25896, material="SK16")
+    lens.surfaces.add(index=2, radius=-435.76044, thickness=6.00755)
+    lens.surfaces.add(
         index=3,
         radius=-22.21328,
         thickness=0.99997,
         material=("F2", "schott"),
     )
-    lens.add_surface(index=4, radius=20.29192, thickness=4.75041, is_stop=True)
-    lens.add_surface(index=5, radius=79.68360, thickness=2.95208, material="SK16")
-    lens.add_surface(index=6, radius=-18.39533, thickness=42.20778)
-    lens.add_surface(index=7)
+    lens.surfaces.add(index=4, radius=20.29192, thickness=4.75041, is_stop=True)
+    lens.surfaces.add(index=5, radius=79.68360, thickness=2.95208, material="SK16")
+    lens.surfaces.add(index=6, radius=-18.39533, thickness=42.20778)
+    lens.surfaces.add(index=7)
 
     lens.set_aperture(aperture_type="float_by_stop_size", value=7.6)
 
-    lens.set_field_type(field_type="angle")
-    lens.add_field(y=0)
-    lens.add_field(y=14)
-    lens.add_field(y=20)
+    lens.fields.set_type(field_type="angle")
+    lens.fields.add(y=0)
+    lens.fields.add(y=14)
+    lens.fields.add(y=20)
 
-    lens.add_wavelength(value=0.48)
-    lens.add_wavelength(value=0.55, is_primary=True)
-    lens.add_wavelength(value=0.65)
+    lens.wavelengths.add(value=0.48)
+    lens.wavelengths.add(value=0.55, is_primary=True)
+    lens.wavelengths.add(value=0.65)
 
     assert_allclose(lens.paraxial.EPD(), 9.997764563903152)
+
+
+def test_negative_lens():
+    """A simple test to ensure negative paraxial lenses are handled correctly"""
+    lens = Optic()
+
+    lens.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+    lens.surfaces.add(
+        index=1, surface_type="paraxial", f=-50.0, thickness=0.0, is_stop=True
+    )
+    lens.surfaces.add(index=2)
+    lens.set_aperture(aperture_type="float_by_stop_size", value=5)
+    lens.wavelengths.add(value=0.55, is_primary=True)
+    assert_allclose(
+        [
+            lens.paraxial.f1(),
+            lens.paraxial.f2(),
+            lens.paraxial.F1(),
+            lens.paraxial.F2(),
+            lens.paraxial.P1(),
+            lens.paraxial.P2(),
+        ],
+        [50.0, -50.0, 50.0, -50, 0.0, 0.0],
+    )
+
+
+@pytest.mark.parametrize("n1", [1.0, 1.33])
+@pytest.mark.parametrize("n2", [1.5, 1.8])
+@pytest.mark.parametrize("n3", [1.33, 1.5, 1.0])
+@pytest.mark.parametrize("r1", [50, -75])
+@pytest.mark.parametrize("r2", [-100, 225])
+@pytest.mark.parametrize("d", [0.0, 1.0, 2.0, 5.0, 10.0, 100.0])
+def test_thick_lens(n1, n2, n3, r1, r2, d, set_test_backend):
+    lens = Optic()
+    lens.surfaces.add(
+        index=0, radius=be.inf, thickness=be.inf, material=IdealMaterial(n1)
+    )
+    lens.surfaces.add(
+        index=1, radius=r1, thickness=d, material=IdealMaterial(n2), is_stop=True
+    )
+    lens.surfaces.add(
+        index=2, radius=r2, thickness=0.0, material=IdealMaterial(n3), is_stop=False
+    )
+    lens.surfaces.add(index=3, material=IdealMaterial(n3))
+    lens.wavelengths.add(value=0.55, is_primary=True)
+    lens.fields.add(y=0)
+    lens.fields.set_type(field_type="angle")
+    lens.set_aperture(aperture_type="float_by_stop_size", value=5)
+    px = lens.paraxial
+    tl = ThickLens(n1, n2, n3, r1, r2, d)
+    assert_allclose(
+        [tl.F1, tl.F2, tl.f1, tl.f2, tl.PP1, tl.PP2],
+        [px.F1(), px.F2(), px.f1(), px.f2(), px.P1(), px.P2()],
+    )
+
+
+@pytest.mark.parametrize("n1", [1.0, 1.33])
+@pytest.mark.parametrize("n2", [1.0, 1.2])
+@pytest.mark.parametrize("n3", [1.0, 1.5])
+@pytest.mark.parametrize("f1", [50.0, -75.0])
+@pytest.mark.parametrize("f2", [-100.0, 225.0])
+@pytest.mark.parametrize("d", [0.0, 1.0, 2.0, 5.0, 10.0, 100.0])
+def test_compound_lens(n1, n2, n3, f1, f2, d, set_test_backend):
+    cl = CompoundLens(n1, n2, n3, f1, f2, d)
+    lens = Optic()
+    lens.surfaces.add(
+        index=0, radius=be.inf, thickness=be.inf, material=IdealMaterial(n1)
+    )
+    lens.surfaces.add(
+        index=1,
+        surface_type="paraxial",
+        f=f1,
+        thickness=d,
+        material=IdealMaterial(n2),
+        is_stop=True,
+    )
+    lens.surfaces.add(
+        index=2,
+        surface_type="paraxial",
+        f=f2,
+        thickness=0.0,
+        material=IdealMaterial(n3),
+        is_stop=False,
+    )
+    lens.surfaces.add(index=3, material=IdealMaterial(n3))
+    lens.wavelengths.add(value=0.55, is_primary=True)
+    lens.fields.add(y=0)
+    lens.fields.set_type(field_type="angle")
+    lens.set_aperture(aperture_type="float_by_stop_size", value=5)
+    px = lens.paraxial
+    assert_allclose(
+        [cl.F1, cl.F2, cl.f1, cl.f2, cl.PP1, cl.PP2],
+        [px.F1(), px.F2(), px.f1(), px.f2(), px.P1(), px.P2()],
+    )
+
+
+@pytest.mark.parametrize("n1", [1.0, 1.33])
+@pytest.mark.parametrize("n2", [1.5, 2.0])
+@pytest.mark.parametrize("n3", [1.0, 1.33])
+@pytest.mark.parametrize("r1", [100, -50])
+@pytest.mark.parametrize("r2", [50, -100])
+@pytest.mark.parametrize("rm", [250, -100])
+@pytest.mark.parametrize("d1", [1.0, 5.0])
+@pytest.mark.parametrize("d2", [5.0, 10])
+def test_thick_mirror(n1, n2, n3, r1, r2, rm, d1, d2):
+    thick_lens = ThickLens(n1, n2, n3, r1, r2, d1)
+    mirror = Mirror(rm, n3)
+    thick_mirror = ThickMirror(thick_lens, mirror, d2)
+    lens = Optic()
+
+    lens.surfaces.add(
+        index=0, radius=be.inf, thickness=be.inf, material=IdealMaterial(n1)
+    )
+    lens.surfaces.add(
+        index=1, radius=r1, thickness=d1, is_stop=True, material=IdealMaterial(n2)
+    )
+    lens.surfaces.add(
+        index=2, radius=r2, thickness=d2, is_stop=False, material=IdealMaterial(n3)
+    )
+    lens.surfaces.add(
+        index=3, radius=rm, thickness=-d2, is_stop=False, material="mirror"
+    )
+    lens.surfaces.add(
+        index=4, radius=r2, thickness=-d1, is_stop=False, material=IdealMaterial(n2)
+    )
+    lens.surfaces.add(
+        index=5, radius=r1, thickness=0.0, is_stop=False, material=IdealMaterial(n1)
+    )
+    lens.surfaces.add(index=lens.surfaces.num_surfaces, material=IdealMaterial(n1))
+    lens.set_aperture(aperture_type="float_by_stop_size", value=5)
+    lens.fields.add(0.0)
+    lens.fields.set_type("angle")
+    lens.wavelengths.add(value=0.55, is_primary=True)
+
+    # Adjust sign to account for sign convention in source:
+    assert -n1 / thick_mirror.P == pytest.approx(lens.paraxial.f2())
+
+
+@pytest.mark.parametrize("n1", [1.0, 1.33])
+@pytest.mark.parametrize("n2", [1.0, 1.2])
+@pytest.mark.parametrize("f", [50.0, -75.0, -100.0, 225.0])
+@pytest.mark.parametrize("d", [0.0, 1.0, 2.0, 5.0, 10.0, 100.0])
+def test_mirrored_lens(n1, n2, f, d, set_test_backend):
+    """Test to ensure that a lens system consisting of a paraxial lens and mirror yield
+    the same results as an unfolded lens system, with the exception of sign swaps"""
+    cl = CompoundLens(n1, n2, n1, f, f, 2 * d)
+    lens = Optic()
+    lens.surfaces.add(
+        index=0, radius=be.inf, thickness=be.inf, material=IdealMaterial(n1)
+    )
+    lens.surfaces.add(
+        index=1,
+        surface_type="paraxial",
+        f=f,
+        thickness=d,
+        material=IdealMaterial(n2),
+        is_stop=True,
+    )
+    lens.surfaces.add(
+        index=2,
+        surface_type="paraxial",
+        material="mirror",
+        f=be.inf,
+        thickness=-d,
+        is_stop=False,
+    )
+    lens.surfaces.add(
+        index=3,
+        surface_type="paraxial",
+        f=-f,
+        thickness=0.0,
+        material=IdealMaterial(n1),
+        is_stop=False,
+    )
+
+    lens.surfaces.add(index=4, material=IdealMaterial(n1))
+    lens.wavelengths.add(value=0.55, is_primary=True)
+    lens.fields.add(y=0)
+    lens.fields.set_type(field_type="angle")
+    lens.set_aperture(aperture_type="float_by_stop_size", value=5)
+    px = lens.paraxial
+    assert_allclose(
+        [cl.f1, cl.F1, cl.PP1, cl.f2, cl.F2, cl.PP2],
+        [px.f1(), px.F1(), px.P1(), -px.f2(), -px.F2(), -px.P2()],
+    )
+
+
+def _get_paraxial_items(paraxial: Paraxial):
+    return [getattr(paraxial, item)() for item in ("f1", "f2", "F1", "F2", "P1", "P2")]
+
+
+@pytest.mark.parametrize(
+    "paraxial_surfaces, real_surfaces",
+    [
+        (
+            (  # Case 1: single mirror
+                {
+                    "radius": be.inf,
+                    "thickness": be.inf,
+                    "material": IdealMaterial(2.0),
+                },
+                {
+                    "surface_type": "paraxial",
+                    "f": -50,
+                    "is_stop": True,
+                    "thickness": 0.0,
+                    "material": "mirror",
+                },
+                {"material": IdealMaterial(2.0)},
+            ),
+            (
+                {
+                    "radius": be.inf,
+                    "thickness": be.inf,
+                    "material": IdealMaterial(2.0),
+                },
+                {
+                    "radius": -100.0,
+                    "is_stop": True,
+                    "thickness": 0.0,
+                    "material": "mirror",
+                },
+                {"material": IdealMaterial(2.0)},
+            ),
+        ),
+        (
+            (  # Case 2: Backward propagation through paraxial surface
+                {
+                    "radius": be.inf,
+                    "thickness": be.inf,
+                    "material": IdealMaterial(1.5),
+                },
+                {
+                    "surface_type": "paraxial",
+                    "f": 50,
+                    "is_stop": True,
+                    "thickness": 10.0,
+                    "material": IdealMaterial(2.0),
+                },
+                {
+                    "surface_type": "paraxial",
+                    "f": be.inf,
+                    "is_stop": False,
+                    "thickness": -10.0,
+                    "material": "mirror",
+                },
+                {
+                    "surface_type": "paraxial",
+                    "f": -50,
+                    "is_stop": False,
+                    "thickness": 0.0,
+                    "material": IdealMaterial(1.5),
+                },
+                {"material": IdealMaterial(1.5)},
+            ),
+            (
+                {
+                    "radius": be.inf,
+                    "thickness": be.inf,
+                    "material": IdealMaterial(1.5),
+                },
+                {
+                    "radius": 100,
+                    "is_stop": True,
+                    "thickness": 0.0,
+                    "material": IdealMaterial(2.5),
+                },
+                {
+                    "radius": -50,
+                    "is_stop": True,
+                    "thickness": 10.0,
+                    "material": IdealMaterial(2.0),
+                },
+                {
+                    "radius": be.inf,
+                    "is_stop": False,
+                    "thickness": -10.0,
+                    "material": "mirror",
+                },
+                {
+                    "radius": -50,
+                    "is_stop": False,
+                    "thickness": 0.0,
+                    "material": IdealMaterial(2.5),
+                },
+                {
+                    "radius": 100,
+                    "is_stop": False,
+                    "thickness": 0.0,
+                    "material": IdealMaterial(1.5),
+                },
+                {"material": IdealMaterial(1.5)},
+            ),
+        ),
+        (
+            (  # Case 3: Case 2 with opposite focal lengths
+                {
+                    "radius": be.inf,
+                    "thickness": be.inf,
+                    "material": IdealMaterial(1.5),
+                },
+                {
+                    "surface_type": "paraxial",
+                    "f": -50,
+                    "is_stop": True,
+                    "thickness": 10.0,
+                    "material": IdealMaterial(2.0),
+                },
+                {
+                    "surface_type": "paraxial",
+                    "f": be.inf,
+                    "is_stop": False,
+                    "thickness": -10.0,
+                    "material": "mirror",
+                },
+                {
+                    "surface_type": "paraxial",
+                    "f": 50,
+                    "is_stop": False,
+                    "thickness": 0.0,
+                    "material": IdealMaterial(1.5),
+                },
+                {"material": IdealMaterial(1.5)},
+            ),
+            (
+                {
+                    "radius": be.inf,
+                    "thickness": be.inf,
+                    "material": IdealMaterial(1.5),
+                },
+                {
+                    "radius": -100,
+                    "is_stop": True,
+                    "thickness": 0.0,
+                    "material": IdealMaterial(2.5),
+                },
+                {
+                    "radius": 50,
+                    "is_stop": True,
+                    "thickness": 10.0,
+                    "material": IdealMaterial(2.0),
+                },
+                {
+                    "radius": be.inf,
+                    "is_stop": False,
+                    "thickness": -10.0,
+                    "material": "mirror",
+                },
+                {
+                    "radius": 50,
+                    "is_stop": False,
+                    "thickness": 0.0,
+                    "material": IdealMaterial(2.5),
+                },
+                {
+                    "radius": -100,
+                    "is_stop": False,
+                    "thickness": 0.0,
+                    "material": IdealMaterial(1.5),
+                },
+                {"material": IdealMaterial(1.5)},
+            ),
+        ),
+        (
+            (  # Case 3: Double paraxial mirror, one with glass substrate
+                {
+                    "radius": be.inf,
+                    "thickness": be.inf,
+                    "material": IdealMaterial(1.0),
+                },
+                {
+                    "surface_type": "paraxial",
+                    "f": -50,
+                    "is_stop": True,
+                    "thickness": -20.0,
+                    "material": "mirror",
+                },
+                {
+                    "surface_type": "paraxial",
+                    "f": be.inf,
+                    "is_stop": False,
+                    "thickness": -4.0,
+                    "material": IdealMaterial(1.5),
+                },
+                {
+                    "surface_type": "paraxial",
+                    "f": 50.0,
+                    "is_stop": False,
+                    "thickness": 4,
+                    "material": "mirror",
+                },
+                {
+                    "surface_type": "paraxial",
+                    "f": be.inf,
+                    "is_stop": False,
+                    "thickness": 0.0,
+                    "material": IdealMaterial(1.0),
+                },
+                {"material": IdealMaterial(1.0)},
+            ),
+            (
+                {
+                    "radius": be.inf,
+                    "thickness": be.inf,
+                    "material": IdealMaterial(1.0),
+                },
+                {
+                    "radius": -100,
+                    "is_stop": True,
+                    "thickness": -20.0,
+                    "material": "mirror",
+                },
+                {
+                    "radius": be.inf,
+                    "is_stop": False,
+                    "thickness": -4.0,
+                    "material": IdealMaterial(1.5),
+                },
+                {
+                    "radius": 100.0,
+                    "is_stop": False,
+                    "thickness": 4,
+                    "material": "mirror",
+                },
+                {
+                    "radius": be.inf,
+                    "is_stop": False,
+                    "thickness": 0.0,
+                    "material": IdealMaterial(1.0),
+                },
+                {"material": IdealMaterial(1.0)},
+            ),
+        ),
+    ],
+)
+def test_equivalence(paraxial_surfaces, real_surfaces, set_test_backend):
+    paraxial_lens = Optic()
+
+    for surface_args in paraxial_surfaces:
+        paraxial_lens.surfaces.add(
+            index=paraxial_lens.surfaces.num_surfaces, **surface_args
+        )
+
+    paraxial_lens.wavelengths.add(value=0.55, is_primary=True)
+    paraxial_lens.fields.add(y=0)
+    paraxial_lens.fields.set_type(field_type="angle")
+    paraxial_lens.set_aperture(aperture_type="float_by_stop_size", value=5)
+
+    real_lens = Optic()
+    for surface_args in real_surfaces:
+        real_lens.surfaces.add(index=real_lens.surfaces.num_surfaces, **surface_args)
+
+    real_lens.wavelengths.add(value=0.55, is_primary=True)
+    real_lens.fields.add(y=0)
+    real_lens.fields.set_type(field_type="angle")
+    real_lens.set_aperture(aperture_type="float_by_stop_size", value=5)
+
+    assert_allclose(
+        _get_paraxial_items(paraxial_lens.paraxial),
+        _get_paraxial_items(real_lens.paraxial),
+    )
+
+
+def test_marginal_ray_without_object_surface_raises_descriptive_error(
+    set_test_backend,
+):
+    lens = CookeTriplet()
+    lens.surfaces.surfaces = [
+        surface
+        for surface in lens.surfaces.surfaces
+        if not isinstance(surface, ObjectSurface)
+    ]
+    assert lens.object_surface is None
+
+    with pytest.raises(ValueError, match="No object surface is defined"):
+        lens.paraxial.marginal_ray()
+
+
+def test_chief_ray_without_field_definition_raises_descriptive_error(set_test_backend):
+    lens = CookeTriplet()
+    lens.fields.field_definition = None
+
+    with pytest.raises(ValueError, match="No field definition is set"):
+        lens.paraxial.chief_ray()
+
+
+def _air_spaced_singlet(n_lens=1.5, r1=50.0, r2=-50.0, d=5.0):
+    """Build a singlet in air, for comparison against analytic formulas."""
+    lens = Optic()
+    lens.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+    lens.surfaces.add(
+        index=1, radius=r1, thickness=d, material=IdealMaterial(n=n_lens), is_stop=True
+    )
+    lens.surfaces.add(index=2, radius=r2, thickness=95.0)
+    lens.surfaces.add(index=3)
+
+    lens.set_aperture(aperture_type="EPD", value=10)
+    lens.fields.set_type(field_type="angle")
+    lens.fields.add(y=0)
+    lens.wavelengths.add(value=0.5876, is_primary=True)
+    return lens
+
+
+@pytest.mark.parametrize("optic_and_values", get_optic_data(), indirect=True)
+def test_f2_range_over_full_system_matches_f2(optic_and_values):
+    """The EFL of the complete surface range equals the system EFL."""
+    optic_instance, values = optic_and_values
+    last = optic_instance.surfaces.num_surfaces - 1
+    assert_allclose(optic_instance.paraxial.f2_range(1, last), values["f2"])
+
+
+def test_f2_range_single_element_matches_thick_lens(set_test_backend):
+    """A lone thick element reproduces the Jenkins & White thick-lens EFL."""
+    n_lens, r1, r2, d = 1.5, 50.0, -50.0, 5.0
+    lens = _air_spaced_singlet(n_lens, r1, r2, d)
+
+    expected = ThickLens(n1=1.0, n2=n_lens, n3=1.0, r1=r1, r2=r2, d=d).f2
+    assert_allclose(lens.paraxial.f2_range(1, 2), expected)
+
+
+def test_f2_range_element_within_system_matches_thick_lens(set_test_backend):
+    """A group embedded in a larger system is evaluated in isolation."""
+    lens = CookeTriplet()
+
+    # First element of the triplet: surfaces 1 and 2, with air on both sides.
+    n_lens = be.to_numpy(lens.surfaces[1].material_post.n(lens.primary_wavelength))
+    radii = be.to_numpy(lens.surfaces.radii)
+    positions = be.to_numpy(be.ravel(lens.surfaces.positions))
+
+    expected = ThickLens(
+        n1=1.0,
+        n2=n_lens.item(),
+        n3=1.0,
+        r1=radii[1].item(),
+        r2=radii[2].item(),
+        d=(positions[2] - positions[1]).item(),
+    ).f2
+    assert_allclose(lens.paraxial.f2_range(1, 2), expected)
+
+
+def test_f2_range_single_surface(set_test_backend):
+    """A single refracting surface has an EFL of n' / power."""
+    n_lens, r1 = 1.5, 50.0
+    lens = _air_spaced_singlet(n_lens=n_lens, r1=r1)
+
+    assert_allclose(lens.paraxial.f2_range(1, 1), n_lens / ((n_lens - 1.0) / r1))
+
+
+def test_f2_range_is_not_a_decomposition_of_system_power(set_test_backend):
+    """Group EFLs are computed in isolation, not by splitting system power."""
+    lens = CookeTriplet()
+    group_powers = sum(
+        1.0 / float(be.to_numpy(lens.paraxial.f2_range(k, k + 1))) for k in (1, 3, 5)
+    )
+    system_power = 1.0 / float(be.to_numpy(lens.paraxial.f2()))
+
+    # The group powers ignore the separations between the groups' principal
+    # planes, so they must not be mistaken for the system power. Assert they
+    # genuinely differ, so the documented caveat stays honest.
+    assert abs(group_powers - system_power) > 1e-3
+
+
+def test_f2_range_afocal_returns_inf(set_test_backend):
+    """A range with no net power has an infinite EFL."""
+    lens = _air_spaced_singlet()
+
+    # Surface 3 is the flat image surface, with air on both sides.
+    assert be.isinf(lens.paraxial.f2_range(3, 3))
+
+
+def test_f2_range_paraxial_surface(set_test_backend):
+    """Ideal (paraxial) surfaces report their own focal length."""
+    lens = Optic()
+    lens.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+    lens.surfaces.add(
+        index=1, surface_type="paraxial", f=-50.0, thickness=0.0, is_stop=True
+    )
+    lens.surfaces.add(index=2)
+    lens.set_aperture(aperture_type="EPD", value=10)
+    lens.fields.set_type(field_type="angle")
+    lens.fields.add(y=0)
+    lens.wavelengths.add(value=0.5876, is_primary=True)
+
+    assert_allclose(lens.paraxial.f2_range(1, 1), -50.0)
+
+
+def test_f2_range_respects_wavelength(set_test_backend):
+    """The wavelength argument selects the dispersion used for the group."""
+    lens = CookeTriplet()
+    blue = float(be.to_numpy(lens.paraxial.f2_range(1, 2, wavelength=0.4861)))
+    red = float(be.to_numpy(lens.paraxial.f2_range(1, 2, wavelength=0.6563)))
+
+    # Normal dispersion: the blue focal length is the shorter of the two.
+    assert blue < red
+
+
+def test_ray_transfer_matrix_determinant(set_test_backend):
+    """det(M) equals n_before / n_after for a purely refractive range."""
+    lens = CookeTriplet()
+    matrix = be.to_numpy(lens.paraxial.ray_transfer_matrix(1, 6))
+    n = be.to_numpy(lens.surfaces.n(lens.primary_wavelength))
+
+    determinant = matrix[0, 0] * matrix[1, 1] - matrix[0, 1] * matrix[1, 0]
+    assert_allclose(determinant, n[0] / n[6])
+
+
+def test_ray_transfer_matrix_composes(set_test_backend):
+    """Splitting a range and re-composing it reproduces the whole matrix."""
+    lens = CookeTriplet()
+    positions = be.ravel(lens.surfaces.positions)
+
+    whole = lens.paraxial.ray_transfer_matrix(1, 6)
+    first = lens.paraxial.ray_transfer_matrix(1, 3)
+    second = lens.paraxial.ray_transfer_matrix(4, 6)
+    gap = float(be.to_numpy(positions[4] - positions[3]))
+    transfer = be.array([[1.0, gap], [0.0, 1.0]])
+
+    assert_allclose(be.matmul(second, be.matmul(transfer, first)), whole)
+
+
+def test_ray_transfer_matrix_invalid_range(set_test_backend):
+    """Out-of-bounds and inverted surface ranges are rejected."""
+    lens = CookeTriplet()
+    last = lens.surfaces.num_surfaces - 1
+
+    with pytest.raises(ValueError, match="at least 1"):
+        lens.paraxial.f2_range(0, 2)
+
+    with pytest.raises(ValueError, match="largest valid index"):
+        lens.paraxial.f2_range(1, last + 1)
+
+    with pytest.raises(ValueError, match="must not exceed end"):
+        lens.paraxial.ray_transfer_matrix(4, 2)
+
+
+def test_f2_range_is_differentiable(set_test_backend):
+    """The group EFL carries gradients back to the surface parameters."""
+    if be.get_backend() != "torch":
+        pytest.skip("Autodiff test only runs for torch backend")
+
+    be.grad_mode.enable()
+    radius_tensor = be.array(50.0)
+    radius_tensor.requires_grad = True
+
+    lens = Optic()
+    lens.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+    lens.surfaces.add(
+        index=1,
+        radius=radius_tensor,
+        thickness=5.0,
+        material=IdealMaterial(n=1.5),
+        is_stop=True,
+    )
+    lens.surfaces.add(index=2, radius=-50.0, thickness=95.0)
+    lens.surfaces.add(index=3)
+    lens.set_aperture(aperture_type="EPD", value=10)
+    lens.fields.set_type(field_type="angle")
+    lens.fields.add(y=0)
+    lens.wavelengths.add(value=0.5876, is_primary=True)
+
+    lens.paraxial.f2_range(1, 2).backward()
+
+    grad = lens.surfaces[1].geometry.radius.grad
+    assert grad is not None
+    assert be.to_numpy(grad) != 0

@@ -1,5 +1,6 @@
-import optiland.backend as be
+from __future__ import annotations
 
+import optiland.backend as be
 from optiland import scatter
 from optiland.rays import RealRays
 

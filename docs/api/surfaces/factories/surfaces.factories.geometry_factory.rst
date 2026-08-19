@@ -8,6 +8,5 @@
 
    .. autosummary::
    
-      GeometryConfig
       GeometryFactory
    

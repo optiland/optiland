@@ -16,7 +16,7 @@ from optiland.materials import BaseMaterial
 from optiland.surfaces.standard_surface import Surface
 
 if TYPE_CHECKING:
-    from optiland.rays import ParaxialRays, RealRays
+    from optiland.rays import BaseRays, ParaxialRays, RealRays
 
 
 class ObjectSurface(Surface):
@@ -38,7 +38,7 @@ class ObjectSurface(Surface):
     def __init__(self, geometry, material_post, comment=""):
         super().__init__(
             geometry=geometry,
-            material_pre=material_post,
+            previous_surface=None,
             material_post=material_post,
             is_stop=False,
             aperture=None,
@@ -53,39 +53,44 @@ class ObjectSurface(Surface):
     def set_aperture(self):
         """Sets the aperture of the surface."""
 
-    def trace(self, rays):
+    def trace(self, rays: BaseRays) -> BaseRays:
         """Traces the given rays through the surface.
 
         Args:
-            rays (Rays): The rays to be traced.
+            rays (BaseRays): The rays to be traced.
 
         Returns:
-            RealRays: The traced rays.
+            BaseRays: The traced rays.
 
         """
-        # reset recorded information
         self.reset()
-
-        # record ray information
-        self._record(rays)
-
+        rays.trace_on_surface(self)
+        rays.record_on_surface(self)
         return rays
 
-    def _trace_paraxial(self, rays: ParaxialRays):
-        """Traces the given paraxial rays through the surface.
+    def _trace_paraxial(self, rays: ParaxialRays) -> ParaxialRays:
+        """No-op physics kernel for the object surface (paraxial).
 
         Args:
             rays (ParaxialRays): The paraxial rays to be traced.
 
-        """
+        Returns:
+            ParaxialRays: The rays (unchanged).
 
-    def _trace_real(self, rays: RealRays):
-        """Traces the given real rays through the surface.
+        """
+        return rays
+
+    def _trace_real(self, rays: RealRays) -> RealRays:
+        """No-op physics kernel for the object surface (real rays).
 
         Args:
             rays (RealRays): The real rays to be traced.
 
+        Returns:
+            RealRays: The rays (unchanged).
+
         """
+        return rays
 
     def _interact(self, rays):
         """Interacts the given rays with the surface.
@@ -123,3 +128,7 @@ class ObjectSurface(Surface):
         material_post = BaseMaterial.from_dict(data["material_post"])
         comment = data.get("comment", "")
         return cls(geometry, material_post, comment=comment)
+
+    @property
+    def material_pre(self):
+        return self.material_post

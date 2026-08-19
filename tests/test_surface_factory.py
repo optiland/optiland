@@ -1,22 +1,28 @@
-import optiland.backend as be
+from __future__ import annotations
+
 import pytest
 
+import optiland.backend as be
 from optiland.coatings import FresnelCoating, SimpleCoating
-from optiland.materials import IdealMaterial
-from optiland.samples.objectives import TessarLens
 from optiland.interactions.diffractive_model import DiffractiveInteractionModel
-from optiland.surfaces.object_surface import ObjectSurface
 from optiland.interactions.thin_lens_interaction_model import ThinLensInteractionModel
-from optiland.surfaces.standard_surface import Surface
+from optiland.materials import IdealMaterial
+from optiland.optic import Optic
+from optiland.phase.radial import RadialPhaseProfile
+from optiland.samples.objectives import TessarLens
 from optiland.surfaces import SurfaceFactory
+from optiland.surfaces.object_surface import ObjectSurface
+from optiland.surfaces.standard_surface import Surface
+
+from .utils import assert_allclose
 
 
 class TestSurfaceFactory:
     @pytest.fixture(autouse=True)
     def setup(self):
         self.lens = TessarLens()
-        self.surface_group = self.lens.surface_group
-        self.factory = SurfaceFactory(self.surface_group)
+        self.surfaces = self.lens.surfaces
+        self.factory = SurfaceFactory(self.surfaces)
 
     def test_create_surface_standard(self, set_test_backend):
         surface = self.factory.create_surface(
@@ -50,7 +56,7 @@ class TestSurfaceFactory:
         assert isinstance(surface, Surface)
         assert surface.geometry.radius == 10
         assert surface.geometry.k == 0
-        assert surface.geometry.c == [1, 2, 3]
+        assert surface.geometry.coefficients == [1, 2, 3]
         assert isinstance(surface.material_pre, IdealMaterial)
         assert isinstance(surface.material_post, IdealMaterial)
 
@@ -69,7 +75,7 @@ class TestSurfaceFactory:
         assert isinstance(surface, Surface)
         assert surface.geometry.radius == 10
         assert surface.geometry.k == 0
-        assert surface.geometry.c == [1, 2, 3]
+        assert surface.geometry.coefficients == [1, 2, 3]
         assert isinstance(surface.material_pre, IdealMaterial)
         assert isinstance(surface.material_post, IdealMaterial)
 
@@ -90,7 +96,7 @@ class TestSurfaceFactory:
         assert isinstance(surface, Surface)
         assert surface.geometry.radius == 10
         assert surface.geometry.k == 0
-        assert be.array_equal(surface.geometry.c, be.array([[1, 2, 3]]))
+        assert be.array_equal(surface.geometry.coefficients, be.array([[1, 2, 3]]))
         assert surface.geometry.tol == 1e-6
         assert surface.geometry.max_iter == 100
         assert isinstance(surface.material_pre, IdealMaterial)
@@ -115,7 +121,7 @@ class TestSurfaceFactory:
         assert isinstance(surface, Surface)
         assert surface.geometry.radius == 10
         assert surface.geometry.k == 0
-        assert be.all(surface.geometry.c == be.arange(9).reshape(3, 3))
+        assert be.all(surface.geometry.coefficients == be.arange(9).reshape(3, 3))
         assert surface.geometry.tol == 1e-6
         assert surface.geometry.max_iter == 100
         assert surface.geometry.norm_x == 1
@@ -149,6 +155,51 @@ class TestSurfaceFactory:
                 material="air",
                 thickness=5,
             )
+
+    def test_metalens_integration_focus(self, set_test_backend):
+        """Test creating and tracing a metalens as an integration test."""
+        if be.get_backend() == "torch":
+            pytest.skip("This test requires functionality not yet in torch backend")
+
+        optic = Optic()
+        focal_length = 100.0
+        wavelength = 0.55
+        k0 = 2 * be.pi / wavelength
+
+        # The Optic starts with an object surface. We need to set its material.
+        optic.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+
+        # Define the phase profile for a lens: phi = -k0/(2f) * r^2
+        # k0 should be calculated in mm^-1 for the phase profile coefficient
+        k0_mm = 2 * be.pi / (wavelength * 1e-3)
+        lens_coeff = -k0_mm / (2 * focal_length)
+        phase_profile = RadialPhaseProfile(coefficients=[lens_coeff])
+
+        # Add the metalens surface
+        optic.surfaces.add(
+            index=1,
+            surface_type="plane",
+            interaction_type="phase",
+            phase_profile=phase_profile,
+            is_stop=True,
+            material="air",
+            thickness=focal_length,  # Propagate to the focal plane
+        )
+        optic.surfaces.add(index=2)
+
+        # Configure optic for tracing
+        optic.wavelengths.add(wavelength)
+        optic.fields.set_type("angle")
+        optic.fields.add(0)  # On-axis field
+        optic.set_aperture("EPD", 10.0)
+
+        # Trace rays
+        rays = optic.trace(Hx=0, Hy=0, wavelength=wavelength, num_rays=5)
+
+        # Verification: at the focal plane, all rays should be at the focus
+        assert_allclose(rays.z, be.full_like(rays.z, focal_length))
+        assert be.all(be.abs(rays.x) < 1e-2)
+        assert be.all(be.abs(rays.y) < 1e-2)
 
     def test_invalid_surface_index(self, set_test_backend):
         with pytest.raises(IndexError):

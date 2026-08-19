@@ -15,16 +15,14 @@ A surface consists of several components that define its optical properties:
 - **Materials**: The material type before and after the surface, which determines the refractive index and extinction coefficient.
 - **Coatings**: Coatings (e.g., thin films) applied to the surface for modifying reflection, transmission, and/or polarization properties.
 - **Stop Surface Flag**: Indicates if the surface is the aperture stop of the system.
-- **Reflective Flag**: Indicates if the surface is reflective (e.g., mirror) or refractive (e.g., lens).
+- **Interaction Model**: Defines how a ray interacts with the surface (e.g., refraction, reflection). For more details, see the :ref:`interaction_models` section.
 - **Physical Aperture (optional)**: A physical or virtual aperture defining the area where rays can interact with the surface.
 - **BSDF** (optional): Bidirectional Scattering Distribution Function for modeling scattering behavior.
 
 Paraxial Surfaces
 -----------------
 
-A special surface type is the **Paraxial Surface**, which is a simplified ideal lens defined only by its focal length (assumed in air). This surface can be used for first order layouts
-at the beginning of the optical design process. See the :ref:`gallery_basic_lenses` for an example of using paraxial surfaces. Under the hood, paraxial surfaces are defined as planar
-surfaces and use simplified ray tracing logic, which assumes paraxial behavior. Lastly, paraxial surfaces can be automatically converted into a thick lens equivalent by using the conversion function `optiland.surfaces.convert_to_thick_lens`.
+Optiland handles paraxial surfaces not as a distinct class, but through a `ThinLensInteractionModel` that can be applied to a standard `Surface`. This model simplifies the surface to an ideal thin lens with a given focal length. This approach allows for first-order layouts and analysis. A `Surface` with a `ThinLensInteractionModel` can be converted into a thick lens equivalent using the `convert_to_thick_lens` function in `optiland.surfaces.converters`.
 
 Ray Interaction with Surfaces
 -----------------------------
@@ -35,7 +33,7 @@ When a ray interacts with a surface, the following steps are typically performed
 2. **Aperture Check**: The ray's intersection point is checked against the surface's aperture to determine if the ray is blocked.
 3. **Refraction/Reflection**: The ray's direction is updated based on Snell's law or the law of reflection, and the ray properties may be affected by the surface's material/coating properties.
 4. **Scattering**: If the surface has a BSDF, the ray may be scattered based on the scattering distribution function.
-5. **Recording**: Data such as intersection points and modified ray attributes are stored for later analysis.
+5. **Recording**: During a trace, each `Surface` temporarily stores the ray data at the intersection point.
 
 Surface Group
 -------------
@@ -44,19 +42,23 @@ Surfaces are combined into a **Surface Group**, which manages a collection of su
 
 - Tracks the ordered list of surfaces in the optical system.
 - Propagates rays through the system, invoking surface-specific logic at each step.
+- Aggregates ray trace history from all surfaces, providing a complete picture of the ray paths.
 - Exposes methods for adding, removing, and modifying surfaces in the system.
 
 .. tip::
    The Surface Group allows efficient iteration over multiple surfaces, simplifying complex ray tracing operations.
 
-Surface Factory
----------------
+Surface Factories
+-----------------
 
-To streamline surface creation, Optiland includes a **Surface Factory**. The factory:
+To streamline surface creation, Optiland uses a multi-factory pattern, with distinct factories for different components:
 
-- Generates the appropriate surface type based on user input.
-- Configures the surface with the specified geometry, material, coatings, and other properties.
-- Adds the surface to the Surface Group at the specified position in the system, based on the surface index.
+- **SurfaceFactory**: The main factory that orchestrates the creation of `Surface` objects.
+- **GeometryFactory**: Creates different geometry types (e.g., `StandardGeometry`, `ToroidalGeometry`).
+- **MaterialFactory**: Handles the creation of materials.
+- **CoatingFactory**: Manages the creation of coatings.
+
+This granular approach makes the system more modular and extensible.
 
 Extensibility
 -------------
@@ -64,6 +66,22 @@ Extensibility
 The surface framework is designed for extensibility:
 
 - Custom geometries, coatings, or aperture definitions can be added by subclassing existing components. These may be added to any surface instance.
-- The Surface Factory can be extended to handle new surface types.
+- The factories can be extended to handle new component types.
 
 For more detailed information on surface geometry and coatings, see their dedicated sections in this guide.
+
+How to Extend This
+------------------
+
+**Scenario:** Add a new surface geometry type to Optiland.
+
+**Step 1:** Create a new file in ``optiland/geometries/my_geometry.py``.
+**Step 2:** Subclass ``BaseGeometry`` (closed-form intersection) or ``NewtonRaphsonGeometry``
+(iterative intersection) and implement ``distance(rays)``, ``sag(x, y)``, and ``surface_normal(rays)``.
+**Step 3:** Register in ``optiland/geometries/__init__.py``.
+**Step 4:** Add the geometry type string to ``optiland/surfaces/factories/geometry_factory.py``
+for JSON serialisation support.
+**Step 5:** Add tests in ``tests/test_geometries/test_my_geometry.py``.
+
+For a complete worked example, see :doc:`../examples/Tutorial_8a_Custom_Surface_Types`.
+For step-by-step guidance, see :ref:`extension_recipes`.

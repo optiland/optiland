@@ -1,4 +1,4 @@
-﻿mtf.huygens\_fresnel
+mtf.huygens\_fresnel
 ====================
 
 .. automodule:: mtf.huygens_fresnel
@@ -9,4 +9,6 @@
    .. autosummary::
    
       HuygensMTF
+      ScalarHuygensMTF
+      VectorialHuygensMTF
    

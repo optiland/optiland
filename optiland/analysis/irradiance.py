@@ -26,47 +26,49 @@ from optiland.rays import RealRays
 from .base import BaseAnalysis
 
 if TYPE_CHECKING:
+    from matplotlib.axes import Axes
     from matplotlib.colors import Colormap
+    from matplotlib.figure import Figure
+    from numpy.typing import NDArray
 
 
 class IncoherentIrradiance(BaseAnalysis):
     """Compute and visualise incoherent irradiance on the detector surface.
     For simplification, we assume that the detector surface = image surface.
 
-     Attributes:
-     ---
-     optic : optiland.optic.Optic
-         Reference to the optical system - must already define fields, wavelengths
-         and, critically, a physical aperture on the chosen detector surface.
-     res : tuple[int, int]
-         Requested pixel count along (x,y) of the irradiance grid.
-     px_size : tuple[float, float] | None
-         Physical pixel pitch (dx,dy) in mm.  If ``None`` the pitch is
-         derived from the surface aperture and `res`.
-     num_rays : int
-         Number of real rays launched for every (field,wavelength) pair.
-     fields, wavelengths : tuple | "all"
-         Convenience selectors that work exactly like those in
-         `SpotDiagram` - default is to analyse all of them.
-     detector_surface : int
-         Index into `optic.surface_group.surfaces` that designates the detector
-         plane to analyse (default=`-1`->image surface).
-     data : list[list[be.ndarray]]
-         2-D irradiance arrays for every (field,wvl) - outer index is field,
-         inner index is wavelength.  Each array has shape
-         (res[0],res[1]) with X as the row index so that
-         ``irr_data[f][w][i,j]`` refers to X=i, Y=j.
-     user_initial_rays : RealRays | None
-         Optional user-provided initial rays (at the source/object plane)
-         to be traced through the whole optical system.
+    Attributes:
+        optic (optiland.optic.Optic): Reference to the optical system - must
+            already define fields, wavelengths and, critically, a physical
+            aperture on the chosen detector surface.
+        res (tuple[int, int]): Requested pixel count along (x,y) of the
+            irradiance grid.
+        px_size (tuple[float, float] | None): Physical pixel pitch (dx,dy) in
+            mm. If ``None`` the pitch is derived from the surface aperture
+            and `res`.
+        num_rays (int): Number of real rays launched for every
+            (field,wavelength) pair.
+        fields, wavelengths (tuple | "all"): Convenience selectors that work
+            exactly like those in `SpotDiagram` - default is to analyse all
+            of them.
+        detector_surface (int): Index into `optic.surfaces` that designates
+            the detector plane to analyse (default=`-1`->image surface).
+        data (list[list[be.ndarray]]): 2-D irradiance arrays for every
+            (field,wvl) - outer index is field, inner index is wavelength.
+            Each array has shape (res[0],res[1]) with X as the row index so
+            that ``irr_data[f][w][i,j]`` refers to X=i, Y=j.
+        user_initial_rays (RealRays | None): Optional user-provided initial
+            rays (at the source/object plane) to be traced through the whole
+            optical system.
+        source (BaseSource | None): Optional extended source object (e.g.,
+            GaussianSource) to generate initial rays automatically. Cannot
+            be used with user_initial_rays. When provided, num_rays
+            determines how many rays to generate.
 
-     Methods
-     ---
-     view(figsize=(6,5), cmap="inferno") → None
-         Display false-colour irradiance maps three fields per row, sharing a common
-         colour bar.
-     peak_irradiance() → list[list[float]]
-         Return the maximum pixel value for every (field,wvl) pair.
+    Methods:
+        view(figsize=(6,5), cmap="inferno"): Display false-colour irradiance
+            maps three fields per row, sharing a common colour bar.
+        peak_irradiance() -> list[list[float]]: Return the maximum pixel
+            value for every (field,wvl) pair.
     """
 
     def __init__(
@@ -74,18 +76,33 @@ class IncoherentIrradiance(BaseAnalysis):
         optic,
         num_rays: int = 5,
         res=(128, 128),
-        px_size: float = None,
+        px_size: float | None = None,
         detector_surface: int = -1,
         *,
         fields="all",
         wavelengths="all",
         distribution: str = "random",
         user_initial_rays=None,
+        source=None,
+        skip_trace: bool = False,
     ):
         if fields == "all":
             self.fields = optic.fields.get_field_coords()
         else:
             self.fields = tuple(fields)
+
+        # Handle source integration
+        if source is not None and user_initial_rays is not None:
+            raise ValueError("Cannot specify both 'source' and 'user_initial_rays'.")
+
+        if source is not None:
+            # Generate rays from the extended source
+            self.user_initial_rays = source.generate_rays(num_rays)
+            # When using a source, we treat all rays as a single "field"
+            # The source emission defines the field, not optic.fields
+            self.fields = [(0.0, 0.0)]  # Single dummy field for source rays
+        else:
+            self.user_initial_rays = user_initial_rays
 
         self.num_rays = num_rays
         self.npix_x, self.npix_y = res
@@ -93,7 +110,7 @@ class IncoherentIrradiance(BaseAnalysis):
             None if px_size is None else (float(px_size[0]), float(px_size[1]))
         )
         self.detector_surface = int(detector_surface)
-        self.user_initial_rays = user_initial_rays
+        # self.user_initial_rays = user_initial_rays
         self._initial_ray_data = None
         if self.user_initial_rays is not None:
             if not isinstance(self.user_initial_rays, RealRays):
@@ -110,9 +127,10 @@ class IncoherentIrradiance(BaseAnalysis):
                 "wavelength": self.user_initial_rays.w,
             }
         self.distribution = distribution
+        self.skip_trace = skip_trace
 
         # The detector surface must have a physical aperture
-        surf = optic.surface_group.surfaces[self.detector_surface]
+        surf = optic.surfaces[self.detector_surface]
         if surf.aperture is None:
             raise ValueError(
                 "Detector surface has no physical aperture - set one "
@@ -140,51 +158,49 @@ class IncoherentIrradiance(BaseAnalysis):
 
     def view(
         self,
-        fig_to_plot_on: plt.Figure = None,
+        fig_to_plot_on: Figure | None = None,
         figsize: tuple = (6, 5),
         cmap: str | Colormap = "inferno",
-        cross_section: tuple[str, int] = None,
+        cross_section: tuple[str, int] | None = None,
         *,
         normalize: bool = True,
-    ) -> tuple[plt.Figure, _np.ndarray[plt.Axes]]:
+        show: bool = True,
+    ) -> tuple[Figure, NDArray[_np.object_]] | None:
         """
         Display a false-colour irradiance map or cross-section plots for the current
         irradiance data.
 
         Args:
-            fig_to_plot_on : plt.Figure, optional
-                Existing matplotlib Figure to plot on. If None, a new figure is created.
-                Default is None.
-            figsize : tuple, optional
-                Size of each subplot as (width, height) in inches. Default is (6, 5).
-            cmap : str or Colormap, optional
-                Colormap to use for the irradiance map. Default is "inferno".
-            cross_section : tuple[str, int], optional
-                If provided, plot a cross-section instead of a 2D map. Should be a tuple
-                of ('cross-x' or 'cross-y', index), where index is the slice index along
-                the specified axis.
-                If None, a 2D irradiance map is plotted. Default is None.
-            normalize : bool, optional
-                If True, normalize irradiance maps to their peak value. If False, use
-                absolute values.
-                Default is True.
+            fig_to_plot_on (plt.Figure, optional): Existing matplotlib Figure
+                to plot on. If None, a new figure is created. Default is None.
+            figsize (tuple, optional): Size of each subplot as (width, height)
+                in inches. Default is (6, 5).
+            cmap (str or Colormap, optional): Colormap to use for the
+                irradiance map. Default is "inferno".
+            cross_section (tuple[str, int], optional): If provided, plot a
+                cross-section instead of a 2D map. Should be a tuple of
+                ('cross-x' or 'cross-y', index), where index is the slice
+                index along the specified axis. If None, a 2D irradiance map
+                is plotted. Default is None.
+            normalize (bool, optional): If True, normalize irradiance maps to
+                their peak value. If False, use absolute values. Default is
+                True.
 
-        Returns :
-            fig : matplotlib.figure.Figure
-                The matplotlib Figure object containing the plot(s).
-            axs : numpy.ndarray
-                Array of Axes objects for the subplots, or None if plotting on an
-                existing figure.
+        Returns:
+            fig (matplotlib.figure.Figure): The matplotlib Figure object
+                containing the plot(s).
+            axs (numpy.ndarray): Array of Axes objects for the subplots, or
+                None if plotting on an existing figure.
 
-        Notes
-        -----
-        - If no valid irradiance data is available, the method prints a warning
-        and returns None.
-        - If `cross_section` is invalid or not provided, a 2D irradiance map is
-        shown.
-        - The method supports plotting multiple fields and wavelengths as a grid
-        of subplots.
-        - Colorbars and axis labels are automatically added to each subplot.
+        Notes:
+            - If no valid irradiance data is available, the method prints a
+              warning and returns None.
+            - If `cross_section` is invalid or not provided, a 2D irradiance
+              map is shown.
+            - The method supports plotting multiple fields and wavelengths as
+              a grid of subplots.
+            - Colorbars and axis labels are automatically added to each
+              subplot.
         """
         if not self.data:
             print("No irradiance data to display.")
@@ -217,6 +233,9 @@ class IncoherentIrradiance(BaseAnalysis):
                 )
 
         self._finalize_figure(fig, cs_info, normalize)
+        is_gui_embedding = fig_to_plot_on is not None
+        if show and not is_gui_embedding:
+            plt.show()
         return fig, axs
 
     # --- Data Generation and Access ---
@@ -230,10 +249,10 @@ class IncoherentIrradiance(BaseAnalysis):
         data = []
         for field in self.fields:
             f_block = []
-            for wl in self.wavelengths:
+            for wp in self.wavelengths:
                 f_block.append(
                     self._generate_field_data(
-                        field, wl, self.distribution, self.user_initial_rays
+                        field, wp.value, self.distribution, self.user_initial_rays
                     )
                 )
             data.append(f_block)
@@ -244,23 +263,29 @@ class IncoherentIrradiance(BaseAnalysis):
         Traces rays and bins their power. Switches between standard and
         differentiable methods based on the gradient mode.
         """
-        if user_initial_rays is None:
-            Hx, Hy = field
-            rays_traced = self.optic.trace(
-                Hx, Hy, wavelength, self.num_rays, distribution
+        rays_traced = None
+        if not self.skip_trace:
+            if user_initial_rays is None:
+                Hx, Hy = field
+                rays_traced = self.optic.trace(
+                    Hx, Hy, wavelength, self.num_rays, distribution
+                )
+            else:
+                rays_to_trace = RealRays(**self._initial_ray_data)
+                self.optic.surfaces.trace(rays_to_trace)
+                rays_traced = rays_to_trace
+
+        surf = self.optic.surfaces[self.detector_surface]
+        if rays_traced is not None:
+            x_g, y_g, z_g, power = (
+                rays_traced.x,
+                rays_traced.y,
+                rays_traced.z,
+                rays_traced.i,
             )
         else:
-            rays_to_trace = RealRays(**self._initial_ray_data)
-            self.optic.surface_group.trace(rays_to_trace)
-            rays_traced = rays_to_trace
-
-        surf = self.optic.surface_group.surfaces[self.detector_surface]
-        x_g, y_g, z_g, power = (
-            rays_traced.x,
-            rays_traced.y,
-            rays_traced.z,
-            rays_traced.i,
-        )
+            # Read from cache (assumes trace was done externally or skipping)
+            x_g, y_g, z_g, power = surf.x, surf.y, surf.z, surf.intensity
 
         from optiland.visualization.system.utils import transform
 
@@ -297,10 +322,10 @@ class IncoherentIrradiance(BaseAnalysis):
             indices, weights = be.get_bilinear_weights(
                 ray_coords, (x_edges_be, y_edges_be)
             )
-            power_map = be.zeros((self.npix_y, self.npix_x))
+            power_map = be.zeros((self.npix_x, self.npix_y))
             for i in range(4):
                 power_map = power_map.index_put(
-                    (indices[:, i, 1].long(), indices[:, i, 0].long()),
+                    (indices[:, i, 0].long(), indices[:, i, 1].long()),
                     weights[:, i] * power,
                     accumulate=True,
                 )
@@ -404,11 +429,11 @@ class IncoherentIrradiance(BaseAnalysis):
         Initializes the matplotlib figure and axes for plotting.
 
         Args:
-            fig_to_plot_on (plt.Figure | None): An existing figure to draw on.
+            fig_to_plot_on (Figure | None): An existing figure to draw on.
             figsize (tuple[float, float]): The size for each subplot.
 
         Returns:
-            tuple[plt.Figure, _np.ndarray[plt.Axes]]: The figure and axes array.
+            tuple[Figure, _np.ndarray[Axes]]: The figure and axes array.
         """
         n_fields = len(self.fields)
         n_wavelengths = len(self.wavelengths)
@@ -457,7 +482,7 @@ class IncoherentIrradiance(BaseAnalysis):
             return f"(User Rays: {field_label})"
         else:
             field_coord = self.fields[f_idx]
-            wavelength_val = self.wavelengths[w_idx]
+            wavelength_val = self.wavelengths[w_idx].value
             text = (
                 f"Field {f_idx} {field_coord}, "
                 f"$\\lambda_{w_idx}$ = {wavelength_val:.3f} µm"
@@ -465,14 +490,24 @@ class IncoherentIrradiance(BaseAnalysis):
             return text
 
     def _plot_single_subplot(
-        self, ax, fig, entry_data, f_idx, w_idx, normalize, vmin, vmax, cmap, cs_info
+        self,
+        ax: Axes,
+        fig: Figure,
+        entry_data: tuple,
+        f_idx: int,
+        w_idx: int,
+        normalize: bool,
+        vmin: float,
+        vmax: float,
+        cmap: Colormap,
+        cs_info: tuple,
     ):
         """
         Plots the data for a single subplot, either as a 2D map or a cross-section.
 
         Args:
-            ax (plt.Axes): The matplotlib axes to plot on.
-            fig (plt.Figure): The parent figure, for colorbar placement.
+            ax (Axes): The matplotlib axes to plot on.
+            fig (Figure): The parent figure, for colorbar placement.
             entry_data (tuple): Tuple of (irr_map, x_edges, y_edges).
             f_idx (int): The field index.
             w_idx (int): The wavelength index.
@@ -501,7 +536,7 @@ class IncoherentIrradiance(BaseAnalysis):
                 plot_map.T,
                 aspect="auto",
                 origin="lower",
-                extent=[x_edges[0], x_edges[-1], y_edges[0], y_edges[-1]],
+                extent=(x_edges[0], x_edges[-1], y_edges[0], y_edges[-1]),
                 cmap=cmap,
                 vmin=vmin,
                 vmax=vmax,
@@ -533,7 +568,7 @@ class IncoherentIrradiance(BaseAnalysis):
 
     def _plot_cross_section(
         self,
-        ax: plt.Axes,
+        ax: Axes,
         irr_map_be,
         x_edges,
         y_edges,

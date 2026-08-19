@@ -31,6 +31,9 @@ class MaterialFile(BaseMaterial):
 
     Args:
         filename (str): The path to the material file.
+        propagation_model (BasePropagationModel, optional): The propagation
+            model to use. Defaults to None, which creates a
+            HomogeneousPropagation model.
 
     Attributes:
         filename (str): The filename of the material file.
@@ -45,7 +48,8 @@ class MaterialFile(BaseMaterial):
 
     """
 
-    def __init__(self, filename):
+    def __init__(self, filename, propagation_model=None):
+        super().__init__(propagation_model)
         self.filename = filename
         self._k_warning_printed = False
         self.coefficients = []
@@ -75,7 +79,7 @@ class MaterialFile(BaseMaterial):
         data = self._read_file()
         self._parse_file(data)
 
-    def n(self, wavelength, temperature=None, pressure=None):
+    def _calculate_n(self, wavelength, **kwargs):
         """Calculates the refractive index of the material at given wavelengths.
 
         The method first calculates the refractive index from the dispersion formula,
@@ -93,7 +97,8 @@ class MaterialFile(BaseMaterial):
         Returns:
             float or be.ndarray: The refractive index(s) of the material.
         """
-
+        temperature = kwargs.get("temperature")
+        pressure = kwargs.get("pressure")
         # Apply environmental corrections only if temperature data is available.
         if (
             temperature is not None
@@ -211,7 +216,7 @@ class MaterialFile(BaseMaterial):
 
         return n_air
 
-    def k(self, wavelength):
+    def _calculate_k(self, wavelength, **kwargs):
         """Retrieves the extinction coefficient of the material at a
         given wavelength. If no exxtinction coefficient data is found, it is
         assumed to be 0 and prints a warning message, only once.
@@ -444,7 +449,11 @@ class MaterialFile(BaseMaterial):
         Returns:
             dict: Parsed YAML data.
         """
-        with open(self.filename) as stream:
+        # The RefractiveIndex.INFO YAML files contain non-ASCII characters
+        # (e.g. the degree sign, em dashes). Decode explicitly as UTF-8 so the
+        # read does not depend on the platform's default text encoding -- on
+        # Windows that is cp1252/cp936 (GBK), which raises UnicodeDecodeError.
+        with open(self.filename, encoding="utf-8") as stream:
             return yaml.safe_load(stream)
 
     def _set_formula_type(self, formula_type):
@@ -477,10 +486,10 @@ class MaterialFile(BaseMaterial):
 
     def _parse_formula_data(self, sub_data: dict, sub_data_type: str) -> None:
         """Parse formula-based material data."""
-        self.coefficients = be.array(
-            [float(k) for k in sub_data.get("coefficients", "").split()]
-        )
-        self.coefficients = be.reshape(self.coefficients, (-1, 1))
+        coeff_values = [float(k) for k in sub_data.get("coefficients", "").split()]
+        # Build a 2D column array directly from Python values so the result is
+        # always a graph-leaf (avoids a non-leaf view from reshape on a 1-D tensor).
+        self.coefficients = be.array([[c] for c in coeff_values])
         self._set_formula_type(sub_data_type)
 
     def _parse_tabulated_data(self, sub_data: dict, sub_data_type: str) -> None:
@@ -508,10 +517,8 @@ class MaterialFile(BaseMaterial):
         try:
             coeff = data["SPECS"]["thermal_dispersion"][0]
             if coeff.get("type", "").startswith("Schott"):
-                self.thermdispcoef = be.array(
-                    [float(k) for k in coeff.get("coefficients", "").split()]
-                )
-                self.thermdispcoef = be.reshape(self.thermdispcoef, (-1, 1))
+                td_values = [float(k) for k in coeff.get("coefficients", "").split()]
+                self.thermdispcoef = be.array([[c] for c in td_values])
 
             self._t0 = float(data["SPECS"]["temperature"].split(" ")[0])
         except KeyError:
@@ -552,5 +559,4 @@ class MaterialFile(BaseMaterial):
         if "filename" not in data:
             raise ValueError("Material file data missing filename.")
 
-        material = cls(data["filename"])
-        return material
+        return cls(data["filename"])

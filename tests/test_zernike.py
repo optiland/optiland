@@ -1,13 +1,18 @@
+from __future__ import annotations
+
 from unittest.mock import patch
 
 import matplotlib
 import matplotlib.pyplot as plt
+import numpy as np
 import pytest
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 
 import optiland.backend as be
 from optiland import zernike
+
 from .utils import assert_allclose
-import numpy as np
 
 matplotlib.use("Agg")  # use non-interactive backend for testing
 
@@ -715,8 +720,8 @@ class TestZernikeFit:
         fig, ax = zernike_fit_standard.view(projection="2d")
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
     @patch("matplotlib.pyplot.show")
@@ -730,8 +735,8 @@ class TestZernikeFit:
         fig, ax = zernike_fit_standard.view(projection="3d")
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
     @patch("matplotlib.pyplot.show")
@@ -745,8 +750,8 @@ class TestZernikeFit:
         fig, ax = zernike_fit_noll.view(projection="2d")
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
     @patch("matplotlib.pyplot.show")
@@ -760,8 +765,8 @@ class TestZernikeFit:
         fig, ax = zernike_fit_noll.view(projection="3d")
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
     @patch("matplotlib.pyplot.show")
@@ -775,8 +780,8 @@ class TestZernikeFit:
         fig, ax = zernike_fit_standard.view_residual()
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
     @patch("matplotlib.pyplot.show")
@@ -790,8 +795,8 @@ class TestZernikeFit:
         fig, ax = zernike_fit_noll.view_residual()
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
     @patch("matplotlib.pyplot.show")
@@ -800,8 +805,8 @@ class TestZernikeFit:
         fig, ax = zernike_fit.view(projection="2d")
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
     @patch("matplotlib.pyplot.show")
@@ -810,8 +815,8 @@ class TestZernikeFit:
         fig, ax = zernike_fit.view(projection="3d")
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)
 
     @patch("matplotlib.pyplot.show")
@@ -820,6 +825,6 @@ class TestZernikeFit:
         fig, ax = zernike_fit.view_residual()
         assert fig is not None
         assert ax is not None
-        assert isinstance(fig, plt.Figure)
-        assert isinstance(ax, plt.Axes)
+        assert isinstance(fig, Figure)
+        assert isinstance(ax, Axes)
         plt.close(fig)

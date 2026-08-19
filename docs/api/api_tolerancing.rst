@@ -9,6 +9,8 @@ imperfections, the performance of an optical system will still fall within an ac
 
 In Optiland, tolerancing is performed via sensitivity analysis or Monte Carlo simulations.
 
+For tolerancing of multilayer thin film coatings specifically, see the :doc:`api_thin_film` module.
+
 Tolerancing in Optiland requires 4 key components:
 
 1. Optic - the optical system to be analyzed.

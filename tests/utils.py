@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import numpy as np
-import optiland.backend as be
 from numpy.testing import assert_array_equal as np_assert_array_equal
+
+import optiland.backend as be
 
 
 def assert_allclose(a, b, rtol=1.0e-5, atol=1.0e-7):

@@ -9,4 +9,10 @@
    .. autosummary::
    
       AbbeMaterial
+      AbbeMaterialE
+      AbbeModel
+      AbbePolynomialModel
+      BuchdahlDModel
+      BuchdahlEModel
+      BuchdahlModel
    

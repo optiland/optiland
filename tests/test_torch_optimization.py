@@ -1,11 +1,14 @@
-import warnings
+from __future__ import annotations
 
 import pytest
 
 import optiland.backend as be
-from optiland.optimization import TorchAdamOptimizer, TorchSGDOptimizer
+from optiland.optimization import (
+    OptimizationProblem,
+    TorchAdamOptimizer,
+    TorchSGDOptimizer,
+)
 from optiland.samples.objectives import CookeTriplet
-from optiland.optimization import OptimizationProblem
 
 
 def setup_problem(
@@ -35,7 +38,7 @@ def setup_problem(
 
     # Set the initial state before adding variables to ensure it's captured
     if add_variable:
-        lens.surface_group.surfaces[1].radius = initial_value
+        lens.surfaces[1].radius = initial_value
         problem.add_variable(
             lens,
             "radius",
@@ -102,22 +105,25 @@ class TestTorchBaseOptimizerSetup:
         """
         # Create the problem first. This may enable grad mode.
         problem, _ = setup_problem()
-        
+
         # Now, explicitly disable grad mode to test the optimizer's __init__.
         if hasattr(be.grad_mode, "disable"):
-             be.grad_mode.disable()
+            be.grad_mode.disable()
         assert not be.grad_mode.requires_grad
 
         # The optimizer's __init__ should now issue a warning and enable grad mode.
-        with pytest.warns(UserWarning, match="Gradient tracking is enabled for PyTorch"):
-             optimizer = TorchAdamOptimizer(problem)
-        
+        with pytest.warns(
+            UserWarning, match="Gradient tracking is enabled for PyTorch"
+        ):
+            optimizer = TorchAdamOptimizer(problem)
+
         # Check that gradients are now enabled by the optimizer
         assert be.grad_mode.requires_grad
-        
+
         # Cleanup: Ensure grad mode is enabled for subsequent tests
         if hasattr(be.grad_mode, "enable"):
             be.grad_mode.enable()
+
 
 @pytest.mark.parametrize("optimizer_class", [TorchAdamOptimizer, TorchSGDOptimizer])
 class TestTorchOptimizers:
@@ -175,7 +181,6 @@ class TestTorchOptimizers:
         final_param_val = problem.variables[0].variable.get_value()
         assert be.isclose(initial_param_val, final_param_val)
 
-
     def test_callback_is_invoked_at_each_step(self, optimizer_class):
         """
         Ensures the callback function is called exactly n_steps times with the
@@ -195,11 +200,15 @@ class TestTorchOptimizers:
         for i, (step, loss) in enumerate(history):
             assert step == i
             assert isinstance(loss, float)
-            if i > 0: # Loss is not guaranteed to decrease every step for all optimizers
+            if (
+                i > 0
+            ):  # Loss is not guaranteed to decrease every step for all optimizers
                 assert loss >= 0.0
 
     @pytest.mark.parametrize("disp, should_have_output", [(True, True), (False, False)])
-    def test_display_output_controlled_by_disp_flag(self, capsys, optimizer_class, disp, should_have_output):
+    def test_display_output_controlled_by_disp_flag(
+        self, capsys, optimizer_class, disp, should_have_output
+    ):
         """
         Tests that console output is correctly controlled by the 'disp' flag.
         """
@@ -212,3 +221,240 @@ class TestTorchOptimizers:
             assert "Loss" in captured.out
         else:
             assert "Loss" not in captured.out
+
+
+class TestTorchOptimizerScaledSpace:
+    """
+    Tests that verify the Torch optimizers work in scaled parameter space,
+    consistent with the bounds from var.bounds.
+
+    This prevents the bug where raw parameters (e.g. radius=15.0) were clamped
+    by scaled bounds (e.g. [-0.9, -0.7]), corrupting the value and producing
+    NaN loss.
+    """
+
+    def test_params_initialized_in_scaled_space(self):
+        """
+        Optimizer params must match var.value (scaled), not
+        var.variable.get_value() (raw).
+
+        For a RadiusVariable with LinearScaler(factor=1/100, offset=-1.0),
+        raw=5.0 should become scaled = 5.0 * 0.01 - 1.0 = -0.95.
+        """
+        problem, _ = setup_problem(initial_value=5.0, min_val=1.0, max_val=10.0)
+        optimizer = TorchAdamOptimizer(problem)
+
+        # The optimizer param should be the scaled value, not the raw value
+        scaled_param = optimizer.params[0].item()
+        raw_value = problem.variables[0].variable.get_value()
+        expected_scaled = problem.variables[0].value
+
+        assert abs(scaled_param - expected_scaled) < 1e-10, (
+            f"Param {scaled_param} should equal scaled value {expected_scaled}, "
+            f"not raw value {raw_value}"
+        )
+        # Sanity: scaled and raw should differ for this scaler
+        assert abs(scaled_param - raw_value) > 0.1, (
+            "Scaled and raw values should be different"
+        )
+
+    def test_bounds_consistent_with_params(self):
+        """
+        After _apply_bounds(), the parameter must remain in the valid scaled
+        range — not be corrupted by a space mismatch.
+        """
+        problem, _ = setup_problem(initial_value=5.0, min_val=1.0, max_val=10.0)
+        optimizer = TorchAdamOptimizer(problem)
+
+        min_bound, max_bound = problem.variables[0].bounds
+
+        # Apply bounds and verify param stays in range (with float tolerance)
+        optimizer._apply_bounds()
+        param_val = optimizer.params[0].item()
+
+        tol = 1e-6
+        assert min_bound - tol <= param_val <= max_bound + tol, (
+            f"Param {param_val} outside scaled bounds [{min_bound}, {max_bound}]"
+        )
+
+    def test_bounded_optimization_no_nan(self):
+        """
+        Regression test: optimization with bounded variables must not produce
+        NaN loss. This was the exact failure mode when raw params were clamped
+        by scaled bounds.
+        """
+        import math
+
+        problem, lens = setup_problem(
+            initial_value=5.0,
+            min_val=1.0,
+            max_val=10.0,
+            target=12.0,
+        )
+        optimizer = TorchAdamOptimizer(problem)
+        result = optimizer.optimize(n_steps=20, disp=False)
+
+        assert not math.isnan(result.fun), f"Loss should not be NaN, got {result.fun}"
+        assert result.fun >= 0.0, f"Loss should be non-negative, got {result.fun}"
+
+    def test_bounded_variable_stays_in_physical_range(self):
+        """
+        After optimization with bounds [1, 10], the actual radius on the
+        optic must be within that physical range — not corrupted to a scaled
+        value like -0.7.
+        """
+        problem, lens = setup_problem(
+            initial_value=5.0,
+            min_val=1.0,
+            max_val=10.0,
+            target=12.0,
+        )
+        optimizer = TorchAdamOptimizer(problem)
+        optimizer.optimize(n_steps=10, disp=False)
+
+        # Get the actual physical radius from the optic
+        raw_radius = problem.variables[0].variable.get_value()
+        if hasattr(raw_radius, "item"):
+            raw_radius = raw_radius.item()
+
+        # Allow small floating-point overshoot from inverse-scaling
+        tol = 1e-4
+        assert 1.0 - tol <= raw_radius <= 10.0 + tol, (
+            f"Physical radius {raw_radius} outside bounds [1.0, 10.0]. "
+            "This suggests a scaled/unscaled space mismatch."
+        )
+
+    def test_optimizer_with_real_material_no_nan(self):
+        """
+        End-to-end regression test using Material("N-BK7") with bounded
+        variables — the exact combination that triggered both the NaN bug
+        (scaled/unscaled mismatch) and the RuntimeError (stale graph in
+        cached material tensors).
+        """
+        import math
+
+        from optiland.optic import Optic
+
+        lens = Optic()
+        lens.surfaces.add(index=0, thickness=be.inf)
+        lens.surfaces.add(
+            index=1,
+            thickness=7,
+            radius=15,
+            material="N-BK7",
+            is_stop=True,
+        )
+        lens.surfaces.add(index=2, thickness=30, radius=-1000)
+        lens.surfaces.add(index=3)
+        lens.set_aperture(aperture_type="EPD", value=15)
+        lens.fields.set_type(field_type="angle")
+        lens.fields.add(y=0)
+        lens.wavelengths.add(value=0.55, is_primary=True)
+
+        problem = OptimizationProblem()
+        problem.add_operand(
+            operand_type="f2",
+            target=50,
+            weight=1,
+            input_data={"optic": lens},
+        )
+        problem.add_variable(
+            lens,
+            "radius",
+            surface_number=1,
+            min_val=10,
+            max_val=30,
+        )
+        problem.add_variable(lens, "thickness", surface_number=2)
+
+        initial_loss = problem.sum_squared().item()
+        optimizer = TorchAdamOptimizer(problem)
+        result = optimizer.optimize(n_steps=10, disp=False)
+
+        assert not math.isnan(result.fun), (
+            f"Loss should not be NaN with Material('N-BK7') and bounded "
+            f"variables, got {result.fun}"
+        )
+        assert result.fun < initial_loss, (
+            "Optimizer should reduce loss for the real-material bounded case; "
+            "otherwise gradients may be disconnected."
+        )
+
+    def test_legacy_array_behavior_breaks_gradient_flow(self, monkeypatch):
+        """Regression guard for the historical graph-break behavior.
+
+        The legacy TorchBackend.array implementation converted lists containing
+        tensors with torch.tensor(...), which detached them from autograd.
+        This test monkeypatches that legacy behavior and verifies gradients on
+        optimizer parameters become None, proving learning was broken.
+        """
+        import numpy as np
+        import torch
+
+        from optiland.backend.torch_backend import TorchBackend
+        from optiland.optic import Optic
+
+        def _legacy_array(self, x):
+            if isinstance(x, torch.Tensor):
+                return x
+            if (
+                isinstance(x, (list, tuple))
+                and len(x) > 0
+                and isinstance(x[0], np.ndarray)
+            ):
+                x = np.array(x)
+            return torch.tensor(
+                x,
+                device=self._device(),
+                dtype=self._dtype(),
+                requires_grad=self._grad(),
+            )
+
+        monkeypatch.setattr(TorchBackend, "array", _legacy_array)
+
+        lens = Optic()
+        lens.add_surface(index=0, thickness=be.inf)
+        lens.add_surface(
+            index=1,
+            thickness=7,
+            radius=15,
+            material="N-BK7",
+            is_stop=True,
+        )
+        lens.add_surface(index=2, thickness=30, radius=-1000)
+        lens.add_surface(index=3)
+        lens.set_aperture(aperture_type="EPD", value=15)
+        lens.set_field_type(field_type="angle")
+        lens.add_field(y=0)
+        lens.add_wavelength(value=0.55, is_primary=True)
+
+        problem = OptimizationProblem()
+        problem.add_operand(
+            operand_type="f2",
+            target=50,
+            weight=1,
+            input_data={"optic": lens},
+        )
+        problem.add_variable(
+            lens,
+            "radius",
+            surface_number=1,
+            min_val=10,
+            max_val=30,
+        )
+        problem.add_variable(lens, "thickness", surface_number=2)
+
+        optimizer = TorchAdamOptimizer(problem)
+        torch_opt, _ = optimizer._create_optimizer_and_scheduler(lr=1e-2, gamma=0.99)
+
+        torch_opt.zero_grad()
+        for k, param in enumerate(optimizer.params):
+            problem.variables[k].update(param)
+        problem.update_optics()
+        loss = problem.sum_squared()
+        loss.backward()
+
+        assert all(param.grad is None for param in optimizer.params), (
+            "Legacy array behavior should detach tensors and break gradients; "
+            "expected all parameter grads to be None."
+        )

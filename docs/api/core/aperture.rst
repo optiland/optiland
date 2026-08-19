@@ -4,9 +4,9 @@
 .. automodule:: aperture
 
    
-   .. rubric:: Classes
+   .. rubric:: Functions
 
    .. autosummary::
    
-      Aperture
+      make_system_aperture
    

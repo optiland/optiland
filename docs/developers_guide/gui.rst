@@ -28,9 +28,8 @@ Key Components
 Main Window (`main_window.py`)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The `MainWindow` class is the entry point and central hub of the GUI. Its responsibilities include:
+The `MainWindow` class is the entry point and central hub of the GUI. It uses an `ActionManager` to create and manage `QAction` instances, and a `PanelManager` to handle the creation and layout of all dockable panels. Its responsibilities include:
 
-*   **Dock Management**: Manages the layout and visibility of various dockable widgets (panels). It allows users to rearrange, float, and tabify panels.
 *   **Menu Bar and Toolbars**: Provides standard application menus (File, Edit, View, Help) and quick-action toolbars.
 *   **Theme Handling**: Supports light and dark themes, loading stylesheets (`.qss` files) and propagating theme changes to child widgets and plots.
 *   **Window Control**: Implements a custom title bar for a modern look and feel, handling minimize, maximize, and close operations.
@@ -45,7 +44,7 @@ The `OptilandConnector` is a vital QObject that acts as a bridge between the GUI
 *   **`Optic` Object Management**: It holds and manages the instance of the `Optic` class, which represents the current optical system.
 *   **Signal Emission**: Emits Qt signals when the optical system is loaded (`opticLoaded`), modified (`opticChanged`), or when specific parts like surface data or count change. GUI panels connect to these signals to refresh their views.
 *   **Data Access and Modification**: Provides methods for GUI components to safely access data from the `Optic` object (e.g., `get_surface_data`, `get_column_headers`) and to modify it (e.g., `set_surface_data`, `add_surface`).
-*   **Undo/Redo**: Manages an `UndoRedoManager` to capture states of the `Optic` object and allow undo/redo operations.
+*   **Undo/Redo**: Delegates undo and redo operations to an `UndoRedoManager` instance.
 *   **File Operations**: Handles loading and saving of optical systems in Optiland's JSON format.
 
 Core Panels
@@ -79,8 +78,11 @@ These are the primary QDockWidget or QWidget instances that provide specific fun
 
 *   **Optimization Panel (`optimization_panel.py`)**:
 
-    *   Currently a placeholder for future optimization functionalities.
-    *   Intended to allow users to define optimization variables, objectives (merit functions), and run optimization routines from the Optiland backend.
+    *   Provides Variables, Operands, and Optimizer tabs for building an `OptimizationProblem`
+        against the current `Optic` instance.
+    *   Lets users add/edit variables and operands (with dialogs for adding and auto-generating
+        operands), choose an optimizer and its settings, and run/stop the optimization with a
+        persistent live-updating merit-function view.
 
 *   **System Properties Panel (`system_properties_panel.py`)**:
 
@@ -105,6 +107,12 @@ Key Widgets
     *   An embedded IPython terminal.
     *   Provides direct access to the `OptilandConnector` instance (via the `connector` variable), allowing advanced users to interact with the optical system programmatically.
     *   Commands executed in the terminal can trigger GUI updates if they modify the `Optic` object.
+
+*   **Command Palette (`widgets/command_palette.py`)**:
+
+    *   A floating panel that allows users to quickly search for and execute GUI commands.
+    *   Similar to the command palette found in VS Code, it provides a centralized interface for discovering and running various tools, analyses, and layout operations.
+    *   Triggered from the `MainWindow` via the `Ctrl+K` shortcut.
 
 Styling and Resources
 ~~~~~~~~~~~~~~~~~~~~~~~~

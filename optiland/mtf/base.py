@@ -10,11 +10,16 @@ Kramer Harrison, 2025
 from __future__ import annotations
 
 import abc
+from typing import TYPE_CHECKING
 
 import matplotlib.pyplot as plt
 
 import optiland.backend as be
 from optiland.utils import get_working_FNO, resolve_fields, resolve_wavelength
+
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
 
 
 class BaseMTF(abc.ABC):
@@ -60,7 +65,9 @@ class BaseMTF(abc.ABC):
         self.remove_tilt = remove_tilt
         self.strategy_kwargs = kwargs
 
-        self.resolved_fields = resolve_fields(optic, fields)
+        resolved = resolve_fields(optic, fields)
+        # extract plain (x, y) coords; BaseMTF uses single wavelength (no weighting)
+        self.resolved_fields = [fp.coord for fp in resolved]
         self.resolved_wavelength = resolve_wavelength(optic, wavelength)
 
         self._calculate_psf()
@@ -91,10 +98,10 @@ class BaseMTF(abc.ABC):
 
     def view(
         self,
-        fig_to_plot_on: plt.Figure = None,
+        fig_to_plot_on: Figure | None = None,
         figsize: tuple[float, float] = (12, 4),
         add_reference: bool = False,
-    ) -> tuple[plt.Figure, plt.Axes]:
+    ) -> tuple[Figure, Axes]:
         """Visualizes the Modulation Transfer Function (MTF).
 
         This method sets up the plot and iterates through field data,
@@ -109,8 +116,10 @@ class BaseMTF(abc.ABC):
                 If None, a new figure will be created. Defaults to None.
             figsize (tuple, optional): The size of the figure.
                 Defaults to (12, 4).
-            add_reference (bool, optional): Whether to add the diffraction
-                limit reference line. Defaults to False.
+            add_reference (bool, optional): Whether to overlay the theoretical
+                diffraction-limited MTF curve for a clear circular aperture.
+                The reference is computed using the *on-axis* working F/# and
+                the resolved wavelength. Defaults to False.
         Returns:
             tuple: A tuple containing the figure and axes objects.
         """
@@ -127,15 +136,28 @@ class BaseMTF(abc.ABC):
             self._plot_field_mtf(ax, k, field_mtf_item, color=f"C{k}")
 
         if add_reference:
-            ratio = be.clip(self.freq / self.max_freq, 0.0, 1.0)
+            # The reference curve shows the theoretical diffraction-limited OTF for
+            # a clear circular aperture evaluated at the *on-axis* working F/# and
+            # the resolved wavelength. For off-axis fields the working F/# may
+            # differ; the on-axis reference provides a consistent, field-independent
+            # benchmark.
+            #
+            # Formula (incoherent OTF for a circular aperture):
+            #   MTF(u) = (2/π)(arccos(u) − u √(1 − u²))  for u ∈ [0, 1]
+            # where u = f / f_c  and  f_c = 1 / (λ · F/#_on-axis).
+            on_axis_fno = self._get_fno()
+            cutoff_freq = 1 / (self.resolved_wavelength * 1e-3 * on_axis_fno)
+            ref_freq = be.linspace(0, cutoff_freq, 256)
+
+            ratio = be.clip(ref_freq / cutoff_freq, 0.0, 1.0)
             phi = be.arccos(ratio)
             diff_limited_mtf = (2 / be.pi) * (phi - be.cos(phi) * be.sin(phi))
 
             ax.plot(
-                be.to_numpy(self.freq),
+                be.to_numpy(ref_freq),
                 be.to_numpy(diff_limited_mtf),
                 "k--",
-                label="Diffraction Limit",
+                label="Diffraction Limit (on-axis)",
             )
 
         ax.legend(bbox_to_anchor=(1.05, 0.5), loc="center left")

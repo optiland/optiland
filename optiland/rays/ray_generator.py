@@ -8,11 +8,15 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import optiland.backend as be
 from optiland.rays.polarized_rays import PolarizedRays
+from optiland.rays.ray_aiming.registry import create_ray_aimer
 from optiland.rays.real_rays import RealRays
 
-from ..fields.field_types import AngleField
+if TYPE_CHECKING:
+    from optiland._types import ScalarOrArray
 
 
 class RayGenerator:
@@ -20,59 +24,59 @@ class RayGenerator:
 
     def __init__(self, optic):
         self.optic = optic
+        self.aimer = create_ray_aimer("paraxial", optic)
 
-    def generate_rays(self, Hx, Hy, Px, Py, wavelength):
+    def set_ray_aiming(
+        self, mode: str, max_iter: int = 10, tol: float = 1e-6, **kwargs
+    ):
+        """Set the ray aiming strategy.
+
+        Args:
+            mode (str): The name of the ray aiming strategy. Options include
+                "paraxial", "iterative", and "robust".
+            max_iter (int, optional): Maximum iterations for iterative/robust
+                methods. Defaults to 10.
+            tol (float, optional): Convergence tolerance for iterative/robust
+                methods. Defaults to 1e-6.
+            **kwargs: Additional parameters passed to the aimer constructor.
+        """
+        self.aimer = create_ray_aimer(
+            mode, self.optic, max_iter=max_iter, tol=tol, **kwargs
+        )
+
+    def generate_rays(
+        self,
+        Hx: float,
+        Hy: float,
+        Px: ScalarOrArray,
+        Py: ScalarOrArray,
+        wavelength: ScalarOrArray,
+    ) -> RealRays:
         """Generates rays for tracing based on the given parameters.
 
         Args:
-            Hx (float): Normalized x field coordinate.
-            Hy (float): Normalized y field coordinate.
-            Px (float or be.ndarray): x-coordinate of the pupil point.
-            Py (float or be.ndarray): y-coordinate of the pupil point.
-            wavelength (float): Wavelength of the rays.
+            Hx: Normalized x field coordinate.
+            Hy: Normalized y field coordinate.
+            Px: x-coordinate of the pupil point.
+            Py: y-coordinate of the pupil point.
+            wavelength: Wavelength of the rays.
 
         Returns:
-            RealRays: RealRays object containing the generated rays.
+            RealRays object containing the generated rays.
 
         """
-        vxf, vyf = self.optic.fields.get_vig_factor(Hx, Hy)
-        vx = 1 - be.array(vxf)
-        vy = 1 - be.array(vyf)
-        x0, y0, z0 = self.optic.field_definition.get_ray_origins(
-            self.optic, Hx, Hy, Px, Py, vx, vy
+        if hasattr(self.optic.ray_tracer, "ray_aiming_config"):
+            config = self.optic.ray_tracer.ray_aiming_config
+            if not hasattr(self, "_current_config") or self._current_config != config:
+                self.set_ray_aiming(**config)
+                self._current_config = config.copy()
+
+        # Aim rays using the configured strategy
+        x0, y0, z0, L, M, N = self.aimer.aim_rays(
+            (Hx, Hy),
+            wavelength,
+            (Px, Py),
         )
-
-        if self.optic.obj_space_telecentric:
-            if isinstance(self.optic.field_definition, AngleField):
-                raise ValueError(
-                    'Field type cannot be "angle" for telecentric object space.',
-                )
-            if self.optic.aperture.ap_type == "EPD":
-                raise ValueError(
-                    'Aperture type cannot be "EPD" for telecentric object space.',
-                )
-            if self.optic.aperture.ap_type == "imageFNO":
-                raise ValueError(
-                    'Aperture type cannot be "imageFNO" for telecentric object space.',
-                )
-
-            sin = self.optic.aperture.value
-            z = be.sqrt(1 - sin**2) / sin + z0
-            z1 = be.full_like(Px, z)
-            x1 = Px * vx + x0
-            y1 = Py * vy + y0
-        else:
-            EPL = self.optic.paraxial.EPL()
-            EPD = self.optic.paraxial.EPD()
-
-            x1 = Px * EPD * vx / 2
-            y1 = Py * EPD * vy / 2
-            z1 = be.full_like(Px, EPL)
-
-        mag = be.sqrt((x1 - x0) ** 2 + (y1 - y0) ** 2 + (z1 - z0) ** 2)
-        L = (x1 - x0) / mag
-        M = (y1 - y0) / mag
-        N = (z1 - z0) / mag
 
         apodization = self.optic.apodization
         if apodization:
@@ -80,13 +84,16 @@ class RayGenerator:
         else:
             intensity = be.ones_like(Px)
 
-        wavelength = be.ones_like(x1) * wavelength
+        wavelength = be.ones_like(x0) * wavelength
 
         if self.optic.polarization == "ignore":
-            if self.optic.surface_group.uses_polarization:
+            if self.optic.surfaces.uses_polarization:
                 raise ValueError(
                     "Polarization must be set when surfaces have "
                     "polarization-dependent coatings.",
                 )
-            return RealRays(x0, y0, z0, L, M, N, intensity, wavelength)
+            rays = RealRays(
+                x0, y0, z0, L, M, N, intensity=intensity, wavelength=wavelength
+            )
+            return rays
         return PolarizedRays(x0, y0, z0, L, M, N, intensity, wavelength)

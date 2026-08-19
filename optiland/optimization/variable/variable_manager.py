@@ -1,3 +1,5 @@
+"""Manages the collection of variables used during optimization."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -39,6 +41,20 @@ class VariableManager:
 
         """
         self.variables.append(Variable(optic, variable_type, scaler=scaler, **kwargs))
+
+        # Check for and remove any pickups that control this variable
+        surface_number = kwargs.get("surface_number")
+        if surface_number is not None:
+            pickups_to_remove = []
+            for pickup in optic.pickups.pickups:
+                if (
+                    pickup.target_surface_idx == surface_number
+                    and pickup.attr_type == variable_type
+                ):
+                    pickups_to_remove.append(pickup)
+
+            for pickup in pickups_to_remove:
+                optic.pickups.pickups.remove(pickup)
 
     def clear(self):
         """Clear all variables from the merit function"""

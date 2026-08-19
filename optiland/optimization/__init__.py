@@ -21,15 +21,22 @@ from .optimizer.scipy import (
     SHGO,
     BasinHopping,
     GlassExpert,
+    OrthogonalDescent,
 )
 
 try:
     from .optimizer.torch.adam import TorchAdamOptimizer
     from .optimizer.torch.sgd import TorchSGDOptimizer
-except (ImportError, ModuleNotFoundError):
+except (ImportError, ModuleNotFoundError, OSError):
     pass
 
 from .optimizer.scipy import glass_expert
+
+from .optimizer.custom import (
+    CMAES,
+    ParticleSwarm,
+)
+
 import sys
 
 optimization = sys.modules[__name__]

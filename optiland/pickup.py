@@ -5,10 +5,15 @@ operations on an optic surface. A pickup operation involves copying an
 attribute value from one surface to another surface, optionally scaling and
 offsetting the value.
 
+It also supports generic pickups between arbitrary attributes of any
+Optic instance.
+
 Kramer Harrison, 2024
 """
 
 from __future__ import annotations
+
+from optiland.utils import get_attr_by_path, set_attr_by_path
 
 
 class PickupManager:
@@ -36,20 +41,32 @@ class PickupManager:
     def __len__(self):
         return len(self.pickups)
 
-    def add(self, source_surface_idx, attr_type, target_surface_idx, scale=1, offset=0):
+    def add(
+        self,
+        source_surface_idx,
+        attr_type,
+        target_surface_idx,
+        scale=1,
+        offset=0,
+        source_optic=None,
+    ):
         """Adds a new pickup operation to the manager.
 
         Args:
             source_surface_idx (int): The index of the source surface in the
                 optic's surface group.
             attr_type (str): The type of attribute to be picked up ('radius',
-                'conic', or 'thickness').
+                'conic', or 'thickness'). Can also be a generic path, where `[i]`
+                should be used to indicate the surface index (e.g.
+                `surfaces.surfaces[i].geometry.coefficients`).
             target_surface_idx (int): The index of the target surface in the
                 optic's surface group.
             scale (float, optional): The scaling factor applied to the picked
                 up value. Defaults to 1.
             offset (float, optional): The offset added to the picked up value.
                 Defaults to 0.
+            source_optic (Optic, optional): The generic source optic. Defaults
+                to None (same optic).
 
         """
         pickup = Pickup(
@@ -59,6 +76,7 @@ class PickupManager:
             target_surface_idx,
             scale,
             offset,
+            source_optic,
         )
         pickup.apply()
         self.pickups.append(pickup)
@@ -121,13 +139,17 @@ class Pickup:
         source_surface_idx (int): The index of the source surface in the
             optic's surface group.
         attr_type (str): The type of attribute to be picked up ('radius',
-            'conic', or 'thickness').
+            'conic', or 'thickness'). Can also be a generic path, where `[i]`
+            should be used to indicate the surface index (e.g.
+            `surfaces.surfaces[i].geometry.coefficients`).
         target_surface_idx (int): The index of the target surface in the
             optic's surface group.
         scale (float, optional): The scaling factor applied to the picked up
             value. Defaults to 1.
         offset (float, optional): The offset added to the picked up value.
             Defaults to 0.
+        source_optic (Optic, optional): The source optic to pick up from.
+            Defaults to None (uses self.optic).
 
     Methods:
         apply(): Applies the pickup operation by scaling and offsetting the
@@ -146,6 +168,7 @@ class Pickup:
         target_surface_idx,
         scale=1,
         offset=0,
+        source_optic=None,
     ):
         self.optic = optic
         self.source_surface_idx = source_surface_idx
@@ -153,6 +176,7 @@ class Pickup:
         self.target_surface_idx = target_surface_idx
         self.scale = scale
         self.offset = offset
+        self.source_optic = source_optic if source_optic else optic
 
     def apply(self):
         """Updates the target surface based on the source surface attribute.
@@ -162,6 +186,13 @@ class Pickup:
         on the target surface.
         """
         old_value = self._get_value()
+
+        # Optimization: if scale is 1 and offset is 0, just copy the value.
+        # This allows pickups to work with non-numeric types (e.g., strings).
+        if self.scale == 1 and self.offset == 0:
+            self._set_value(old_value)
+            return
+
         new_value = self.scale * old_value + self.offset
         self._set_value(new_value)
 
@@ -171,18 +202,23 @@ class Pickup:
         Returns:
             The value of the attribute.
 
-        Raises:
-            ValueError: If the source attribute is invalid.
-
         """
-        surface = self.optic.surface_group.surfaces[self.source_surface_idx]
+        # Legacy support
+        surface = self.source_optic.surfaces[self.source_surface_idx]
         if self.attr_type == "radius":
             return surface.geometry.radius
         if self.attr_type == "conic":
             return surface.geometry.k
         if self.attr_type == "thickness":
-            return self.optic.surface_group.get_thickness(self.source_surface_idx)
-        raise ValueError("Invalid source attribute")
+            return self.source_optic.surfaces.get_thickness(self.source_surface_idx)
+
+        # Generic path support
+        try:
+            path = self.attr_type.replace("[i]", f"[{self.source_surface_idx}]")
+            val = get_attr_by_path(self.source_optic, path)
+            return val
+        except AttributeError:
+            raise ValueError("Invalid source attribute") from None
 
     def _set_value(self, value):
         """Sets the value of the target surface attribute.
@@ -190,18 +226,26 @@ class Pickup:
         Args:
             value (float): The value to set for the attribute.
 
-        Raises:
-            ValueError: If the source attribute is invalid.
-
         """
+        # Legacy support
         if self.attr_type == "radius":
-            self.optic.set_radius(value, self.target_surface_idx)
+            self.optic.updater.set_radius(value, self.target_surface_idx)
+            return
         elif self.attr_type == "conic":
-            self.optic.set_conic(value, self.target_surface_idx)
+            self.optic.updater.set_conic(value, self.target_surface_idx)
+            return
         elif self.attr_type == "thickness":
-            self.optic.set_thickness(value, self.target_surface_idx)
-        else:
-            raise ValueError("Invalid source attribute")
+            self.optic.updater.set_thickness(value, self.target_surface_idx)
+            return
+
+        # Generic path support
+        try:
+            path = self.attr_type.replace("[i]", f"[{self.target_surface_idx}]")
+            # Check existence first to ensure no arbitrary attribute creation
+            get_attr_by_path(self.optic, path)
+            set_attr_by_path(self.optic, path, value)
+        except Exception:
+            raise ValueError("Invalid target attribute") from None
 
     def to_dict(self):
         """Returns a dictionary representation of the pickup operation.
@@ -233,9 +277,9 @@ class Pickup:
         """
         return cls(
             optic,
-            data["source_surface_idx"],
-            data["attr_type"],
-            data["target_surface_idx"],
-            data["scale"],
-            data["offset"],
+            data.get("source_surface_idx"),
+            data.get("attr_type"),
+            data.get("target_surface_idx"),
+            data.get("scale", 1),
+            data.get("offset", 0),
         )

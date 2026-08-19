@@ -1,3 +1,4 @@
+# ruff: noqa: B027
 """Base Geometry
 
 The base geometry class for all geometries.
@@ -63,6 +64,15 @@ class BaseGeometry(ABC):
         # pragma: no cover
 
     @abstractmethod
+    def scale(self, scale_factor: float):
+        """Scale the geometry parameters.
+
+        Args:
+            scale_factor (float): The factor by which to scale the geometry.
+        """
+        # pragma: no cover
+
+    @abstractmethod
     def surface_normal(self, rays):
         """Find the surface normal of the geometry at the given ray positions.
 
@@ -86,6 +96,29 @@ class BaseGeometry(ABC):
         curvature is inverted. For example, the radius of curvature should
         change sign. Conic constants and polynomial coefficients should not
         change. The coordinate system of the geometry should not be modified.
+        """
+        pass  # pragma: no cover
+
+    def set_radius(self, value: float) -> None:
+        """Set the radius of curvature.
+
+        Args:
+            value (float): The new radius of curvature.
+
+        Raises:
+            AttributeError: If the geometry type does not support setting a radius.
+        """
+        raise AttributeError(
+            f"Geometry type '{self.__class__.__name__}' does not support set_radius()."
+        )
+
+    def update_normalization(self, semi_aperture: float) -> None:
+        """Update the normalization attributes of the geometry based on
+        its defined normalization_mode ('auto' or 'manual').
+        Base geometry generally does not maintain a normalization radius.
+
+        Args:
+            semi_aperture (float): The current semi-aperture of the surface.
         """
         pass  # pragma: no cover
 

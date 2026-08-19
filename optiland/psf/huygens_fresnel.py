@@ -7,21 +7,29 @@ Visualization and Strehl ratio calculation are primarily handled by the base
 class. The PSF is normalized against the peak of an ideal diffraction-limited
 system calculated using the same Huygens-Fresnel principle.
 
+The module exposes:
+- ``ScalarHuygensPSF``: scalar (intensity-only) Huygens PSF.
+- ``HuygensPSF``: factory that automatically dispatches to
+  ``VectorialHuygensPSF`` when a polarization state is set on the optic,
+  and to ``ScalarHuygensPSF`` otherwise.
+
 Kramer Harrison, 2025
 """
 
 from __future__ import annotations
 
-from numba import njit, prange
-
 import optiland.backend as be
 from optiland.psf.base import BasePSF
+from optiland.psf.huygens_fresnel_strategies import (
+    NumbaSummation,
+    TorchSummation,
+)
 from optiland.visualization.system.utils import transform
 from optiland.wavefront import Wavefront
 
 
-class HuygensPSF(BasePSF):
-    """Huygens PSF class using Huygens-Fresnel principle.
+class ScalarHuygensPSF(BasePSF):
+    """Huygens PSF class using Huygens-Fresnel principle (scalar formulation).
 
     Computes PSF by integrating contributions from point sources across the
     exit pupil. The PSF is normalized such that the peak intensity of an
@@ -69,11 +77,9 @@ class HuygensPSF(BasePSF):
         remove_tilt=False,
         oversample: float = None,
         pixel_pitch: float = None,
+        normalization: float = None,
         **kwargs,
     ):
-        if be.get_backend() != "numpy":
-            raise ValueError("HuygensPSF only supports numpy backend.")
-
         super().__init__(
             optic=optic,
             field=field,
@@ -90,15 +96,33 @@ class HuygensPSF(BasePSF):
 
         self.image_size = image_size
         self.oversample = oversample
+        self.normalization = normalization
+
+        self._summation_strategy = self._create_summation_strategy()
         self.psf = self._compute_psf()
+
+    def _create_summation_strategy(self):
+        """Factory method to create the appropriate summation strategy."""
+        backend = be.get_backend()
+        if backend == "numpy":
+            return NumbaSummation()
+        elif backend == "torch":
+            try:
+                return TorchSummation()
+            except ImportError as e:
+                raise ImportError(
+                    "Torch backend selected, but PyTorch is not installed."
+                ) from e
+        else:
+            raise ValueError(f"Unsupported backend for HuygensPSF: {backend}")
 
     def _determine_image_center(self):
         """Determine center of image via raytrace across field"""
-        Hx, Hy = self.fields[0]
+        Hx, Hy = self.fields[0].coord
         rays = self.optic.trace(
             Hx=Hx,
             Hy=Hy,
-            wavelength=self.wavelengths[0],
+            wavelength=self.wavelengths[0].value,
             distribution="hexapolar",
             num_rays=6,
         )
@@ -161,7 +185,7 @@ class HuygensPSF(BasePSF):
         The oversampling factor scales the cutoff to achieve finer-than-Nyquist
         sampling, ensuring that the PSF is adequately resolved on the image grid.
         """
-        f_cutoff = 1.0 / (self._get_working_FNO() * self.wavelengths[0] * 1e-3)
+        f_cutoff = 1.0 / (self._get_working_FNO() * self.wavelengths[0].value * 1e-3)
         f_nyquist = self.oversample * f_cutoff
         self.pixel_pitch = 1.0 / (2 * f_nyquist)
         return 0.5 * self.image_size * self.pixel_pitch
@@ -181,7 +205,7 @@ class HuygensPSF(BasePSF):
             num_Airy_disks
             * self._get_working_FNO()  # effective F-number
             * 1.22
-            * (self.wavelengths[0] * 1e-3)  # um --> mm
+            * (self.wavelengths[0].value * 1e-3)  # um --> mm
         )
         return max(extent_geometric, extent_ideal)
 
@@ -212,84 +236,6 @@ class HuygensPSF(BasePSF):
 
         return image_x, image_y, image_z
 
-    @staticmethod
-    @njit(parallel=True, fastmath=True)
-    def _huygens_fresnel_summation(
-        image_x,
-        image_y,
-        image_z,
-        pupil_x,
-        pupil_y,
-        pupil_z,
-        pupil_amp,
-        pupil_opd,
-        wavelength,
-        Rp,
-    ):
-        """
-        Compute the point spread function using the Huygens–Fresnel diffraction integral
-
-        Args:
-            image_x, image_y, image_z (np.ndarray): 2D arrays of image surface coords.
-            pupil_x, pupil_y, pupil_z (np.ndarray): 1D arrays of pupil plane coords.
-            pupil_amp (np.ndarray): 1D array of pupil plane amplitudes.
-            pupil_opd (np.ndarray): 1D array of optical path difference in mm.
-            wavelength (float): Wavelength of the light in mm.
-            Rp (float): Radius of the exit pupil reference sphere in mm.
-
-        Returns:
-            np.ndarray: 2D array of the point spread function.
-        """
-        k = 2.0 * be.pi / wavelength  # wavenumber
-        Nx, Ny = image_x.shape
-        field = be.zeros((Nx, Ny), dtype=be.complex128)
-
-        # Loop over all image points
-        for ix in prange(Nx):
-            for iy in range(Ny):
-                x = image_x[ix, iy]
-                y = image_y[ix, iy]
-                z = image_z[ix, iy]
-                sum_val = 0.0 + 0.0j  # initialize field sum for image point (x, y)
-
-                # Loop over all pupil points
-                for j in range(pupil_x.shape[0]):
-                    u = pupil_x[j]
-                    v = pupil_y[j]
-                    w = pupil_z[j]
-
-                    # Compute distance R from the pupil point to the image point
-                    dx = x - u
-                    dy = y - v
-                    dz = z - w
-                    R = be.sqrt(dx * dx + dy * dy + dz * dz)
-
-                    # Spherical propagation kernel
-                    wave = be.exp(1j * k * R) / R
-
-                    # Compute the unit normal at the pupil point
-                    nux = u / Rp
-                    nuy = v / Rp
-                    nuz = w / Rp
-
-                    # Compute the cosine of the angle between (P - Q) and pupil normal.
-                    # P is the image point, Q is the pupil point
-                    dot = dx * nux + dy * nuy + dz * nuz
-                    cos_theta = dot / R
-                    Q_obliq = 0.5 * (1.0 + cos_theta)  # obliquity factor
-
-                    # Pupil function
-                    pupil_phase = be.exp(-1j * k * pupil_opd[j])
-
-                    # Add contribution to the field sum
-                    sum_val += pupil_amp[j] * pupil_phase * wave * Q_obliq
-
-                field[ix, iy] = sum_val
-
-        # Compute psf as the squared magnitude of the field
-        psf = be.abs(field) ** 2
-        return psf
-
     def _get_normalization(self):
         """Calculates the normalization factor for the PSF.
 
@@ -306,34 +252,34 @@ class HuygensPSF(BasePSF):
         Returns:
             float: The normalization factor.
         """
-        if self.fields[0] == (0, 0):
-            data = self.get_data((0, 0), self.wavelengths[0])
+        if self.fields[0].coord == (0, 0):
+            data = self.get_data((0, 0), self.wavelengths[0].value)
         else:
             wf = Wavefront(
                 self.optic,
                 distribution="uniform",
                 num_rays=self.num_rays,
                 fields=[(0, 0)],
-                wavelengths=[self.wavelengths[0]],
+                wavelengths=[self.wavelengths[0].value],
             )
-            data = wf.get_data((0, 0), self.wavelengths[0])
+            data = wf.get_data((0, 0), self.wavelengths[0].value)
 
         pupil_opd_ideal = be.zeros_like(data.opd)  # ideal case has no OPD
         image_x = be.zeros((1, 1))  # single point for normalization
         image_y = be.zeros((1, 1))
-        ideal_z = self.optic.surface_group.positions[-1]  # image plane position
+        ideal_z = self.optic.surfaces.positions[-1]  # image plane position
         image_z = be.full((1, 1), ideal_z)
 
-        psf_max = self._huygens_fresnel_summation(
+        psf_max = self._summation_strategy.compute(
             image_x,
             image_y,
             image_z,
             data.pupil_x,
             data.pupil_y,
             data.pupil_z,
-            data.intensity,
+            be.ones_like(data.intensity),
             pupil_opd_ideal,
-            self.wavelengths[0] * 1e-3,
+            self.wavelengths[0].value * 1e-3,
             data.radius,
         )
 
@@ -342,14 +288,14 @@ class HuygensPSF(BasePSF):
     def _compute_psf(self):
         """Compute the PSF using the Huygens-Fresnel principle."""
         # Retrieve pupil data from Wavefront instance
-        Hx, Hy = self.fields[0]
-        wavelength_um = self.wavelengths[0]
+        Hx, Hy = self.fields[0].coord
+        wavelength_um = self.wavelengths[0].value
         wavelength_mm = wavelength_um * 1e-3
         data = self.get_data((Hx, Hy), wavelength_um)
 
         # Extract pupil data
         pupil_x, pupil_y, pupil_z = data.pupil_x, data.pupil_y, data.pupil_z
-        pupil_amp = data.intensity
+        pupil_amp = be.sqrt(data.intensity)
         pupil_opd = data.opd * wavelength_mm  # waves to mm
         Rp = data.radius  # Radius of curvature of exit pupil
 
@@ -357,7 +303,7 @@ class HuygensPSF(BasePSF):
         image_x, image_y, image_z = self._get_image_coordinates()
 
         # Compute the PSF using Huygens-Fresnel summation
-        psf = self._huygens_fresnel_summation(
+        psf = self._summation_strategy.compute(
             image_x,
             image_y,
             image_z,
@@ -371,8 +317,9 @@ class HuygensPSF(BasePSF):
         )
 
         # Normalize the PSF
-        normalization = self._get_normalization()
-        psf = psf / normalization * 100.0
+        if self.normalization is None:
+            self.normalization = self._get_normalization()
+        psf = psf / self.normalization * 100.0
 
         return psf
 
@@ -399,3 +346,72 @@ class HuygensPSF(BasePSF):
         x = be.to_numpy(num_x * dx) * 1e3  # mm --> um
         y = be.to_numpy(num_y * dx) * 1e3  # mm --> um
         return x, y
+
+
+class HuygensPSF:
+    """Factory class for generating either a Vectorial or Scalar Huygens PSF.
+
+    This class inspects the optical system's polarization state to determine
+    which Huygens PSF implementation to instantiate. If polarization is enabled,
+    it returns a ``VectorialHuygensPSF``. Otherwise, it returns a
+    ``ScalarHuygensPSF``.
+
+    Args:
+        optic (Optic): The optical system object.
+        field (tuple): The field point.
+        wavelength (str | float): The wavelength of light in micrometers.
+        num_rays (int, optional): The number of rays to trace. Defaults to 128.
+        image_size (int, optional): The size of the image grid. Defaults to 128.
+        strategy (str): The wavefront calculation strategy. Defaults to
+            "chief_ray".
+        remove_tilt (bool): If True, removes tilt from OPD. Defaults to False.
+        oversample (float, optional): Oversampling ratio for MTF use.
+            Defaults to None.
+        pixel_pitch (float, optional): Pixel pitch in mm. Defaults to None.
+        **kwargs: Additional keyword arguments.
+    """
+
+    def __new__(
+        cls,
+        optic,
+        field,
+        wavelength: str | float,
+        num_rays=128,
+        image_size=128,
+        strategy="chief_ray",
+        remove_tilt=False,
+        oversample: float = None,
+        pixel_pitch: float = None,
+        normalization: float = None,
+        **kwargs,
+    ):
+        if optic.polarization_state is not None:
+            from optiland.psf.vectorial_huygens import VectorialHuygensPSF
+
+            return VectorialHuygensPSF(
+                optic=optic,
+                field=field,
+                wavelength=wavelength,
+                num_rays=num_rays,
+                image_size=image_size,
+                strategy=strategy,
+                remove_tilt=remove_tilt,
+                oversample=oversample,
+                pixel_pitch=pixel_pitch,
+                normalization=normalization,
+                **kwargs,
+            )
+        else:
+            return ScalarHuygensPSF(
+                optic=optic,
+                field=field,
+                wavelength=wavelength,
+                num_rays=num_rays,
+                image_size=image_size,
+                strategy=strategy,
+                remove_tilt=remove_tilt,
+                oversample=oversample,
+                pixel_pitch=pixel_pitch,
+                normalization=normalization,
+                **kwargs,
+            )

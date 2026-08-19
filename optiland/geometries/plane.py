@@ -40,6 +40,17 @@ class Plane(BaseGeometry):
         """
         pass
 
+    def scale(self, scale_factor: float):
+        """Scale the geometry parameters.
+
+        For a plane, this operation does nothing as its geometry is unchanged
+        by scaling (radius remains infinite).
+
+        Args:
+            scale_factor (float): The factor by which to scale the geometry.
+        """
+        pass
+
     def sag(self, x=0, y=0):
         """Calculate the surface sag of the plane geometry.
 

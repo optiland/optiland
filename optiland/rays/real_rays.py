@@ -14,102 +14,144 @@ import optiland.backend as be
 from optiland.rays.base import BaseRays
 
 if TYPE_CHECKING:
-    from optiland.materials import BaseMaterial
+    from numpy.typing import ArrayLike
+
+    from optiland._types import BEArray, ScalarOrArray
+    from optiland.surfaces.standard_surface import Surface
 
 
 class RealRays(BaseRays):
     """Represents a collection of real rays in 3D space.
 
+    This class stores ray positions, directions, and properties as arrays,
+    supporting both NumPy and PyTorch backends for efficient computation.
+
     Attributes:
-        x (ndarray): The x-coordinates of the rays.
-        y (ndarray): The y-coordinates of the rays.
-        z (ndarray): The z-coordinates of the rays.
-        L (ndarray): The x-components of the direction vectors of the rays.
-        M (ndarray): The y-components of the direction vectors of the rays.
-        N (ndarray): The z-components of the direction vectors of the rays.
-        i (ndarray): The intensity of the rays.
-        w (ndarray): The wavelength of the rays.
-        opd (ndarray): The optical path length of the rays.
+        x: x-coordinates of ray positions.
+        y: y-coordinates of ray positions.
+        z: z-coordinates of ray positions.
+        L: x-components of ray direction cosines.
+        M: y-components of ray direction cosines.
+        N: z-components of ray direction cosines.
+        i: Intensity values of the rays.
+        w: Wavelength values of the rays.
+        opd: Optical path difference values.
+        L0: Pre-surface x-direction cosines (None until surface interaction).
+        M0: Pre-surface y-direction cosines (None until surface interaction).
+        N0: Pre-surface z-direction cosines (None until surface interaction).
 
-    Methods:
-        rotate_x(rx: float): Rotate the rays about the x-axis.
-        rotate_y(ry: float): Rotate the rays about the y-axis.
-        rotate_z(rz: float): Rotate the rays about the z-axis.
-        propagate(t: float): Propagate the rays a distance t.
-        clip(condition): Clip the rays based on a condition.
-
+    Note:
+        Direction cosines should be normalized: L² + M² + N² = 1.
     """
 
-    def __init__(self, x, y, z, L, M, N, intensity, wavelength):
-        self.x = be.as_array_1d(x)
-        self.y = be.as_array_1d(y)
-        self.z = be.as_array_1d(z)
-        self.L = be.as_array_1d(L)
-        self.M = be.as_array_1d(M)
-        self.N = be.as_array_1d(N)
-        self.i = be.as_array_1d(intensity)
-        self.w = be.as_array_1d(wavelength)
+    def __init__(
+        self,
+        x: ArrayLike,
+        y: ArrayLike,
+        z: ArrayLike,
+        L: ArrayLike,
+        M: ArrayLike,
+        N: ArrayLike,
+        intensity: ArrayLike,
+        wavelength: ArrayLike,
+    ):
+        """Initialize a collection of real rays in 3D space.
+
+        Args:
+            x: The x-coordinates of the ray starting positions.
+            y: The y-coordinates of the ray starting positions.
+            z: The z-coordinates of the ray starting positions.
+            L: The x-components of the ray direction cosines.
+            M: The y-components of the ray direction cosines.
+            N: The z-components of the ray direction cosines.
+            intensity: The intensity values of the rays.
+            wavelength: The wavelength values of the rays.
+
+        Note:
+            All input arrays are converted to 1D arrays. Direction cosines
+            (L, M, N) should be normalized such that L² + M² + N² = 1.
+        """
+        self.x = be.atleast_1d(x)
+        self.y = be.atleast_1d(y)
+        self.z = be.atleast_1d(z)
+        self.L = be.atleast_1d(L)
+        self.M = be.atleast_1d(M)
+        self.N = be.atleast_1d(N)
+        self.i = be.atleast_1d(intensity)
+        self.w = be.atleast_1d(wavelength)
         self.opd = be.zeros_like(self.x)
 
         # variables to hold pre-surface direction cosines
-        self.L0 = None
-        self.M0 = None
-        self.N0 = None
+        self.L0: BEArray | None = None
+        self.M0: BEArray | None = None
+        self.N0: BEArray | None = None
 
         self.is_normalized = True
 
-    def rotate_x(self, rx: float):
-        """Rotate the rays about the x-axis."""
+    def trace_on_surface(self, surface: Surface) -> RealRays:
+        """Dispatch to the surface's real ray trace kernel.
+
+        Args:
+            surface (Surface): The surface to trace through.
+
+        Returns:
+            RealRays: The traced real rays.
+
+        """
+        return surface._trace_real(self)
+
+    def record_on_surface(self, surface: Surface) -> None:
+        """Dispatch to the surface's real ray record method.
+
+        Args:
+            surface (Surface): The surface to record onto.
+
+        """
+        surface._record_real(self)
+
+    def rotate_x(self, rx: ScalarOrArray):
+        """Rotate the rays about the x-axis.
+
+        Args:
+            rx: Rotation angle around x-axis in radians.
+        """
         rx = be.array(rx)
-        y = self.y * be.cos(rx) - self.z * be.sin(rx)
-        z = self.y * be.sin(rx) + self.z * be.cos(rx)
-        m = self.M * be.cos(rx) - self.N * be.sin(rx)
-        n = self.M * be.sin(rx) + self.N * be.cos(rx)
-        self.y = y
-        self.z = z
-        self.M = m
-        self.N = n
+        self.y, self.z, self.M, self.N = (
+            self.y * be.cos(rx) - self.z * be.sin(rx),
+            self.y * be.sin(rx) + self.z * be.cos(rx),
+            self.M * be.cos(rx) - self.N * be.sin(rx),
+            self.M * be.sin(rx) + self.N * be.cos(rx),
+        )
 
-    def rotate_y(self, ry: float):
-        """Rotate the rays about the y-axis."""
+    def rotate_y(self, ry: ScalarOrArray):
+        """Rotate the rays about the y-axis.
+
+        Args:
+            ry: Rotation angle around y-axis in radians.
+        """
         ry = be.array(ry)
-        x = self.x * be.cos(ry) + self.z * be.sin(ry)
-        z = -self.x * be.sin(ry) + self.z * be.cos(ry)
-        L = self.L * be.cos(ry) + self.N * be.sin(ry)
-        n = -self.L * be.sin(ry) + self.N * be.cos(ry)
-        self.x = x
-        self.z = z
-        self.L = L
-        self.N = n
+        self.x, self.z, self.L, self.N = (
+            self.x * be.cos(ry) + self.z * be.sin(ry),
+            -self.x * be.sin(ry) + self.z * be.cos(ry),
+            self.L * be.cos(ry) + self.N * be.sin(ry),
+            -self.L * be.sin(ry) + self.N * be.cos(ry),
+        )
 
-    def rotate_z(self, rz: float):
-        """Rotate the rays about the z-axis."""
+    def rotate_z(self, rz: ScalarOrArray):
+        """Rotate the rays about the z-axis.
+
+        Args:
+            rz: Rotation angle around z-axis in radians.
+        """
         rz = be.array(rz)
-        x = self.x * be.cos(rz) - self.y * be.sin(rz)
-        y = self.x * be.sin(rz) + self.y * be.cos(rz)
-        L = self.L * be.cos(rz) - self.M * be.sin(rz)
-        m = self.L * be.sin(rz) + self.M * be.cos(rz)
-        self.x = x
-        self.y = y
-        self.L = L
-        self.M = m
+        self.x, self.y, self.L, self.M = (
+            self.x * be.cos(rz) - self.y * be.sin(rz),
+            self.x * be.sin(rz) + self.y * be.cos(rz),
+            self.L * be.cos(rz) - self.M * be.sin(rz),
+            self.L * be.sin(rz) + self.M * be.cos(rz),
+        )
 
-    def propagate(self, t: float, material: BaseMaterial = None):
-        """Propagate the rays a distance t."""
-        self.x = self.x + t * self.L
-        self.y = self.y + t * self.M
-        self.z = self.z + t * self.N
-
-        if material is not None:
-            k = material.k(self.w)
-            alpha = 4 * be.pi * k / self.w
-            self.i = self.i * be.exp(-alpha * t * 1e3)  # mm to microns
-
-        # normalize, if required
-        if not self.is_normalized:
-            self.normalize()
-
-    def clip(self, condition):
+    def clip(self, condition: BEArray):
         """Clip the rays based on a condition."""
         cond = be.array(condition)
         try:
@@ -118,18 +160,13 @@ class RealRays(BaseRays):
             cond = cond.bool()
         self.i = be.where(cond, be.zeros_like(self.i), self.i)
 
-    def refract(self, nx, ny, nz, n1, n2):
+    def refract(self, nx: float, ny: float, nz: float, n1: float, n2: float):
         """Refract rays on the surface.
 
         Args:
-            rays: The rays.
             nx: The x-component of the surface normals.
             ny: The y-component of the surface normals.
             nz: The z-component of the surface normals.
-
-        Returns:
-            RealRays: The refracted rays.
-
         """
         self.L0 = be.copy(self.L)
         self.M0 = be.copy(self.M)
@@ -138,7 +175,9 @@ class RealRays(BaseRays):
         u = n1 / n2
         nx, ny, nz, dot = self._align_surface_normal(nx, ny, nz)
 
-        root = be.sqrt(1 - u**2 * (1 - dot**2))
+        # ignore runtime warnings for total internal reflection
+        with be.errstate(invalid="ignore"):
+            root = be.sqrt(1 - u**2 * (1 - dot**2))
         tx = u * self.L0 + nx * root - u * nx * dot
         ty = u * self.M0 + ny * root - u * ny * dot
         tz = u * self.N0 + nz * root - u * nz * dot
@@ -147,17 +186,13 @@ class RealRays(BaseRays):
         self.M = ty
         self.N = tz
 
-    def reflect(self, nx, ny, nz):
+    def reflect(self, nx: float, ny: float, nz: float):
         """Reflects the rays on the surface.
 
         Args:
             nx: The x-component of the surface normal.
             ny: The y-component of the surface normal.
             nz: The z-component of the surface normal.
-
-        Returns:
-            RealRays: The reflected rays.
-
         """
         self.L0 = be.copy(self.L)
         self.M0 = be.copy(self.M)
@@ -169,8 +204,21 @@ class RealRays(BaseRays):
         self.M = self.M - 2 * dot * ny
         self.N = self.N - 2 * dot * nz
 
-    def gratingdiffract(self, nx, ny, nz, fx, fy, fz, m, d, n1, n2, is_reflective):
-        """Diffract the rays on the surface.
+    def gratingdiffract(
+        self,
+        nx: float,
+        ny: float,
+        nz: float,
+        fx: float,
+        fy: float,
+        fz: float,
+        m: int,
+        d: float,
+        n1: float,
+        n2: float,
+        is_reflective: bool,
+    ):
+        """Diffract the rays on a surface with a grating.
 
         Args:
             nx: The x-component of the surface normal.
@@ -181,10 +229,9 @@ class RealRays(BaseRays):
             fz: The z-component of the grating vector.
             d:  The grating spacing
             m:  The grating diffraction order
-
-        Returns:
-            RealRays: The rays diffracted by the grating.
-
+            n1:  IOR of the pre surface material
+            n2:  IOR of the post surface material
+            is_reflective: Wether the surface is reflective or not
         """
         self.L0 = be.copy(self.L)
         self.M0 = be.copy(self.M)
@@ -474,7 +521,7 @@ class RealRays(BaseRays):
 
         self.normalize()
 
-    def update(self, jones_matrix: be.ndarray = None):
+    def update(self, jones_matrix: BEArray | None = None):
         """Update ray properties (primarily used for polarization)."""
 
     def normalize(self):
@@ -485,7 +532,9 @@ class RealRays(BaseRays):
         self.N = self.N / mag
         self.is_normalized = True
 
-    def _align_surface_normal(self, nx, ny, nz):
+    def _align_surface_normal(
+        self, nx: float, ny: float, nz: float
+    ) -> tuple[float, float, float, BEArray]:
         """Align the surface normal with the incident ray vectors.
 
         Note:
@@ -502,10 +551,15 @@ class RealRays(BaseRays):
             nx: The corrected x-component of the surface normal.
             ny: The corrected y-component of the surface normal.
             nz: The corrected z-component of the surface normal.
-            dot: The dot product of the surface normal and the incident ray
-                vectors.
-
+            dot: The dot product of the surface normal and the incident ray vectors.
         """
+
+        # check if L0, M0 or N0 are None
+        if self.L0 is None or self.M0 is None or self.N0 is None:
+            raise ValueError(
+                "Direction cosines (L0, M0, N0) must be set before aligning surface "
+                "normal. Call refract(), reflect(), or gratingdiffract() first."
+            )
         dot = self.L0 * nx + self.M0 * ny + self.N0 * nz
 
         sgn = be.sign(dot)
@@ -516,7 +570,7 @@ class RealRays(BaseRays):
         dot = be.abs(dot)
         return nx, ny, nz, dot
 
-    def __str__(self):
+    def __str__(self) -> str:
         """Returns a string representation of the rays in a tabular format.
         Truncates output if the number of rays is large, showing first,
         central, and last rays.

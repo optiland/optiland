@@ -1,5 +1,7 @@
 """Unit tests for the SampledMTF class."""
 
+from __future__ import annotations
+
 from optiland.mtf import SampledMTF
 from optiland.samples.objectives import CookeTriplet
 from tests.utils import assert_allclose

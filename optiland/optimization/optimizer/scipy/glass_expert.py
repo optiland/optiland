@@ -20,7 +20,7 @@ drpaprika, 2025
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from optiland.materials import (
     downsample_glass_map,
@@ -29,6 +29,7 @@ from optiland.materials import (
     plot_glass_map,
 )
 
+from ..live_plotter import LiveOptimizationPlotter
 from .base import OptimizerGeneric
 
 if TYPE_CHECKING:
@@ -201,9 +202,11 @@ class GlassExpert(OptimizerGeneric):
         Test a list of candidate glasses by performing local optimizations.
 
         Saves the initial state, then for each candidate:
-          - Updates the glass variable
-          - Runs a continuous optimization to measure objective
-          - Restores the previous state before the next trial
+
+        - Updates the glass variable
+        - Runs a continuous optimization to measure objective
+        - Restores the previous state before the next trial
+
         After all trials, restores the best-performing configuration.
         """
         # Save state before testing new glasses
@@ -269,7 +272,8 @@ class GlassExpert(OptimizerGeneric):
         maxiter: int = 1000,
         tol: float = 1e-3,
         disp: bool = True,
-        callback=None,
+        plot: bool = False,
+        callback: Any = None,
         verbose: bool = True,
         plot_glass_map=False,
     ):
@@ -277,9 +281,10 @@ class GlassExpert(OptimizerGeneric):
         Execute the full glass optimization workflow.
 
         This includes:
-          1. Global exploration of diverse materials.
-          2. Local refinement around current selections.
-          3. Final continuous optimization on remaining variables.
+
+        1. Global exploration of diverse materials.
+        2. Local refinement around current selections.
+        3. Final continuous optimization on remaining variables.
 
         This method performs a greedy, cyclic optimization over all
         glass variables by iteratively substituting each one with its
@@ -291,28 +296,28 @@ class GlassExpert(OptimizerGeneric):
         is performed over all continuous variables only.
 
         Args:
-        num_neighbours (int, optional): Number of nearest neighbors to try
-            for each categorical variable during each pass.
-            Default is 7.
-        maxiter (int, optional): Maximum number of iterations for each
-            local optimization run.
-            Default is 1000.
-        tol (float, optional): Tolerance for convergence in local optimization.
-            Default is 1e-3.
-        disp (bool, optional): Whether to display internal messages from the optimizer.
-            Default is True.
-        callback (callable, optional): Optional function called at each
-            iteration of the optimizer.
-        verbose (bool, optional): Whether to print informative messages
-            from this method.
-            Default is True.
-        plot_glass_map (bool, optional): Wheter to plot the glass selection
-            on a (nd, vd) glass map.
-            Default is False.
+            num_neighbours (int, optional): Number of nearest neighbors to try
+                for each categorical variable during each pass.
+                Default is 7.
+            maxiter (int, optional): Maximum number of iterations for each
+                local optimization run.
+                Default is 1000.
+            tol (float, optional): Tolerance for convergence in local
+                optimization. Default is 1e-3.
+            disp (bool, optional): Whether to display internal messages from
+                the optimizer. Default is True.
+            plot: If True, update live plots during optimization.
+            callback (callable, optional): Optional function called at each
+                iteration of the optimizer.
+            verbose (bool, optional): Whether to print informative messages
+                from this method. Default is True.
+            plot_glass_map (bool, optional): Whether to plot the glass
+                selection on a (nd, vd) glass map. Default is False.
 
         Returns:
             result (OptimizeResult): Result of the final local optimization
                 containing fields such as:
+
                 - x: optimized continuous variable values
                 - fun: final objective function value
                 - nfev: number of function evaluations, etc.
@@ -321,8 +326,22 @@ class GlassExpert(OptimizerGeneric):
         self.verbose = verbose
         self.plot_glass_map = plot_glass_map
 
+        live_plotter: LiveOptimizationPlotter | None = None
+        if plot:
+            live_plotter = LiveOptimizationPlotter(self)
+            live_plotter.initialize()
+
+        def _wrapped_callback(*args: Any, **kwargs: Any) -> None:
+            if callback is not None:
+                callback(*args, **kwargs)
+
+            if live_plotter is not None:
+                live_plotter.update()
+
         # Local optimizer params
-        self.opt_params = dict(maxiter=maxiter, tol=tol, disp=disp, callback=callback)
+        self.opt_params = dict(
+            maxiter=maxiter, tol=tol, disp=disp, callback=_wrapped_callback
+        )
 
         # Identify variables
         continuous_variables = [
@@ -361,5 +380,9 @@ class GlassExpert(OptimizerGeneric):
         for var, val in zip(self.problem.variables, result.x, strict=False):
             var.update(val)
         self.problem.update_optics()
+
+        if live_plotter is not None:
+            live_plotter.update()
+            live_plotter.finalize()
 
         return result

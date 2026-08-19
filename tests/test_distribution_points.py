@@ -1,16 +1,19 @@
-import pytest
+from __future__ import annotations
+
 import numpy as np
+import pytest
 
 from optiland import backend as be
 from optiland.distribution import (
     CrossDistribution,
+    GaussianQuadrature,
     HexagonalDistribution,
-    RandomDistribution,
-    UniformDistribution,
-    RingDistribution,
     LineXDistribution,
     LineYDistribution,
-    GaussianQuadrature,
+    RandomDistribution,
+    RingDistribution,
+    SobolDistribution,
+    UniformDistribution,
 )
 
 
@@ -149,13 +152,12 @@ class TestDistributionPoints:
 
     @pytest.mark.parametrize(
         "num_points", [1, 3, 5]
-    )  # Corresponds to radius_dict keys in GaussianQuadrature's _get_radius
-    @pytest.mark.parametrize("is_symmetric", [True, False])
+    )
     def test_gaussian_quadrature_distribution(
-        self, backend, num_points, is_symmetric
+        self, backend, num_points
     ):  # num_points here is num_rings for GaussianQuad
         be.set_backend(backend)
-        dist = GaussianQuadrature(is_symmetric=is_symmetric)
+        dist = GaussianQuadrature()
         dist.generate_points(
             num_rings=num_points
         )  # num_points in test param is num_rings for method
@@ -217,3 +219,14 @@ class TestDistributionPoints:
         )
         assert len(dist.x) == 0
         assert len(dist.y) == 0
+
+    def test_sobol_distribution(self, backend):
+        be.set_backend(backend)
+        num_points = 100
+        dist = SobolDistribution(seed=42)
+        dist.generate_points(num_points=num_points)
+        # For Sobol, all points should be unique
+        unique_count = count_unique_points(dist.x, dist.y)
+        assert unique_count == num_points, (
+            f"SobolDistribution expected {num_points} unique points, got {unique_count}"
+        )

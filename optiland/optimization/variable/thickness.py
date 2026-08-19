@@ -54,7 +54,7 @@ class ThicknessVariable(VariableBehavior):
             new_value (float): The new thickness value.
 
         """
-        self.optic.set_thickness(new_value, self.surface_number)
+        self.optic.updater.set_thickness(new_value, self.surface_number)
 
     def __str__(self):
         """Return a string representation of the variable.

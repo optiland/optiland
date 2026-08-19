@@ -1,7 +1,10 @@
+from __future__ import annotations
+
 import pytest
 
-from optiland.wavelength import Wavelength, WavelengthGroup, add_wavelengths
 import optiland.backend as be
+from optiland.wavelength import Wavelength, WavelengthGroup, add_wavelengths
+from tests.utils import assert_allclose
 
 
 class TestWavelengths:
@@ -81,34 +84,59 @@ class TestWavelengths:
 class TestWavelengthGroups:
     def test_add_wavelength(self, set_test_backend):
         wg = WavelengthGroup()
-        wg.add_wavelength(500, unit="nm")
+        wg.add(500, unit="nm")
         assert wg.num_wavelengths == 1
         assert wg.get_wavelength(0) == 0.5
 
+    def test_remove_wavelength(self, set_test_backend):
+        wg = WavelengthGroup()
+        wg.add(500, unit="nm")
+        wg.add(600, unit="nm")
+        wg.add(700, unit="nm")
+        assert wg.num_wavelengths == 3
+        wg.remove(1)
+        assert wg.num_wavelengths == 2
+        assert_allclose(wg.get_wavelength(1), 0.7)
+
     def test_primary_wavelength(self, set_test_backend):
         wg = WavelengthGroup()
-        wg.add_wavelength(500, unit="nm")
-        wg.add_wavelength(600, is_primary=True, unit="nm")
+        wg.add(500, unit="nm")
+        wg.add(600, is_primary=True, unit="nm")
         assert wg.primary_wavelength.value == 0.6
+
+    def test_set_primary_index(self, set_test_backend):
+        wg = WavelengthGroup()
+        wg.add(500, unit="nm")
+        wg.add(600, is_primary=True, unit="nm")
+        wg.primary_index = 0
+        assert wg.primary_wavelength.value == 0.5
+
+    @pytest.mark.parametrize("index", (-1, 2))
+    def test_set_primary_index_raises(self, index, set_test_backend):
+        wg = WavelengthGroup()
+        wg.add(500, unit="nm")
+        wg.add(600, is_primary=True, unit="nm")
+        with pytest.raises(ValueError, match="Invalid primary wavelength index"):
+            wg.primary_index = index
 
     def test_multiple_wavelengths(self, set_test_backend):
         wg = WavelengthGroup()
-        wg.add_wavelength(500, unit="nm")
-        wg.add_wavelength(600, unit="nm", is_primary=True)
+        wg.add(500, unit="nm")
+        wg.add(600, unit="nm", is_primary=True)
         assert wg.num_wavelengths == 2
         assert wg.get_wavelength(0) == 0.5
         assert wg.get_wavelength(1) == 0.6
 
     def test_get_wavelengths(self, set_test_backend):
         wg = WavelengthGroup()
-        wg.add_wavelength(500, unit="nm")
-        wg.add_wavelength(600, unit="nm")
+        wg.add(500, unit="nm")
+        wg.add(600, unit="nm")
         assert wg.get_wavelengths() == [0.5, 0.6]
 
     def test_to_dict(self, set_test_backend):
         wg = WavelengthGroup()
-        wg.add_wavelength(500, unit="nm", weight=0.5)
-        wg.add_wavelength(600, unit="nm", weight=1.5)
+        wg.add(500, unit="nm", weight=0.5)
+        wg.add(600, unit="nm", weight=1.5, is_primary=True)
         assert wg.to_dict() == {
             "wavelengths": [
                 {"value": 500, "unit": "nm", "is_primary": False, "weight": 0.5},
@@ -137,9 +165,9 @@ class TestWavelengthGroups:
 
     def test_wavelengthgroup_weights_property(self, set_test_backend):
         wg = WavelengthGroup()
-        wg.add_wavelength(500, unit="nm", weight=0.5)
-        wg.add_wavelength(600, unit="nm", weight=1.5)
-        wg.add_wavelength(700, unit="nm", weight=2.5)
+        wg.add(500, unit="nm", weight=0.5)
+        wg.add(600, unit="nm", weight=1.5)
+        wg.add(700, unit="nm", weight=2.5)
         assert wg.weights == (0.5, 1.5, 2.5)
 
     def test_add_wavelengths(self, set_test_backend):

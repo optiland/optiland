@@ -11,11 +11,14 @@ Kramer Harrison, 2025
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 import numpy as np
 
 import optiland.backend as be
+
+if TYPE_CHECKING:
+    from optiland._types import ScalarOrArray
 
 _ZernikeIndex = np.dtype([("n", int), ("m", int)])
 
@@ -33,10 +36,17 @@ class BaseZernike(ABC):
     _indices_cache: ClassVar[np.ndarray | None] = None
 
     def __init__(self, coeffs=None, num_terms=36):
-        self.coeffs = be.zeros(num_terms) if coeffs is None else coeffs
+        self.coeffs = be.zeros([num_terms]) if coeffs is None else coeffs
         self.indices = self._generate_indices(len(self.coeffs))
 
-    def get_term(self, coeff=0, n=0, m=0, r=0, phi=0):
+    def get_term(
+        self,
+        coeff: ScalarOrArray = 0,
+        n: int = 0,
+        m: int = 0,
+        r: ScalarOrArray = 0,
+        phi: ScalarOrArray = 0,
+    ) -> ScalarOrArray:
         """Calculate the Zernike term for given coefficients and parameters.
 
         Args:
@@ -57,7 +67,7 @@ class BaseZernike(ABC):
             * self._azimuthal_term(m, phi)
         )
 
-    def terms(self, r=0, phi=0):
+    def terms(self, r: ScalarOrArray = 0, phi: ScalarOrArray = 0) -> list:
         """Calculate the Zernike terms for given radial distance and azimuthal
         angle.
 
@@ -77,7 +87,7 @@ class BaseZernike(ABC):
 
         return val
 
-    def poly(self, r=0, phi=0):
+    def poly(self, r: ScalarOrArray = 0, phi: ScalarOrArray = 0) -> float:
         """Calculate the Zernike polynomial for given radial distance and
         azimuthal angle.
 
@@ -187,8 +197,9 @@ class BaseZernike(ABC):
         """
         # pragma: no cover
 
+    @staticmethod
     @abstractmethod
-    def _norm_constant(n, m):
+    def _norm_constant(n: int, m: int) -> float:
         """Calculate the normalization constant of the Zernike polynomial.
 
         Args:
@@ -201,13 +212,13 @@ class BaseZernike(ABC):
         """
         # pragma: no cover
 
-    def _radial_term(self, n, m, r):
+    @staticmethod
+    def _radial_term(n, m, r):
         """Calculate the radial term of the Zernike polynomial."""
-        s_max = (n - abs(m)) // 2 + 1
+        n = int(n)
+        m_abs = abs(int(m))
 
-        n = be.array(n)
-        m = be.array(m)
-        m_abs = be.abs(m)
+        s_max = (n - m_abs) // 2 + 1
         r = be.array(r)
 
         # Initialize value with correct backend
@@ -226,7 +237,8 @@ class BaseZernike(ABC):
 
         return value
 
-    def _azimuthal_term(self, m=0, phi=0):
+    @staticmethod
+    def _azimuthal_term(m: int = 0, phi: ScalarOrArray = 0):
         """Calculate the azimuthal term of the Zernike polynomial.
 
         Args:
@@ -244,7 +256,8 @@ class BaseZernike(ABC):
             return be.cos(m * phi)
         return be.sin(be.abs(m) * phi)
 
-    def _radial_derivative(self, n, m, r):
+    @staticmethod
+    def _radial_derivative(n, m, r):
         """Calculate the derivative of the radial term with respect to r.
 
         R_n^m(rho) = sum_{k=0}^{(n - m)/2} (-1)^k * (n-k)! /
@@ -258,10 +271,10 @@ class BaseZernike(ABC):
         Returns:
             float: The calculated value of the radial derivative.
         """
-        s_max = (n - abs(m)) // 2 + 1
+        n = int(n)
+        m = abs(int(m))
 
-        n = be.array(n)
-        m = be.array(m)
+        s_max = (n - m) // 2 + 1
         r = be.array(r)
 
         # Initialize value with correct backend

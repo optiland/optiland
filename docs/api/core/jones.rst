@@ -9,9 +9,11 @@
    .. autosummary::
    
       BaseJones
+      ConstantJones
       JonesFresnel
       JonesHalfWaveRetarder
       JonesLinearDiattenuator
+      JonesLinearPolarizer
       JonesLinearRetarder
       JonesPolarizerH
       JonesPolarizerL135

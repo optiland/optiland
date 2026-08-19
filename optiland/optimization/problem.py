@@ -20,6 +20,7 @@ from optiland.optimization.operand import OperandManager
 from optiland.optimization.variable import VariableManager
 
 if TYPE_CHECKING:
+    from optiland.optimization.batched_evaluator import BatchedRayEvaluator
     from optiland.optimization.scaling.base import Scaler
 
 
@@ -47,15 +48,25 @@ class OptimizationProblem:
 
     """
 
-    def __init__(self):
+    def __init__(self, batching: bool = True):
+        """Initialize an optimization problem.
+
+        Args:
+            batching: If ``True`` (default), batched ray evaluation is enabled.
+                Set to ``False`` to opt out and use per-operand evaluation.
+        """
         self.operands = OperandManager()
         self.variables = VariableManager()
         self.initial_value = 0.0
+        self._batched_evaluator: BatchedRayEvaluator | None = None
 
         # Enable gradient tracking for PyTorch
         if be.get_backend() == "torch" and not be.grad_mode.requires_grad:
             warnings.warn("Gradient tracking is enabled for PyTorch.", stacklevel=2)
             be.grad_mode.enable()
+
+        if batching:
+            self.enable_batching()
 
     @staticmethod
     def _to_item(x):
@@ -68,6 +79,31 @@ class OptimizationProblem:
         if hasattr(x, "item"):
             return x.item()
         return x
+
+    def enable_batching(self):
+        """Enable batched ray evaluation for faster optimization.
+
+        When batching is enabled, operands that require ray tracing are
+        grouped by optic and wavelength so that redundant traces are
+        eliminated. This can dramatically speed up merit-function
+        evaluation for problems with many ray operands.
+
+        The evaluator is re-created whenever this method is called, so
+        it always reflects the current set of operands.
+        """
+        from optiland.optimization.batched_evaluator import BatchedRayEvaluator
+
+        self._batched_evaluator = BatchedRayEvaluator(self)
+
+    def disable_batching(self):
+        """Disable batched ray evaluation and use standard per-operand
+        evaluation."""
+        self._batched_evaluator = None
+
+    @property
+    def batching_enabled(self) -> bool:
+        """Whether batched evaluation is currently active."""
+        return self._batched_evaluator is not None
 
     def add_operand(
         self,
@@ -82,6 +118,9 @@ class OptimizationProblem:
         if input_data is None:
             input_data = {}
         self.operands.add(operand_type, target, min_val, max_val, weight, input_data)
+        # Invalidate batch plan when operands change
+        if self._batched_evaluator is not None:
+            self._batched_evaluator.refresh()
 
     def add_variable(self, optic, variable_type, scaler: Scaler = None, **kwargs):
         """Add a variable to the merit function"""
@@ -91,6 +130,8 @@ class OptimizationProblem:
         """Clear all operands from the merit function"""
         self.initial_value = 0.0
         self.operands.clear()
+        if self._batched_evaluator is not None:
+            self._batched_evaluator.refresh()
 
     def clear_variables(self):
         """Clear all variables from the merit function"""
@@ -98,14 +139,78 @@ class OptimizationProblem:
         self.variables.clear()
 
     def fun_array(self):
-        """Array of operand weighted deltas squared"""
-        terms = [op.fun() for op in self.operands]
+        """Array of operand contribution terms for the merit function.
+
+        Each term is computed as::
+
+            (effective_weight(op) * op.delta()) ** 2
+
+        where ``effective_weight = operand.weight * field_weight * wl_weight``.
+        Field and wavelength weights are read from the optic stored in each
+        operand's ``input_data``. Operands with an effective weight of zero are
+        excluded from the result.
+
+        When batching is enabled, delegates to the
+        :class:`~optiland.optimization.batched_evaluator.BatchedRayEvaluator`
+        which minimises redundant ray traces.
+
+        Returns:
+            be.ndarray: 1-D array of per-operand contribution values. Returns
+            ``[0.0]`` when there are no active operands.
+        """
+        if self._batched_evaluator is not None:
+            return self._batched_evaluator.fun_array()
+
+        terms = []
+        for op in self.operands:
+            ew = op.effective_weight()
+            if ew == 0.0:
+                continue
+            terms.append((ew * op.delta()) ** 2)
         if not terms:
             return be.array([0.0])
-        return be.stack(terms) ** 2
+        return be.stack(terms)
+
+    def residual_vector(self):
+        """Vector of weighted operand deltas (unsquared).
+
+        Returns a 1-D array whose *i*-th element is
+        ``weight_i * delta_i`` for each operand. This is the residual
+        vector **r** needed by least-squares algorithms such as the
+        Damped Least-Squares (Levenberg-Marquardt) optimizer.
+
+        Unlike :meth:`fun_array`, the values are *not* squared, so the
+        merit function equals ``sum(residual_vector() ** 2)``.
+
+        When batching is enabled, delegates to the
+        :class:`~optiland.optimization.batched_evaluator.BatchedRayEvaluator`
+        which minimises redundant ray traces.
+
+        Returns:
+            be.ndarray: A 1-D array of length ``len(self.operands)``.
+        """
+        if self._batched_evaluator is not None:
+            return self._batched_evaluator.residual_vector()
+        terms = []
+        for op in self.operands:
+            ew = op.effective_weight()
+            if ew == 0.0:
+                terms.append(be.array(0.0))
+            else:
+                terms.append(ew * op.delta())
+        if not terms:
+            return be.array([])
+        return be.stack(terms)
 
     def sum_squared(self):
-        """Calculate the sum of squared operand weighted deltas"""
+        """Calculate the sum of squared operand weighted deltas.
+
+        When batching is enabled, delegates to the
+        :class:`~optiland.optimization.batched_evaluator.BatchedRayEvaluator`
+        which minimises redundant ray traces.
+        """
+        if self._batched_evaluator is not None:
+            return self._batched_evaluator.sum_squared()
         return be.sum(self.fun_array())
 
     def rss(self):
@@ -118,7 +223,7 @@ class OptimizationProblem:
         for var in self.variables:
             unique_optics.add(var.optic)
         for optic in unique_optics:
-            optic.update()
+            optic.updater.update()
 
     def operand_info(self):
         """Print information about the operands in the merit function"""
@@ -137,21 +242,32 @@ class OptimizationProblem:
                 for op in self.operands
             ],
             "Weight": [self._to_item(op.weight) for op in self.operands],
+            "Eff. Weight": [
+                self._to_item(op.effective_weight()) for op in self.operands
+            ],
             "Value": [f"{self._to_item(op.value):+.3f}" for op in self.operands],
             "Delta": [f"{self._to_item(op.delta()):+.3f}" for op in self.operands],
         }
 
         df = pd.DataFrame(data)
-        values = self.fun_array()
-        total = be.sum(values)
 
-        total_item = self._to_item(total)
+        # Contribution uses (effective_weight × delta)² per operand.
+        ew_list = [op.effective_weight() for op in self.operands]
+        contrib_values = []
+        for op, ew in zip(self.operands, ew_list, strict=False):
+            if ew == 0.0:
+                contrib_values.append(be.array(0.0))
+            else:
+                contrib_values.append((be.array(ew) * op.delta()) ** 2)
 
-        if total_item == 0.0:
+        total = sum(self._to_item(v) for v in contrib_values)
+
+        if total == 0.0:
             df["Contrib. [%]"] = 0.0
         else:
-            contrib = be.round(values / total * 100, decimals=2)
-            df["Contrib. [%]"] = be.to_numpy(contrib)
+            df["Contrib. [%]"] = [
+                round(self._to_item(v) / total * 100, 2) for v in contrib_values
+            ]
 
         print(df.to_markdown(headers="keys", tablefmt="fancy_outline"))
 
@@ -193,6 +309,62 @@ class OptimizationProblem:
         }
         df = pd.DataFrame(data)
         print(df.to_markdown(headers="keys", tablefmt="fancy_outline"))
+
+    def weight_breakdown(self) -> list[dict]:
+        """Return a list of dicts describing each operand's effective weight.
+
+        The effective weight is the product of the operand's own weight, the
+        field weight (looked up from the optic via the operand's ``input_data``),
+        and the wavelength weight.  The formula used in the merit function is::
+
+            (effective_weight × delta) ** 2
+
+        Each returned dict contains:
+
+        * ``operand_type`` (str): The operand type string.
+        * ``field``: The field index or coordinate from ``input_data`` (or None).
+        * ``wavelength``: The wavelength index or value from ``input_data``
+          (or None).
+        * ``operand_weight`` (float): The user-set ``Operand.weight``.
+        * ``field_weight`` (float): The field's weight from the optic (1.0 if
+          not resolvable).
+        * ``wl_weight`` (float): The wavelength's weight from the optic (1.0 if
+          not resolvable).
+        * ``effective_weight`` (float): Product of the three weights above.
+
+        Returns:
+            list[dict]: One dict per operand in ``self.operands``.
+        """
+        import contextlib
+
+        rows = []
+        for op in self.operands:
+            optic = op.input_data.get("optic") if op.input_data else None
+            field_idx = op.input_data.get("field") if op.input_data else None
+            wl_idx = op.input_data.get("wavelength") if op.input_data else None
+
+            field_w = 1.0
+            wl_w = 1.0
+            if optic is not None:
+                if field_idx is not None and isinstance(field_idx, int):
+                    with contextlib.suppress(IndexError):
+                        field_w = optic.fields.fields[field_idx].weight
+                if wl_idx is not None and isinstance(wl_idx, int):
+                    with contextlib.suppress(IndexError):
+                        wl_w = optic.wavelengths.wavelengths[wl_idx].weight
+
+            rows.append(
+                {
+                    "operand_type": op.operand_type,
+                    "field": field_idx,
+                    "wavelength": wl_idx,
+                    "operand_weight": op.weight,
+                    "field_weight": field_w,
+                    "wl_weight": wl_w,
+                    "effective_weight": op.weight * field_w * wl_w,
+                }
+            )
+        return rows
 
     def info(self):
         """Print information about the optimization problem."""

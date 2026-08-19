@@ -1,6 +1,8 @@
-import optiland.backend as be
+from __future__ import annotations
+
 import pytest
 
+import optiland.backend as be
 from optiland.samples.objectives import TessarLens
 from optiland.tolerancing.perturbation import (
     DistributionSampler,

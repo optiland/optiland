@@ -1,4 +1,4 @@
-﻿mtf.fft
+mtf.fft
 =======
 
 .. automodule:: mtf.fft
@@ -9,4 +9,5 @@
    .. autosummary::
    
       FFTMTF
+      ScalarFFTMTF
    

@@ -1,40 +1,21 @@
-"""Marginal Ray Height Solve Module
+"""MarginalRayHeightSolve Module (Deprecated)
 
-Defines the marginal ray height solve.
-
-Kramer Harrison, 2025
+This module is deprecated and will be removed in v0.7.0.
+Please use `optiland.solves.thickness` instead.
 """
 
 from __future__ import annotations
 
-from optiland.solves.ray_height_base import RayHeightSolveBase
+import warnings
 
+from optiland.solves.thickness import MarginalRayHeightThicknessSolve
 
-class MarginalRayHeightSolve(RayHeightSolveBase):
-    """Solves for a target marginal ray height on a specific surface.
+warnings.warn(
+    "The `optiland.solves.marginal_ray_height` module is deprecated and will be "
+    "removed in v0.7.0. Use `optiland.solves.thickness` instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
-    This class adjusts the z-position of the specified surface and all
-    subsequent surfaces to achieve the desired marginal ray height.
-    """
-
-    def __init__(self, optic, surface_idx: int, height: float):
-        """Initializes a MarginalRayHeightSolve object.
-
-        Args:
-            optic (Optic): The optic object.
-            surface_idx (int): The index of the surface where the marginal
-                ray height is to be controlled.
-            height (float): The target height of the marginal ray on the
-                specified surface.
-        """
-        super().__init__(optic, surface_idx, height)
-
-    def _get_ray_y_u(self):
-        """Gets the marginal ray height (y) and slope (u) arrays.
-
-        Returns:
-            tuple[np.ndarray, np.ndarray]: A tuple containing:
-                - ya: marginal ray heights at each surface.
-                - ua: marginal ray slopes before each surface.
-        """
-        return self.optic.paraxial.marginal_ray()
+# Alias for backward compatibility
+MarginalRayHeightSolve = MarginalRayHeightThicknessSolve

@@ -7,6 +7,7 @@ from .field_types import (
     BaseFieldDefinition,
     ObjectHeightField,
     ParaxialImageHeightField,
+    RealImageHeightField,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "AngleField",
     "ObjectHeightField",
     "ParaxialImageHeightField",
+    "RealImageHeightField",
 ]

@@ -13,10 +13,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     # pragma: no cover
     from optiland.coatings import BaseCoating
-    from optiland.geometries import BaseGeometry
-    from optiland.materials import BaseMaterial
     from optiland.rays import ParaxialRays, RealRays
     from optiland.scatter import BaseBSDF
+    from optiland.surfaces import Surface
 
 
 class BaseInteractionModel(ABC):
@@ -26,19 +25,31 @@ class BaseInteractionModel(ABC):
 
     def __init__(
         self,
-        geometry: BaseGeometry,
-        material_pre: BaseMaterial,
-        material_post: BaseMaterial,
+        parent_surface: Surface | None,
         is_reflective: bool,
         coating: BaseCoating | None = None,
         bsdf: BaseBSDF | None = None,
     ):
-        self.geometry = geometry
-        self.material_pre = material_pre
-        self.material_post = material_post
+        self.parent_surface = parent_surface
         self.is_reflective = is_reflective
         self.coating = coating
         self.bsdf = bsdf
+
+    @property
+    def material_pre(self):
+        return (
+            self.parent_surface.material_post
+            if self.parent_surface.previous_surface is None
+            else self.parent_surface.previous_surface.material_post
+        )
+
+    @property
+    def material_post(self):
+        return self.parent_surface.material_post
+
+    @property
+    def geometry(self):
+        return self.parent_surface.geometry
 
     def __init_subclass__(cls, **kwargs):
         """Automatically register subclasses."""
@@ -70,29 +81,34 @@ class BaseInteractionModel(ABC):
         }
 
     @classmethod
-    def from_dict(cls, data, geometry, material_pre, material_post):
-        """Creates an interaction model from a dictionary representation."""
+    def _deserialize_init_data(cls, data):
         from optiland.coatings import BaseCoating
         from optiland.scatter import BaseBSDF
 
+        init_data = data.copy()
+        init_data.pop("type", None)
+        init_data.pop("material_pre", None)
+
+        if init_data.get("coating") is not None:
+            init_data["coating"] = BaseCoating.from_dict(init_data["coating"])
+
+        if init_data.get("bsdf") is not None:
+            init_data["bsdf"] = BaseBSDF.from_dict(init_data["bsdf"])
+
+        return init_data
+
+    @classmethod
+    def from_dict(cls, data, parent_surface):
+        """Creates an interaction model from a dictionary representation."""
         interaction_type = data["type"]
         subclass = cls._registry.get(interaction_type)
         if subclass is None:
             raise ValueError(f"Unknown interaction model type: {interaction_type}")
 
-        # Remove 'type' from data to avoid passing it to the constructor
-        init_data = data.copy()
-        init_data.pop("type")
-
-        if "coating" in init_data and init_data["coating"] is not None:
-            init_data["coating"] = BaseCoating.from_dict(init_data["coating"])
-        if "bsdf" in init_data and init_data["bsdf"] is not None:
-            init_data["bsdf"] = BaseBSDF.from_dict(init_data["bsdf"])
+        init_data = subclass._deserialize_init_data(data)
 
         return subclass(
-            geometry=geometry,
-            material_pre=material_pre,
-            material_post=material_post,
+            parent_surface=parent_surface,
             **init_data,
         )
 

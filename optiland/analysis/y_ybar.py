@@ -10,11 +10,17 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import matplotlib.pyplot as plt
 
 import optiland.backend as be
 
 from .base import BaseAnalysis
+
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
 
 
 class YYbar(BaseAnalysis):
@@ -64,15 +70,19 @@ class YYbar(BaseAnalysis):
 
     def view(
         self,
-        fig_to_plot_on: plt.Figure | None = None,
+        fig_to_plot_on: Figure | None = None,
         figsize: tuple[float, float] = (7, 5.5),
-    ) -> tuple[plt.Figure, plt.Axes]:
+        *,
+        show: bool = True,
+    ) -> tuple[Figure, Axes]:
         """Visualize the Y Y-bar diagram.
 
         Args:
             fig_to_plot_on (plt.Figure, optional): Existing figure to plot on.
                 Creates a new figure if None.
             figsize (tuple, optional): Figure size if creating a new figure.
+            show (bool): If True (default), calls plt.show(). Set False for
+                headless use.
 
         Returns:
             tuple: Matplotlib Figure and Axes objects.
@@ -85,6 +95,8 @@ class YYbar(BaseAnalysis):
 
         self._plot_diagram(ax)
         self._finalize_plot(fig, ax, is_embedding)
+        if show and not is_embedding:
+            plt.show()
         return fig, ax
 
     def _has_valid_data(self) -> bool:
@@ -93,8 +105,8 @@ class YYbar(BaseAnalysis):
 
     @staticmethod
     def _prepare_figure(
-        fig_to_plot_on: plt.Figure | None, figsize: tuple[float, float]
-    ) -> tuple[plt.Figure, plt.Axes, bool]:
+        fig_to_plot_on: Figure | None, figsize: tuple[float, float]
+    ) -> tuple[Figure, Axes, bool]:
         """Prepare a Matplotlib figure and axis."""
         is_embedding = fig_to_plot_on is not None
         if is_embedding:
@@ -106,7 +118,7 @@ class YYbar(BaseAnalysis):
         return fig, ax, is_embedding
 
     @staticmethod
-    def _plot_error(ax: plt.Axes, fig: plt.Figure, is_embedding: bool) -> None:
+    def _plot_error(ax: Axes, fig: Figure, is_embedding: bool) -> None:
         """Plot error message when no data is available."""
         ax.text(
             0.5,
@@ -119,11 +131,11 @@ class YYbar(BaseAnalysis):
         if is_embedding and hasattr(fig, "canvas"):
             fig.canvas.draw_idle()
 
-    def _plot_diagram(self, ax: plt.Axes) -> None:
+    def _plot_diagram(self, ax: Axes) -> None:
         """Plot the main Y Y-bar diagram."""
         ya = self.data["ya"]
         yb = self.data["yb"]
-        num_surfaces = self.optic.surface_group.num_surfaces
+        num_surfaces = self.optic.surfaces.num_surfaces
 
         for idx in range(1, num_surfaces):
             label = self._generate_surface_label(idx, num_surfaces)
@@ -137,7 +149,7 @@ class YYbar(BaseAnalysis):
 
     def _generate_surface_label(self, idx: int, num_surfaces: int) -> str | None:
         """Generate label for a surface in the diagram."""
-        sg = self.optic.surface_group
+        sg = self.optic.surfaces
 
         if idx == num_surfaces - 1:
             return "Image"
@@ -150,11 +162,11 @@ class YYbar(BaseAnalysis):
         label = surface.comment or (
             f"S{surface.id}" if hasattr(surface, "id") else f"S{idx}"
         )
-        if idx == self.optic.surface_group.stop_index:
+        if idx == self.optic.surfaces.stop_index:
             label += " (Stop)"
         return label
 
-    def _finalize_plot(self, fig: plt.Figure, ax: plt.Axes, is_embedding: bool) -> None:
+    def _finalize_plot(self, fig: Figure, ax: Axes, is_embedding: bool) -> None:
         """Apply final touches to the plot."""
         ax.axhline(y=0, linewidth=0.5, color="k")
         ax.axvline(x=0, linewidth=0.5, color="k")
