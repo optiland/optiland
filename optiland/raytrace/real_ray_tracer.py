@@ -63,6 +63,7 @@ class RealRayTracer(BaseRayTracer):
         wavelength,
         num_rays: int | None = 100,
         distribution: DistributionType | BaseDistribution | None = "hexapolar",
+        record: bool = True,
     ):
         """Trace a distribution of rays through the optical system.
 
@@ -74,6 +75,10 @@ class RealRayTracer(BaseRayTracer):
                 to 100.
             distribution (str or Distribution, optional): The distribution of
                 the rays. Defaults to 'hexapolar'.
+            record (bool, optional): Whether to store per-surface snapshots of
+                the traced rays for later analysis. Pass False to cut peak
+                memory roughly in half when only the returned rays are needed
+                (e.g. large GPU traces). Defaults to True.
 
         Returns:
             RealRays: The RealRays object containing the traced rays."
@@ -101,7 +106,7 @@ class RealRayTracer(BaseRayTracer):
         rays = self.ray_generator.generate_rays(
             Hx_full, Hy_full, Px_full, Py_full, wavelength
         )
-        self.optic.surfaces.trace(rays)
+        self.optic.surfaces.trace(rays, record=record)
 
         # Propagate to the image surface
         if self.optic.image_surface:
@@ -113,12 +118,9 @@ class RealRayTracer(BaseRayTracer):
         if isinstance(rays, PolarizedRays):
             rays.update_intensity(self.optic.polarization_state)
 
-        # update ray intensity
-        self.optic.surfaces.intensity[-1, :] = rays.i
-
         return rays
 
-    def trace_generic(self, Hx, Hy, Px, Py, wavelength):
+    def trace_generic(self, Hx, Hy, Px, Py, wavelength, record: bool = True):
         """Trace generic rays through the optical system.
 
         Args:
@@ -127,6 +129,8 @@ class RealRayTracer(BaseRayTracer):
             Px (float or numpy.ndarray): The normalized x pupil coordinate.
             Py (float or numpy.ndarray): The normalized y pupil coordinate
             wavelength (float): The wavelength of the rays.
+            record (bool, optional): Whether to store per-surface snapshots of
+                the traced rays. Defaults to True.
 
         """
         self._validate_normalized_coordinates(Hx, Hy, "field")
@@ -141,16 +145,13 @@ class RealRayTracer(BaseRayTracer):
         Hx, Hy, Px, Py = self._validate_array_size(Hx, Hy, Px, Py)
 
         rays = self.ray_generator.generate_rays(Hx, Hy, Px, Py, wavelength)
-        self.optic.surfaces.trace(rays)
+        self.optic.surfaces.trace(rays, record=record)
 
         # Propagate to the image surface
         last_surface = self.optic.surfaces[-1]
         last_surface.material_post.propagation_model.propagate(
             rays, last_surface.thickness
         )
-
-        # update intensity
-        self.optic.surfaces.intensity[-1, :] = rays.i
 
         return rays
 

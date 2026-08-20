@@ -188,8 +188,10 @@ class TestBaseMaterial:
         baseline = len(_ARRAY_DIGEST_CACHE)
         for i in range(50):
             arr = np.zeros(n, dtype=np.float64)
-            arr[1] = float(i)  # content (and so the expected n) differs each round
-            assert material.n(arr) == float(i)  # never a stale cross-array value
+            # content (and so the expected n) differs each round; the +1 keeps
+            # the array non-uniform so every round takes the digest path
+            arr[1] = float(i) + 1.0
+            assert material.n(arr) == float(i) + 1.0  # never a stale value
             del arr
             gc.collect()  # free the buffer so the next array may reuse its address
 
@@ -238,6 +240,72 @@ class TestBaseMaterial:
     "torch" not in be.list_available_backends(),
     reason="PyTorch not installed",
 )
+class TestUniformWavelengthFastPath:
+    """A large wavelength bundle holding one repeated value — the shape every
+    single-wavelength trace produces — is keyed by that value, evaluated on a
+    single element, and served back as a broadcast view. The cache then holds
+    one number per wavelength instead of one full-size array per bundle, and
+    no device-to-host content hash is needed."""
+
+    @staticmethod
+    def _dispersive_dummy():
+        class DummyMaterial(BaseMaterial):
+            def _calculate_n(self, wavelength, **kwargs):
+                return 1.0 + 0.1 * wavelength**2
+
+            def _calculate_k(self, wavelength, **kwargs):
+                return 0.01 * wavelength
+
+        return DummyMaterial()
+
+    def test_matches_full_evaluation(self, set_test_backend):
+        material = self._dispersive_dummy()
+        n_rays = 5_000  # above _MAX_VALUE_KEY_ARRAY_SIZE -> large-array path
+        uniform = be.full((n_rays,), 0.55)
+        result = be.to_numpy(material.n(uniform))
+        assert result.shape == (n_rays,)
+        assert_allclose(result, np.full(n_rays, 1.0 + 0.1 * 0.55**2))
+
+    def test_cache_holds_single_value_not_full_bundle(self, set_test_backend):
+        material = self._dispersive_dummy()
+        # Built from numpy so the bundle never requires grad — differentiable
+        # results bypass the cache by design, and here the cache is the point.
+        uniform = be.asarray(np.full(50_000, 0.55))
+        material.n(uniform)
+        material.k(uniform)
+        (cached_n,) = material._n_cache.values()
+        (cached_k,) = material._k_cache.values()
+        assert be.size(cached_n) == 1
+        assert be.size(cached_k) == 1
+
+    def test_equal_value_bundles_share_key(self, set_test_backend):
+        material = self._dispersive_dummy()
+        a = be.full((5_000,), 0.55)
+        b = be.full((5_000,), 0.55)  # same content, different object/buffer
+        nonuniform = be.asarray(np.linspace(0.4, 0.7, 5_000))
+        assert material._create_cache_key(a) == material._create_cache_key(b)
+        assert material._create_cache_key(a) != material._create_cache_key(nonuniform)
+
+    def test_nonuniform_bundle_still_evaluated_elementwise(self, set_test_backend):
+        material = self._dispersive_dummy()
+        values = np.linspace(0.4, 0.7, 5_000)
+        result = be.to_numpy(material.n(be.asarray(values)))
+        assert_allclose(result, 1.0 + 0.1 * values**2)
+
+    def test_inference_mode_does_not_crash(self, set_test_backend):
+        """Torch inference tensors have no version counter; the cache-key
+        builder must treat them as immutable rather than raising."""
+        if be.get_backend() != "torch":
+            pytest.skip("torch-only regression")
+        import torch
+
+        material = self._dispersive_dummy()
+        with torch.inference_mode():
+            uniform = be.full((5_000,), 0.55)
+            result = material.n(uniform)
+        assert be.to_numpy(result).shape == (5_000,)
+
+
 class TestBaseMaterialTorchCaching:
     """Tests for material caching behavior specific to torch backend.
 

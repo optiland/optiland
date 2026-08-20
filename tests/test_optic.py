@@ -358,6 +358,20 @@ class TestOptic:
         rays = lens.trace_generic(0.0, 0.0, 0.0, 0.0, 0.55)
         assert rays is not None
 
+    def test_trace_without_recording(self, set_test_backend):
+        """record=False returns identical rays but stores no per-surface
+        snapshots, halving peak memory for large traces."""
+        recorded = HeliarLens().trace(0.0, 0.0, 0.55, num_rays=32)
+
+        lens = HeliarLens()
+        rays = lens.trace(0.0, 0.0, 0.55, num_rays=32, record=False)
+
+        assert_allclose(be.to_numpy(rays.x), be.to_numpy(recorded.x))
+        assert_allclose(be.to_numpy(rays.i), be.to_numpy(recorded.i))
+        for surface in lens.surfaces.surfaces:
+            assert be.size(surface.x) == 0
+            assert be.size(surface.intensity) == 0
+
     def test_trace_invalid_field(self, set_test_backend):
         lens = HeliarLens()
         with pytest.raises(ValueError):
