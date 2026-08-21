@@ -939,6 +939,7 @@ class TestElementDrawingSmoke:
         assert paths[0].stat().st_size > 10_000
 
     def test_dxf_singlet(self, singlet_spec, tmp_path):
+        pytest.importorskip("ezdxf")
         from optiland.iso10110 import ISO10110Report
 
         report = ISO10110Report(singlet_spec)
@@ -2066,6 +2067,10 @@ class TestWavefrontFormatValidation:
 class TestDxfContent:
     """DXF output must contain specific annotation elements."""
 
+    @pytest.fixture(autouse=True)
+    def _require_ezdxf(self):
+        pytest.importorskip("ezdxf")
+
     @pytest.fixture
     def dxf_content(self, tmp_path):
         """Return the raw text content of a DXF file for a singlet with coating."""
@@ -2347,6 +2352,10 @@ class TestChamferYamlRoundtrip:
 class TestDxfArrowheads:
     """DXF dimension lines must have SOLID-filled arrowheads (ISO 129-1)."""
 
+    @pytest.fixture(autouse=True)
+    def _require_ezdxf(self):
+        pytest.importorskip("ezdxf")
+
     def test_dxf_contains_solid_arrowheads(self, tmp_path):
         """DXF singlet drawing must contain at least two SOLID entities (one
         per end of the CT dimension line)."""
@@ -2389,6 +2398,10 @@ class TestDxfArrowheads:
 class TestDxfAxisLinetype:
     """DXF optical axis must use the OPTICAL dash-double-dot linetype."""
 
+    @pytest.fixture(autouse=True)
+    def _require_ezdxf(self):
+        pytest.importorskip("ezdxf")
+
     def test_optical_linetype_defined_in_dxf(self, tmp_path):
         """DXF must define the 'OPTICAL' linetype (dash-double-dot per ISO 128)."""
         import ezdxf
@@ -2411,6 +2424,10 @@ class TestDxfAxisLinetype:
 
 class TestDxfExtents:
     """DXF $EXTMIN / $EXTMAX must match the requested paper size."""
+
+    @pytest.fixture(autouse=True)
+    def _require_ezdxf(self):
+        pytest.importorskip("ezdxf")
 
     def test_a4_portrait_extents(self, tmp_path):
         """A4 portrait DXF must have extents (0,0)→(210,297)."""
@@ -2472,6 +2489,7 @@ class TestMatchedPairMarker:
 
     def test_m_marker_in_dxf(self, tmp_path):
         """DXF CT dimension text must contain 'M' when matched_pair=True."""
+        pytest.importorskip("ezdxf")
         from optiland.iso10110 import DrawingSpec, ISO10110Report
 
         lens = _make_singlet()
@@ -2491,6 +2509,10 @@ class TestMatchedPairMarker:
 
 class TestDxfTitleBlockEmDash:
     """DXF title block must use em dash (U+2014) for empty DRAWN BY / APPROVED."""
+
+    @pytest.fixture(autouse=True)
+    def _require_ezdxf(self):
+        pytest.importorskip("ezdxf")
 
     def test_em_dash_in_dxf_when_drawn_by_empty(self, tmp_path):
         """When drawn_by and approved_by are not set, the DXF title block
@@ -2874,6 +2896,7 @@ class TestDrawingStyleRendering:
         assert _spec_table_fontsize(fig_scaled) == 15.0
 
     def test_dxf_dimension_scale_changes_height(self, element_and_spec):
+        pytest.importorskip("ezdxf")
         from optiland.iso10110 import ElementDrawing, DrawingStyle
 
         element, spec = element_and_spec
@@ -2894,6 +2917,7 @@ class TestDrawingStyleRendering:
         assert 5.0 in heights_scaled
 
     def test_border_margin_shifts_dxf_layout(self, element_and_spec):
+        pytest.importorskip("ezdxf")
         from optiland.iso10110 import ElementDrawing, DrawingStyle
 
         element, spec = element_and_spec

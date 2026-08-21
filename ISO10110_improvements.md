@@ -750,3 +750,32 @@ real, not just theoretical.
   captured immediately after syncing with master (same harness as §X3) —
   zero difference.
 
+### Y2 · Guard DXF-only tests against a missing `ezdxf` install ✅
+- `uv sync --dev` (no `--all-extras`) leaves `ezdxf` uninstalled; CI is
+  green because it installs `--all-extras`, but a contributor on a plain
+  dev install saw ~20 `ModuleNotFoundError: ezdxf` failures. The source
+  side was already correct — `ElementDrawing.generate()` catches the
+  import and raises a clean, actionable `ImportError`
+  ("...pip install optiland[manufacturing]"); `save_pdf`/`save_png`/`show`
+  never touch `ezdxf`. The gap was purely the test suite not guarding its
+  DXF-only tests.
+- Added `pytest.importorskip("ezdxf")` guards, following the idiom already
+  used elsewhere in the repo (`tests/prescription/test_renderer_pdf.py`,
+  `tests/test_torch_backend.py`) rather than inventing a new pattern: an
+  autouse class fixture for the fully-DXF classes (`TestDxfContent`,
+  `TestDxfArrowheads`, `TestDxfAxisLinetype`, `TestDxfExtents`,
+  `TestDxfTitleBlockEmDash`), and an inline `pytest.importorskip` call in
+  just the DXF-specific methods of classes that mix DXF and non-DXF tests
+  (`TestElementDrawingSmoke.test_dxf_singlet`,
+  `TestMatchedPairMarker.test_m_marker_in_dxf`,
+  `TestDrawingStyleRendering.test_dxf_dimension_scale_changes_height` /
+  `test_border_margin_shifts_dxf_layout`).
+- Deliberately left `TestOptionalEzdxfDependency` untouched — it
+  monkeypatches `builtins.__import__` to simulate a missing `ezdxf`
+  regardless of what's actually installed, and is the regression test
+  proving the clean-`ImportError` path above; a whole-file skip would have
+  incorrectly skipped exactly that class.
+- Verified by running the suite with `ezdxf` uninstalled: guarded tests
+  skip cleanly (not error), `TestOptionalEzdxfDependency` still runs and
+  passes, and reinstalling `ezdxf` restores the full green suite.
+
