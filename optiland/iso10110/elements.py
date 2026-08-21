@@ -10,6 +10,7 @@ Bernhard Lutzer, 2026
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -190,6 +191,12 @@ def identify_elements(optic: Optic) -> list[LensElement]:
     grouped into a single :class:`LensElement`.  The final surface of each
     element is the one whose ``material_post`` transitions back to air.
 
+    This grouping is purely a glass/air-transition heuristic and does not
+    understand reflective (mirror) surfaces or images immersed in a
+    non-air medium — both configurations emit a ``UserWarning`` and may
+    yield a missing or incomplete element list rather than raising, since
+    mirror support is not implemented yet.
+
     Returns:
         List of :class:`LensElement` in optical order.
     """
@@ -199,10 +206,13 @@ def identify_elements(optic: Optic) -> list[LensElement]:
     in_glass = False
     current_surfaces: list[Surface] = []
     current_indices: list[int] = []
+    has_reflective = False
 
     # Walk real surfaces only (skip object [0] and image [-1])
     for idx in range(1, len(surfaces) - 1):
         surf = surfaces[idx]
+        if getattr(getattr(surf, "interaction_model", None), "is_reflective", False):
+            has_reflective = True
         glass = not is_air(surf.material_post)
 
         if glass:
@@ -226,5 +236,23 @@ def identify_elements(optic: Optic) -> list[LensElement]:
                 current_surfaces = []
                 current_indices = []
             # else: air gap between elements — skip
+
+    if has_reflective:
+        warnings.warn(
+            "identify_elements() does not support reflective (mirror) surfaces: "
+            "a mirror's material_post is aliased to material_pre, so it looks "
+            "like an air gap to this glass/air-transition grouping. Elements "
+            "adjacent to a mirror may be dropped or grouped incorrectly, and the "
+            "resulting ISO 10110 drawings may be incomplete or empty.",
+            stacklevel=2,
+        )
+    if in_glass:
+        warnings.warn(
+            "The optic's final surface is still immersed in a non-air material "
+            "(no closing air transition found before the image surface); the "
+            "trailing lens element could not be closed and will be missing from "
+            "the ISO 10110 drawings.",
+            stacklevel=2,
+        )
 
     return elements

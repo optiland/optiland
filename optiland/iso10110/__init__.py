@@ -35,6 +35,14 @@ For cemented lenses each glass component may carry independent quality specs::
 
     spec.set_material(0, 0, birefringence=5,  nh_class="NH040")  # crown
     spec.set_material(0, 1, birefringence=10, nh_class="NH100")  # flint
+
+Scope / limitations
+--------------------
+:func:`identify_elements` groups surfaces by glass/air transitions. It does
+not currently support reflective (mirror) surfaces or images immersed in a
+non-air medium — these configurations emit a ``UserWarning`` and may produce
+a missing or incomplete element list (and therefore missing or incomplete
+drawings) rather than raising an error.
 """
 
 from __future__ import annotations

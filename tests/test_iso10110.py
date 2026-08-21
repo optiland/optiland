@@ -56,6 +56,79 @@ def _make_cemented_doublet():
     return CementedAchromat()
 
 
+def _make_two_mirror_system():
+    """Return a simple two-mirror (Cassegrain-like) Optic, all surfaces in air."""
+    from optiland import optic
+
+    lens = optic.Optic()
+    lens.surfaces.add(index=0, thickness=float("inf"))
+    lens.surfaces.add(
+        index=1, radius=-100.0, thickness=-40.0, material="mirror", is_stop=True
+    )
+    lens.surfaces.add(index=2, radius=-30.0, thickness=40.0, material="mirror")
+    lens.surfaces.add(index=3)
+    lens.set_aperture(aperture_type="EPD", value=10.0)
+    lens.fields.set_type("angle")
+    lens.fields.add(y=0.0)
+    lens.wavelengths.add(value=0.5876, is_primary=True)
+    return lens
+
+
+def _make_immersed_image_singlet():
+    """Return a singlet whose image surface is still immersed in glass."""
+    from optiland import optic
+
+    lens = optic.Optic()
+    lens.surfaces.add(index=0, thickness=float("inf"))
+    lens.surfaces.add(
+        index=1, radius=50.0, thickness=6.0, material="N-BK7", is_stop=True
+    )
+    lens.surfaces.add(index=2)  # image surface, still inside N-BK7 (no air gap)
+    return lens
+
+
+# ---------------------------------------------------------------------------
+# elements.py — identify_elements()
+# ---------------------------------------------------------------------------
+
+class TestIdentifyElementsWarnings:
+    def test_two_mirror_system_warns_and_returns_empty(self):
+        from optiland.iso10110.elements import identify_elements
+
+        lens = _make_two_mirror_system()
+        with pytest.warns(UserWarning, match="reflective"):
+            elements = identify_elements(lens)
+        assert elements == []
+
+    def test_immersed_image_warns_and_drops_trailing_element(self):
+        from optiland.iso10110.elements import identify_elements
+
+        lens = _make_immersed_image_singlet()
+        with pytest.warns(UserWarning, match="immersed"):
+            elements = identify_elements(lens)
+        assert elements == []
+
+    def test_ordinary_singlet_emits_no_warnings(self):
+        from optiland.iso10110.elements import identify_elements
+
+        lens = _make_singlet()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            elements = identify_elements(lens)
+        assert len(elements) == 1
+        assert caught == []
+
+    def test_cemented_doublet_emits_no_warnings(self):
+        from optiland.iso10110.elements import identify_elements
+
+        lens = _make_cemented_doublet()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            elements = identify_elements(lens)
+        assert len(elements) == 1
+        assert caught == []
+
+
 # ---------------------------------------------------------------------------
 # notation.py — SurfaceSpec
 # ---------------------------------------------------------------------------

@@ -712,3 +712,41 @@ real, not just theoretical.
   reorganization, so this was mostly a formality, but confirmed no
   import-order/circular-import side effect changed behavior) — zero diff
   against the pre-refactor reference.
+
+## Y — Fixes from Manuel Fragata's PR review (2026-08-21)
+
+### Y1 · Warn instead of silently producing nothing for reflective/immersed systems ✅
+- `identify_elements()` (`optiland/iso10110/elements.py`) groups surfaces by
+  glass/air `material_post` transitions. A mirror's `material_post` is
+  deliberately aliased to `material_pre` by the surface factory (so a
+  mirror in air looks like "air" to the grouping heuristic), so an
+  all-reflective system (e.g. a two-mirror Cassegrain-style layout) never
+  enters the glass branch and silently produces zero elements —
+  `ISO10110Report.generate()` returns `[]` and `save_pdf()`/`save_dxf()`
+  succeed without writing any drawing content, with no exception and no
+  warning. A system whose final surface is still immersed in a non-air
+  medium (image inside glass) has the same failure mode from the other
+  end: the loop exits with an still-open glass run that's silently
+  discarded.
+- Full mirror support is out of scope for this fix (per reviewer: "even if
+  mirrors are out of scope for this PR, I would still say so somewhere
+  rather than not saying anything"). Behavior is unchanged — still
+  whatever `elements` list results, no exception — except both conditions
+  now emit a `warnings.warn(...)` (matching the existing style in
+  `notation.py`) so the situation is no longer silent. Detection reads
+  `surf.interaction_model.is_reflective` defensively via `getattr(...,
+  False)`, matching the pattern already used elsewhere in the codebase
+  (e.g. `optiland/aberrations/third_order.py`).
+- Documented the limitation in `identify_elements()`'s own docstring and in
+  the `optiland.iso10110` package docstring (new "Scope / limitations"
+  section) so it's discoverable without reading source.
+- Four new tests in `tests/test_iso10110.py`
+  (`TestIdentifyElementsWarnings`): two-mirror system warns and returns
+  `[]`; immersed-image singlet warns and returns `[]`; ordinary singlet and
+  cemented-doublet fixtures emit **zero** warnings (regression guard
+  against over-eager detection).
+- Verified no output drift for ordinary systems: regenerated the full
+  PDF/PNG/DXF example set and diffed byte-for-byte against a reference
+  captured immediately after syncing with master (same harness as §X3) —
+  zero difference.
+
