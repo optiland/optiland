@@ -94,6 +94,8 @@ class Paraxial:
         start: int,
         end: int,
         wavelength: float | None = None,
+        *,
+        path: ParaxialPath | None = None,
     ) -> ScalarOrArray:
         """Calculate the effective focal length of a range of surfaces.
 
@@ -107,12 +109,18 @@ class Paraxial:
         into :meth:`f2`, since that would additionally require the separations
         between the groups' principal planes.
 
+        Delegates to :meth:`ray_transfer_matrix`, so it shares the same
+        validated scalar sequence (and supported scalar domain) as the
+        explicit paraxial trace.
+
         Args:
             start: Index of the first surface of the range, inclusive.
             end: Index of the last surface of the range, inclusive.
             wavelength: Wavelength in micrometers at which the refractive
                 indices are evaluated. Defaults to the system's primary
                 wavelength.
+            path: Optional prebuilt :class:`~optiland.paraxial_path.ParaxialPath`
+                to reuse across several first-order calls.
 
         Returns:
             Effective focal length of the surface range. A range with no net
@@ -120,9 +128,11 @@ class Paraxial:
 
         Raises:
             ValueError: If the surface range is invalid.
+            UnsupportedParaxialGeometryError: If the geometry lies outside
+                the supported scalar folded paraxial domain.
 
         """
-        matrix = self.ray_transfer_matrix(start, end, wavelength)
+        matrix = self.ray_transfer_matrix(start, end, wavelength, path=path)
 
         # A ray entering parallel to the axis (y=1, u=0) leaves the range with
         # slope u_out = C, so the EFL is -y_in / u_out = -1 / C. This is the
@@ -621,6 +631,8 @@ class Paraxial:
         start: int,
         end: int,
         wavelength: float | None = None,
+        *,
+        path: ParaxialPath | None = None,
     ) -> BEArray:
         """Build the paraxial ray-transfer (ABCD) matrix of a surface range.
 
@@ -636,9 +648,15 @@ class Paraxial:
         range contribute: no propagation is included before ``start`` or after
         ``end``.
 
-        The per-surface refraction, reflection and transfer steps follow the
-        same conventions as :meth:`trace_generic`, so the matrix and an
-        explicit paraxial trace of the same range agree.
+        The matrix is assembled from the same validated scalar sequence as
+        :meth:`trace_generic` (shared path metadata, scalar-domain
+        validation, straight-system advisories, and orientation-aware
+        effective radii and focal lengths), so the matrix and an explicit
+        paraxial trace of the same range always agree. The supported scalar
+        domain is that of :class:`~optiland.paraxial_path.ParaxialPath`:
+        piecewise-centered legs joined by plane fold mirrors, powered
+        surfaces normal to their local beam segment; geometry outside it
+        raises :class:`~optiland.paraxial_path.UnsupportedParaxialGeometryError`.
 
         Args:
             start: Index of the first surface of the range, inclusive. Must be
@@ -648,12 +666,18 @@ class Paraxial:
             wavelength: Wavelength in micrometers at which the refractive
                 indices are evaluated. Defaults to the system's primary
                 wavelength.
+            path: Optional prebuilt :class:`~optiland.paraxial_path.ParaxialPath`
+                for the current geometry, so a high-level operation making
+                several first-order calls pays the path construction once.
+                Must be a fresh snapshot of the surfaces being analyzed.
 
         Returns:
             The 2x2 ray-transfer matrix of the surface range.
 
         Raises:
             ValueError: If the surface range is invalid.
+            UnsupportedParaxialGeometryError: If the geometry lies outside
+                the supported scalar folded paraxial domain.
 
         """
         num_surfaces = self.surfaces.num_surfaces
@@ -678,32 +702,53 @@ class Paraxial:
         if wavelength is None:
             wavelength = self.optic.primary_wavelength
 
-        R = self.surfaces.radii
-        n = self.surfaces.n(wavelength)
-        pos = be.ravel(self.surfaces.positions)
+        sequence = self._ray_tracer.prepare_scalar_sequence(
+            wavelength, path=path, operation="ray transfer matrix assembly"
+        )
+        R = sequence.radii
+        n = sequence.refractive_indices
+        pos = sequence.positions
 
-        matrix = self._interaction_matrix(start, R, n)
+        matrix = self._interaction_matrix(
+            start, R, n, sequence.surfaces[start], sequence.focal_signs[start]
+        )
         for k in range(start + 1, end + 1):
             transfer = self._transfer_matrix(pos[k] - pos[k - 1], n)
             matrix = be.matmul(
-                self._interaction_matrix(k, R, n), be.matmul(transfer, matrix)
+                self._interaction_matrix(
+                    k, R, n, sequence.surfaces[k], sequence.focal_signs[k]
+                ),
+                be.matmul(transfer, matrix),
             )
         return matrix
 
-    def _interaction_matrix(self, k: int, R: BEArray, n: BEArray) -> BEArray:
+    def _interaction_matrix(
+        self,
+        k: int,
+        R: BEArray,
+        n: BEArray,
+        surface,
+        focal_sign: float = 1.0,
+    ) -> BEArray:
         """Build the ray-transfer matrix of a single surface interaction.
+
+        Receives already-effective values from the shared scalar sequence:
+        ``R`` carries the orientation-corrected radii, and ``focal_sign`` is
+        the per-surface orientation sign to apply to an explicit paraxial
+        focal length. No orientation logic is duplicated here.
 
         Args:
             k: Index of the surface.
-            R: Radii of curvature of all surfaces.
+            R: Paraxial-effective radii of curvature of all surfaces.
             n: Refractive indices following each surface.
+            surface: The surface object at index ``k``.
+            focal_sign: Orientation sign for an explicit paraxial surface's
+                focal length.
 
         Returns:
             The 2x2 ray-transfer matrix of the surface interaction.
 
         """
-        surface = self.surfaces[k]
-
         # Derive the constants from n so they carry the backend's dtype and
         # device. R is unsuitable, as it is infinite for a plane surface.
         zero = n[k] * 0.0
@@ -712,13 +757,13 @@ class Paraxial:
         if surface.interaction_model.is_reflective:
             D = -one
             if surface.surface_type == "paraxial":
-                C = -one / surface.interaction_model.f
+                C = -one / (focal_sign * surface.interaction_model.f)
             else:
                 C = -2.0 / R[k]
         else:
             D = n[k - 1] / n[k]
             if surface.surface_type == "paraxial":
-                C = -one / (surface.interaction_model.f * n[k])
+                C = -one / (focal_sign * surface.interaction_model.f * n[k])
             else:
                 C = -((n[k] - n[k - 1]) / R[k]) / n[k]
 

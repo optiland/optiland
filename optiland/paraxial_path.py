@@ -261,6 +261,11 @@ class ParaxialPath:
             operation -- the historical numbers are still returned -- they
             only make the approximation visible via
             :meth:`warn_scalar_approximations`.
+        axis_alignments: Per-surface alignment ``z_axis . incoming_direction``
+            between the surface's local +z axis and the physical beam
+            arriving at it. ``|alignment| == 1`` (within
+            :func:`angular_tolerance`) identifies a centered/collinear
+            surface; anything else is genuinely oblique.
     """
 
     axial_positions: BEArray
@@ -280,6 +285,7 @@ class ParaxialPath:
     is_folded_or_off_axis: bool
     diagnostics: tuple
     advisories: tuple = ()
+    axis_alignments: tuple = ()
 
     @property
     def num_surfaces(self) -> int:
@@ -289,6 +295,42 @@ class ParaxialPath:
     def orientation_sign_array(self) -> BEArray:
         """Orientation signs as a backend array aligned with the surfaces."""
         return be.array([float(s) for s in self.orientation_sign])
+
+    def effective_orientation_signs(self) -> tuple:
+        """Per-surface signs mapping authored powers to scalar-effective ones.
+
+        This is the single collinear orientation policy shared by the
+        explicit paraxial tracer and the ray-transfer-matrix assembly
+        (they must never disagree because they selected different power
+        conventions):
+
+        - A centered/collinear surface (``|1 - |z_axis . d_in|| <=``
+          :func:`angular_tolerance`) gets ``s_k = parity_before *
+          sgn(z_axis . d_in)`` -- on straight and folded paths alike, so a
+          physically equivalent surface authored with its local axis
+          reversed is normalized to the same effective scalar power. The
+          canonical default authoring always has ``s_k = +1``, preserving
+          historical values bit-for-bit.
+        - A genuinely oblique surface on a straight-classified path keeps
+          the historical raw value (sign ``+1``); the approximation is
+          surfaced via :meth:`warn_scalar_approximations`, never silently
+          re-signed by a heuristic.
+        - A genuinely oblique surface on a folded/off-axis path is outside
+          the scalar domain (``require_scalar_paraxial`` raises). Inside a
+          :func:`paraxial_seed_scope` -- where that rejection is downgraded
+          to a warning because the values only seed a real-ray solve -- the
+          collinear-limit sign is kept, which is the continuous limit of
+          the supported geometry as the tilt goes to zero.
+        """
+        if self.is_folded_or_off_axis or not self.axis_alignments:
+            return self.orientation_sign
+        tol = angular_tolerance()
+        return tuple(
+            sign if abs(abs(alignment) - 1.0) <= tol else 1.0
+            for sign, alignment in zip(
+                self.orientation_sign, self.axis_alignments, strict=True
+            )
+        )
 
     @property
     def entry_is_positive_z(self) -> bool:
@@ -563,6 +605,7 @@ def build_paraxial_path(surfaces: list) -> ParaxialPath:
     parity_before: list[float] = []
     parity_after: list[float] = []
     orientation: list[float] = []
+    alignments: list[float] = []
     axial: list = []
 
     if n:
@@ -580,6 +623,7 @@ def build_paraxial_path(surfaces: list) -> ParaxialPath:
         axis_dot = _to_float(_dot(axes[k], direction))
         sign = 1.0 if axis_dot >= 0.0 else -1.0
         orientation.append(parity * sign)
+        alignments.append(axis_dot)
 
         surf = surfaces[k]
         powered = _surface_is_powered(surf) if k > 0 else False
@@ -769,6 +813,7 @@ def build_paraxial_path(surfaces: list) -> ParaxialPath:
         is_folded_or_off_axis=is_folded_or_off_axis,
         diagnostics=tuple(diagnostics),
         advisories=tuple(advisories),
+        axis_alignments=tuple(alignments),
     )
 
 
