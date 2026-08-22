@@ -194,7 +194,22 @@ class OpticUpdater:
             scale_factor (float): The factor by which to scale all relevant
                 system dimensions (radii, thicknesses, EPD, physical apertures).
 
+        Raises:
+            UnsupportedParaxialGeometryError: If the beam path is folded off
+                global +z (or entered along another direction), before any
+                value is read or any geometry is touched. Scaling rebuilds
+                positions from cumulative thicknesses along global z, which
+                would move folded surfaces off their physical legs; guarding
+                only inside ``set_thickness`` would leave the system
+                partially scaled.
         """
+        from optiland.paraxial_path import require_global_z_geometry
+
+        # Preflight-atomic: reject before reading thicknesses (which walk
+        # the unfolded path) and before the first geometry.scale() call, so
+        # a rejected system is left exactly as it was.
+        require_global_z_geometry(self.optic.surfaces, "scale_system")
+
         num_surfaces = self.optic.surfaces.num_surfaces
         thicknesses = [
             self.optic.surfaces.get_thickness(surf_idx)[0]

@@ -512,6 +512,183 @@ class TestStraightReversedAxisAuthoring:
 
 
 # ---------------------------------------------------------------------------
+# Workstream C: preflight-atomic z-bound geometry mutations
+# ---------------------------------------------------------------------------
+
+
+def _system_snapshot(optic):
+    """Full geometric fingerprint used for exact no-change assertions."""
+    per_surface = []
+    for surf in optic.surfaces:
+        cs = surf.geometry.cs
+        thickness = surf.thickness
+        if hasattr(thickness, "item"):
+            thickness = thickness.item()
+        radius = getattr(surf.geometry, "radius", None)
+        radius = None if radius is None else float(be.to_numpy(be.array(radius)))
+        aperture = None if surf.aperture is None else surf.aperture.to_dict()
+        per_surface.append(
+            (
+                float(be.to_numpy(be.array(cs.x))),
+                float(be.to_numpy(be.array(cs.y))),
+                float(be.to_numpy(be.array(cs.z))),
+                float(thickness),
+                radius,
+                aperture,
+            )
+        )
+    system_aperture = optic.aperture.to_dict() if optic.aperture else None
+    return per_surface, system_aperture, optic.surfaces.to_dict()
+
+
+def folded_relative_chain():
+    """Folded system authored with relative coordinates (thickness + tilt).
+
+    Relative-coordinate mode is what routes insertions/removals through
+    ``_update_coordinate_systems``, so this is the chain those guards must
+    protect.
+    """
+    optic = Optic(name="folded-relative")
+    optic.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+    optic.surfaces.add(
+        index=1, radius=25.84, thickness=4.0, material="N-BK7", is_stop=True
+    )
+    optic.surfaces.add(index=2, radius=be.inf, thickness=20.0)
+    optic.surfaces.add(index=3, thickness=13.0, rx=math.pi / 4, material="mirror")
+    optic.surfaces.add(index=4, thickness=0.0)
+    return _finish(optic)
+
+
+class TestPreflightAtomicMutations:
+    def test_scale_system_rejects_before_any_mutation(self, set_test_backend):
+        optic = folded()
+        before = _system_snapshot(optic)
+        with pytest.raises(UnsupportedParaxialGeometryError):
+            optic.scale_system(2.0)
+        assert _system_snapshot(optic) == before
+
+    def test_surface_group_flip_rejects_before_any_mutation(self, set_test_backend):
+        optic = folded()
+        before = _system_snapshot(optic)
+        with pytest.raises(UnsupportedParaxialGeometryError):
+            optic.surfaces.flip()
+        assert _system_snapshot(optic) == before
+
+    def test_optic_updater_flip_rejects_before_any_mutation(self, set_test_backend):
+        optic = folded()
+        before = _system_snapshot(optic)
+        with pytest.raises(UnsupportedParaxialGeometryError):
+            optic.flip()
+        assert _system_snapshot(optic) == before
+
+    def test_composition_rejects_folded_left_operand(self, set_test_backend):
+        left = folded()
+        right = straight()
+        right_before = _system_snapshot(right)
+        with pytest.raises(UnsupportedParaxialGeometryError):
+            left.surfaces + right.surfaces
+        assert _system_snapshot(right) == right_before
+
+    def test_composition_rejects_folded_right_operand(self, set_test_backend):
+        left = straight()
+        right = folded()
+        left_before = _system_snapshot(left)
+        right_before = _system_snapshot(right)
+        with pytest.raises(UnsupportedParaxialGeometryError):
+            left.surfaces + right.surfaces
+        assert _system_snapshot(left) == left_before
+        assert _system_snapshot(right) == right_before
+
+    def test_composition_of_straight_groups_still_works(self, set_test_backend):
+        combined = straight().surfaces + straight().surfaces
+        assert combined.num_surfaces > 0
+
+    def test_insertion_into_folded_relative_chain_rejects(self, set_test_backend):
+        optic = folded_relative_chain()
+        before = _system_snapshot(optic)
+        n_before = optic.surfaces.num_surfaces
+        with pytest.raises(UnsupportedParaxialGeometryError):
+            optic.surfaces.add(index=2, radius=100.0, thickness=1.0)
+        assert optic.surfaces.num_surfaces == n_before
+        assert _system_snapshot(optic) == before
+
+    def test_removal_from_folded_relative_chain_rejects(self, set_test_backend):
+        optic = folded_relative_chain()
+        before = _system_snapshot(optic)
+        n_before = optic.surfaces.num_surfaces
+        with pytest.raises(UnsupportedParaxialGeometryError):
+            optic.surfaces.remove(2)
+        assert optic.surfaces.num_surfaces == n_before
+        assert _system_snapshot(optic) == before
+
+    def test_relative_construction_of_straight_chain_unaffected(self, set_test_backend):
+        """Ordinary relative-coordinate insertion/removal keeps working."""
+        optic = straight()
+        optic.surfaces.add(index=2, radius=-100.0, thickness=2.0)
+        assert optic.surfaces.num_surfaces == 5
+        optic.surfaces.remove(2)
+        assert optic.surfaces.num_surfaces == 4
+
+    def test_update_coordinate_systems_rejects_folded_chain(self, set_test_backend):
+        optic = folded_relative_chain()
+        before = _system_snapshot(optic)
+        with pytest.raises(UnsupportedParaxialGeometryError):
+            optic.surfaces._update_coordinate_systems(start_index=1)
+        assert _system_snapshot(optic) == before
+
+    def test_set_thickness_rebuild_rejects_folded_chain(self, set_test_backend):
+        """Thickness updates route through the guarded set_thickness."""
+        optic = folded_relative_chain()
+        before = _system_snapshot(optic)
+        with pytest.raises(UnsupportedParaxialGeometryError):
+            optic.updater.set_thickness(10.0, 2)
+        assert _system_snapshot(optic) == before
+
+    def test_quick_focus_distance_guards_before_tracing(self, set_test_backend):
+        from optiland.solves.quick_focus import QuickFocusSolve
+
+        optic = folded()
+        calls = []
+        original_trace = optic.trace
+        optic.trace = lambda *args, **kwargs: (
+            calls.append(1),
+            original_trace(*args, **kwargs),
+        )[1]
+        solve = QuickFocusSolve(optic)
+        with pytest.raises(UnsupportedParaxialGeometryError):
+            solve.optimal_focus_distance()
+        assert calls == []
+
+    def test_multiconfig_thickness_update_is_atomic(self, set_test_backend):
+        from optiland.multiconfig import MultiConfiguration
+
+        base = straight()
+        mc = MultiConfiguration(base)
+        mc.add_configuration()
+        # Replace configuration 1 with a folded system so a thickness
+        # update on [0, 1] must reject; configuration 0 must stay exactly
+        # unchanged (no partial group update).
+        mc.configurations[1] = folded()
+        before = _system_snapshot(mc.configurations[0])
+        with pytest.raises(UnsupportedParaxialGeometryError):
+            mc.set_thickness(surface_index=1, value=9.0, configurations=[0, 1])
+        assert _system_snapshot(mc.configurations[0]) == before
+
+    def test_multiconfig_straight_thickness_update_still_works(self, set_test_backend):
+        from optiland.multiconfig import MultiConfiguration
+
+        base = straight()
+        mc = MultiConfiguration(base)
+        mc.add_configuration()
+        mc.set_thickness(surface_index=1, value=5.0, configurations=[0, 1])
+        for optic in mc.configurations:
+            thickness = optic.surfaces[1].thickness
+            if hasattr(thickness, "item"):
+                thickness = thickness.item()
+            assert_allclose(float(thickness), 5.0)
+
+
+# ---------------------------------------------------------------------------
 # Backend parity and gradients through the matrix path
 # ---------------------------------------------------------------------------
 

@@ -18,7 +18,12 @@ from typing import TYPE_CHECKING
 
 import optiland.backend as be
 from optiland.coatings import BaseCoatingPolarized
-from optiland.paraxial_path import ParaxialPath, build_paraxial_path, transverse_basis
+from optiland.paraxial_path import (
+    ParaxialPath,
+    build_paraxial_path,
+    require_global_z_geometry,
+    transverse_basis,
+)
 from optiland.surfaces.factories.surface_factory import SurfaceFactory
 from optiland.surfaces.standard_surface import Surface
 
@@ -103,7 +108,25 @@ class SurfaceGroup:
             optical element with finite thickness, its propagation space is
             still honoured via the junction-z calculation even though the
             surface itself is not retained.
+
+        Raises:
+            UnsupportedParaxialGeometryError: If either operand's beam path
+                is folded off global +z (or entered along another
+                direction), before anything is copied or shifted.
+                Composition places ``other`` by shifting global z only,
+                which is meaningless for a folded operand. A laterally
+                translated system whose axis remains global +z stays
+                supported.
         """
+        # Preflight-atomic: both operands must be global-z compatible
+        # before any copy or coordinate shift happens.
+        require_global_z_geometry(
+            self._surfaces, "surface-group composition (left operand)"
+        )
+        require_global_z_geometry(
+            other._surfaces, "surface-group composition (right operand)"
+        )
+
         # Deep-copy other's surfaces so the original is never mutated and the
         # combined group does not share mutable objects with other.
         other_copies = [deepcopy(s) for s in other._surfaces]
@@ -541,13 +564,25 @@ class SurfaceGroup:
                     "later, or remove the existing object surface first."
                 )
 
+            # Whether an interior insertion will rebuild downstream cs.z from
+            # cumulative thicknesses (only in relative-coordinate mode).
+            will_rebuild = not self.surface_factory.use_absolute_cs and index < len(
+                self._surfaces
+            )
+            if will_rebuild:
+                # Preflight-atomic: validate the would-be chain before the
+                # list is mutated, so a rejected insertion leaves the group
+                # exactly as it was.
+                require_global_z_geometry(
+                    self._surfaces[:index] + [new_surface] + self._surfaces[index:],
+                    "surface insertion into a relative-coordinate chain",
+                )
+
             self._surfaces.insert(index, new_surface)
             self._update_surface_links()
 
             # Update coordinate systems if surface was inserted
-            if not self.surface_factory.use_absolute_cs and index < (
-                len(self._surfaces) - 1
-            ):
+            if will_rebuild:
                 self._update_coordinate_systems(start_index=index)
 
         if new_surface.is_stop:
@@ -579,12 +614,22 @@ class SurfaceGroup:
 
         num_surfaces_before_removal = len(self.surfaces)
 
+        will_rebuild = (
+            not self.surface_factory.use_absolute_cs
+            and index < num_surfaces_before_removal - 1
+        )
+        if will_rebuild:
+            # Preflight-atomic: validate the would-be chain before the list
+            # is mutated, so a rejected removal leaves the group unchanged.
+            require_global_z_geometry(
+                self._surfaces[:index] + self._surfaces[index + 1 :],
+                "surface removal from a relative-coordinate chain",
+            )
+
         del self._surfaces[index]
 
-        if not self.surface_factory.use_absolute_cs:
-            was_not_last_surface = index < num_surfaces_before_removal - 1
-            if was_not_last_surface:
-                self._update_coordinate_systems(start_index=index)
+        if will_rebuild:
+            self._update_coordinate_systems(start_index=index)
 
         self._update_surface_links()
 
@@ -645,9 +690,30 @@ class SurfaceGroup:
                             not the object surface (index 0) and has a predecessor.
                             If `start_index` is 0, updates effectively begin
                             for surface 1 based on surface 0.
+
+        Raises:
+            UnsupportedParaxialGeometryError: If the current chain's beam
+                path is folded off global +z (or entered along another
+                direction), before any coordinate is rewritten.
+                Reconstructing every downstream position as predecessor
+                ``z + thickness`` is only meaningful while the beam path
+                runs along global +z; on a folded chain it would collapse
+                the fold onto the z axis.
         """
         if not self._surfaces:
             return
+
+        # Defensive gate for every entry point (insertion and removal
+        # preflight the would-be chain before mutating the list; direct or
+        # future callers land here). Ordinary relative-coordinate
+        # construction is unaffected: chains classified straight pass
+        # through, and a single surface defines no path to misread.
+        if len(self._surfaces) >= 2:
+            require_global_z_geometry(
+                self._surfaces,
+                "relative-coordinate reconstruction "
+                "(SurfaceGroup._update_coordinate_systems)",
+            )
 
         effective_start_index = max(start_index, 1)  # No update to object surface
 
@@ -699,6 +765,13 @@ class SurfaceGroup:
 
         Raises:
             RuntimeError: If either `start_index` or `end_index` is zero, but not both.
+            UnsupportedParaxialGeometryError: If the beam path is folded off
+                global +z (or entered along another direction), before any
+                surface order, material, coordinate or thickness is touched.
+                Flipping derives new positions and thicknesses from global z
+                differences, which is meaningless on a folded chain. This
+                guard protects the direct ``SurfaceGroup.flip()`` API as
+                well as ``OpticUpdater.flip()``.
 
         """
         n_surfaces_total = len(self._surfaces)
@@ -709,6 +782,10 @@ class SurfaceGroup:
             raise RuntimeError(
                 "Cannot flip object surface or image surface without flipping both"
             )
+
+        # Preflight-atomic: reject before list reversal, material swaps,
+        # coordinate changes or thickness updates.
+        require_global_z_geometry(self._surfaces, "SurfaceGroup.flip")
         flip_object_image_media = start_index == 0 and end_index == 0
 
         if flip_object_image_media:
