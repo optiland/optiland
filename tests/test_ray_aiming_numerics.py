@@ -30,8 +30,13 @@ from optiland.rays.ray_aiming.parameterization import (
 from optiland.utils import machine_eps, solve_2x2
 
 from .nr_implicit_test_utils import backend_state
-from .test_folded_paraxial import _finish, straight
-from .test_folded_paraxial_hardening import stop_after_fold, stop_mid_straight
+from .test_folded_paraxial import _finish, entered_along_x, straight
+from .test_folded_paraxial_hardening import (
+    _translate,
+    entered_along_neg_z,
+    stop_after_fold,
+    stop_mid_straight,
+)
 from .utils import assert_allclose
 
 BACKEND_PRECISION = [
@@ -768,12 +773,9 @@ class TestSeedCenteredScan:
     def test_all_candidate_offsets_are_transverse(
         self, set_test_backend, builder_name
     ):
-        from tests import test_folded_paraxial as tfp
-        from tests.test_folded_paraxial_hardening import entered_along_neg_z
-
         builders = {
-            "straight": tfp.straight,
-            "entered_along_x": tfp.entered_along_x,
+            "straight": straight,
+            "entered_along_x": entered_along_x,
             "entered_along_neg_z": entered_along_neg_z,
         }
         optic = builders[builder_name]()
@@ -791,8 +793,6 @@ class TestSeedCenteredScan:
         assert np.max(np.abs(along)) <= 1e-9
 
     def test_candidates_invariant_under_rigid_translation(self, set_test_backend):
-        from tests.test_folded_paraxial_hardening import _translate
-
         base = straight()
         moved = _translate(straight(), dx=7.0, dy=-3.0)
 
