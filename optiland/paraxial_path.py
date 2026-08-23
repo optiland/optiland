@@ -53,6 +53,7 @@ OBLIQUE_POWERED_MIRROR = "OBLIQUE_POWERED_MIRROR"
 UNSUPPORTED_PARAXIAL_INTERACTION = "UNSUPPORTED_PARAXIAL_INTERACTION"
 NONOBJECT_INFINITY = "NONOBJECT_INFINITY"
 AMBIGUOUS_WIDE_ANGLE_FIELD = "AMBIGUOUS_WIDE_ANGLE_FIELD"
+SINGULAR_ANGLE_TANGENT = "SINGULAR_ANGLE_TANGENT"
 
 
 class UnsupportedParaxialGeometryError(ValueError):
@@ -119,6 +120,67 @@ def position_tolerance(characteristic_scale: float) -> float:
             largest finite vertex coordinate magnitude.
     """
     return angular_tolerance() * max(1.0, abs(characteristic_scale))
+
+
+def tangent_singularity_tolerance_deg() -> float:
+    """Rejection half-width (degrees) around the odd multiples of 90 degrees.
+
+    A component field angle closer than this to ``90 + k * 180`` degrees is
+    rejected before its tangent is evaluated: floating-point ``tan`` returns
+    a huge finite number there instead of failing, and every quantity built
+    from it (launch points, object positions, chief-ray scales) silently
+    loses its meaning.
+
+    The width is derived from the active backend precision. The tangent's
+    relative conditioning error at distance ``delta`` (radians) from the
+    pole is approximately ``eps * (pi / 2) / delta``; requiring it to stay
+    below ``sqrt(eps)`` -- i.e. the value keeps at least half its
+    significant digits -- gives ``delta >= (pi / 2) * sqrt(eps)``, which is
+    ``90 * sqrt(eps)`` in degrees. For float64 this is ~1.3e-6 degrees; for
+    float32 ~0.031 degrees. Valid nonsingular one-dimensional wide fields
+    (89, 91, 95, 105 degrees, ...) lie far outside it.
+    """
+    try:
+        precision = str(be.get_precision())
+    except Exception:
+        precision = "float64"
+    eps = _EPS_BY_PRECISION["float32" if "32" in precision else "float64"]
+    return 90.0 * eps**0.5
+
+
+def require_nonsingular_tangent_angles(
+    *components_deg, operation: str = "angle-field evaluation"
+) -> None:
+    """Reject field-angle components whose tangent is numerically singular.
+
+    Call before every ``tan(angle)`` evaluation on component field angles.
+    Angles within :func:`tangent_singularity_tolerance_deg` of an odd
+    multiple of 90 degrees raise; everything else passes through untouched.
+
+    Args:
+        *components_deg: Angle components in degrees (scalars or arrays).
+        operation: Name of the calling operation, used in the message.
+
+    Raises:
+        UnsupportedParaxialGeometryError: With code
+            ``SINGULAR_ANGLE_TANGENT`` for the first offending component.
+    """
+    tol = tangent_singularity_tolerance_deg()
+    for component in components_deg:
+        values = be.to_numpy(be.atleast_1d(be.array(component))).reshape(-1)
+        distance = abs(abs(values) % 180.0 - 90.0)
+        bad = distance <= tol
+        if bad.any():
+            i = int(bad.nonzero()[0][0])
+            raise UnsupportedParaxialGeometryError(
+                f"[{SINGULAR_ANGLE_TANGENT}] {operation}: the field angle "
+                f"component {values[i]:.10g} deg lies within {tol:.3g} deg "
+                "of an odd multiple of 90 degrees, where its tangent is "
+                "numerically singular (floating-point tan returns a huge "
+                "finite number instead of failing). Use a field angle away "
+                "from the pole; nonsingular wide angles such as 89, 91, 95 "
+                "or 105 degrees remain supported."
+            )
 
 
 @dataclass(frozen=True)

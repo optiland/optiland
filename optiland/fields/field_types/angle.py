@@ -9,6 +9,7 @@ import optiland.backend as be
 from optiland.paraxial_path import (
     AMBIGUOUS_WIDE_ANGLE_FIELD,
     UnsupportedParaxialGeometryError,
+    require_nonsingular_tangent_angles,
 )
 from optiland.utils import globalize_coordinates
 
@@ -95,6 +96,9 @@ class AngleField(BaseFieldDefinition):
 
         if obj.is_infinite:
             _validate_unambiguous_field(field_x, field_y)
+            require_nonsingular_tangent_angles(
+                field_x, field_y, operation="infinite-conjugate ray origins"
+            )
             EPD = optic.paraxial.EPD()
             offset = self._get_starting_z_offset(optic)
             d = offset + EPL
@@ -139,6 +143,9 @@ class AngleField(BaseFieldDefinition):
                 y0 = anchor[1] + back * d0[1] + tu * u0[1] + tv * v0[1]
                 z0 = anchor[2] + back * d0[2] + tu * u0[2] + tv * v0[2]
         else:
+            require_nonsingular_tangent_angles(
+                field_x, field_y, operation="finite-conjugate ray origins"
+            )
             dist_to_ep = (
                 optic.paraxial.entrance_pupil_axial_position()
                 - optic.surfaces.positions[0]
@@ -173,6 +180,9 @@ class AngleField(BaseFieldDefinition):
         """
         max_field = be.array(optic.fields.max_field)
         field_y = max_field * be.array(Hy)
+        require_nonsingular_tangent_angles(
+            field_y, operation="paraxial object-position construction"
+        )
         y = -be.tan(be.radians(field_y)) * EPL
         z = optic.surfaces.positions[1]
         y0 = y1 + y
@@ -197,6 +207,9 @@ class AngleField(BaseFieldDefinition):
             float: The scaling factor.
         """
         max_field_angle = optic.fields.max_y_field
+        require_nonsingular_tangent_angles(
+            max_field_angle, operation="chief-ray field scaling"
+        )
         target_slope = be.tan(be.deg2rad(max_field_angle))
         return target_slope / u_obj_unit
 

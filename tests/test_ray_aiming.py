@@ -154,15 +154,21 @@ def test_robust_caching_regression(set_test_backend):
     optic.trace(0, 0, 0.55, num_rays=1)
 
 
-def test_robust_aimer_infinite_object_90_degree_field(set_test_backend):
-    """Regression test: verify RobustRayAimer aims correctly for 90 deg field @ infinity.
+def test_robust_aimer_infinite_object_near_90_degree_field(set_test_backend):
+    """Regression test: verify RobustRayAimer aims correctly near a 90 deg
+    field at infinity.
 
-    See bug fix where IterativeRayAimer inherited bad L,M,N from initial_guess.
+    See bug fix where IterativeRayAimer inherited bad L,M,N from
+    initial_guess. The field sits just off the pole: an exact 90 degree
+    component angle is now rejected before its tangent is evaluated
+    (SINGULAR_ANGLE_TANGENT), so the direction-inheritance regression is
+    pinned at the closest supported geometry instead.
     """
     optic = Optic()
-    # Construct a minimal wide angle lens setup that reproduces the infinite + 90 deg scenario
-    # We'll use a simplified version of the user's lens to avoid clutter,
-    # but ensure it has infinite object and large field.
+    # Construct a minimal wide-angle setup reproducing the infinite +
+    # near-90-deg scenario. We use a simplified version of the user's lens
+    # to avoid clutter, but ensure it has an infinite object and a large
+    # field.
 
     optic.surfaces.add(index=0, radius=float("inf"), thickness=float("inf"))
     # A dummy surface to aim at
@@ -174,7 +180,7 @@ def test_robust_aimer_infinite_object_90_degree_field(set_test_backend):
     optic.set_aperture("EPD", 1.0)
     optic.fields.set_type("angle")
     optic.fields.add(y=0)
-    optic.fields.add(y=90)
+    optic.fields.add(y=89.9)
     optic.wavelengths.add(0.55, is_primary=True)
 
     optic.ray_tracer.set_aiming("robust")
@@ -183,16 +189,42 @@ def test_robust_aimer_infinite_object_90_degree_field(set_test_backend):
 
     rg = RayGenerator(optic)
 
-    # Generate rays for 90 degree field (Hy=1.0)
-    # 90 degrees means rays come from +Y relative to Z.
-    # Direction vector should be approx (0, 1, 0).
-    # N (z-dir cosine) should be near 0.
+    # Generate rays for the near-90-degree field (Hy=1.0): rays come from
+    # +Y relative to Z, so the direction vector should be approx (0, 1, 0)
+    # and N (the z direction cosine) near 0.
     rays = rg.generate_rays(Hx=0, Hy=1, Px=0, Py=0, wavelength=0.55)
 
     # Check N is close to 0 (allow small tolerance due to numerical precision/mapping)
     # Using the fixed code, we saw N ~ 0.02 which is small enough compared to N ~ 1.
     assert abs(rays.N[0]) < 0.1
     assert rays.M[0] > 0.9  # Should be largely in Y direction
+
+
+def test_exact_90_degree_field_rejected_before_tangent(set_test_backend):
+    """An exact 90 degree component angle raises the dedicated singularity
+    diagnostic instead of silently evaluating tan(90 deg)."""
+    from optiland.paraxial_path import UnsupportedParaxialGeometryError
+
+    optic = Optic()
+    optic.surfaces.add(index=0, radius=float("inf"), thickness=float("inf"))
+    optic.surfaces.add(
+        index=1, radius=100.0, thickness=10.0, material="air", is_stop=True
+    )
+    optic.surfaces.add(index=2)
+    optic.set_aperture("EPD", 1.0)
+    optic.fields.set_type("angle")
+    optic.fields.add(y=0)
+    optic.fields.add(y=90)
+    optic.wavelengths.add(0.55, is_primary=True)
+    optic.ray_tracer.set_aiming("robust")
+
+    from optiland.rays.ray_generator import RayGenerator
+
+    rg = RayGenerator(optic)
+    with pytest.raises(
+        UnsupportedParaxialGeometryError, match="SINGULAR_ANGLE_TANGENT"
+    ):
+        rg.generate_rays(Hx=0, Hy=1, Px=0, Py=0, wavelength=0.55)
 
 
 def test_instantiate_wide_angle_lenses(set_test_backend):

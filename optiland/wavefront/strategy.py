@@ -14,6 +14,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Literal
 
 import optiland.backend as be
+from optiland.paraxial_path import require_nonsingular_tangent_angles
 
 from ..fields.field_types import AngleField
 from .reference_geometry import PlanarReference, ReferenceGeometry, SphericalReference
@@ -119,6 +120,9 @@ class ReferenceStrategy(ABC):
         max_field_deg = self.optic.fields.max_field
         fx = hx * max_field_deg
         fy = hy * max_field_deg
+        require_nonsingular_tangent_angles(
+            fx, fy, operation="wavefront tilt correction"
+        )
         fx_rad = be.deg2rad(fx)
         fy_rad = be.deg2rad(fy)
 

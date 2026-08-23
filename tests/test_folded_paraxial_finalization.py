@@ -733,3 +733,134 @@ class TestMatrixBackendParity:
             efl_vals.append(float(be.to_numpy(probe.paraxial.f2_range(1, last))))
         grad_fd = (efl_vals[0] - efl_vals[1]) / (2 * h)
         assert_allclose(grad, grad_fd, rtol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# Workstream E: exact tangent-angle singularities are rejected
+# ---------------------------------------------------------------------------
+
+
+class TestTangentSingularityRejection:
+    @pytest.mark.parametrize("angle", [90.0, -90.0, 270.0, -270.0])
+    def test_exact_odd_multiple_of_90_raises(self, set_test_backend, angle):
+        optic = straight()
+        optic.fields.add(x=0.0, y=angle)
+        Hx, Hy = optic.fields.get_field_coords()[-1]
+        with pytest.raises(
+            UnsupportedParaxialGeometryError, match="SINGULAR_ANGLE_TANGENT"
+        ):
+            optic.trace(
+                Hx=Hx, Hy=Hy, wavelength=0.55, num_rays=3, distribution="line_y"
+            )
+
+    def test_just_inside_tolerance_raises(self, set_test_backend):
+        from optiland.paraxial_path import (
+            require_nonsingular_tangent_angles,
+            tangent_singularity_tolerance_deg,
+        )
+
+        tol = tangent_singularity_tolerance_deg()
+        for pole in (90.0, -90.0, 270.0):
+            with pytest.raises(
+                UnsupportedParaxialGeometryError, match="SINGULAR_ANGLE_TANGENT"
+            ):
+                require_nonsingular_tangent_angles(pole - 0.5 * tol)
+
+    def test_just_outside_tolerance_stays_finite(self, set_test_backend):
+        from optiland.paraxial_path import (
+            require_nonsingular_tangent_angles,
+            tangent_singularity_tolerance_deg,
+        )
+
+        tol = tangent_singularity_tolerance_deg()
+        for angle in (90.0 - 3.0 * tol, 90.0 + 3.0 * tol, 270.0 - 3.0 * tol):
+            require_nonsingular_tangent_angles(angle)  # must not raise
+            value = float(be.to_numpy(be.tan(be.radians(be.array(angle)))))
+            assert math.isfinite(value)
+
+    @pytest.mark.parametrize("angle", [89.0, 91.0, 95.0, 105.0])
+    def test_nonsingular_one_dimensional_wide_fields_still_trace(
+        self, set_test_backend, angle
+    ):
+        """The supported 1-D wide-angle domain must remain supported."""
+        optic = straight()
+        optic.fields.add(x=0.0, y=angle)
+        rays = optic.trace(
+            Hx=0, Hy=1, wavelength=0.55, num_rays=3, distribution="line_y"
+        )
+        assert rays is not None
+
+    def test_two_dimensional_ambiguity_still_raises(self, set_test_backend):
+        """(70, 70) stays rejected with the ambiguity code, not the
+        singularity code."""
+        optic = straight()
+        optic.fields.add(x=70.0, y=70.0)
+        Hx, Hy = optic.fields.get_field_coords()[-1]
+        with pytest.raises(
+            UnsupportedParaxialGeometryError, match="AMBIGUOUS_WIDE_ANGLE_FIELD"
+        ):
+            optic.trace(
+                Hx=Hx, Hy=Hy, wavelength=0.55, num_rays=3, distribution="line_y"
+            )
+
+    def test_mixed_sign_two_dimensional_field_unchanged(self, set_test_backend):
+        """A 2-D field inside the documented domain keeps tracing."""
+        optic = straight()
+        optic.fields.add(x=30.0, y=-40.0)
+        Hx, Hy = optic.fields.get_field_coords()[-1]
+        rays = optic.trace(
+            Hx=Hx, Hy=Hy, wavelength=0.55, num_rays=3, distribution="line_y"
+        )
+        assert rays is not None
+
+    def test_paraxial_object_position_is_guarded(self, set_test_backend):
+        optic = straight()
+        optic.fields.add(x=0.0, y=90.0)
+        with pytest.raises(
+            UnsupportedParaxialGeometryError, match="SINGULAR_ANGLE_TANGENT"
+        ):
+            optic.paraxial.trace(Hy=1.0, Py=0.0, wavelength=0.55)
+
+    def test_chief_ray_scaling_is_guarded(self, set_test_backend):
+        optic = straight()
+        optic.fields.add(x=0.0, y=90.0)
+        with pytest.raises(
+            UnsupportedParaxialGeometryError, match="SINGULAR_ANGLE_TANGENT"
+        ):
+            optic.paraxial.chief_ray()
+
+    def test_wavefront_tilt_correction_is_guarded(self, set_test_backend):
+        from optiland.wavefront.strategy import require_nonsingular_tangent_angles
+
+        with pytest.raises(
+            UnsupportedParaxialGeometryError, match="SINGULAR_ANGLE_TANGENT"
+        ):
+            require_nonsingular_tangent_angles(
+                90.0, operation="wavefront tilt correction"
+            )
+
+    @pytest.mark.parametrize("backend", ["numpy", "torch"])
+    def test_boundary_scales_with_backend_precision(self, backend):
+        """The rejection width is derived from the active precision: a
+        near-pole angle inside the float32 width but far outside the
+        float64 width must raise only in float32."""
+        from .nr_implicit_test_utils import backend_state
+
+        probe = 90.0 - 0.005
+
+        with backend_state(backend, "float64"):
+            from optiland.paraxial_path import (
+                require_nonsingular_tangent_angles,
+                tangent_singularity_tolerance_deg,
+            )
+
+            tol64 = tangent_singularity_tolerance_deg()
+            require_nonsingular_tangent_angles(probe)  # must not raise
+
+        with backend_state(backend, "float32"):
+            tol32 = tangent_singularity_tolerance_deg()
+            assert tol32 > tol64
+            with pytest.raises(
+                UnsupportedParaxialGeometryError, match="SINGULAR_ANGLE_TANGENT"
+            ):
+                require_nonsingular_tangent_angles(probe)
