@@ -28,6 +28,33 @@ from optiland.visualization.system.utils import transform
 from optiland.wavefront import Wavefront
 
 
+def image_vertex_grid(optic) -> tuple:
+    """(1, 1) image-point grids at the image surface's 3-D global vertex.
+
+    The ideal-normalization reference point of the Huygens PSF is the full
+    three-dimensional vertex of the image surface in the global frame --
+    not ``(0, 0, global_z)``, which is only equivalent while the image
+    vertex sits on the global z axis. Shared by the scalar and vectorial
+    Huygens implementations so the two normalization paths cannot drift.
+
+    Built by broadcasting the vertex coordinates onto a zero grid instead
+    of ``be.full(...)``: the torch backend's ``full`` extracts a Python
+    scalar from a tensor fill value, which would silently detach trainable
+    image-vertex coordinates from the autograd graph. Broadcasting keeps
+    the graph intact on every backend.
+
+    Args:
+        optic: The optical system whose image-surface vertex anchors the
+            normalization.
+
+    Returns:
+        tuple: ``(image_x, image_y, image_z)`` arrays of shape ``(1, 1)``.
+    """
+    vx, vy, vz = optic.surfaces[-1].geometry.cs.position_in_gcs
+    zero = be.zeros((1, 1))
+    return zero + vx, zero + vy, zero + vz
+
+
 class ScalarHuygensPSF(BasePSF):
     """Huygens PSF class using Huygens-Fresnel principle (scalar formulation).
 
@@ -265,14 +292,7 @@ class ScalarHuygensPSF(BasePSF):
             data = wf.get_data((0, 0), self.wavelengths[0].value)
 
         pupil_opd_ideal = be.zeros_like(data.opd)  # ideal case has no OPD
-        # Real-space image-surface vertex: the ideal normalization point is
-        # the full 3-D vertex of the image surface in the global frame --
-        # not (0, 0, global_z), which is only equivalent while the image
-        # vertex sits on the global z axis.
-        vx, vy, vz = self.optic.surfaces[-1].geometry.cs.position_in_gcs
-        image_x = be.full((1, 1), vx)
-        image_y = be.full((1, 1), vy)
-        image_z = be.full((1, 1), vz)
+        image_x, image_y, image_z = image_vertex_grid(self.optic)
 
         psf_max = self._summation_strategy.compute(
             image_x,

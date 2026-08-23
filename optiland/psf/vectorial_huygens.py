@@ -14,7 +14,7 @@ Kramer Harrison, 2026
 from __future__ import annotations
 
 import optiland.backend as be
-from optiland.psf.huygens_fresnel import ScalarHuygensPSF
+from optiland.psf.huygens_fresnel import ScalarHuygensPSF, image_vertex_grid
 from optiland.wavefront import Wavefront
 
 
@@ -141,12 +141,9 @@ class VectorialHuygensPSF(ScalarHuygensPSF):
 
         pupil_opd_ideal = be.zeros_like(data.opd)
         # Same corrected image reference point as the scalar Huygens PSF:
-        # the full 3-D image-surface vertex in the global frame, not
-        # (0, 0, global_z).
-        vx, vy, vz = self.optic.surfaces[-1].geometry.cs.position_in_gcs
-        image_x = be.full((1, 1), vx)
-        image_y = be.full((1, 1), vy)
-        image_z = be.full((1, 1), vz)
+        # the shared helper keeps the two normalization paths identical and
+        # gradient-safe.
+        image_x, image_y, image_z = image_vertex_grid(self.optic)
 
         is_valid = data.intensity > 0
         norm = 0.0
