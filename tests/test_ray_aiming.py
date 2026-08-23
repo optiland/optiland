@@ -556,7 +556,7 @@ def test_robust_aimer_chief_ray_matches_field_angle_per_field(set_test_backend):
         # Fresh aimer per field: no cross-field warm start available, so
         # this also exercises the cold chief-ray marching fallback.
         aimer_fresh = RobustRayAimer(WideAngle170FOV())
-        chief = aimer_fresh._solve_chief(
+        chief, _strategy, _report = aimer_fresh._solve_chief(
             Hx, Hy, optic.primary_wavelength, stop_idx, is_inf, None
         )
         _, _, _, L, M, N = chief

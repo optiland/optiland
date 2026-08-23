@@ -449,3 +449,448 @@ class TestBasisPole:
             assert not bool(be.any(be.isnan(component)))
         report = aimer.last_report
         assert report is not None and report.converged
+
+
+# ---------------------------------------------------------------------------
+# Robust aiming reports (honest and complete)
+# ---------------------------------------------------------------------------
+
+
+def _pupil_batch():
+    return (be.array([0.0, 0.0, 0.2]), be.array([0.0, 0.3, -0.2]))
+
+
+def _fail(result, n):
+    """Return a copy of a _solve_core result with every ray non-converged."""
+    x_, y_, z_, L_, M_, N_, conv, nan_flag, report = result
+    return (x_, y_, z_, L_, M_, N_, conv & (be.zeros(n) > 0.0), nan_flag, report)
+
+
+class TestRobustReports:
+    def test_fresh_calibration_report(self, set_test_backend):
+        from optiland.rays.ray_aiming.robust import RobustRayAimer
+
+        optic = stop_mid_straight()
+        aimer = RobustRayAimer(optic)
+        aimer.aim_rays((0.0, 0.4), 0.55, _pupil_batch())
+        report = aimer.last_report
+        assert report is not None
+        assert report.converged
+        assert report.num_rays == 3
+        assert report.num_converged == 3
+        assert not report.fallback_used
+        assert len(report.field_reports) == 1
+        field = report.field_reports[0]
+        assert field.calibration_used
+        assert not field.used_cached_map
+        assert field.chief_seed_strategy in ("direct_paraxial", "warm_map")
+        assert field.edge_probe_fallbacks == 0
+        assert field.final_polish.converged
+        assert report.final_residual <= 10 * aimer.tol
+
+    def test_cached_map_report(self, set_test_backend):
+        from optiland.rays.ray_aiming.robust import RobustRayAimer
+
+        optic = stop_mid_straight()
+        aimer = RobustRayAimer(optic)
+        aimer.aim_rays((0.0, 0.4), 0.55, _pupil_batch())
+        aimer.aim_rays((0.0, 0.4), 0.55, _pupil_batch())
+        field = aimer.last_report.field_reports[0]
+        assert field.used_cached_map
+        assert not field.calibration_used
+        assert field.chief_seed_strategy == "cached_map"
+        assert not field.fallback_used
+
+    def test_marching_report(self, set_test_backend):
+        """Force the direct chief solve to fail once so the field-marching
+        fallback runs and is reported."""
+        from optiland.rays.ray_aiming.iterative import IterativeRayAimer
+        from optiland.rays.ray_aiming.robust import RobustRayAimer
+
+        optic = stop_mid_straight()
+        aimer = RobustRayAimer(optic)
+
+        original = IterativeRayAimer._solve_core
+        state = {"target0_singles": 0}
+
+        def failing_direct_chief(self, x, y, z, L, M, N, *args, **kwargs):
+            result = original(self, x, y, z, L, M, N, *args, **kwargs)
+            n = len(be.as_array_1d(x))
+            tx, ty = args[3], args[4]
+            target = float(be.to_numpy(be.abs(tx) + be.abs(ty)).reshape(-1)[0])
+            if n == 1 and target == 0.0:
+                state["target0_singles"] += 1
+                # Call 1 is the stop-radius pupil-center solve; call 2 is
+                # the direct chief attempt -- fail exactly that one so the
+                # marching fallback must run.
+                if state["target0_singles"] == 2:
+                    return _fail(result, n)
+            return result
+
+        IterativeRayAimer._solve_core = failing_direct_chief
+        try:
+            aimer.aim_rays((0.0, 0.4), 0.55, _pupil_batch())
+        finally:
+            IterativeRayAimer._solve_core = original
+
+        report = aimer.last_report
+        field = report.field_reports[0]
+        assert field.chief_seed_strategy == "marching"
+        assert field.fallback_used
+        assert report.fallback_used
+        assert report.converged
+
+    def test_edge_probe_fallbacks_are_counted(self, set_test_backend):
+        """Probes that fail to converge fall back to the chief launch and
+        the count is reported."""
+        from optiland.rays.ray_aiming.iterative import IterativeRayAimer
+        from optiland.rays.ray_aiming.robust import RobustRayAimer
+
+        optic = stop_mid_straight()
+        aimer = RobustRayAimer(optic)
+
+        original = IterativeRayAimer._solve_core
+
+        def failing_probes(
+            self, x, y, z, L, M, N, wavelengths, stop_idx, is_inf, tx, ty,
+            **kwargs,
+        ):
+            result = original(
+                self, x, y, z, L, M, N, wavelengths, stop_idx, is_inf, tx, ty,
+                **kwargs,
+            )
+            n = len(be.as_array_1d(x))
+            target = float(be.to_numpy(be.abs(tx) + be.abs(ty)).reshape(-1)[0])
+            if n == 1 and target > 0.0:
+                x_, y_, z_, L_, M_, N_, conv, nan_flag, report = result
+                return (
+                    x_,
+                    y_,
+                    z_,
+                    L_,
+                    M_,
+                    N_,
+                    conv & (be.zeros(1) > 0.0),
+                    nan_flag,
+                    report,
+                )
+            return result
+
+        IterativeRayAimer._solve_core = failing_probes
+        try:
+            aimer.aim_rays(
+                (0.0, 0.2), 0.55, (be.array([0.0, 0.1]), be.array([0.0, 0.1]))
+            )
+        finally:
+            IterativeRayAimer._solve_core = original
+
+        field = aimer.last_report.field_reports[0]
+        assert field.edge_probe_fallbacks == 4
+        assert field.fallback_used
+
+    def test_failed_initial_guess_marks_fallback(self, set_test_backend):
+        from optiland.rays.ray_aiming.robust import RobustRayAimer
+
+        optic = stop_mid_straight()
+        aimer = RobustRayAimer(optic)
+        # A sideways guess traces to NaN, so the direct iterative attempt
+        # raises and the calibrated solve takes over.
+        bad_guess = (
+            be.array([0.0, 0.0, 0.2]),
+            be.array([0.0, 0.3, -0.2]),
+            be.array([-10.0, -10.0, -10.0]),
+            be.array([1.0, 1.0, 1.0]),
+            be.array([0.0, 0.0, 0.0]),
+            be.array([0.0, 0.0, 0.0]),
+        )
+        aimer.aim_rays((0.0, 0.4), 0.55, _pupil_batch(), initial_guess=bad_guess)
+        report = aimer.last_report
+        assert report.converged
+        assert report.fallback_used
+
+    def test_successful_initial_guess_reports_strategy(self, set_test_backend):
+        from optiland.rays.ray_aiming.robust import RobustRayAimer
+
+        optic = stop_mid_straight()
+        aimer = RobustRayAimer(optic)
+        # First solve normally, reuse the result as a (good) guess.
+        solution = aimer.aim_rays((0.0, 0.4), 0.55, _pupil_batch())
+        aimer.aim_rays((0.0, 0.4), 0.55, _pupil_batch(), initial_guess=solution)
+        report = aimer.last_report
+        assert report.converged
+        assert not report.fallback_used
+        assert report.field_reports[0].chief_seed_strategy == "initial_guess"
+        assert not report.field_reports[0].calibration_used
+
+    def test_partial_per_ray_convergence_counts(self, set_test_backend):
+        """Non-converged rays surface as NaN with exact counts retained and
+        converged defined as num_converged == num_rays."""
+        from optiland.rays.ray_aiming.iterative import IterativeRayAimer
+        from optiland.rays.ray_aiming.robust import RobustRayAimer
+
+        optic = stop_mid_straight()
+        aimer = RobustRayAimer(optic)
+
+        original = IterativeRayAimer._solve_core
+
+        def fail_last_ray_of_batch(self, x, y, z, L, M, N, *args, **kwargs):
+            result = original(self, x, y, z, L, M, N, *args, **kwargs)
+            n = len(be.as_array_1d(x))
+            if n == 3:
+                from dataclasses import replace
+
+                x_, y_, z_, L_, M_, N_, conv, nan_flag, report = result
+                keep = be.arange_indices(n) < n - 1
+                conv = conv & keep
+                report = replace(
+                    report,
+                    num_converged=int(be.to_numpy(conv).reshape(-1).sum()),
+                    converged=False,
+                )
+                return x_, y_, z_, L_, M_, N_, conv, nan_flag, report
+            return result
+
+        IterativeRayAimer._solve_core = fail_last_ray_of_batch
+        try:
+            x, y, z, L, M, N = aimer.aim_rays((0.0, 0.4), 0.55, _pupil_batch())
+        finally:
+            IterativeRayAimer._solve_core = original
+
+        report = aimer.last_report
+        assert report.num_rays == 3
+        assert report.num_converged == 2
+        assert not report.converged
+        assert bool(be.isnan(x[2]))
+        assert not bool(be.any(be.isnan(x[0:2])))
+
+    def test_total_field_failure_sets_last_report_before_raising(
+        self, set_test_backend
+    ):
+        from optiland.rays.ray_aiming.iterative import IterativeRayAimer
+        from optiland.rays.ray_aiming.robust import RobustRayAimer
+
+        optic = stop_mid_straight()
+        aimer = RobustRayAimer(optic)
+
+        original = IterativeRayAimer._solve_core
+
+        def always_fail(self, x, y, z, L, M, N, *args, **kwargs):
+            result = original(self, x, y, z, L, M, N, *args, **kwargs)
+            x_, y_, z_, L_, M_, N_, conv, nan_flag, report = result
+            n = len(be.as_array_1d(x))
+            return (
+                x_,
+                y_,
+                z_,
+                L_,
+                M_,
+                N_,
+                conv & (be.zeros(n) > 0.0),
+                nan_flag,
+                report,
+            )
+
+        IterativeRayAimer._solve_core = always_fail
+        try:
+            with pytest.raises(ValueError):
+                aimer.aim_rays((0.0, 0.4), 0.55, _pupil_batch())
+        finally:
+            IterativeRayAimer._solve_core = original
+
+        report = aimer.last_report
+        assert report is not None
+        assert not report.converged
+        assert report.fallback_used
+        assert report.field_reports[-1].chief_seed_strategy == "failed"
+
+
+# ---------------------------------------------------------------------------
+# Seed-centered chief scan
+# ---------------------------------------------------------------------------
+
+
+class TestSeedCenteredScan:
+    @staticmethod
+    def _seed_and_param(optic):
+        from optiland.rays.ray_aiming.robust import RobustRayAimer
+
+        aimer = RobustRayAimer(optic)
+        is_inf = bool(getattr(optic.object_surface, "is_infinite", False))
+        param = LaunchParameterization.for_optic(optic, is_inf)
+        seed = aimer._paraxial.aim_rays(
+            (be.array([0.0]), be.array([0.6])),
+            be.array([0.55]),
+            (be.array([0.0]), be.array([0.0])),
+        )
+        return aimer, param, seed
+
+    @staticmethod
+    def _candidates(optic, param, seed, Hx=0.0, Hy=0.6, n=41):
+        from optiland.rays.ray_aiming.pupil_map import to_float
+        from optiland.rays.ray_aiming.robust import _scan_candidate_offsets
+
+        path = optic.surfaces.build_paraxial_path()
+        anchor = path.vertices_gcs[1]
+        u, v = param.u, param.v
+        g_rel = (
+            to_float(seed[0]) - to_float(anchor[0]),
+            to_float(seed[1]) - to_float(anchor[1]),
+            to_float(seed[2]) - to_float(anchor[2]),
+        )
+        g_xi = g_rel[0] * u[0] + g_rel[1] * u[1] + g_rel[2] * u[2]
+        g_eta = g_rel[0] * v[0] + g_rel[1] * v[1] + g_rel[2] * v[2]
+        xi_off, eta_off = _scan_candidate_offsets(g_xi, g_eta, Hx, Hy, n)
+
+        ones = be.ones(n)
+        bound = param.bind(
+            ones * to_float(seed[0]),
+            ones * to_float(seed[1]),
+            ones * to_float(seed[2]),
+            ones * to_float(seed[3]),
+            ones * to_float(seed[4]),
+            ones * to_float(seed[5]),
+        )
+        return bound.launch(xi_off, eta_off), (xi_off, eta_off)
+
+    def test_zero_candidate_is_exactly_the_seed(self, set_test_backend):
+        optic = straight()
+        aimer, param, seed = self._seed_and_param(optic)
+        (x, y, z, L, M, N), _ = self._candidates(optic, param, seed, n=41)
+        mid = 41 // 2
+        for launched, seeded in zip((x, y, z, L, M, N), seed, strict=True):
+            got = float(be.to_numpy(launched).reshape(-1)[mid])
+            want = float(be.to_numpy(seeded).reshape(-1)[0])
+            assert got == want  # exact, bit-for-bit
+
+    @pytest.mark.parametrize(
+        "builder_name", ["straight", "entered_along_x", "entered_along_neg_z"]
+    )
+    def test_all_candidate_offsets_are_transverse(
+        self, set_test_backend, builder_name
+    ):
+        from tests import test_folded_paraxial as tfp
+        from tests.test_folded_paraxial_hardening import entered_along_neg_z
+
+        builders = {
+            "straight": tfp.straight,
+            "entered_along_x": tfp.entered_along_x,
+            "entered_along_neg_z": entered_along_neg_z,
+        }
+        optic = builders[builder_name]()
+        aimer, param, seed = self._seed_and_param(optic)
+        (x, y, z, L, M, N), _ = self._candidates(optic, param, seed, n=41)
+        path = optic.surfaces.build_paraxial_path()
+        d = [float(be.to_numpy(be.array(c))) for c in path.entry_direction]
+        sx = float(be.to_numpy(seed[0]).reshape(-1)[0])
+        sy = float(be.to_numpy(seed[1]).reshape(-1)[0])
+        sz = float(be.to_numpy(seed[2]).reshape(-1)[0])
+        dx = be.to_numpy(x).reshape(-1) - sx
+        dy = be.to_numpy(y).reshape(-1) - sy
+        dz = be.to_numpy(z).reshape(-1) - sz
+        along = dx * d[0] + dy * d[1] + dz * d[2]
+        assert np.max(np.abs(along)) <= 1e-9
+
+    def test_candidates_invariant_under_rigid_translation(self, set_test_backend):
+        from tests.test_folded_paraxial_hardening import _translate
+
+        base = straight()
+        moved = _translate(straight(), dx=7.0, dy=-3.0)
+
+        _, param_a, seed_a = self._seed_and_param(base)
+        _, param_b, seed_b = self._seed_and_param(moved)
+        _, (xi_a, eta_a) = self._candidates(base, param_a, seed_a, n=41)
+        _, (xi_b, eta_b) = self._candidates(moved, param_b, seed_b, n=41)
+        # The local scan offsets are identical: the sweep is centered on
+        # the seed and scaled by the seed's offset from the first-surface
+        # anchor, both of which translate with the system.
+        assert np.allclose(
+            be.to_numpy(xi_a), be.to_numpy(xi_b), rtol=0, atol=1e-12
+        )
+        assert np.allclose(
+            be.to_numpy(eta_a), be.to_numpy(eta_b), rtol=0, atol=1e-12
+        )
+
+    def test_forced_scan_is_used_and_reported(self, set_test_backend):
+        """Deterministically force direct solve and marching to fail so the
+        scan branch definitely runs, converges and is reported."""
+        from optiland.rays.ray_aiming.iterative import IterativeRayAimer
+        from optiland.rays.ray_aiming.robust import RobustRayAimer
+
+        optic = stop_mid_straight()
+        aimer = RobustRayAimer(optic)
+        march_orig = RobustRayAimer._march_chief
+        RobustRayAimer._march_chief = lambda self, *a, **k: None
+
+        original = IterativeRayAimer._solve_core
+        state = {"scan_seen": False, "calls": 0}
+
+        def fail_single_until_scan(self, x, y, z, L, M, N, *args, **kwargs):
+            n = len(be.as_array_1d(x))
+            if n > 100:
+                state["scan_seen"] = True
+            result = original(self, x, y, z, L, M, N, *args, **kwargs)
+            if n <= 100 and not state["scan_seen"]:
+                state["calls"] += 1
+                # The very first small solve is the stop-radius
+                # pupil-center computation; keep it intact so r_stop is
+                # the genuine real-reference value.
+                if state["calls"] > 1:
+                    return _fail(result, n)
+            return result
+
+        IterativeRayAimer._solve_core = fail_single_until_scan
+        try:
+            x, *_ = aimer.aim_rays((0.0, 0.3), 0.55, _pupil_batch())
+        finally:
+            IterativeRayAimer._solve_core = original
+            RobustRayAimer._march_chief = march_orig
+
+        assert state["scan_seen"]
+        assert not bool(be.any(be.isnan(x)))
+        field = aimer.last_report.field_reports[0]
+        assert field.chief_seed_strategy == "scan"
+        assert field.fallback_used
+
+    def test_wide_angle_1d_field_beyond_90_can_use_scan(self, set_test_backend):
+        """A nonsingular 1-D field beyond 90 degrees can be solved through
+        the scan fallback when the other strategies are disabled."""
+        from optiland.rays.ray_aiming.iterative import IterativeRayAimer
+        from optiland.rays.ray_aiming.robust import RobustRayAimer
+
+        optic = straight()
+        optic.fields.add(x=0.0, y=95.0)
+        aimer = RobustRayAimer(optic)
+        march_orig = RobustRayAimer._march_chief
+        RobustRayAimer._march_chief = lambda self, *a, **k: None
+
+        original = IterativeRayAimer._solve_core
+        state = {"scan_seen": False, "calls": 0}
+
+        def fail_single_until_scan(self, x, y, z, L, M, N, *args, **kwargs):
+            n = len(be.as_array_1d(x))
+            if n > 100:
+                state["scan_seen"] = True
+            result = original(self, x, y, z, L, M, N, *args, **kwargs)
+            if n <= 100 and not state["scan_seen"]:
+                state["calls"] += 1
+                # The very first small solve is the stop-radius
+                # pupil-center computation; keep it intact so r_stop is
+                # the genuine real-reference value.
+                if state["calls"] > 1:
+                    return _fail(result, n)
+            return result
+
+        IterativeRayAimer._solve_core = fail_single_until_scan
+        try:
+            x, y, z, L, M, N = aimer.aim_rays(
+                (0.0, 1.0), 0.55, (be.array([0.0]), be.array([0.0]))
+            )
+        finally:
+            IterativeRayAimer._solve_core = original
+            RobustRayAimer._march_chief = march_orig
+
+        assert state["scan_seen"]
+        field = aimer.last_report.field_reports[0]
+        assert field.chief_seed_strategy == "scan"
+        # The chief of a 95-degree field must run steeply in +y.
+        assert float(be.to_numpy(M).reshape(-1)[0]) > 0.9

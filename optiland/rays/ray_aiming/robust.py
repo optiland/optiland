@@ -20,6 +20,7 @@ Kramer Harrison, 2026
 from __future__ import annotations
 
 import contextlib
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
@@ -27,7 +28,10 @@ from optiland.paraxial_path import paraxial_seed_scope
 from optiland.rays.ray_aiming.base import BaseRayAimer
 from optiland.rays.ray_aiming.initialization import get_stop_radius_strategy
 from optiland.rays.ray_aiming.iterative import IterativeRayAimer
-from optiland.rays.ray_aiming.parameterization import LaunchParameterization
+from optiland.rays.ray_aiming.parameterization import (
+    LaunchParameterization,
+    SolveReport,
+)
 from optiland.rays.ray_aiming.pupil_map import PupilMap, PupilMapCache, to_float
 from optiland.rays.ray_aiming.registry import register_aimer
 
@@ -36,6 +40,129 @@ if TYPE_CHECKING:
 
 # Cardinal edge probes on the stop, in (Px, Py) order: east, west, north, south.
 _EDGE_PROBES = ((1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0))
+
+
+@dataclass(frozen=True)
+class RobustFieldReport:
+    """Per-field outcome of one robust aiming call.
+
+    Attributes:
+        Hx, Hy: Normalized field coordinates of the group.
+        wavelength: Wavelength of the group in micrometers.
+        final_polish: :class:`SolveReport` of the group's final Newton
+            polish (or of the failed chief solve when calibration itself
+            failed).
+        chief_seed_strategy: How the chief anchor was obtained --
+            ``"initial_guess"`` (caller-supplied guess solved directly),
+            ``"cached_map"`` (fresh cached map reused, no calibration),
+            ``"warm_map"`` (chief solved from a stale/nearest cached map),
+            ``"direct_paraxial"`` (chief solved from the fresh paraxial
+            seed), ``"marching"`` (field-marching fallback), ``"scan"``
+            (transverse scan fallback) or ``"failed"``.
+        used_cached_map: Whether a fresh cached pupil map was reused
+            without recalibration.
+        edge_probe_fallbacks: Number of cardinal edge probes that failed to
+            converge and fell back to the chief launch in the affine fit.
+        calibration_used: Whether a fresh chief-plus-probes calibration ran
+            for this field.
+        fallback_used: Whether any substitute strategy was used for this
+            field: a failed caller-supplied guess, chief marching or scan,
+            edge-probe fallbacks, or a Jacobian conditioning fallback
+            inside the final polish.
+    """
+
+    Hx: float
+    Hy: float
+    wavelength: float
+    final_polish: SolveReport
+    chief_seed_strategy: str
+    used_cached_map: bool
+    edge_probe_fallbacks: int
+    calibration_used: bool
+    fallback_used: bool
+
+
+@dataclass(frozen=True)
+class RobustSolveReport:
+    """Aggregate outcome of one :meth:`RobustRayAimer.aim_rays` call.
+
+    Robust aiming may return NaN for individual vignetted/unreachable
+    rays; ``converged`` is therefore defined as
+    ``num_converged == num_rays`` and the exact counts are retained.
+
+    Attributes:
+        field_reports: One :class:`RobustFieldReport` per processed field
+            group, in processing order.
+        num_rays: Total number of requested rays.
+        num_converged: Number of rays that met the solver tolerance.
+        converged: ``num_converged == num_rays``.
+        seed_residual: Worst (max) seed residual across the field polishes.
+        final_residual: Worst (max) final residual across the field
+            polishes.
+        final_polish_iterations: Largest Newton iteration count among the
+            field polishes.
+        fallback_used: Whether any field used a substitute strategy (see
+            :attr:`RobustFieldReport.fallback_used`).
+    """
+
+    field_reports: tuple
+    num_rays: int
+    num_converged: int
+    converged: bool
+    seed_residual: float
+    final_residual: float
+    final_polish_iterations: int
+    fallback_used: bool
+
+
+@dataclass(frozen=True)
+class _CalibrationRecord:
+    """Bookkeeping of one fresh per-field calibration."""
+
+    chief_strategy: str
+    chief_report: SolveReport | None
+    edge_probe_fallbacks: int
+
+
+def _scan_candidate_offsets(
+    g_xi: float, g_eta: float, Hx: float, Hy: float, n: int
+) -> tuple:
+    """Transverse ``(xi, eta)`` offsets of the chief-scan candidates.
+
+    The offsets parameterize a line *through the fresh paraxial seed*: the
+    candidate at index ``n // 2`` is exactly ``(0, 0)`` (the seed itself),
+    and every other candidate displaces the seed within the entry frame's
+    transverse plane only. The sweep direction comes from the local field
+    coordinates ``(Hx, Hy)`` normalized -- the meridional ``eta`` axis for
+    a zero/degenerate field -- and the sweep half-width scales with the
+    seed's own transverse offset from the first-surface anchor
+    (``g_xi, g_eta``), which is invariant under a rigid translation of the
+    system.
+
+    Args:
+        g_xi, g_eta: Transverse components of (seed - first-surface vertex)
+            in the entry frame.
+        Hx, Hy: Normalized field coordinates of the chief solve.
+        n: Number of candidates (odd keeps the exact seed in the sweep).
+
+    Returns:
+        tuple: ``(xi_offsets, eta_offsets)`` backend arrays of length ``n``.
+    """
+    h_norm = (Hx * Hx + Hy * Hy) ** 0.5
+    if h_norm < 1e-12:
+        dir_xi, dir_eta = 0.0, 1.0
+    else:
+        dir_xi, dir_eta = Hx / h_norm, Hy / h_norm
+
+    seed_offset = (g_xi * g_xi + g_eta * g_eta) ** 0.5
+    scale = max(50.0, 20.0 * seed_offset)
+
+    r = be.linspace(-scale, scale, n)
+    # Force the center candidate to exactly zero so it reproduces the seed
+    # bit-for-bit (linspace's midpoint is only zero to round-off).
+    center = be.arange_indices(n) == n // 2
+    r = be.where(center, be.zeros_like(r), r)
+    return dir_xi * r, dir_eta * r
 
 
 @contextlib.contextmanager
@@ -141,6 +268,12 @@ class RobustRayAimer(BaseRayAimer):
         self._iterative = IterativeRayAimer(optic, max_iter=max_iter, tol=tol)
         self._paraxial = self._iterative._paraxial_aimer
         self._cache = PupilMapCache()
+        #: Aggregate report of the most recent :meth:`aim_rays` call. Set
+        #: before raising on a total field failure, so the failure can be
+        #: inspected.
+        self.last_report: RobustSolveReport | None = None
+        # Report of the last chief-solve attempt, kept for the failure path.
+        self._last_chief_failure_report: SolveReport | None = None
 
     def aim_rays(
         self,
@@ -183,14 +316,20 @@ class RobustRayAimer(BaseRayAimer):
         initial_guess: tuple | None = None,
     ) -> tuple:
         """Body of :meth:`aim_rays`, run inside the paraxial seed scope."""
+        guess_failed = False
         if initial_guess is not None:
             try:
-                return self._iterative.aim_rays(
+                result = self._iterative.aim_rays(
                     fields, wavelengths, pupil_coords, initial_guess=initial_guess
                 )
             except ValueError:
-                # Fall through to the calibrated solve below.
-                pass
+                # Fall through to the calibrated solve below; using
+                # calibration after a failed requested guess is a fallback
+                # and is reported as such.
+                guess_failed = True
+            else:
+                self.last_report = self._report_for_initial_guess(fields, wavelengths)
+                return result
 
         Px, Py = pupil_coords
         Px = be.as_array_1d(Px)
@@ -245,20 +384,84 @@ class RobustRayAimer(BaseRayAimer):
         L_parts: list[Any] = []
         M_parts: list[Any] = []
         N_parts: list[Any] = []
+        field_reports: list[RobustFieldReport] = []
+        num_converged_total = 0
+
+        def _finalize_report() -> None:
+            """Assemble the aggregate report from the field reports so far."""
+            polishes = [fr.final_polish for fr in field_reports]
+            self.last_report = RobustSolveReport(
+                field_reports=tuple(field_reports),
+                num_rays=n,
+                num_converged=num_converged_total,
+                converged=num_converged_total == n,
+                seed_residual=max(
+                    (p.seed_residual for p in polishes), default=float("inf")
+                ),
+                final_residual=max(
+                    (p.final_residual for p in polishes), default=float("inf")
+                ),
+                final_polish_iterations=max(
+                    (p.iterations for p in polishes), default=0
+                ),
+                fallback_used=guess_failed
+                or any(fr.fallback_used for fr in field_reports),
+            )
 
         for key in ordered_keys:
             idx = groups[key]
             Hxk, Hyk, wlk = key
 
+            used_cached_map = False
+            calibration: _CalibrationRecord | None = None
             pmap = self._cache.get_fresh(Hxk, Hyk, wlk)
-            if pmap is None:
+            if pmap is not None:
+                used_cached_map = True
+            else:
                 seed_map = self._cache.get_stale(Hxk, Hyk, wlk)
                 if seed_map is None:
                     seed_map = self._cache.nearest(Hxk, Hyk)
-                with _cached_paraxial_constants(self.optic):
-                    pmap = self._calibrate_field(
-                        Hxk, Hyk, wlk, stop_idx, is_inf, r_stop, seed_map, param
+                try:
+                    with _cached_paraxial_constants(self.optic):
+                        pmap, calibration = self._calibrate_field(
+                            Hxk,
+                            Hyk,
+                            wlk,
+                            stop_idx,
+                            is_inf,
+                            r_stop,
+                            seed_map,
+                            param,
+                        )
+                except ValueError:
+                    # Total chief failure for this field: record what was
+                    # attempted, publish the partial report, then re-raise
+                    # so the failure can be inspected via last_report.
+                    failed_polish = self._last_chief_failure_report
+                    if failed_polish is None:
+                        failed_polish = SolveReport(
+                            seed_residual=float("inf"),
+                            final_residual=float("inf"),
+                            converged=False,
+                            iterations=0,
+                            num_rays=len(idx),
+                            num_converged=0,
+                        )
+                    field_reports.append(
+                        RobustFieldReport(
+                            Hx=Hxk,
+                            Hy=Hyk,
+                            wavelength=wlk,
+                            final_polish=failed_polish,
+                            chief_seed_strategy="failed",
+                            used_cached_map=False,
+                            edge_probe_fallbacks=0,
+                            calibration_used=True,
+                            fallback_used=True,
+                        )
                     )
+                    _finalize_report()
+                    raise
                 self._cache.put(Hxk, Hyk, wlk, pmap)
 
             Px_g = Px[idx]
@@ -269,11 +472,41 @@ class RobustRayAimer(BaseRayAimer):
             tx = Px_g * r_stop
             ty = Py_g * r_stop
 
-            x, y, z, L, M, N, converged, _, _report = self._iterative._solve_core(
+            x, y, z, L, M, N, converged, _, polish = self._iterative._solve_core(
                 x0, y0, z0, L0, M0, N0, wl_g, stop_idx, is_inf, tx, ty, param=param
             )
 
+            group_converged = int(be.to_numpy(converged).reshape(-1).sum())
+            num_converged_total += group_converged
+
+            if calibration is None:
+                strategy = "cached_map"
+                probe_fallbacks = 0
+            else:
+                strategy = calibration.chief_strategy
+                probe_fallbacks = calibration.edge_probe_fallbacks
+
+            field_reports.append(
+                RobustFieldReport(
+                    Hx=Hxk,
+                    Hy=Hyk,
+                    wavelength=wlk,
+                    final_polish=polish,
+                    chief_seed_strategy=strategy,
+                    used_cached_map=used_cached_map,
+                    edge_probe_fallbacks=probe_fallbacks,
+                    calibration_used=calibration is not None,
+                    fallback_used=guess_failed
+                    or strategy in ("marching", "scan")
+                    or probe_fallbacks > 0
+                    or polish.fallback_used,
+                )
+            )
+
             if not be.any(converged):
+                # Publish the report -- including this field's failed
+                # polish -- before raising, so the failure is inspectable.
+                _finalize_report()
                 raise ValueError(
                     "RobustRayAimer: every ray failed to converge for field "
                     f"(Hx={Hxk}, Hy={Hyk}); check the system configuration."
@@ -313,7 +546,51 @@ class RobustRayAimer(BaseRayAimer):
         M_out = be.concatenate(M_parts)[inv_perm]
         N_out = be.concatenate(N_parts)[inv_perm]
 
+        _finalize_report()
         return x_out, y_out, z_out, L_out, M_out, N_out
+
+    def _report_for_initial_guess(
+        self, fields: tuple, wavelengths: Any
+    ) -> RobustSolveReport:
+        """Aggregate report for a call solved directly from a caller guess."""
+        polish = self._iterative.last_report
+        if polish is None:  # pragma: no cover - aim_rays always sets it
+            polish = SolveReport(
+                seed_residual=float("nan"),
+                final_residual=float("nan"),
+                converged=True,
+                iterations=0,
+                num_rays=0,
+                num_converged=0,
+            )
+        Hx, Hy = fields
+        hx0 = float(be.to_numpy(be.as_array_1d(Hx)).reshape(-1)[0])
+        hy0 = float(be.to_numpy(be.as_array_1d(Hy)).reshape(-1)[0])
+        if hasattr(wavelengths, "__len__"):
+            wl0 = float(be.to_numpy(be.as_array_1d(wavelengths)).reshape(-1)[0])
+        else:
+            wl0 = float(wavelengths)
+        field_report = RobustFieldReport(
+            Hx=hx0,
+            Hy=hy0,
+            wavelength=wl0,
+            final_polish=polish,
+            chief_seed_strategy="initial_guess",
+            used_cached_map=False,
+            edge_probe_fallbacks=0,
+            calibration_used=False,
+            fallback_used=polish.fallback_used,
+        )
+        return RobustSolveReport(
+            field_reports=(field_report,),
+            num_rays=polish.num_rays,
+            num_converged=polish.num_converged,
+            converged=polish.num_converged == polish.num_rays,
+            seed_residual=polish.seed_residual,
+            final_residual=polish.final_residual,
+            final_polish_iterations=polish.iterations,
+            fallback_used=polish.fallback_used,
+        )
 
     def _calibrate_field(
         self,
@@ -325,16 +602,33 @@ class RobustRayAimer(BaseRayAimer):
         r_stop: float,
         seed_map: PupilMap | None,
         param: LaunchParameterization | None = None,
-    ) -> PupilMap:
-        """Chief solve + 4 edge probes -> affine :class:`PupilMap` (§4.2)."""
+    ) -> tuple[PupilMap, _CalibrationRecord]:
+        """Chief solve + 4 edge probes -> affine :class:`PupilMap` (§4.2).
+
+        Returns:
+            tuple: The fitted map and the :class:`_CalibrationRecord`
+            describing how the chief anchor was obtained and how many edge
+            probes fell back to the chief launch.
+        """
         if param is None:
             param = LaunchParameterization.for_optic(self.optic, bool(is_inf))
-        chief = self._solve_chief(Hx, Hy, wl, stop_idx, is_inf, seed_map, param)
-        probes = [
-            self._solve_probe(wl, stop_idx, is_inf, px, py, r_stop, chief, param)
-            for px, py in _EDGE_PROBES
-        ]
-        return self._fit_affine(chief, probes, param)
+        chief, strategy, chief_report = self._solve_chief(
+            Hx, Hy, wl, stop_idx, is_inf, seed_map, param
+        )
+        probes = []
+        probe_fallbacks = 0
+        for px, py in _EDGE_PROBES:
+            probe, fell_back = self._solve_probe(
+                wl, stop_idx, is_inf, px, py, r_stop, chief, param
+            )
+            probes.append(probe)
+            probe_fallbacks += int(fell_back)
+        record = _CalibrationRecord(
+            chief_strategy=strategy,
+            chief_report=chief_report,
+            edge_probe_fallbacks=probe_fallbacks,
+        )
+        return self._fit_affine(chief, probes, param), record
 
     def _solve_chief(
         self,
@@ -345,7 +639,7 @@ class RobustRayAimer(BaseRayAimer):
         is_inf: bool,
         seed_map: PupilMap | None,
         param: LaunchParameterization | None = None,
-    ) -> tuple[float, float, float, float, float, float]:
+    ) -> tuple[tuple, str, SolveReport | None]:
         """Solve the chief ray (stop target (0, 0)) for this field.
 
         Seed order: warm-started map for this field or the nearest
@@ -364,12 +658,25 @@ class RobustRayAimer(BaseRayAimer):
         Newton still converges. Only the free transverse 2-DOF is
         warm-started: the seed map's chief launch is projected onto this
         field's fresh seed through the shared local parameterization.
+
+        Returns:
+            tuple: ``(launch, strategy, report)`` -- the solved chief
+            launch state, which strategy produced it (``"warm_map"``,
+            ``"direct_paraxial"``, ``"marching"`` or ``"scan"``), and the
+            :class:`SolveReport` of the producing solve (``None`` when the
+            producing step exposes no single report).
+
+        Raises:
+            ValueError: If every strategy fails. The report of the last
+                attempted solve is stored on
+                ``self._last_chief_failure_report`` before raising.
         """
         if param is None:
             param = LaunchParameterization.for_optic(self.optic, bool(is_inf))
         wl_a = be.array([wl])
         tx = be.array([0.0])
         ty = be.array([0.0])
+        self._last_chief_failure_report = None
 
         px0, py0, pz0, pL0, pM0, pN0 = self._paraxial.aim_rays(
             (be.array([Hx]), be.array([Hy])),
@@ -387,11 +694,12 @@ class RobustRayAimer(BaseRayAimer):
             xi, eta = bound.project(sx0, sy0, sz0, sL0, sM0, sN0)
             x0, y0, z0, L0, M0, N0 = bound.launch(xi, eta)
 
-            x, y, z, L, M, N, converged, _, _r = self._iterative._solve_core(
+            x, y, z, L, M, N, converged, _, report = self._iterative._solve_core(
                 x0, y0, z0, L0, M0, N0, wl_a, stop_idx, is_inf, tx, ty, param=param
             )
+            self._last_chief_failure_report = report
             if be.any(converged):
-                return (
+                launch = (
                     to_float(x),
                     to_float(y),
                     to_float(z),
@@ -399,12 +707,14 @@ class RobustRayAimer(BaseRayAimer):
                     to_float(M),
                     to_float(N),
                 )
+                return launch, "warm_map", report
 
-        x, y, z, L, M, N, converged, _, _r = self._iterative._solve_core(
+        x, y, z, L, M, N, converged, _, report = self._iterative._solve_core(
             px0, py0, pz0, pL0, pM0, pN0, wl_a, stop_idx, is_inf, tx, ty, param=param
         )
+        self._last_chief_failure_report = report
         if be.any(converged):
-            return (
+            launch = (
                 to_float(x),
                 to_float(y),
                 to_float(z),
@@ -412,17 +722,23 @@ class RobustRayAimer(BaseRayAimer):
                 to_float(M),
                 to_float(N),
             )
+            return launch, "direct_paraxial", report
 
         marched = self._march_chief(Hx, Hy, wl_a, stop_idx, is_inf, tx, ty, param)
         if marched is not None:
-            return marched
+            launch, report = marched
+            if report is not None:
+                self._last_chief_failure_report = report
+            return launch, "marching", report
 
         if is_inf:
             scanned = self._scan_chief(
-                px0, py0, pz0, pL0, pM0, pN0, wl_a, stop_idx, tx, ty, param
+                px0, py0, pz0, pL0, pM0, pN0, wl_a, stop_idx, tx, ty, param, Hx, Hy
             )
             if scanned is not None:
-                return scanned
+                launch, report = scanned
+                self._last_chief_failure_report = report
+                return launch, "scan", report
 
         raise ValueError(
             f"RobustRayAimer: chief ray failed to converge for field "
@@ -443,34 +759,47 @@ class RobustRayAimer(BaseRayAimer):
         tx: Any,
         ty: Any,
         param: LaunchParameterization,
+        Hx: float = 0.0,
+        Hy: float = 0.0,
         n: int = 2001,
-    ) -> tuple[float, float, float, float, float, float] | None:
+    ) -> tuple[tuple, SolveReport] | None:
         """Last-resort chief-ray seed search for extreme (beyond +-90 degree)
         field angles.
 
-        Sweeps candidate launch points along the transverse line through the
-        paraxial guess (in the entry frame's transverse plane) and returns
-        the first one the Newton polish converges from, for when neither the
-        paraxial guess nor field marching converges.
+        Sweeps candidate launch points along the transverse line *through
+        the fresh paraxial seed* ``(px0 ... pN0)`` and returns the first
+        one the Newton polish converges from, for when neither the paraxial
+        guess nor field marching converges. The parameterization is bound
+        to repeated copies of the seed, so the ``r = 0`` candidate
+        reproduces the seed exactly and every candidate displacement is
+        transverse to the entry direction. The sweep direction comes from
+        the field coordinates ``(Hx, Hy)`` (the meridional axis for a
+        degenerate field) and the sweep width from the seed's transverse
+        offset relative to the first-surface anchor -- both invariant under
+        a rigid translation of the system (see
+        :func:`_scan_candidate_offsets`).
         """
-        # Sweep direction in the transverse (xi, eta) plane: the radial
-        # direction of the guess position projected onto the entry frame's
-        # transverse basis (for a +z entry this reduces to the old global
-        # (x, y) radial sweep), defaulting to eta -- the meridional v axis.
+        # Seed offset relative to the first physical surface's vertex,
+        # expressed on the entry frame's transverse basis. Anchoring at the
+        # vertex (not the global origin) keeps the sweep width invariant
+        # under rigid translations.
+        path = self.optic.surfaces.build_paraxial_path()
+        anchor = path.vertices_gcs[1]
         u, v = param.u, param.v
-        gpos = (to_float(px0), to_float(py0), to_float(pz0))
-        g_xi = gpos[0] * u[0] + gpos[1] * u[1] + gpos[2] * u[2]
-        g_eta = gpos[0] * v[0] + gpos[1] * v[1] + gpos[2] * v[2]
-        norm = (g_xi**2 + g_eta**2) ** 0.5
-        if norm < 1e-9:
-            dir_xi, dir_eta = 0.0, 1.0
-        else:
-            dir_xi, dir_eta = g_xi / norm, g_eta / norm
-        scale = max(50.0, 20.0 * norm)
+        g_rel = (
+            to_float(px0) - to_float(anchor[0]),
+            to_float(py0) - to_float(anchor[1]),
+            to_float(pz0) - to_float(anchor[2]),
+        )
+        g_xi = g_rel[0] * u[0] + g_rel[1] * u[1] + g_rel[2] * u[2]
+        g_eta = g_rel[0] * v[0] + g_rel[1] * v[1] + g_rel[2] * v[2]
 
-        r = be.linspace(-scale, scale, n)
+        xi_off, eta_off = _scan_candidate_offsets(g_xi, g_eta, Hx, Hy, n)
+
         ones = be.ones(n)
-        z0 = ones * to_float(pz0)
+        sx = ones * to_float(px0)
+        sy = ones * to_float(py0)
+        sz = ones * to_float(pz0)
         L0 = ones * to_float(pL0)
         M0 = ones * to_float(pM0)
         N0 = ones * to_float(pN0)
@@ -478,21 +807,32 @@ class RobustRayAimer(BaseRayAimer):
         tx_b = ones * to_float(tx)
         ty_b = ones * to_float(ty)
 
-        # Candidates sit on the transverse line through the origin of the
-        # sweep: bind the parameterization at the swept-axis origin so the
-        # xi/eta displacements stay in the transverse plane for any entry.
-        bound = param.bind(be.zeros(n), be.zeros(n), z0, L0, M0, N0)
-        x0, y0, z0, L0, M0, N0 = bound.launch(dir_xi * r, dir_eta * r)
+        # Candidates sit on the transverse line through the seed: binding
+        # the parameterization at repeated copies of the seed makes
+        # launch(0, 0) the seed itself and keeps the xi/eta displacements
+        # in the transverse plane for any entry direction.
+        bound = param.bind(sx, sy, sz, L0, M0, N0)
+        x0, y0, z0, L0, M0, N0 = bound.launch(xi_off, eta_off)
 
-        x, y, z, L, M, N, converged, _, _r = self._iterative._solve_core(
+        x, y, z, L, M, N, converged, _, report = self._iterative._solve_core(
             x0, y0, z0, L0, M0, N0, wl_b, stop_idx, True, tx_b, ty_b, param=param
         )
         if not be.any(converged):
             return None
 
+        # Among the converged candidates, take the one whose starting
+        # offset from the fresh seed is smallest: a wide sweep can also
+        # converge onto physically extreme solution branches far from the
+        # seed, and an extreme "chief" would poison the probe/affine
+        # calibration built on top of it. Nearest-to-seed stays on the
+        # seed's own branch.
         conv_np = be.to_numpy(converged).reshape(-1)
-        idx = int(conv_np.nonzero()[0][0])
-        return (
+        offsets_np = (
+            be.to_numpy(xi_off).reshape(-1) ** 2 + be.to_numpy(eta_off).reshape(-1) ** 2
+        )
+        candidates = conv_np.nonzero()[0]
+        idx = int(candidates[offsets_np[candidates].argmin()])
+        launch = (
             to_float(x[idx : idx + 1]),
             to_float(y[idx : idx + 1]),
             to_float(z[idx : idx + 1]),
@@ -500,6 +840,7 @@ class RobustRayAimer(BaseRayAimer):
             to_float(M[idx : idx + 1]),
             to_float(N[idx : idx + 1]),
         )
+        return launch, report
 
     def _march_chief(
         self,
@@ -513,7 +854,7 @@ class RobustRayAimer(BaseRayAimer):
         param: LaunchParameterization,
         max_attempts: int = 150,
         min_dt: float = 1e-4,
-    ) -> tuple[float, float, float, float, float, float] | None:
+    ) -> tuple[tuple, SolveReport | None] | None:
         """March the chief ray from the axis out to (Hx, Hy) in field angle.
 
         A step-halving walk -- each step a single-ray 2-DOF solve
@@ -540,6 +881,11 @@ class RobustRayAimer(BaseRayAimer):
         launch DOF encodes the field angle itself, so a caller that used a
         partial march's result as the final chief ray would be aiming at
         the wrong field entirely, not just aiming imprecisely.
+
+        On success, returns ``(launch, report)`` where ``report`` is the
+        :class:`SolveReport` of the final full-tolerance solve (``None``
+        when the attempt budget ran out exactly at ``t = 1`` before that
+        solve could run).
         """
         t = 0.0
         # t=0 (the axis) is trivial and always converges: L=M=0, N=+-1.
@@ -561,7 +907,7 @@ class RobustRayAimer(BaseRayAimer):
                 L0 = be.array([launch[3]])
                 M0 = be.array([launch[4]])
                 N0 = be.array([launch[5]])
-                x, y, z, L, M, N, converged, _, _r = self._iterative._solve_core(
+                x, y, z, L, M, N, converged, _, report = self._iterative._solve_core(
                     x0,
                     y0,
                     z0,
@@ -583,8 +929,8 @@ class RobustRayAimer(BaseRayAimer):
                         to_float(L),
                         to_float(M),
                         to_float(N),
-                    )
-                return launch
+                    ), report
+                return launch, report
 
             t_next = min(t + dt, 1.0)
             Hxt, Hyt = Hx * t_next, Hy * t_next
@@ -666,7 +1012,7 @@ class RobustRayAimer(BaseRayAimer):
                 if dt < min_dt:
                     return None
 
-        return launch if t >= 1.0 else None
+        return (launch, None) if t >= 1.0 else None
 
     def _solve_probe(
         self,
@@ -678,8 +1024,14 @@ class RobustRayAimer(BaseRayAimer):
         r_stop: float,
         chief: tuple[float, float, float, float, float, float],
         param: LaunchParameterization,
-    ) -> tuple[float, float, float, float, float, float]:
-        """Solve one cardinal edge probe, seeded from the chief launch."""
+    ) -> tuple[tuple, bool]:
+        """Solve one cardinal edge probe, seeded from the chief launch.
+
+        Returns:
+            tuple: ``(launch, fell_back)`` -- the probe launch state and
+            whether it fell back to the chief launch because the probe
+            failed to converge.
+        """
         x0, y0, z0, L0, M0, N0 = (be.array([v]) for v in chief)
         wl_a = be.array([wl])
         tx = be.array([Px_e * r_stop])
@@ -693,7 +1045,7 @@ class RobustRayAimer(BaseRayAimer):
             # An unreachable edge probe still yields a usable (if less
             # accurate) linear seed by falling back to the chief launch,
             # rather than propagating NaN into the affine fit.
-            return chief
+            return chief, True
 
         return (
             to_float(x),
@@ -702,7 +1054,7 @@ class RobustRayAimer(BaseRayAimer):
             to_float(L),
             to_float(M),
             to_float(N),
-        )
+        ), False
 
     def _fit_affine(
         self,
