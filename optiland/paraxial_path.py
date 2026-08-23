@@ -265,7 +265,10 @@ def transverse_basis(direction: tuple) -> tuple[tuple, tuple]:
         be.array(0.0) - d[1] * d[2],
     )
     norm = _norm(y_proj)
-    if bool(be.all(norm > _AXIS_TOL)):
+    # The pole decision is dtype-aware: angular_tolerance() widens with the
+    # active backend precision, so a float32 run switches to the +x gauge
+    # while the projection still carries meaningful digits.
+    if bool(be.all(norm > angular_tolerance())):
         v = tuple(c / norm for c in y_proj)
         u = _cross(v, d)
         return u, v

@@ -47,7 +47,13 @@ from dataclasses import dataclass
 from typing import Any
 
 import optiland.backend as be
-from optiland.utils import globalize_coordinates, machine_eps
+from optiland.utils import (
+    RCOND_EPS_MULTIPLIER,
+    globalize_coordinates,
+    jacobian_2x2_condition,
+    machine_eps,
+    solve_2x2,
+)
 
 from .base import BaseFieldDefinition
 from .paraxial_image_height import ParaxialImageHeightField
@@ -62,13 +68,11 @@ except (ImportError, ModuleNotFoundError):
 # matching the budget used by ``IterativeRayAimer``.
 _MAX_BACKTRACK = 8
 
-# Documented multiplier ``C`` on the machine epsilon for the reciprocal
-# Frobenius-condition singularity test of the 2x2 field Jacobian. A matrix is
-# classified unusable when ``rho_F = |det(A)| / ||A||_F^2 <= C * eps(dtype)``,
-# where ``A`` is the Jacobian normalized by its largest-magnitude entry. The
-# test is scale invariant: a global unit or magnification rescaling of the
-# Jacobian cannot change the classification.
-_RCOND_EPS_MULTIPLIER = 64.0
+# The scale-invariant 2x2 conditioning authority lives in optiland.utils and
+# is shared with the ray-aiming Newton core; these aliases keep this module's
+# historical names importable.
+_RCOND_EPS_MULTIPLIER = RCOND_EPS_MULTIPLIER
+_jacobian_2x2_condition = jacobian_2x2_condition
 
 # Multiplier on the machine epsilon for the paraxial-seed singularity test.
 _PARAXIAL_EPS_MULTIPLIER = 64.0
@@ -84,77 +88,6 @@ def _paraxial_singular_threshold(value) -> float:
     must be -- a fixed ``1e-14`` is below float32 round-off.
     """
     return _PARAXIAL_EPS_MULTIPLIER * machine_eps(value)
-
-
-@dataclass
-class _Jacobian2x2Condition:
-    """Scale-invariant conditioning state of per-field ``2x2`` Jacobians.
-
-    Attributes:
-        a, b, c, d: Entries of the normalized matrix ``A = J / s``.
-        scale: Per-field normalization ``s = max(|J11|,|J12|,|J21|,|J22|)``,
-            replaced by 1 where ``s == 0`` (those fields are singular).
-        det: Determinant of the normalized matrix ``A``.
-        singular: Per-field mask -- non-finite entries, zero scale, or
-            reciprocal Frobenius condition at round-off level.
-    """
-
-    a: Any
-    b: Any
-    c: Any
-    d: Any
-    scale: Any
-    det: Any
-    singular: Any
-
-
-def _jacobian_2x2_condition(J11, J12, J21, J22) -> _Jacobian2x2Condition:
-    """Classify per-field ``2x2`` Jacobians with a scale-invariant test.
-
-    Normalizes each field's Jacobian by its largest-magnitude entry and
-    computes the reciprocal Frobenius-condition estimate
-
-    ``rho_F = |det(A)| / (a^2 + b^2 + c^2 + d^2)``,
-
-    which for a ``2x2`` matrix bounds ``1 / cond_F(J)``. The classification is
-    invariant under a global scaling of the Jacobian, so a well-conditioned
-    but small-magnitude matrix (e.g. ``1e-3 * I`` in float32) is never
-    misclassified as singular. This is the single authority for all field
-    Jacobian validation; do not duplicate determinant logic elsewhere.
-    """
-    finite = be.logical_and(
-        be.logical_and(be.isfinite(J11), be.isfinite(J12)),
-        be.logical_and(be.isfinite(J21), be.isfinite(J22)),
-    )
-
-    magnitude = be.maximum(
-        be.maximum(be.abs(J11), be.abs(J12)),
-        be.maximum(be.abs(J21), be.abs(J22)),
-    )
-    zero_scale = magnitude == 0.0
-    # Safe placeholder scale for zero-scale entries only; they are singular.
-    scale = be.where(zero_scale, be.ones_like(magnitude), magnitude)
-
-    a = J11 / scale
-    b = J12 / scale
-    c = J21 / scale
-    d = J22 / scale
-    det = a * d - b * c
-
-    frob_sq = a * a + b * b + c * c + d * d
-    safe_frob_sq = be.where(frob_sq > 0.0, frob_sq, be.ones_like(frob_sq))
-    rho = be.abs(det) / safe_frob_sq
-
-    singular = be.logical_or(
-        be.logical_or(be.logical_not(finite), zero_scale),
-        be.logical_or(
-            be.logical_not(be.isfinite(det)),
-            rho <= _RCOND_EPS_MULTIPLIER * machine_eps(det),
-        ),
-    )
-    return _Jacobian2x2Condition(
-        a=a, b=b, c=c, d=d, scale=scale, det=det, singular=singular
-    )
 
 
 @dataclass
@@ -322,12 +255,13 @@ class RealImageHeightField(BaseFieldDefinition):
         return (eps**0.75) * scale
 
     def _solve_2x2(self, J11, J12, J21, J22, rx, ry, *, strict=False):
-        """Solve ``J dq = R`` per field via the normalized system ``A dq = R/s``.
+        """Solve ``J dq = R`` per field via the shared normalized 2x2 solve.
 
-        The Jacobian is first normalized by its largest-magnitude entry
-        (see :func:`_jacobian_2x2_condition`), which makes both the
-        singularity classification and the solve invariant under global
-        scaling and avoids raw-determinant overflow/underflow.
+        Delegates to :func:`optiland.utils.solve_2x2` (the single 2x2
+        conditioning authority, shared with the ray-aiming Newton core):
+        the Jacobian is normalized by its largest-magnitude entry, which
+        makes both the singularity classification and the solve invariant
+        under global scaling and avoids raw-determinant overflow/underflow.
 
         Args:
             J11, J12, J21, J22: Per-field Jacobian entries.
@@ -344,11 +278,12 @@ class RealImageHeightField(BaseFieldDefinition):
         Raises:
             ValueError: If ``strict`` and any field's Jacobian is singular.
         """
-        cond = _jacobian_2x2_condition(J11, J12, J21, J22)
+        result = solve_2x2(J11, J12, J21, J22, rx, ry)
+        singular = be.logical_not(result.valid)
 
-        if strict and bool(be.any(cond.singular)):
-            n_singular = int(be.to_numpy(be.sum(cond.singular)))
-            n_total = int(be.size(cond.det))
+        if strict and bool(be.any(singular)):
+            n_singular = int(be.to_numpy(be.sum(singular)))
+            n_total = int(be.size(result.rcond))
             raise ValueError(
                 f"Real-image-height field Jacobian is singular for "
                 f"{n_singular} of {n_total} field(s): reciprocal Frobenius "
@@ -360,19 +295,7 @@ class RealImageHeightField(BaseFieldDefinition):
                 "usable image height."
             )
 
-        # Placeholder determinant avoids division by ~0; singular fields are
-        # then explicitly zeroed rather than receiving a clipped step.
-        safe_det = be.where(cond.singular, be.ones_like(cond.det), cond.det)
-
-        rx_s = rx / cond.scale
-        ry_s = ry / cond.scale
-        dq_x = (cond.d * rx_s - cond.b * ry_s) / safe_det
-        dq_y = (-cond.c * rx_s + cond.a * ry_s) / safe_det
-
-        zero = be.zeros_like(dq_x)
-        dq_x = be.where(cond.singular, zero, dq_x)
-        dq_y = be.where(cond.singular, zero, dq_y)
-        return dq_x, dq_y, cond.singular
+        return result.x1, result.x2, singular
 
     # ------------------------------------------------------------------
     # Jacobians

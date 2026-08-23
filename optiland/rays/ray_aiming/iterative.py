@@ -23,6 +23,7 @@ from optiland.rays.ray_aiming.parameterization import (
 )
 from optiland.rays.ray_aiming.paraxial import ParaxialRayAimer
 from optiland.rays.ray_aiming.registry import register_aimer
+from optiland.utils import machine_eps, solve_2x2
 
 if TYPE_CHECKING:
     from optiland.optic import Optic
@@ -80,6 +81,9 @@ class IterativeRayAimer(BaseRayAimer):
         self._paraxial_aimer = ParaxialRayAimer(optic)
         self.last_iterations = 0
         self.last_report: SolveReport | None = None
+        # Debug/report state written by _finite_difference_jacobian.
+        self._last_fd_steps: tuple | None = None
+        self._last_jacobian_fallback: Any = None
 
     def aim_rays(
         self,
@@ -256,16 +260,23 @@ class IterativeRayAimer(BaseRayAimer):
 
         full_indices = be.arange_indices(num_rays)
 
-        # Initialize the per-ray 2x2 Jacobian by finite differences on
-        # (xi, eta). A paraxial estimate is only a scalar magnitude (equal on
-        # both axes, off-diagonal zero) and cannot represent the sign flip or
-        # cross-coupling a tilted/decentered stop induces -- e.g. a 90 deg
+        # Initialize the per-ray 2x2 Jacobian by central finite differences
+        # on (xi, eta). A paraxial estimate is only a scalar magnitude (equal
+        # on both axes, off-diagonal zero) and cannot represent the sign flip
+        # or cross-coupling a tilted/decentered stop induces -- e.g. a 90 deg
         # fold makes d(ey)/d(eta) negative, so an assumed-positive diagonal
         # Jacobian steps the wrong way and Broyden then diverges to NaN
-        # (issue #654). Two extra traces capture the true local response.
+        # (issue #654). Four extra traces capture the true local response.
+        step_scale = self._fd_step_scale(is_inf, tx, ty)
         J11, J12, J21, J22 = self._finite_difference_jacobian(
-            bound, xi, eta, wavelengths, stop_idx, is_inf, lx, ly
+            bound, xi, eta, wavelengths, stop_idx, is_inf, lx, ly, step_scale
         )
+        fallback_used = bool(be.any(self._last_jacobian_fallback))
+        jacobian_refreshes = 0
+        # Rays whose Jacobian stayed ill-conditioned even after a refresh
+        # and the paraxial substitution: hold them (zero step) without
+        # re-triggering the refresh ladder every iteration.
+        hopeless = be.zeros(num_rays) > 0.0
 
         converged = ex**2 + ey**2 < tol_sq
         self.last_iterations = 0
@@ -293,22 +304,85 @@ class IterativeRayAimer(BaseRayAimer):
             ex_curr = ex[idx]
             ey_curr = ey[idx]
 
-            # Update solution (Newton Step)
-            # [dx] = - [J]^-1 * [error]
-            # Determinant for active rays
-            det = J11[idx] * J22[idx] - J12[idx] * J21[idx]
+            # Newton step dp = -J^-1 e via the shared, scale-invariant,
+            # conditioning-aware 2x2 solve: the determinant's sign is
+            # preserved for every valid ray (never clamped to an arbitrary
+            # positive value), so the step direction cannot be silently
+            # reversed.
+            solve = solve_2x2(J11[idx], J12[idx], J21[idx], J22[idx], ex_curr, ey_curr)
+            needs_ladder = be.logical_and(
+                be.logical_not(solve.valid),
+                be.logical_not(hopeless[idx]),
+            )
+            if bool(be.any(needs_ladder)):
+                # Iteration-time conditioning ladder: (1) refresh the
+                # ill-conditioned active rays with a fresh central-difference
+                # Jacobian at the current state and re-evaluate; (2) if still
+                # ill-conditioned, substitute the sign-preserving paraxial
+                # diagonal and report the fallback; (3) if even that is
+                # singular, hold the ray (zero step) and let it surface as
+                # non-converged -- a step is never fabricated.
+                jacobian_refreshes += 1
+                F11, F12, F21, F22 = self._finite_difference_jacobian(
+                    bound,
+                    xi,
+                    eta,
+                    wavelengths,
+                    stop_idx,
+                    is_inf,
+                    None,
+                    None,
+                    step_scale,
+                )
+                fallback_used = fallback_used or bool(
+                    be.any(self._last_jacobian_fallback[idx][needs_ladder])
+                )
+                bad_idx = idx[needs_ladder]
+                J11 = be.copy(J11)
+                J12 = be.copy(J12)
+                J21 = be.copy(J21)
+                J22 = be.copy(J22)
+                J11[bad_idx] = F11[bad_idx]
+                J12[bad_idx] = F12[bad_idx]
+                J21[bad_idx] = F21[bad_idx]
+                J22[bad_idx] = F22[bad_idx]
+                solve = solve_2x2(
+                    J11[idx], J12[idx], J21[idx], J22[idx], ex_curr, ey_curr
+                )
 
-            # Prevent division by zero
-            det = be.where(be.abs(det) < 1e-12, 1e-12, det)
+                still_bad = be.logical_and(be.logical_not(solve.valid), needs_ladder)
+                if bool(be.any(still_bad)):
+                    fallback_used = True
+                    wl_mean = (
+                        be.mean(wavelengths)
+                        if hasattr(wavelengths, "__len__")
+                        else wavelengths
+                    )
+                    j_par = float(
+                        be.to_numpy(
+                            self._get_paraxial_jacobian(
+                                float(wl_mean), stop_idx, is_inf
+                            )
+                        ).ravel()[0]
+                    )
+                    sub_idx = idx[still_bad]
+                    J11[sub_idx] = j_par
+                    J22[sub_idx] = j_par
+                    J12[sub_idx] = 0.0
+                    J21[sub_idx] = 0.0
+                    solve = solve_2x2(
+                        J11[idx], J12[idx], J21[idx], J22[idx], ex_curr, ey_curr
+                    )
+                    # Anything still invalid is genuinely degenerate: mark it
+                    # so later iterations skip the ladder for it.
+                    hopeless = be.copy(hopeless)
+                    hopeless[idx] = be.logical_or(
+                        hopeless[idx],
+                        be.logical_and(be.logical_not(solve.valid), still_bad),
+                    )
 
-            # Invert 2x2 matrix analytically
-            J11_inv = J22[idx]
-            J12_inv = -J12[idx]
-            J21_inv = -J21[idx]
-            J22_inv = J11[idx]
-
-            dp1 = -(J11_inv * ex_curr + J12_inv * ey_curr) / det
-            dp2 = -(J21_inv * ex_curr + J22_inv * ey_curr) / det
+            dp1 = -solve.x1
+            dp2 = -solve.x2
 
             # --- Damped update with per-ray backtracking line search ---
             # A full Newton/Broyden step can overshoot into a region where a
@@ -381,9 +455,22 @@ class IterativeRayAimer(BaseRayAimer):
             Rx = dEx - Js_x
             Ry = dEy - Js_y
 
-            # Norm sq of step s
+            # Norm sq of step s. The update is skipped entirely for a
+            # zero/unaccepted step (the line search committed nothing) or a
+            # step at round-off level relative to the local parameter scale
+            # -- dividing such a step's residual by its vanishing norm would
+            # amplify pure noise into J. The floor is dtype- and
+            # scale-aware: |s| <= eps_mach * max(S, |xi|, |eta|) is
+            # indistinguishable from rounding of the parameters themselves.
             norm_sq = dx**2 + dy**2
-            norm_sq = be.maximum(norm_sq, 1e-20)
+            step_ref = be.maximum(
+                be.maximum(be.abs(p1_base), be.abs(p2_base)),
+                step_scale,
+            )
+            floor_sq = (machine_eps(dx) * step_ref) ** 2
+            do_update = norm_sq > floor_sq
+            safe_norm_sq = be.where(do_update, norm_sq, be.ones_like(norm_sq))
+            zero_upd = be.zeros_like(norm_sq)
 
             # Update J (Avoid in-place leaf errors by copying first)
             J11 = be.copy(J11)
@@ -391,10 +478,10 @@ class IterativeRayAimer(BaseRayAimer):
             J21 = be.copy(J21)
             J22 = be.copy(J22)
 
-            J11[idx] += Rx * dx / norm_sq
-            J12[idx] += Rx * dy / norm_sq
-            J21[idx] += Ry * dx / norm_sq
-            J22[idx] += Ry * dy / norm_sq
+            J11[idx] += be.where(do_update, Rx * dx / safe_norm_sq, zero_upd)
+            J12[idx] += be.where(do_update, Rx * dy / safe_norm_sq, zero_upd)
+            J21[idx] += be.where(do_update, Ry * dx / safe_norm_sq, zero_upd)
+            J22[idx] += be.where(do_update, Ry * dy / safe_norm_sq, zero_upd)
 
             # Write the accepted errors back for the next iteration.
             ex = be.copy(ex)
@@ -412,8 +499,33 @@ class IterativeRayAimer(BaseRayAimer):
             iterations=self.last_iterations,
             num_rays=num_rays,
             num_converged=num_converged,
+            fallback_used=fallback_used,
+            jacobian_refreshes=jacobian_refreshes,
         )
         return x, y, z, L, M, N, converged, had_initial_nan, report
+
+    def _fd_step_scale(self, is_inf: bool, tx: Any, ty: Any) -> float:
+        """Characteristic parameter scale ``S`` for finite-difference steps.
+
+        For infinite conjugates the solver parameters ``(xi, eta)`` are
+        lengths, so ``S`` is a physical stop scale: the largest target
+        magnitude of the batch (edge probes and pupil batches carry the
+        stop radius), floored at 1 mm for pure chief batches whose targets
+        are all zero. For finite conjugates the parameters are
+        dimensionless tangent perturbations of a unit direction, so the
+        local scale is 1.
+        """
+        if not is_inf:
+            return 1.0
+        values = np.concatenate(
+            [
+                np.abs(be.to_numpy(tx)).reshape(-1),
+                np.abs(be.to_numpy(ty)).reshape(-1),
+            ]
+        )
+        finite = values[np.isfinite(values)]
+        scale = float(finite.max()) if finite.size else 0.0
+        return max(scale, 1.0)
 
     def _finite_difference_jacobian(
         self,
@@ -425,10 +537,10 @@ class IterativeRayAimer(BaseRayAimer):
         is_inf: bool,
         lx: Any,
         ly: Any,
-        eps: float = 1e-6,
+        step_scale: float = 1.0,
     ) -> tuple:
-        """Per-ray 2x2 Jacobian ``d(local stop x, y)/d(xi, eta)`` by finite
-        differences.
+        """Per-ray 2x2 Jacobian ``d(local stop x, y)/d(xi, eta)`` by central
+        finite differences.
 
         The free degrees of freedom are the two transverse launch parameters
         of the bound :class:`LaunchParameterization` -- both are independent
@@ -437,9 +549,23 @@ class IterativeRayAimer(BaseRayAimer):
         Unlike the paraxial magnitude estimate, this captures the sign and
         cross-coupling of tilted or decentered stops, which is required for
         the Newton step to be a descent direction on such systems (issue
-        #654). Rays whose perturbed trace is degenerate (NaN, or a collapsed
-        determinant) fall back to the paraxial diagonal so the solve still
-        has a usable seed.
+        #654).
+
+        The differences are central with dtype- and scale-aware per-ray
+        steps ``h = eps_mach^(1/3) * max(S, |parameter|)`` -- the cube root
+        is the standard optimum balancing a central difference's truncation
+        error against round-off, and ``S`` comes from
+        :meth:`_fd_step_scale`. The selected steps are recorded on
+        ``self._last_fd_steps`` for debugging.
+
+        Rays whose perturbed traces are unusable (a perturbed ray missed a
+        surface -> NaN entries) fall back to the sign-preserving paraxial
+        diagonal -- the raw paraxial response, never clamped to an
+        arbitrary magnitude -- and are recorded on
+        ``self._last_jacobian_fallback`` so the solve core can report the
+        substitution. Ill-conditioning is *not* judged here: the Newton
+        core evaluates a scale-invariant reciprocal condition at solve time
+        and refreshes/falls back explicitly.
 
         Args:
             bound: The bound launch parameterization for this solve.
@@ -447,48 +573,64 @@ class IterativeRayAimer(BaseRayAimer):
             wavelengths: Ray wavelengths.
             stop_idx: Index of the stop surface.
             is_inf: Whether the object is at infinity.
-            lx, ly: Unperturbed local-stop coordinates of the current state.
-            eps: Finite-difference step size.
+            lx, ly: Unperturbed local-stop coordinates of the current state
+                (kept for signature stability; the central difference does
+                not evaluate the center point).
+            step_scale: Characteristic parameter scale ``S``.
 
         Returns:
             tuple: ``(J11, J12, J21, J22)`` per-ray Jacobian entries, with
             ``J = [[d lx/d xi, d lx/d eta], [d ly/d xi, d ly/d eta]]``.
         """
-        x1, y1, z1, L1, M1, N1 = bound.launch(xi + eps, eta)
-        r1 = self._trace_subset(x1, y1, z1, L1, M1, N1, wavelengths, stop_idx, is_inf)
-        lx1, ly1 = self._get_local_stop_coords(r1, stop_idx)
-        x2, y2, z2, L2, M2, N2 = bound.launch(xi, eta + eps)
-        r2 = self._trace_subset(x2, y2, z2, L2, M2, N2, wavelengths, stop_idx, is_inf)
-        lx2, ly2 = self._get_local_stop_coords(r2, stop_idx)
+        del lx, ly  # central differences do not use the center point
+        eps_mach = machine_eps(xi)
+        h0 = eps_mach ** (1.0 / 3.0)
+        h_xi = h0 * be.maximum(be.abs(xi), step_scale)
+        h_eta = h0 * be.maximum(be.abs(eta), step_scale)
+        self._last_fd_steps = (h_xi, h_eta)
 
-        J11 = (lx1 - lx) / eps
-        J21 = (ly1 - ly) / eps
-        J12 = (lx2 - lx) / eps
-        J22 = (ly2 - ly) / eps
+        def stop_coords(xi_probe, eta_probe):
+            launch = bound.launch(xi_probe, eta_probe)
+            rays = self._trace_subset(*launch, wavelengths, stop_idx, is_inf)
+            return self._get_local_stop_coords(rays, stop_idx)
 
-        # Paraxial diagonal fallback for rays where the finite difference is
-        # unusable (a perturbed ray missed a surface -> NaN, or the local
-        # sensitivity collapsed to a near-singular Jacobian).
-        num_rays = len(bound.x0)
-        wl_mean = (
-            be.mean(wavelengths) if hasattr(wavelengths, "__len__") else wavelengths
+        lx_xp, ly_xp = stop_coords(xi + h_xi, eta)
+        lx_xm, ly_xm = stop_coords(xi - h_xi, eta)
+        lx_ep, ly_ep = stop_coords(xi, eta + h_eta)
+        lx_em, ly_em = stop_coords(xi, eta - h_eta)
+
+        J11 = (lx_xp - lx_xm) / (2.0 * h_xi)
+        J21 = (ly_xp - ly_xm) / (2.0 * h_xi)
+        J12 = (lx_ep - lx_em) / (2.0 * h_eta)
+        J22 = (ly_ep - ly_em) / (2.0 * h_eta)
+
+        # Sign-preserving paraxial diagonal for rays whose finite difference
+        # is unusable (NaN from a missed surface). The raw paraxial response
+        # keeps its sign and magnitude; if it is itself degenerate the
+        # conditioning-aware solve will hold the ray and report
+        # non-convergence rather than fabricate a step.
+        finite = be.logical_and(
+            be.logical_and(be.isfinite(J11), be.isfinite(J12)),
+            be.logical_and(be.isfinite(J21), be.isfinite(J22)),
         )
-        j_par = float(
-            be.to_numpy(
-                self._get_paraxial_jacobian(float(wl_mean), stop_idx, is_inf)
-            ).ravel()[0]
-        )
-        if abs(j_par) < 1e-12:
-            j_par = 1e-12
-        j_par_arr = be.full(num_rays, j_par)
-        zeros = be.zeros(num_rays)
-
-        det = J11 * J22 - J12 * J21
-        bad = be.logical_or(be.isnan(det), be.abs(det) < 1e-12)
-        J11 = be.where(bad, j_par_arr, J11)
-        J22 = be.where(bad, j_par_arr, J22)
-        J12 = be.where(bad, zeros, J12)
-        J21 = be.where(bad, zeros, J21)
+        fallback = be.logical_not(finite)
+        if bool(be.any(fallback)):
+            num_rays = len(bound.x0)
+            wl_mean = (
+                be.mean(wavelengths) if hasattr(wavelengths, "__len__") else wavelengths
+            )
+            j_par = float(
+                be.to_numpy(
+                    self._get_paraxial_jacobian(float(wl_mean), stop_idx, is_inf)
+                ).ravel()[0]
+            )
+            j_par_arr = be.full(num_rays, j_par)
+            zeros = be.zeros(num_rays)
+            J11 = be.where(fallback, j_par_arr, J11)
+            J22 = be.where(fallback, j_par_arr, J22)
+            J12 = be.where(fallback, zeros, J12)
+            J21 = be.where(fallback, zeros, J21)
+        self._last_jacobian_fallback = fallback
         return J11, J12, J21, J22
 
     def _get_paraxial_jacobian(
