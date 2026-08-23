@@ -82,9 +82,34 @@ values to effective ones using the orientation sign
 
 where :math:`p_k` is the reflection parity before surface *k*,
 :math:`\hat z_k` its local ``+z`` axis, and :math:`\mathbf d_k` the incoming
-beam direction. Classic z-authored systems always have :math:`s_k = +1`, so
-their behavior is unchanged. Authored radii and focal lengths are never
-mutated; serialization is unaffected.
+beam direction. The **canonical default authoring has sign** :math:`+1`;
+equivalent centered surfaces authored with the local axis reversed are
+normalized to the same effective scalar power -- on straight and folded
+paths alike. Authored radii and focal lengths are never mutated;
+serialization is unaffected.
+
+The sign applies exactly to **centered/collinear** powered surfaces
+(:math:`\bigl|1 - |\hat z_k \cdot \mathbf d_k|\bigr| \le` the dtype-aware
+angular tolerance). A genuinely oblique powered surface is never re-signed
+by a heuristic: on folded/off-axis paths it is rejected as out of domain,
+and on straight legacy paths it keeps its historical raw value together
+with the scalar-approximation advisory.
+
+One validated scalar sequence for trace and matrix APIs
+-------------------------------------------------------
+
+``Paraxial.ray_transfer_matrix()`` and ``Paraxial.f2_range()`` are
+assembled from the **same validated scalar sequence** as the explicit
+paraxial tracer (``trace_generic``): one internal preparation step
+(``ParaxialRayTracer.prepare_scalar_sequence``) builds or reuses the
+:class:`~optiland.paraxial_path.ParaxialPath`, validates the scalar domain,
+surfaces straight-system advisories, applies the collinear orientation
+signs to radii and explicit focal lengths (preserving radius infinities
+exactly), and applies the reverse transform exactly once. The matrix API
+and the explicit trace therefore can never disagree on the same
+prescription because they selected different power conventions. Both
+accept an optional prebuilt ``path=`` so a high-level operation pays the
+path construction once.
 
 Entry frame and pupil coordinates
 ---------------------------------
@@ -99,9 +124,10 @@ v_0)`:
 - :math:`\mathbf v_0` is global ``+y`` projected off the entry axis
   (the meridional direction), :math:`\mathbf u_0` completes a right-handed
   frame;
-- within ``1e-10`` of a ``+/-y`` entry the projection degenerates (the
-  unavoidable pole of any deterministic gauge) and global ``+x`` is
-  projected instead;
+- within the **dtype-aware** angular tolerance of a ``+/-y`` entry
+  (``1e-10`` in float64, widened in float32 to stay above round-off) the
+  projection degenerates -- the unavoidable pole of any deterministic
+  gauge -- and global ``+x`` is projected instead;
 - for a ``+z`` entry the basis reduces exactly to global ``+x/+y``;
 - the gauge is a **global reference** and never depends on the object
   plane's orientation or roll -- a tilted object plane does not steer the
@@ -141,11 +167,65 @@ freedom** ``(xi, eta)`` in the entry frame
 
 Stop residuals are measured in the stop surface's local transverse
 coordinates, and each solve reports seed residual, final residual,
-iteration count, and convergence status
+iteration count, convergence status, whether the Jacobian conditioning
+fallback was used, and how many iteration-time Jacobian refreshes ran
 (:class:`~optiland.rays.ray_aiming.parameterization.SolveReport`); a
 returned finite ray is not evidence of convergence. Pupil-map warm-start
 caches store local transverse offsets, so rigid pose changes cannot reuse
 an incompatible global-coordinate map.
+
+The Newton core's 2x2 solves share one scale-invariant conditioning
+authority (:func:`optiland.utils.solve_2x2`, also used by the
+real-image-height field solve): each ray's Jacobian is normalized by its
+largest entry, judged by a reciprocal Frobenius-condition estimate against
+a machine-epsilon threshold, and solved with its determinant **sign
+preserved** -- the determinant is never clamped to an arbitrary positive
+value, so a Newton step can never be silently reversed. Initial Jacobians
+use **central** finite differences with dtype- and scale-aware steps
+(:math:`h = \varepsilon_{\mathrm{mach}}^{1/3} S`, with :math:`S` a
+physical stop scale for infinite conjugates and a dimensionless unit for
+finite ones). Before each Newton solve the reciprocal condition is
+checked; ill-conditioned rays get a fresh central-difference refresh,
+then the sign-preserving paraxial diagonal (reported as
+``fallback_used``), and finally a held zero step that surfaces as
+non-convergence -- a step is never fabricated. The Broyden update is
+skipped for zero or round-off-level accepted steps.
+
+Robust aiming reports
+---------------------
+
+``RobustRayAimer.last_report`` exposes a
+:class:`~optiland.rays.ray_aiming.robust.RobustSolveReport` for the most
+recent call: per-field
+:class:`~optiland.rays.ray_aiming.robust.RobustFieldReport` entries (the
+final polish :class:`SolveReport`, the chief seed strategy --
+``initial_guess`` / ``cached_map`` / ``warm_map`` / ``direct_paraxial`` /
+``marching`` / ``scan`` -- cached-map reuse, the edge-probe fallback
+count, and a per-field fallback flag) plus aggregate ray counts, worst
+seed/final residuals, and the largest polish iteration count. Robust
+aiming may return NaN for individual vignetted/unreachable rays;
+``converged`` is defined as ``num_converged == num_rays`` with exact
+counts retained. On a total field failure, ``last_report`` is published
+*before* the ``ValueError`` propagates. A cached map reused as a normal
+warm start is reported via ``used_cached_map``/``chief_seed_strategy``,
+not as a fallback. Reading the report::
+
+    aimer = RobustRayAimer(optic)
+    rays = aimer.aim_rays((0.0, 0.7), 0.55, (Px, Py))
+    report = aimer.last_report
+    if not report.converged:
+        print(f"{report.num_converged}/{report.num_rays} rays converged")
+    for field in report.field_reports:
+        print(field.chief_seed_strategy, field.final_polish.final_residual)
+
+The last-resort chief **scan** (used when the warm/direct solves and field
+marching all fail, e.g. one-dimensional fields beyond 90 degrees) sweeps
+candidates along the transverse line **through the fresh paraxial seed**:
+the zero-offset candidate is exactly the seed, every displacement is
+transverse to the entry direction, the sweep direction follows the field
+coordinates, and the candidate set is invariant under rigid translation of
+the system. Among converged candidates the one nearest the seed is
+selected. Scan use is reported as ``chief_seed_strategy = "scan"``.
 
 ``total_track`` semantics
 -------------------------
@@ -170,23 +250,81 @@ Explicitly unsupported (rejected, not approximated)
 - ``object_height``, ``paraxial_image_height`` and ``real_image_height``
   field types on folded/off-axis paths (their coordinate semantics are
   still z-bound);
-- thickness/image/quick-focus solves and thickness updates on folded paths
-  (they write axial offsets into global ``cs.z``; the guard fires *before*
-  any mutation);
 - ambiguous two-dimensional angle fields at or beyond 90 degrees total
   (``AMBIGUOUS_WIDE_ANGLE_FIELD``): the component-angle representation does
   not uniquely define a 3-D direction there. One-dimensional wide-angle
-  fields keep working.
+  fields keep working;
+- component field angles at an odd multiple of 90 degrees
+  (``SINGULAR_ANGLE_TANGENT``): floating-point ``tan`` returns a huge
+  finite number at the pole instead of failing, so every tangent
+  evaluation on component angles (ray origins, paraxial object positions,
+  chief-ray scaling, wavefront tilt correction) rejects angles within a
+  precision-derived width (:math:`90\sqrt{\varepsilon}` degrees: ~1.3e-6
+  in float64, ~0.031 in float32) of the pole. Nonsingular wide angles
+  such as 89, 91, 95 or 105 degrees remain supported.
+
+z-bound geometry mutations (rejected before any state changes)
+---------------------------------------------------------------
+
+Every operation that interprets an unfolded axial scalar as a writable
+global ``cs.z`` rejects folded/off-axis prescriptions **preflight-atomically**
+-- the guard fires before the first read-modify or write, so a rejected
+system is left exactly as it was:
+
+- ``set_thickness`` and thickness updates (including through pickups and
+  solves);
+- ``ThicknessSolve`` / marginal- and chief-ray height thickness solves;
+- ``image_solve`` and ``QuickFocusSolve.apply()``;
+- ``QuickFocusSolve.optimal_focus_distance()`` directly -- the value it
+  returns is a Cartesian global-z focus coordinate, which is not
+  frame-correct for a folded output arm (guarded before any ray is
+  traced);
+- ``ThroughFocusAnalysis`` (moves the image plane along z);
+- ``OpticUpdater.scale_system()`` (guarded at entry, before reading
+  thicknesses or scaling the first geometry);
+- ``SurfaceGroup.flip()`` and ``OpticUpdater.flip()`` (guarded before list
+  reversal, material swaps, coordinate or thickness changes);
+- surface-group composition (``SurfaceGroup.__add__``): both operands must
+  be global-z compatible before anything is copied or shifted; laterally
+  translated straight systems remain supported;
+- relative-coordinate reconstruction
+  (``SurfaceGroup._update_coordinate_systems``): insertions and removals
+  preflight the would-be chain before mutating the surface list, and the
+  method itself is gated;
+- multi-configuration thickness updates preflight **every selected
+  configuration** before mutating any, so a folded configuration later in
+  the group cannot leave earlier configurations changed.
+
+A future implementation may make these path-aware (translating downstream
+geometry along the actual beam legs); until then they reject rather than
+corrupt.
+
+Huygens PSF normalization
+-------------------------
+
+The scalar and vectorial Huygens PSF normalize against the full 3-D image
+surface vertex through one shared, gradient-safe construction
+(:func:`optiland.psf.huygens_fresnel.image_vertex_grid`): the vertex is
+broadcast onto the image grid instead of passed through ``be.full``,
+whose torch implementation extracts a Python scalar and would silently
+sever trainable image-vertex coordinates from the autograd graph.
 
 Remaining limitations
 ---------------------
 
-- Tilted or decentered powered surfaces on *straight* (global-z) systems
-  keep the historical behavior: first-order results silently ignore the
-  tilt/decenter. Gating those would break long-standing legacy systems;
-  the validation currently applies to folded/off-axis paths only.
+- Genuinely tilted or decentered powered surfaces on *straight* (global-z)
+  systems keep the historical behavior: first-order results ignore the
+  tilt/decenter and a :class:`ParaxialDomainWarning` advisory is emitted.
+  Gating those would break long-standing legacy systems; the hard
+  validation currently applies to folded/off-axis paths only. (Centered
+  surfaces authored with a reversed local axis are *not* part of this
+  limitation -- they are normalized consistently.)
 - The wavefront/OPD and PSF stacks are validated in the supported scalar
   folded domain; general folded wavefront analysis beyond it is untested.
+- The wavefront reference-sphere radius is float-typed by long-standing
+  design, so the *total* derivative of a Huygens normalization with
+  respect to geometry includes that term only through the forward value;
+  the image-vertex path itself is fully differentiable.
 - A general 4x4 first-order coordinate-break model (tangential/sagittal
   treatment of oblique powered mirrors, anamorphic pupils, transverse
   coupling) is future work and out of scope here.
