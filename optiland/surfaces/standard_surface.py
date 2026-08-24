@@ -31,6 +31,46 @@ if TYPE_CHECKING:
     from optiland.rays import BaseRays, ParaxialRays, RealRays
 
 
+def _aperture_aware_distance(surface, rays: RealRays):
+    """Intersection distance from a surface's geometry, aperture-aware when
+    the geometry supports it.
+
+    Geometries whose ``distance`` accepts an ``aperture`` keyword receive the
+    surface's physical aperture so they can prefer intersections on the used
+    region of the surface (see
+    :func:`optiland.geometries.standard._conic_intersection_distance`).
+    Custom geometries with the plain ``distance(rays)`` signature keep
+    working unchanged. The capability check is cached on ``surface``, keyed
+    to the geometry object so a swapped geometry is re-inspected.
+
+    A module-level function rather than a ``Surface`` method so that every
+    surface-like object works without forwarding: ``SurfaceView`` dispatches
+    the tracing kernels through ``type(base_surface)`` bound to itself, and
+    this helper only needs ``surface.geometry`` / ``surface.aperture``, which
+    views resolve through their passthrough properties.
+
+    Args:
+        surface: A surface-like object exposing ``geometry`` and ``aperture``.
+        rays (RealRays): The rays, localized to the surface.
+
+    Returns:
+        be.ndarray: Propagation distance per ray.
+
+    """
+    geometry = surface.geometry
+    cached = getattr(surface, "_distance_capability", None)
+    if cached is None or cached[0] is not geometry:
+        parameters = inspect.signature(geometry.distance).parameters
+        accepts_aperture = "aperture" in parameters or any(
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values()
+        )
+        cached = (geometry, accepts_aperture)
+        surface._distance_capability = cached
+    if cached[1]:
+        return geometry.distance(rays, aperture=surface.aperture)
+    return geometry.distance(rays)
+
+
 class _TracingCoordinator:
     """Owns the localize → intersect → globalize → clip → interact → record pipeline.
 
@@ -257,42 +297,13 @@ class Surface(ObserverMixin):
             RealRays: The traced real rays.
 
         """
-        t = self._geometry_distance(rays)
+        t = _aperture_aware_distance(self, rays)
         self.material_pre.propagation_model.propagate(rays, t)
         rays.opd = rays.opd + be.abs(t * self.material_pre.n(rays.w))
         if self.aperture:
             self.aperture.clip(rays)
         rays = self.interaction_model.interact_real_rays(rays)
         return rays
-
-    def _geometry_distance(self, rays: RealRays):
-        """Intersection distance from the geometry, aperture-aware if supported.
-
-        Geometries whose ``distance`` accepts an ``aperture`` keyword receive
-        the surface's physical aperture so they can prefer intersections on
-        the used region of the surface (see
-        :func:`optiland.geometries.standard._conic_intersection_distance`).
-        Custom geometries with the plain ``distance(rays)`` signature keep
-        working unchanged; the capability check is done once per surface.
-
-        Args:
-            rays (RealRays): The rays, localized to this surface.
-
-        Returns:
-            be.ndarray: Propagation distance per ray.
-
-        """
-        cached = getattr(self, "_distance_capability", None)
-        if cached is None or cached[0] is not self.geometry:
-            parameters = inspect.signature(self.geometry.distance).parameters
-            accepts_aperture = "aperture" in parameters or any(
-                p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values()
-            )
-            cached = (self.geometry, accepts_aperture)
-            self._distance_capability = cached
-        if cached[1]:
-            return self.geometry.distance(rays, aperture=self.aperture)
-        return self.geometry.distance(rays)
 
     def _record_paraxial(self, rays: ParaxialRays) -> None:
         """Records paraxial ray information after tracing.
