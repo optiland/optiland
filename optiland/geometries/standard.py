@@ -101,13 +101,7 @@ def _conic_intersection_distance(rays, radius, conic, aperture=None):
         - 2 * rays.N * radius
         + 2 * rays.N * rays.z
     )
-    c = (
-        k * rays.z**2
-        - 2 * radius * rays.z
-        + rays.x**2
-        + rays.y**2
-        + rays.z**2
-    )
+    c = k * rays.z**2 - 2 * radius * rays.z + rays.x**2 + rays.y**2 + rays.z**2
 
     d = b**2 - 4 * a * c
     d_ok = d >= 0
