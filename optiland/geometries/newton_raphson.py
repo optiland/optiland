@@ -68,28 +68,6 @@ def _nz_threshold(nz):
 
 
 # -- utility functions --
-def _is_radius_infinite(radius):
-    """Checks if the given radius represents an infinite radius (a plane).
-
-    Args:
-        radius (float or be.ndarray): The radius value to check.
-
-    Returns:
-        bool: True if the radius is effectively infinite (or all elements are
-        infinite if it's an array), False otherwise.
-    """
-    is_inf_tensor = be.isinf(radius)
-    if hasattr(is_inf_tensor, "ndim") and is_inf_tensor.ndim > 0:
-        # If it's a multi-element array, check if all are infinite
-        return bool(be.all(is_inf_tensor))
-    # For scalars or single-element arrays that can be converted by .item()
-    return (
-        bool(is_inf_tensor.item())
-        if hasattr(is_inf_tensor, "item")
-        else bool(is_inf_tensor)
-    )
-
-
 def _sign_preserving_floor(value, eps=None):
     """Clamp values to a minimum absolute magnitude while preserving sign.
 
@@ -336,7 +314,7 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
         scale = be.abs(fx * rays.L) + be.abs(fy * rays.M) + be.abs(rays.N)
         return df_dt, scale, nz_regular
 
-    def _solve_distance_primal(self, rays):
+    def _solve_distance_primal(self, rays, aperture=None):
         """Run the Newton-Raphson iteration to find the intersection distance.
 
         This is a pure numerical solve with **no** autograd graph.  It is
@@ -354,13 +332,19 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
 
         Args:
             rays: An object with attributes x, y, z, L, M, N.
+            aperture: The surface's physical aperture, forwarded to the base
+                conic seed so the iteration starts in the basin of the
+                physical root (see
+                :meth:`StandardGeometry.distance`). Optional.
 
         Returns:
             _DistanceSolveResult: Distance, final residual, per-ray
             convergence mask and iteration count.
         """
-        # Better initial guess via base conic intersection
-        t = super().distance(rays)
+        # Better initial guess via base conic intersection. The seed decides
+        # which root's basin the iteration converges in, so it must already
+        # be the physical branch.
+        t = super().distance(rays, aperture=aperture)
 
         tol = _effective_tolerance(self.tol, t)
 
@@ -525,7 +509,7 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
     # Public distance method with autograd dispatch
     # ------------------------------------------------------------------
 
-    def distance(self, rays):
+    def distance(self, rays, aperture=None):
         """
         Calculates the distance from the ray origin to the surface intersection
         using a robust Newton-Raphson method. This version uses the base conic
@@ -572,6 +556,9 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
 
         Args:
             rays (RealRays): The rays used for calculating distance.
+            aperture (BaseAperture, optional): The surface's physical
+                aperture, forwarded to the base conic seed so the iteration
+                starts in the basin of the physical root.
 
         Returns:
             be.ndarray: An array of propagation distances 't' from each ray's
@@ -587,7 +574,7 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
         ctx = torch.no_grad() if use_torch_diff else contextlib.nullcontext()
 
         with ctx:
-            result = self._solve_distance_primal(rays)
+            result = self._solve_distance_primal(rays, aperture=aperture)
             state = self._classify_final_roots(result, rays) if use_torch_diff else None
 
         if not use_torch_diff:
@@ -627,95 +614,6 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
         # --- Phase C: grouped failure reporting --------------------------
         self._warn_rejected_rays(state, result)
         return t_out
-
-    def _intersection_plane(self, rays):
-        """Calculates the intersection points of the rays with a plane (z=0).
-
-        Args:
-            rays (RealRays): The rays to calculate the intersection points for.
-
-        Returns:
-            tuple[be.ndarray, be.ndarray, be.ndarray]: The x, y, and z
-            coordinates of the intersection points.
-        """
-        # handle infinite radius: intersection with plane z=0
-        t = be.full_like(rays.z, be.nan)
-
-        # rays not parallel to the XY plane (N != 0)
-        mask_N_nonzero = be.abs(rays.N) > self.tol
-
-        t = be.where(mask_N_nonzero, -rays.z / rays.N, t)
-
-        mask_N_zero_and_z_zero = (~mask_N_nonzero) & (be.abs(rays.z) < self.tol)
-        t = be.where(mask_N_zero_and_z_zero, 0.0, t)
-
-        x = rays.x + rays.L * t
-        y = rays.y + rays.M * t
-        z = rays.z + rays.N * t
-
-        return x, y, z
-
-    def _intersection_sphere(self, rays):
-        """Calculates the intersection points of the rays with the geometry.
-
-        Args:
-            rays (RealRays): The rays to calculate the intersection points for.
-
-        Returns:
-            tuple[be.ndarray, be.ndarray, be.ndarray]: The x, y, and z
-            coordinates of the intersection points.
-
-        """
-        a = rays.L**2 + rays.M**2 + rays.N**2
-        b = (
-            2 * rays.L * rays.x
-            + 2 * rays.M * rays.y
-            - 2 * rays.N * self.radius
-            + 2 * rays.N * rays.z
-        )
-        c = rays.x**2 + rays.y**2 + rays.z**2 - 2 * self.radius * rays.z
-
-        # discriminant
-        d = b**2 - 4 * a * c
-
-        # two solutions for distance to sphere
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            t1 = (-b + be.sqrt(d)) / (2 * a)
-            t2 = (-b - be.sqrt(d)) / (2 * a)
-
-        # find intersection points in z
-        z1 = rays.z + t1 * rays.N
-        z2 = rays.z + t2 * rays.N
-
-        # take intersection closest to z = 0 (i.e., vertex of geometry)
-        t = be.where(be.abs(z1) <= be.abs(z2), t1, t2)
-
-        # handle case when a = 0
-        cond = a == 0
-        t[cond] = -c[cond] / b[cond]
-
-        x = rays.x + rays.L * t
-        y = rays.y + rays.M * t
-        z = rays.z + rays.N * t
-
-        return x, y, z
-
-    def _intersection(self, rays):
-        """Calculates the initial intersection points of the rays with the base
-        geometry (sphere or plane) before Newton-Raphson iteration.
-
-        Args:
-            rays (RealRays): The rays to calculate the intersection points for.
-
-        Returns:
-            tuple[be.ndarray, be.ndarray, be.ndarray]: The x, y, and z
-            coordinates of the initial intersection points.
-        """
-        if _is_radius_infinite(self.radius):
-            return self._intersection_plane(rays)
-        else:
-            return self._intersection_sphere(rays)
 
     def to_dict(self):
         """Converts the geometry to a dictionary.

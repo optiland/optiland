@@ -12,6 +12,7 @@ Kramer Harrison, 2023
 
 from __future__ import annotations
 
+import inspect
 import warnings
 from typing import TYPE_CHECKING
 
@@ -256,13 +257,42 @@ class Surface(ObserverMixin):
             RealRays: The traced real rays.
 
         """
-        t = self.geometry.distance(rays)
+        t = self._geometry_distance(rays)
         self.material_pre.propagation_model.propagate(rays, t)
         rays.opd = rays.opd + be.abs(t * self.material_pre.n(rays.w))
         if self.aperture:
             self.aperture.clip(rays)
         rays = self.interaction_model.interact_real_rays(rays)
         return rays
+
+    def _geometry_distance(self, rays: RealRays):
+        """Intersection distance from the geometry, aperture-aware if supported.
+
+        Geometries whose ``distance`` accepts an ``aperture`` keyword receive
+        the surface's physical aperture so they can prefer intersections on
+        the used region of the surface (see
+        :func:`optiland.geometries.standard._conic_intersection_distance`).
+        Custom geometries with the plain ``distance(rays)`` signature keep
+        working unchanged; the capability check is done once per surface.
+
+        Args:
+            rays (RealRays): The rays, localized to this surface.
+
+        Returns:
+            be.ndarray: Propagation distance per ray.
+
+        """
+        cached = getattr(self, "_distance_capability", None)
+        if cached is None or cached[0] is not self.geometry:
+            parameters = inspect.signature(self.geometry.distance).parameters
+            accepts_aperture = "aperture" in parameters or any(
+                p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values()
+            )
+            cached = (self.geometry, accepts_aperture)
+            self._distance_capability = cached
+        if cached[1]:
+            return self.geometry.distance(rays, aperture=self.aperture)
+        return self.geometry.distance(rays)
 
     def _record_paraxial(self, rays: ParaxialRays) -> None:
         """Records paraxial ray information after tracing.

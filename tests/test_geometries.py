@@ -1968,21 +1968,23 @@ class TestToroidalGeometry:
         with pytest.raises(ValueError):
             geometries.ToroidalGeometry.from_dict(invalid_dict)
 
-    def test_inf_radius_intersect_sphere_normal_incidence(
+    def test_inf_radius_distance_normal_incidence(
         self, cylinder_x_geometry, set_test_backend
     ):
-        """Test _intersection_sphere for inf radius: ray normal to XY plane (z=0 plane)."""
+        """Distance for inf rotation radius: ray normal to XY plane (z=0 plane).
+
+        Exercises the planar branch of the Newton-Raphson seed
+        (StandardGeometry.distance with radius = inf) through the public API.
+        """
 
         rays = RealRays(
             x=0.0, y=0.0, z=10.0, L=0.0, M=0.0, N=-1.0, intensity=1.0, wavelength=0.55
         )
-        ix, iy, iz = cylinder_x_geometry._intersection(rays)
+        t = cylinder_x_geometry.distance(rays)
 
-        be.allclose(ix, be.array(0.0), rtol=1e-5, atol=1e-6)
-        be.allclose(iy, be.array(0.0), rtol=1e-5, atol=1e-6)
-        be.allclose(
-            iz, be.array(0.0), rtol=1e-5, atol=1e-6
-        )  # Intersection coordinates should be (0, 0, 0)
+        # The cylinder vertex line passes through the origin, so the ray
+        # lands at (0, 0, 0) after propagating t = 10.
+        assert_allclose(t, 10.0, atol=1e-9)
 
 
 class TestBiconicGeometry:
@@ -2115,8 +2117,9 @@ class TestBiconicGeometry:
             x=1.0, y=1.0, z=-5.0, L=0.0, M=0.0, N=1.0, wavelength=0.55, intensity=1.0
         )
         # Distance to plane z=0 should be 5.0
-        # The parent NewtonRaphsonGeometry's _intersection calls _intersection_plane if self.radius is inf.
-        # In Biconic.__init__, self.radius is set to radius_x. So this path is tested.
+        # The Newton-Raphson seed (StandardGeometry.distance) takes its planar
+        # branch when self.radius is inf. In Biconic.__init__, self.radius is
+        # set to radius_x. So this path is tested.
         assert_allclose(geom.distance(rays), 5.0, atol=1e-9)
 
     def test_to_dict_from_dict(self, set_test_backend):

@@ -52,8 +52,8 @@ def _instrument_geometry(geometry, extra_iterations: int):
     geometry.executed_primal_iterations = 0
     original_solve = geometry._solve_distance_primal
 
-    def instrumented_solve(rays):
-        result = original_solve(rays)
+    def instrumented_solve(rays, aperture=None):
+        result = original_solve(rays, aperture=aperture)
         t = result.t
         f_t = result.residual
         for _ in range(geometry.extra_primal_iterations):

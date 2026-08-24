@@ -15,11 +15,10 @@ Kramer Harrison, 2024  Matteo Taccola 2025
 
 from __future__ import annotations
 
-import warnings
-
 import optiland.backend as be
 from optiland.coordinate_system import CoordinateSystem
 from optiland.geometries.base import BaseGeometry
+from optiland.geometries.standard import _conic_intersection_distance
 
 
 class StandardGratingGeometry(BaseGeometry):
@@ -162,54 +161,23 @@ class StandardGratingGeometry(BaseGeometry):
         tz = tz / norm_t
         return tx, ty, tz
 
-    def distance(self, rays):
+    def distance(self, rays, aperture=None):
         """Find the propagation distance to the geometry for the given rays.
 
         Args:
             rays (RealRays): The rays for which to calculate the distance.
+            aperture (BaseAperture, optional): The physical aperture of the
+                surface this geometry belongs to. When given, intersections
+                landing inside the aperture are preferred over intersections
+                the aperture would clip (see
+                :meth:`optiland.geometries.standard.StandardGeometry.distance`).
 
         Returns:
             be.ndarray: An array of distances from each ray's current position
             to its intersection point with the geometry.
 
         """
-        a = self.k * rays.N**2 + rays.L**2 + rays.M**2 + rays.N**2
-        b = (
-            2 * self.k * rays.N * rays.z
-            + 2 * rays.L * rays.x
-            + 2 * rays.M * rays.y
-            - 2 * rays.N * self.radius
-            + 2 * rays.N * rays.z
-        )
-        c = (
-            self.k * rays.z**2
-            - 2 * self.radius * rays.z
-            + rays.x**2
-            + rays.y**2
-            + rays.z**2
-        )
-
-        # discriminant
-        d = b**2 - 4 * a * c
-
-        # two solutions for distance to conic
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            t1 = (-b + be.sqrt(d)) / (2 * a)
-            t2 = (-b - be.sqrt(d)) / (2 * a)
-
-        # find intersection points in z
-        z1 = rays.z + t1 * rays.N
-        z2 = rays.z + t2 * rays.N
-
-        # take intersection closest to z = 0 (i.e., vertex of geometry)
-        t = be.where(be.abs(z1) <= be.abs(z2), t1, t2)
-
-        # handle case when a = 0
-        # Assumes b is not zero when a is zero, based on original logic.
-        t = be.where(a == 0, -c / b, t)
-
-        return t
+        return _conic_intersection_distance(rays, self.radius, self.k, aperture)
 
     def surface_normal(self, rays):
         """Calculate the surface normal of the geometry at the given points.
