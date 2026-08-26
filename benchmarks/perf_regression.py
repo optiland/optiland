@@ -257,6 +257,7 @@ def _run_child(source_dir: Path, out_file: Path) -> None:
 
 
 def compare(args: argparse.Namespace) -> int:
+    """Measure base and candidate refs interleaved; return the exit code."""
     base_ref = args.base or _git("merge-base", "HEAD", "origin/master")
     base_sha = _git("rev-parse", base_ref)
     with tempfile.TemporaryDirectory(prefix="optiland-perf-") as tmp:
@@ -347,6 +348,7 @@ def compare(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
+    """Parse arguments and dispatch to measure or compare mode."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--measure",
