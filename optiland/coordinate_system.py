@@ -174,6 +174,39 @@ class CoordinateSystem:
         Returns:
             A tuple ``(origin, axis)``, each a tuple of x, y and z components.
         """
+        # Fast path: with no rotation anywhere in the reference chain,
+        # ``globalize`` reduces to pure translation, so the origin is the
+        # accumulated (x, y, z) and the axis is global +z. The truthiness
+        # checks mirror the ``if rx:`` branches of ``globalize`` exactly.
+        # This matters because ``build_paraxial_path`` reads one frame per
+        # surface per first-order operation; the probe below costs an order
+        # of magnitude more per call.
+        cs: CoordinateSystem | None = self
+        rotation_free = True
+        while cs is not None:
+            if cs._rx or cs._ry or cs._rz:
+                rotation_free = False
+                break
+            cs = cs.reference_cs
+        if rotation_free:
+            # The 0.0 seeds reproduce the probe's float promotion and keep
+            # any gradient flow through the translations intact.
+            x = 0.0 + self._x
+            y = 0.0 + self._y
+            z = 0.0 + self._z
+            ref = self.reference_cs
+            while ref is not None:
+                x = x + ref._x
+                y = y + ref._y
+                z = z + ref._z
+                ref = ref.reference_cs
+            zero = be.atleast_1d(be.array(0.0))
+            one = be.atleast_1d(be.array(1.0))
+            return (
+                (be.atleast_1d(x), be.atleast_1d(y), be.atleast_1d(z)),
+                (zero, zero, one),
+            )
+
         vector = RealRays(0, 0, 0, 0, 0, 1, 1, 1)
         self.globalize(vector)
         return (vector.x, vector.y, vector.z), (vector.L, vector.M, vector.N)

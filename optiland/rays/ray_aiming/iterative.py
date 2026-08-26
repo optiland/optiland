@@ -589,15 +589,33 @@ class IterativeRayAimer(BaseRayAimer):
         h_eta = h0 * be.maximum(be.abs(eta), step_scale)
         self._last_fd_steps = (h_xi, h_eta)
 
-        def stop_coords(xi_probe, eta_probe):
-            launch = bound.launch(xi_probe, eta_probe)
-            rays = self._trace_subset(*launch, wavelengths, stop_idx, is_inf)
-            return self._get_local_stop_coords(rays, stop_idx)
+        # The four probe bundles are concatenated into one trace: every step
+        # of the pipeline (launch, surface trace, local stop coordinates) is
+        # elementwise per ray, so the batched results are identical to four
+        # separate traces while paying the per-surface Python overhead once
+        # instead of four times.
+        probes = (
+            bound.launch(xi + h_xi, eta),
+            bound.launch(xi - h_xi, eta),
+            bound.launch(xi, eta + h_eta),
+            bound.launch(xi, eta - h_eta),
+        )
+        batched = tuple(
+            be.concatenate([launch[i] for launch in probes]) for i in range(6)
+        )
+        wl = wavelengths
+        n = batched[0].shape[0] // 4
+        if getattr(wl, "shape", None) and wl.shape and wl.shape[0] == n and n > 1:
+            wl = be.concatenate([wl, wl, wl, wl])
+        rays = self._trace_subset(*batched, wl, stop_idx, is_inf)
+        lx_all, ly_all = self._get_local_stop_coords(rays, stop_idx)
 
-        lx_xp, ly_xp = stop_coords(xi + h_xi, eta)
-        lx_xm, ly_xm = stop_coords(xi - h_xi, eta)
-        lx_ep, ly_ep = stop_coords(xi, eta + h_eta)
-        lx_em, ly_em = stop_coords(xi, eta - h_eta)
+        lx_xp, lx_xm, lx_ep, lx_em = (
+            lx_all[0:n], lx_all[n : 2 * n], lx_all[2 * n : 3 * n], lx_all[3 * n :]
+        )
+        ly_xp, ly_xm, ly_ep, ly_em = (
+            ly_all[0:n], ly_all[n : 2 * n], ly_all[2 * n : 3 * n], ly_all[3 * n :]
+        )
 
         J11 = (lx_xp - lx_xm) / (2.0 * h_xi)
         J21 = (ly_xp - ly_xm) / (2.0 * h_xi)
