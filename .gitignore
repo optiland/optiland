@@ -19,4 +19,5 @@ sg_execution_times.rst
 .qlty/
 .claude/
 scratch/
+docs/examples/iso10110_output/
 **/*.doit.db

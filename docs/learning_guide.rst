@@ -139,6 +139,19 @@ systems, advanced topics, and differentiable optimization).
 * :ref:`NSQ gallery deep dive (notebooks 01-11) <gallery_nonsequential>`
 * :ref:`NSQ Limitations & Roadmap <nsq_limitations_and_roadmap>`
 
+11. Manufacturing & Fabrication Drawings
+-----------------------------------------
+
+This example demonstrates how to generate ISO 10110-compliant fabrication
+drawings (DXF and PDF) directly from an Optiland lens design, including
+per-surface and per-element tolerance annotations.
+
+.. toctree::
+   :maxdepth: 1
+
+   Tutorial 11a: ISO 10110 Fabrication Drawings <examples/Tutorial_11a_ISO_10110_Drawings>
+
+
 Community Resources
 --------------------
 

@@ -24,11 +24,13 @@ dependencies = [
     "requests",
     "seaborn",
     "typing-extensions>=4.1.0",
+    "pydantic>=2.0",
 ]
 license = { text = "MIT License" }
 dynamic = ["version"]
 
 [project.optional-dependencies]
+manufacturing = ["ezdxf>=1.0.0"]
 prescription-console = ["rich>=13.0"]
 prescription-pdf = ["reportlab>=4.0"]
 prescription = ["rich>=13.0", "reportlab>=4.0"]
