@@ -119,11 +119,7 @@ def _conic_intersection_distance(rays, radius, conic, aperture=None):
     solvable1 = d_ok & a_ok
     solvable2 = d_ok & q_ok
 
-    x1 = rays.x + t1 * rays.L
-    y1 = rays.y + t1 * rays.M
     z1 = rays.z + t1 * rays.N
-    x2 = rays.x + t2 * rays.L
-    y2 = rays.y + t2 * rays.M
     z2 = rays.z + t2 * rays.N
 
     # Scale-aware forward floor: the ray positions enter the quadratic
@@ -137,20 +133,13 @@ def _conic_intersection_distance(rays, radius, conic, aperture=None):
     valid1 = solvable1 & be.isfinite(t1) & (t1 > t_min) & sheet1
     valid2 = solvable2 & be.isfinite(t2) & (t2 > t_min) & sheet2
 
-    if aperture is not None:
-        pref1 = valid1 & aperture.contains(x1, y1)
-        pref2 = valid2 & aperture.contains(x2, y2)
-    else:
-        pref1 = valid1
-        pref2 = valid2
-
     # Nearest root of the best available tier: in-aperture, then any
-    # admissible, then the legacy vertex-nearest fallback.
+    # admissible, then the legacy vertex-nearest fallback. Without an
+    # aperture the preference tier equals the admissible tier, and the
+    # intersection (x, y) coordinates have no consumer, so both are
+    # skipped: identical selection, roughly a third fewer array passes on
+    # the hot no-aperture path.
     first1 = t1 <= t2
-
-    pick_pref1 = pref1 & (~pref2 | first1)
-    t_pref = be.where(pick_pref1, t1, t2)
-    have_pref = pref1 | pref2
 
     pick_valid1 = valid1 & (~valid2 | first1)
     t_valid = be.where(pick_valid1, t1, t2)
@@ -162,7 +151,22 @@ def _conic_intersection_distance(rays, radius, conic, aperture=None):
     t_vertex = be.where(abs_z1 <= abs_z2, t1, t2)
     t_fallback = be.where(d_ok, t_vertex, be.full_like(d, be.nan))
 
-    return be.where(have_pref, t_pref, be.where(have_valid, t_valid, t_fallback))
+    t_admissible = be.where(have_valid, t_valid, t_fallback)
+    if aperture is None:
+        return t_admissible
+
+    x1 = rays.x + t1 * rays.L
+    y1 = rays.y + t1 * rays.M
+    x2 = rays.x + t2 * rays.L
+    y2 = rays.y + t2 * rays.M
+    pref1 = valid1 & aperture.contains(x1, y1)
+    pref2 = valid2 & aperture.contains(x2, y2)
+
+    pick_pref1 = pref1 & (~pref2 | first1)
+    t_pref = be.where(pick_pref1, t1, t2)
+    have_pref = pref1 | pref2
+
+    return be.where(have_pref, t_pref, t_admissible)
 
 
 class StandardGeometry(BaseGeometry):
