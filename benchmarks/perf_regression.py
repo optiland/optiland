@@ -65,7 +65,7 @@ def _spherical_stack():
     optic.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
     radii = [55.0, -260.0, 34.0, 190.0, -45.0, 28.0, -32.0, -85.0]
     thick = [4.0, 0.5, 5.0, 3.0, 1.0, 6.0, 2.5, 60.0]
-    for i, (r, t) in enumerate(zip(radii, thick), start=1):
+    for i, (r, t) in enumerate(zip(radii, thick, strict=True), start=1):
         mat = "N-BK7" if i % 2 == 1 else "air"
         optic.surfaces.add(
             index=i, radius=r, thickness=t, material=mat, is_stop=(i == 4)
