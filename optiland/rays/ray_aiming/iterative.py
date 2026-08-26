@@ -611,10 +611,16 @@ class IterativeRayAimer(BaseRayAimer):
         lx_all, ly_all = self._get_local_stop_coords(rays, stop_idx)
 
         lx_xp, lx_xm, lx_ep, lx_em = (
-            lx_all[0:n], lx_all[n : 2 * n], lx_all[2 * n : 3 * n], lx_all[3 * n :]
+            lx_all[0:n],
+            lx_all[n : 2 * n],
+            lx_all[2 * n : 3 * n],
+            lx_all[3 * n :],
         )
         ly_xp, ly_xm, ly_ep, ly_em = (
-            ly_all[0:n], ly_all[n : 2 * n], ly_all[2 * n : 3 * n], ly_all[3 * n :]
+            ly_all[0:n],
+            ly_all[n : 2 * n],
+            ly_all[2 * n : 3 * n],
+            ly_all[3 * n :],
         )
 
         J11 = (lx_xp - lx_xm) / (2.0 * h_xi)
