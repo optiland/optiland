@@ -25,9 +25,10 @@ class BaseFieldDefinition(ABC):
     def _reject_folded_use(self, optic: Optic) -> None:
         """Reject field definitions whose coordinate semantics are z-bound.
 
-        Field types that mix global z with heights (object height, paraxial
-        and real image height) have not been given folded coordinate
-        semantics; on a folded or off-axis-entered beam path they would
+        Field types defined by heights on the image side (paraxial and real
+        image height) have not been given folded coordinate semantics: their
+        defining coordinate lives on a leg that a fold moves off the global
+        z axis, so on a folded or off-axis-entered beam path they would
         silently produce wrong ray targets.
 
         Raises:
@@ -45,6 +46,35 @@ class BaseFieldDefinition(ABC):
             "another direction): its coordinate semantics are still "
             'z-bound. Use the "angle" field type for folded systems, or '
             "real ray tracing with explicit launch geometry."
+        )
+
+    def _reject_non_z_entry(self, optic: Optic) -> None:
+        """Reject use when the beam does not enter along global +z.
+
+        Object-height coordinates are global (x, y) heights on the object
+        surface, and the object sits on the entry leg. They coincide with
+        the entry-frame transverse coordinates exactly when the entry
+        direction is global +z, so folds downstream of a +z entry leave
+        their meaning intact and stay supported. Entry along any other
+        direction is rejected: the heights would then be z-bound in a frame
+        the beam does not follow.
+
+        Raises:
+            UnsupportedParaxialGeometryError: If the beam enters the system
+                off the global +z axis.
+        """
+        from optiland.paraxial_path import UnsupportedParaxialGeometryError
+
+        path = optic.surfaces.build_paraxial_path()
+        if path.entry_is_positive_z:
+            return
+        raise UnsupportedParaxialGeometryError(
+            f"The field type {type(self).__name__!r} is not supported for "
+            "systems entered off the global +z axis: its heights are global "
+            "(x, y) coordinates on the object surface, which match the "
+            "entry frame only for +z entry. Systems folded downstream of a "
+            '+z entry remain supported. Use the "angle" field type, or real '
+            "ray tracing with explicit launch geometry."
         )
 
     @classmethod

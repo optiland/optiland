@@ -247,9 +247,14 @@ Explicitly unsupported (rejected, not approximated)
   (``NONCOLLINEAR_VERTEX_CHAIN``);
 - non-object surfaces at infinity on a folded arm (``NONOBJECT_INFINITY``);
 - object-space telecentric aiming for non-``+z`` entry;
-- ``object_height``, ``paraxial_image_height`` and ``real_image_height``
-  field types on folded/off-axis paths (their coordinate semantics are
-  still z-bound);
+- ``paraxial_image_height`` and ``real_image_height`` field types on
+  folded/off-axis paths: their defining coordinate lives on the image-side
+  leg, which a fold moves off the global z axis;
+- ``object_height`` field types on systems entered off global ``+z``: the
+  heights are global (x, y) coordinates on the object surface and match the
+  entry frame only for ``+z`` entry. A ``+z``-entered system folded
+  downstream of the object keeps ``object_height`` support (subject to the
+  usual scalar-domain diagnostics for any first-order quantity involved);
 - ambiguous two-dimensional angle fields at or beyond 90 degrees total
   (``AMBIGUOUS_WIDE_ANGLE_FIELD``): the component-angle representation does
   not uniquely define a 3-D direction there. One-dimensional wide-angle

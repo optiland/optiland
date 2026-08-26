@@ -181,6 +181,20 @@ def retro_finite():
     return _finish(optic)
 
 
+def folded_finite():
+    """Finite-conjugate folded singlet entered along +z: 45-degree fold at
+    z = 24, image on the +y arm. Exact trombone reference: ``retro_finite``."""
+    optic = Optic(name="folded-finite")
+    optic.surfaces.add(index=0, radius=be.inf, thickness=60.0)
+    optic.surfaces.add(
+        index=1, radius=25.84, thickness=4.0, material="N-BK7", is_stop=True
+    )
+    optic.surfaces.add(index=2, radius=be.inf, thickness=20.0)
+    optic.surfaces.add(index=3, x=0.0, y=0.0, z=24.0, rx=math.pi / 4, material="mirror")
+    optic.surfaces.add(index=4, x=0.0, y=26.0, z=24.0, rx=-math.pi / 2)
+    return _finish(optic)
+
+
 def _translate(optic, dx=0.0, dy=0.0, dz=0.0):
     """Rigidly translate every surface of an optic (absolute coordinates)."""
     for surf in optic.surfaces:
@@ -1080,6 +1094,50 @@ class TestGatedOperations:
                 Hx=0, Hy=0, wavelength=0.55, num_rays=3, distribution="line_y"
             )
         assert "Field" in str(excinfo.value) or "field" in str(excinfo.value)
+
+    @pytest.mark.parametrize("Hy", [0.0, 1.0])
+    def test_object_height_supported_on_z_entered_folded_path(
+        self, set_test_backend, Hy
+    ):
+        """Object height lives on the +z entry leg, so a fold downstream
+        must not reject it (issue #329's OAP collimator uses exactly this
+        combination), and the trace must match the exact trombone reference,
+        nonzero heights included."""
+        traced = []
+        for build in (folded_finite, retro_finite):
+            optic = build()
+            optic.fields.set_type("object_height")
+            optic.fields.add(y=2.0)
+            optic.trace(
+                Hx=0, Hy=Hy, wavelength=0.55, num_rays=5, distribution="line_y"
+            )
+            traced.append(optic.surfaces)
+        folded_sg, retro_sg = traced
+        # Launch points sit at the authored object height on both.
+        assert_allclose(folded_sg.y[0], retro_sg.y[0], atol=1e-12)
+        # Shared straight leg: identical heights at the lens.
+        assert_allclose(folded_sg.y[1], retro_sg.y[1], atol=1e-9)
+        # The fold turns z into y: in-plane image coordinate is z - 24.
+        assert_allclose(
+            be.ravel(folded_sg.z[-1]) - 24.0,
+            be.ravel(retro_sg.y[-1]),
+            atol=1e-9,
+        )
+
+    @pytest.mark.parametrize(
+        "field_type", ["paraxial_image_height", "real_image_height"]
+    )
+    def test_image_height_fields_still_raise_on_z_entered_folds(
+        self, set_test_backend, field_type
+    ):
+        """Image-height coordinates live on the folded arm; a +z entry does
+        not make them meaningful there."""
+        optic = folded_finite()
+        optic.fields.set_type(field_type)
+        with pytest.raises(UnsupportedParaxialGeometryError):
+            optic.trace(
+                Hx=0, Hy=0, wavelength=0.55, num_rays=3, distribution="line_y"
+            )
 
     def test_ambiguous_wide_angle_field_raises(self, set_test_backend):
         optic = straight()

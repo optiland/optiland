@@ -35,7 +35,7 @@ class ObjectHeightField(BaseFieldDefinition):
                 infinity.
         """
         self._validate_object_infinite(optic)
-        self._reject_folded_use(optic)
+        self._reject_non_z_entry(optic)
         obj = optic.object_surface
         max_field = optic.fields.max_field
         x_local = be.atleast_1d(be.array(max_field * Hx))
@@ -65,7 +65,7 @@ class ObjectHeightField(BaseFieldDefinition):
 
         """
         self._validate_object_infinite(optic)
-        self._reject_folded_use(optic)
+        self._reject_non_z_entry(optic)
         obj = optic.object_surface
         field_y = optic.fields.max_field * Hy
         y = -field_y
