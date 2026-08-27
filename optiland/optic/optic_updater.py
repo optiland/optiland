@@ -9,6 +9,8 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+import contextlib
+import itertools
 from typing import TYPE_CHECKING
 
 import optiland.backend as be
@@ -16,10 +18,19 @@ from optiland._suggest import options_hint
 from optiland.apodization import BaseApodization
 from optiland.geometries import StandardGeometry
 from optiland.materials import IdealMaterial
+from optiland.rays import RealRays
 
 if TYPE_CHECKING:
     from optiland.materials.base import BaseMaterial
     from optiland.rays import PolarizationState
+    from optiland.surfaces.standard_surface import Surface
+
+# Field/pupil grid used to probe the real-ray footprint on off-axis
+# surfaces (see OpticUpdater._real_ray_footprint). A 3x3 field grid crossed
+# with the 5 cardinal pupil points is enough to catch the tangential and
+# sagittal extremes without tracing a full pupil distribution.
+_FOOTPRINT_FIELDS = tuple(itertools.product((-1.0, 0.0, 1.0), repeat=2))
+_FOOTPRINT_PUPILS = ((0.0, 0.0), (1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0))
 
 
 class OpticUpdater:
@@ -237,11 +248,32 @@ class OpticUpdater:
         """Update the semi-aperture of all surfaces based on paraxial marginal
         and chief ray heights. Also updates normalization radii for relevant
         surface types.
+
+        The paraxial marginal/chief ray heights are an inherently axisymmetric
+        estimate: they assume the ray footprint on a surface is centered on
+        the local optical axis. That assumption breaks down once any surface
+        in the system is decentered or tilted (see optiland/optiland#578), so
+        for surfaces off the optical axis the normalization radius is refined
+        with a bounded real-ray footprint estimate (`_real_ray_footprint`).
+        The physical semi-aperture (used for drawing, vignetting, etc.) is
+        left on the paraxial estimate, unchanged.
         """
         ya, _ = self.optic.paraxial.marginal_ray()
         yb, _ = self.optic.paraxial.chief_ray()
         ya = be.abs(be.ravel(ya))
         yb = be.abs(be.ravel(yb))
+
+        footprints = {}
+        if self._is_off_axis():
+            probe_surfaces = [
+                surface
+                for surface in self.optic.surfaces
+                if hasattr(surface.geometry, "norm_radius")
+                and not getattr(surface, "is_norm_radius_variable", False)
+            ]
+            if probe_surfaces:
+                footprints = self._real_ray_footprints(probe_surfaces)
+
         for k, surface in enumerate(self.optic.surfaces):
             r_max = ya[k] + yb[k]
             if surface.aperture is not None:
@@ -250,21 +282,116 @@ class OpticUpdater:
                     r_max = be.max(be.array([r_max, extent_max]))
 
             surface.set_semi_aperture(r_max=r_max)
-            self.update_normalization(surface)
 
-    def update_normalization(self, surface) -> None:
+            norm_r_max = r_max
+            footprint = footprints.get(surface)
+            if footprint is not None:
+                norm_r_max = be.max(be.array([norm_r_max, footprint]))
+
+            self.update_normalization(surface, norm_r_max)
+
+    def _is_off_axis(self) -> bool:
+        """Check whether any surface in the system is decentered or tilted.
+
+        Used by `update_paraxial` to decide whether the axisymmetric
+        marginal/chief ray heights need refining with a real-ray footprint
+        estimate (optiland/optiland#578).
+        """
+        for surface in self.optic.surfaces:
+            cs = surface.geometry.cs
+            if cs.rx != 0 or cs.ry != 0 or cs.x != 0 or cs.y != 0:
+                return True
+        return False
+
+    def _real_ray_footprints(self, surfaces: list[Surface]) -> dict[Surface, float]:
+        """Estimate the real-ray footprint radius on each of `surfaces`.
+
+        Traces a bounded grid of extreme field/pupil combinations
+        (`_FOOTPRINT_FIELDS` x `_FOOTPRINT_PUPILS`) once through the actual
+        system, and for each surface returns the largest radial distance, in
+        that surface's local coordinates, that any of those rays land at.
+        Unlike the paraxial marginal/chief ray heights, real ray tracing
+        correctly accounts for every surface's decenter and tilt, so this is
+        used to refine the normalization radius on off-axis systems (see
+        optiland/optiland#578).
+
+        Each surface's own normalization radius is temporarily relaxed to
+        infinity for the duration of the probe, so the probe rays are not
+        rejected before their true footprint is known (this reduces each
+        surface to its base conic for the probe, since the normalized
+        Zernike coordinates collapse to the origin -- an acceptable
+        approximation for estimating the footprint).
+
+        Surfaces for which no probe ray was recorded (e.g. every combination
+        vignettes or fails to trace) are omitted from the returned dict, so
+        callers can fall back to the paraxial estimate.
+
+        Args:
+            surfaces (list[Surface]): The surfaces to probe. Each must have a
+                `norm_radius` attribute on its geometry.
+
+        Returns:
+            dict[Surface, float]: The estimated footprint radius per surface.
+        """
+        originals = {surface: surface.geometry.norm_radius for surface in surfaces}
+        for surface in surfaces:
+            surface.geometry.norm_radius = float("inf")
+
+        wavelength = self.optic.primary_wavelength
+        max_r: dict[Surface, float] = {}
+        try:
+            for Hx, Hy in _FOOTPRINT_FIELDS:
+                for Px, Py in _FOOTPRINT_PUPILS:
+                    for surface in surfaces:
+                        surface.reset()
+                    with contextlib.suppress(Exception):
+                        self.optic.trace_generic(Hx, Hy, Px, Py, wavelength)
+
+                    for surface in surfaces:
+                        if be.size(surface.x) == 0:
+                            continue
+
+                        probe = RealRays(
+                            be.copy(surface.x),
+                            be.copy(surface.y),
+                            be.copy(surface.z),
+                            be.zeros_like(surface.x),
+                            be.zeros_like(surface.x),
+                            be.ones_like(surface.x),
+                            be.ones_like(surface.x),
+                            wavelength,
+                        )
+                        surface.geometry.cs.localize(probe)
+                        r2 = probe.x**2 + probe.y**2
+                        if not bool(be.all(be.isfinite(r2))):
+                            continue
+                        r = float(be.sqrt(be.max(r2)))
+                        if r > max_r.get(surface, 0.0):
+                            max_r[surface] = r
+        finally:
+            for surface in surfaces:
+                surface.geometry.norm_radius = originals[surface]
+
+        return max_r
+
+    def update_normalization(self, surface, r_max=None) -> None:
         """Update the normalization radius/factors of a given non-spherical surface.
 
         Args:
             surface (Surface): The surface whose normalization factors are to be
                 updated.
+            r_max (float, optional): The aperture value to normalize against.
+                Defaults to `surface.semi_aperture`.
         """
         # Skip updating normalization when the normalization radius is a variable
         if getattr(surface, "is_norm_radius_variable", False):
             return
 
+        if r_max is None:
+            r_max = surface.semi_aperture
+
         # Delegate updating normalization directly to the geometry
-        surface.geometry.update_normalization(surface.semi_aperture)
+        surface.geometry.update_normalization(r_max)
 
     def update(self) -> None:
         """Update the optical system by applying all defined pickups and solves.
