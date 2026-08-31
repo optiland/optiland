@@ -51,6 +51,8 @@ REPO_ROOT = DOCS_DIR.parent
 # relies on the package directory itself being importable. Keep both entries.
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "optiland"))
+# Local Sphinx extensions (docs/_ext).
+sys.path.insert(0, str(DOCS_DIR / "_ext"))
 
 
 def _env_flag(name: str) -> bool:
@@ -120,6 +122,7 @@ extensions = [
     "sphinx_sitemap",
     "notfound.extension",
     "nbsphinx",
+    "optiland_pygments",  # docs/_ext: colour function and method calls
 ]
 if not SKIP_JUPYTERLITE:
     extensions.insert(0, "jupyterlite_sphinx")
@@ -270,7 +273,8 @@ html_theme_options = {
     "footer_start": ["copyright", "optiland-build-info"],
     "footer_center": [],
     "footer_end": ["optiland-footer-links"],
-    # Code highlighting.
+    # Code highlighting (token colours; see docs/_ext/optiland_pygments.py and
+    # the .highlight rules in _static/optiland-docs.css for the overrides).
     "pygments_light_style": "a11y-high-contrast-light",
     "pygments_dark_style": "a11y-high-contrast-dark",
 }

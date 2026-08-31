@@ -40,6 +40,12 @@ Architecture
   (``versioningit``), so a build from ``master`` is labelled with the honest
   development version (for example ``0.6.2.post49+g<sha>``). It is never
   hardcoded.
+- **Code highlighting.** Colours come from the ``a11y-high-contrast``
+  Pygments styles selected in ``docs/conf.py`` plus a few overrides in
+  ``docs/_static/optiland-docs.css``. Pygments only marks ``def``/``class``
+  names, so the local extension ``docs/_ext/optiland_pygments.py`` extends the
+  ``python``, ``pycon`` and ``ipython3`` lexers to tag function and method
+  calls as well; it is registered like any other extension in ``conf.py``.
 
 The workflow
 ------------

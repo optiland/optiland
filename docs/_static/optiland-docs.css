@@ -204,6 +204,40 @@ div.highlight,
   border-radius: 8px;
 }
 
+/* Syntax highlighting. Token colours come from the a11y-high-contrast Pygments
+ * styles (conf.py). docs/_ext/optiland_pygments.py additionally tags function
+ * and method calls (nf/fm) and constructors (nc); they use the brand blues.
+ * Symbolic operators stay in the text colour so a line such as
+ * lens.add_surface(index=1) reads calmly. */
+html[data-theme="light"] .highlight .nf,
+html[data-theme="light"] .highlight .fm,
+html[data-theme="light"] .highlight .nc {
+  color: var(--optiland-sky-800);
+}
+
+html[data-theme="dark"] .highlight .nf,
+html[data-theme="dark"] .highlight .fm,
+html[data-theme="dark"] .highlight .nc {
+  color: var(--optiland-sky-300);
+}
+
+html[data-theme="light"] .highlight .o,
+html[data-theme="dark"] .highlight .o {
+  color: var(--pst-color-text-base);
+}
+
+/* The dark a11y style paints comments in the same bright yellow as numbers;
+ * keep them quieter than the code they annotate. */
+html[data-theme="dark"] .highlight .c,
+html[data-theme="dark"] .highlight .c1,
+html[data-theme="dark"] .highlight .cm,
+html[data-theme="dark"] .highlight .ch,
+html[data-theme="dark"] .highlight .cp,
+html[data-theme="dark"] .highlight .cpf,
+html[data-theme="dark"] .highlight .cs {
+  color: var(--pst-color-text-muted);
+}
+
 /* API signatures: readable, scrollable, never wrapped unpredictably. */
 dl.py > dt.sig,
 dl.c > dt.sig,
