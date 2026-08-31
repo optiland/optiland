@@ -60,3 +60,33 @@ Here’s a quick overview of what you’ll find in the Developer’s Guide:
 - **Core Frameworks**: Understand the core frameworks that power Optiland, including raytracing, surfaces, analysis, optimization, visualization and tolerancing.
 - **Graphical User Interface (GUI)**: Get an overview of the PySide6-based GUI, its components, and how it interacts with the backend.
 - **File Formats**: Understand the Optiland file format and how to read/write data to and from it.
+
+.. toctree::
+   :hidden:
+   :maxdepth: 1
+
+   requirements
+   installation
+   getting_started
+   architecture
+   code_structure
+   configurable_backend
+   ray_overview
+   nonsequential_raytracing
+   surface_overview
+   interaction_models
+   propagation_models
+   geometry_overview
+   folded_systems
+   implicit_differentiation
+   analysis_framework
+   optimization_framework
+   tolerancing_framework
+   multiconfig_framework
+   sequences_framework
+   visualization_framework
+   optiland_file_format
+   gui
+   extension_recipes
+   plugin_packages
+   deprecations

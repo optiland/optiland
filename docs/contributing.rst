@@ -139,6 +139,42 @@ Docstrings and Comments
 - Write docstrings for all public functions, classes, and modules using the `Google docstring style <https://sphinxcontrib-napoleon.readthedocs.io/en/latest/example_google.html/>`_.
 - Use inline comments sparingly and only when necessary to explain complex logic.
 
+Building the Documentation
+--------------------------
+
+The documentation lives in ``docs/`` as reStructuredText pages, Jupyter
+notebooks (committed **with** their outputs; builds never execute them) and
+API pages generated from docstrings. It is published automatically at
+https://www.optiland.org/docs/ by the ``Docs`` GitHub Actions workflow on
+every push to ``master``, so a documentation change needs nothing beyond a
+normal pull request.
+
+Build it locally with the same pinned environment the hosted build uses::
+
+    # one-time: create/update the environment (needs micromamba or conda)
+    micromamba create -f docs/build-environment.yml
+    micromamba activate sphinx-build
+
+    # normal local build -> docs/_build/html/index.html
+    make -C docs html
+
+    # the exact build + validation CI runs
+    python scripts/docs/build_docs.py
+    python scripts/docs/validate_build.py docs/_build/html \
+        --warnings docs/_build/warnings.log \
+        --allowlist scripts/docs/warnings-allowlist.txt
+
+- ``pip install -r docs/requirements.txt`` mirrors the Python pins for pip/uv
+  users; ``pandoc`` must then be installed separately.
+- The :doc:`try_it` page is built by ``jupyterlite-xeus`` with ``micromamba``.
+  On hosts where that is not possible (for example Windows), pass
+  ``--skip-jupyterlite`` to ``build_docs.py``; CI always builds it.
+- CI treats every Sphinx warning as an error unless it is listed, with a
+  reason, in ``scripts/docs/warnings-allowlist.txt``. Fix the warning at the
+  source rather than extending the allowlist.
+- Never commit generated HTML. Never hardcode the version: it is derived from
+  the package metadata.
+
 Testing
 -------
 
@@ -157,3 +193,11 @@ Reporting Issues
 If you encounter any bugs or issues, please report them on our GitHub issue tracker. Include detailed steps to reproduce the issue, along with any relevant logs or error messages.
 
 Thank you for contributing to Optiland!
+
+.. toctree::
+   :hidden:
+   :maxdepth: 1
+
+   authors
+   license
+   references

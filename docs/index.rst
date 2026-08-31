@@ -1,229 +1,190 @@
-Welcome to Optiland's documentation!
-====================================
+.. _optiland_docs_home:
+
+.. meta::
+   :description: Optiland documentation: open-source optical design, analysis and differentiable ray tracing in Python.
+
+Optiland documentation
+======================
+
+.. div:: optiland-hero
+
+   .. rst-class:: lead
+
+   Open-source optical design, analysis and differentiable ray tracing in
+   Python. Build, trace and optimize lens and mirror systems with a **NumPy**
+   backend for everyday CPU work or a **PyTorch** backend for GPU acceleration
+   and automatic differentiation.
+
+   .. button-ref:: start_here
+      :ref-type: doc
+      :color: primary
+
+      Get started
+
+   .. button-ref:: installation
+      :ref-type: doc
+      :color: secondary
+      :outline:
+
+      Install
+
+   .. button-ref:: gallery/introduction
+      :ref-type: doc
+      :color: secondary
+      :outline:
+
+      Explore examples
+
+   .. button-ref:: api/api_introduction
+      :ref-type: doc
+      :color: secondary
+      :outline:
+
+      API reference
+
+.. grid:: 1 1 2 2
+   :gutter: 4
+
+   .. grid-item::
+
+      .. code-block:: console
+         :caption: Install
+
+         pip install optiland
+
+      .. code-block:: python
+         :caption: Two lines to a traced, rendered system
+
+         from optiland.samples.objectives import ReverseTelephoto
+
+         lens = ReverseTelephoto()
+         lens.draw3D()
+
+   .. grid-item::
+
+      .. image:: images/telephoto.png
+         :alt: 3D rendering of a reverse telephoto lens traced with Optiland
+         :width: 100%
+
+.. rst-class:: optiland-eyebrow
+
+Find your path
+
+.. grid:: 1 2 2 4
+   :gutter: 3
+
+   .. grid-item-card:: Student or first-time user
+      :link: start_here.html#optics-student-first-timer
+      :link-type: url
+
+      Build and visualize your first lens in Python, then learn to read spot
+      diagrams, ray fans and wavefront maps.
+
+   .. grid-item-card:: Optical engineer
+      :link: start_here.html#optical-engineer-practitioner
+      :link-type: url
+
+      Get productive fast: import catalog lenses, reproduce existing designs,
+      and run optimization and tolerancing workflows.
+
+   .. grid-item-card:: Computational researcher
+      :link: start_here.html#computational-researcher
+      :link-type: url
+
+      Use the PyTorch backend for autograd, differentiable optimization and
+      end-to-end machine-learning pipelines.
+
+   .. grid-item-card:: Contributor or extender
+      :link: start_here.html#software-contributor-extender
+      :link-type: url
+
+      Add surface types, coatings, analyses or operands, and understand the
+      architecture behind them.
+
+.. rst-class:: optiland-eyebrow
+
+What Optiland does
+
+.. grid:: 1 2 2 3
+   :gutter: 3
+
+   .. grid-item-card:: Modeling and ray tracing
+      :link: functionalities.html#design-tools
+      :link-type: url
+
+      Sequential systems with spherical, conic, aspheric, freeform and
+      diffractive surfaces; tilts, decenters and fold mirrors; paraxial, real
+      and polarization-aware ray tracing.
+
+   .. grid-item-card:: Analysis
+      :link: functionalities.html#analysis-tools
+      :link-type: url
+
+      Spot diagrams, ray fans, distortion, field curvature, OPD, Zernike
+      decomposition, PSF and MTF, encircled energy, image simulation and more.
+
+   .. grid-item-card:: Optimization and tolerancing
+      :link: functionalities.html#optimization-and-tolerancing
+      :link-type: url
+
+      Local and global optimizers, user-defined operands, Glass Expert
+      categorical optimization, sensitivity and Monte Carlo tolerancing.
+
+   .. grid-item-card:: Differentiable optics
+      :link: gallery/differentiable_ray_tracing
+      :link-type: doc
+
+      A PyTorch backend that makes every trace differentiable: gradients, GPU
+      acceleration and integration with deep-learning workflows.
+
+   .. grid-item-card:: Non-sequential illumination
+      :link: gallery/nonsequential
+      :link-type: doc
+
+      Illumination design, stray-light and ghost analysis with scattering,
+      coatings, detectors and differentiable optimization.
+
+   .. grid-item-card:: Extensibility and interoperability
+      :link: developers_guide/extension_recipes
+      :link-type: doc
+
+      Custom surfaces, coatings, operands and analyses; Zemax, CODE V and
+      OSLO import; vendor lens catalogs; a JSON file format; plugin packages.
+
+.. admonition:: Know what you want to do?
+   :class: tip
+
+   The :doc:`how_do_i` page is organized by task rather than by feature: find
+   your question, follow the link, copy the pattern.
+
+.. grid:: 1 1 2 2
+   :gutter: 3
+
+   .. grid-item-card:: Try Optiland in your browser
+      :link: try_it
+      :link-type: doc
+
+      Run Optiland in an in-page Python kernel. Nothing to install.
+
+   .. grid-item-card:: Learning Guide
+      :link: learning_guide
+      :link-type: doc
+
+      The complete tutorial series, from foundational lens design to machine
+      learning and non-sequential ray tracing.
 
 .. note::
 
-   This project is under active development.
-
-**Optiland** is a Python‑based, open‑source framework for optical design, analysis, and optimization. Its clean, Pythonic API makes it easy to:
-
-- Build, trace, and analyze lens and mirror systems (paraxial → real → polarization-aware)
-- Perform paraxial, wavefront, PSF/MTF, and scattering analyses
-- Optimize via local/global solvers or differentiable ML pipelines
-- Visualize in 2D (interactive, themeable matplotlib) and 3D (VTK)
-- Extend with custom surfaces, coatings, optimization operands, and more
-
-Under the hood, Optiland leverages **NumPy** for CPU‑bound tasks and **PyTorch** for GPU acceleration and autograd‑enabled workflows - so you get the best of both worlds.
-
-.. image:: images/telephoto.png
-   :align: center
-
-|br|
-
-Python code to generate this 3D visualization:
-
-.. code:: python
-
-   from optiland.samples.objectives import ReverseTelephoto
-
-   lens = ReverseTelephoto()
-   lens.draw3D()
-
-Try it Now
-----------
-
-Use the interactive shell to try Optiland in your browser!
-Note that loading the interactive shell may take a few seconds.
-
-Not sure what to type in the shell? Here are a few ideas to explore Optiland right away:
-
-.. code-block:: python
-
-    lens.draw()  # Visualize the optical layout
-
-.. code-block:: python
-
-    effl = lens.paraxial.f2()  # Retrieve the effective focal length
-
-.. code-block:: python
-
-    # Trace 1024 random rays for the on-axis field point, then use rays.x, rays.y for intersection points
-    rays = lens.trace(Hx=0, Hy=0, wavelength=0.55, num_rays=1024, distribution="random")
-
-.. code-block:: python
-
-    # Run a spot diagram analysis
-    from optiland.analysis import SpotDiagram
-    spot = SpotDiagram(lens)
-    spot.view()
-
-.. replite::
-   :kernel: xpython
-   :toolbar: True
-   :width: 100%
-   :height: 600px
-
-   from optiland.samples.objectives import CookeTriplet
-
-   lens = CookeTriplet()
-   lens.draw()
-
-.. note::
-
-   3D plotting does not work in the interactive shell, but you can run the code in your local Python environment to try the 3D visualizations.
-
-.. _getting_started_toc:
+   You are reading the documentation for Optiland |release|, built
+   continuously from the ``master`` branch of
+   `optiland/optiland <https://github.com/optiland/optiland>`_.
 
 .. toctree::
-   :maxdepth: 1
-   :caption: Getting Started
+   :hidden:
 
-   start_here
-   installation
-   quickstart
-   conventions
-   how_do_i
-   cheat_sheet
-   glossary
-   gui_quickstart
-
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Core Functionalities
-
-   functionalities
-
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Example Gallery
-
-   gallery/introduction
-   gallery/basic_lenses
-   gallery/specialized_lenses
-   gallery/reflective_systems
-   gallery/analysis
-   gallery/opd_psf_mtf
-   gallery/optimization
-   gallery/tolerancing
-   gallery/freeforms
-   gallery/diffractive_and_phase
-   gallery/coatings_and_polarization
-   gallery/differentiable_ray_tracing
-   gallery/real_world_projects
-   gallery/external_tools
-   gallery/extended_sources
-   gallery/nonsequential
-   gallery/miscellaneous
-
-
-.. _learning_guide:
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Learning Guide
-
-   learning_guide
-
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Developer's Guide
-   :numbered:
-
-   developers_guide/introduction
-   developers_guide/requirements
-   developers_guide/installation
-   developers_guide/getting_started
-   developers_guide/architecture
-   developers_guide/code_structure
-   developers_guide/configurable_backend
-   developers_guide/ray_overview
-   developers_guide/nonsequential_raytracing
-   developers_guide/surface_overview
-   developers_guide/interaction_models
-   developers_guide/propagation_models
-   developers_guide/geometry_overview
-   developers_guide/folded_systems
-   developers_guide/implicit_differentiation
-   developers_guide/analysis_framework
-   developers_guide/optimization_framework
-   developers_guide/tolerancing_framework
-   developers_guide/multiconfig_framework
-   developers_guide/sequences_framework
-   developers_guide/visualization_framework
-   developers_guide/optiland_file_format
-   developers_guide/gui
-   developers_guide/extension_recipes
-   developers_guide/plugin_packages
-   developers_guide/deprecations
-
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Contributing
-
-   contributing
-
-.. toctree::
-   :maxdepth: 1
-   :caption: API Reference
-
-   api/api_introduction
-   api/api_analysis
-   api/api_prescription
-   api/api_backend
-   api/api_coatings
-   api/api_colorimetry
-   api/api_core
-   api/api_diagnostics
-   api/api_environment
-   api/api_fields
-   api/api_fileio
-   api/api_geometries
-   api/api_interactions
-   api/api_materials
-   api/api_ml
-   api/api_optic
-   api/api_optimization
-   api/api_paraxial
-   api/api_phase
-   api/api_physical_apertures
-   api/api_rays
-   api/api_raytrace
-   api/api_sequences
-   api/api_solves
-   api/api_sources
-   api/api_surfaces
-   api/api_thin_film
-   api/api_tolerancing
-   api/api_visualization
-   api/api_wavefront
-   api/api_zernike
-   api/api_nonsequential
-   api/api_multiconfig
-
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Authors
-
-   authors
-
-
-.. toctree::
-   :maxdepth: 1
-   :caption: License
-
-   license
-
-.. toctree::
-   :maxdepth: 1
-   :caption: References
-
-   references
-
-.. |br| raw:: html
-
-      <br>
+   Get Started <user_guide>
+   Learn <learn>
+   Capabilities <functionalities>
+   API Reference <api/api_introduction>
+   Developer Guide <developers_guide/introduction>
+   Contributing <contributing>

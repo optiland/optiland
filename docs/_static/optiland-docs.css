@@ -1,0 +1,443 @@
+/*
+ * Optiland documentation: brand overrides for pydata-sphinx-theme 0.21.
+ *
+ * Brand tokens are shared with www.optiland.org (tailwind.config.ts and
+ * app/globals.css in optiland/optiland-website). Only CSS custom properties
+ * and a small number of layout rules are set here; the theme's components are
+ * not restyled wholesale, so theme upgrades stay low-risk.
+ */
+
+/* ---------------------------------------------------------------------------
+ * Tokens
+ * ------------------------------------------------------------------------- */
+
+:root {
+  --optiland-orange-300: #f5bb6d;
+  --optiland-orange-400: #f09432;
+  --optiland-orange-500: #ed7712;
+  --optiland-orange-600: #de5c08;
+  --optiland-orange-700: #b84309;
+  --optiland-sky-300: #7dd3fc;
+  --optiland-sky-700: #0369a1;
+  --optiland-sky-800: #075985;
+
+  --optiland-font-body: "DM Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --optiland-font-heading: "Outfit", "DM Sans", system-ui, sans-serif;
+  --optiland-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --pst-font-family-base: var(--optiland-font-body);
+  --pst-font-family-heading: var(--optiland-font-heading);
+  --pst-font-family-monospace: var(--optiland-font-mono);
+  --pst-font-size-base: 1rem;
+  --pst-header-height: 3.75rem;
+  --pst-sidebar-font-size: 0.9rem;
+  --pst-sidebar-font-size-mobile: 1rem;
+}
+
+html[data-theme="light"] {
+  --pst-color-primary: var(--optiland-orange-600);
+  --pst-color-primary-highlight: var(--optiland-orange-700);
+  --pst-color-primary-bg: #fdedd3;
+  --pst-color-secondary: var(--optiland-sky-700);
+  --pst-color-secondary-highlight: var(--optiland-sky-800);
+  --pst-color-secondary-bg: #e0f2fe;
+  --pst-color-accent: var(--optiland-orange-500);
+  --pst-color-accent-bg: #fef7ee;
+  --pst-color-background: #ffffff;
+  --pst-color-on-background: #fafaf9;
+  --pst-color-surface: #f6f4f1;
+  --pst-color-on-surface: #292524;
+  --pst-color-text-base: #1c1917;
+  --pst-color-text-muted: #57534e;
+  --pst-color-heading-color: #0c0a09;
+  --pst-color-border: #e7e5e4;
+  --pst-color-shadow: rgba(28, 25, 23, 0.12);
+  --pst-color-link: var(--optiland-orange-700);
+  --pst-color-link-hover: var(--optiland-orange-600);
+  --pst-color-inline-code: #9a3412;
+  --pst-color-inline-code-links: var(--optiland-orange-700);
+  --pst-color-target: #fdedd3;
+  --pst-color-table-row-hover-bg: #fef7ee;
+}
+
+html[data-theme="dark"] {
+  --pst-color-primary: var(--optiland-orange-400);
+  --pst-color-primary-highlight: var(--optiland-orange-300);
+  --pst-color-primary-bg: #2a1a0a;
+  --pst-color-secondary: var(--optiland-sky-300);
+  --pst-color-secondary-highlight: #bae6fd;
+  --pst-color-secondary-bg: #0c1f2e;
+  --pst-color-accent: var(--optiland-orange-400);
+  --pst-color-accent-bg: #2a1a0a;
+  --pst-color-background: #0f0f13;
+  --pst-color-on-background: #13131a;
+  --pst-color-surface: #1a1a22;
+  --pst-color-on-surface: #e7e5e4;
+  --pst-color-text-base: #f0f0f4;
+  --pst-color-text-muted: #a8a8bc;
+  --pst-color-heading-color: #fafafa;
+  --pst-color-border: rgba(255, 255, 255, 0.12);
+  --pst-color-shadow: rgba(0, 0, 0, 0.5);
+  --pst-color-link: var(--optiland-orange-400);
+  --pst-color-link-hover: var(--optiland-orange-300);
+  --pst-color-inline-code: var(--optiland-orange-300);
+  --pst-color-inline-code-links: var(--optiland-orange-400);
+  --pst-color-target: #2a1a0a;
+  --pst-color-table-row-hover-bg: #1e1e26;
+}
+
+/* ---------------------------------------------------------------------------
+ * Layout
+ * ------------------------------------------------------------------------- */
+
+.bd-page-width {
+  max-width: 96rem;
+}
+
+.bd-main .bd-content .bd-article-container {
+  max-width: 62em;
+}
+
+@media (min-width: 1200px) {
+  .bd-sidebar-primary {
+    max-width: 20rem;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Header
+ * ------------------------------------------------------------------------- */
+
+.bd-header .navbar-brand .logo__image {
+  height: 2rem;
+  width: auto;
+  border-radius: 6px;
+}
+
+.bd-header .navbar-brand .logo__title {
+  font-family: var(--pst-font-family-heading);
+  font-weight: 600;
+  font-size: 1.25rem;
+  letter-spacing: -0.01em;
+}
+
+.bd-header .navbar-nav li a.nav-link {
+  font-weight: 500;
+}
+
+.bd-header .search-button-field {
+  border-radius: 999px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Typography
+ * ------------------------------------------------------------------------- */
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--pst-font-family-heading);
+  letter-spacing: -0.01em;
+}
+
+h1 {
+  font-weight: 600;
+  font-size: 2.1rem;
+}
+
+h2 {
+  font-weight: 600;
+  font-size: 1.55rem;
+  margin-top: 2.25rem;
+}
+
+h3 {
+  font-weight: 600;
+  font-size: 1.25rem;
+}
+
+p.lead,
+.lead {
+  font-size: 1.15rem;
+  color: var(--pst-color-text-muted);
+}
+
+.optiland-eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--pst-color-primary);
+  margin: 2.5rem 0 0.75rem;
+}
+
+/* ---------------------------------------------------------------------------
+ * Code
+ * ------------------------------------------------------------------------- */
+
+code,
+kbd,
+pre {
+  font-family: var(--pst-font-family-monospace);
+}
+
+code.literal {
+  font-size: 0.875em;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  border: 1px solid var(--pst-color-border);
+  background: var(--pst-color-surface);
+}
+
+div.highlight pre,
+.highlight pre {
+  font-size: 0.875rem;
+  line-height: 1.6;
+  border-radius: 8px;
+}
+
+div.highlight,
+.highlight {
+  border-radius: 8px;
+}
+
+/* API signatures: readable, scrollable, never wrapped unpredictably. */
+dl.py > dt.sig,
+dl.c > dt.sig,
+dl.cpp > dt.sig {
+  font-family: var(--pst-font-family-monospace);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  background: var(--pst-color-surface);
+  border-left: 3px solid var(--pst-color-primary);
+  border-radius: 0 6px 6px 0;
+  padding: 0.5rem 0.75rem;
+  overflow-x: auto;
+}
+
+dl.py > dt.sig .sig-name {
+  color: var(--pst-color-heading-color);
+  font-weight: 600;
+}
+
+dl.field-list > dt {
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------------------
+ * Notebooks (nbsphinx)
+ * ------------------------------------------------------------------------- */
+
+div.nbinput.container div.input_area,
+div.nboutput.container div.output_area {
+  border-radius: 6px;
+}
+
+html[data-theme="dark"] div.nbinput.container div.input_area,
+html[data-theme="dark"] div.nboutput.container div.output_area {
+  background: var(--pst-color-surface);
+  border-color: var(--pst-color-border);
+  color: var(--pst-color-text-base);
+}
+
+div.nbinput.container div.prompt pre,
+div.nboutput.container div.prompt pre {
+  color: var(--pst-color-text-muted);
+}
+
+div.nboutput div.output_area img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+
+.nbsphinx-gallery {
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+}
+
+.nbsphinx-gallery > a {
+  border: 1px solid var(--pst-color-border);
+  border-radius: 8px;
+  padding: 0.5rem;
+  background: var(--pst-color-background);
+  color: var(--pst-color-text-base);
+  text-decoration: none;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.nbsphinx-gallery > a:hover {
+  border-color: var(--pst-color-primary);
+  transform: translateY(-2px);
+}
+
+.nbsphinx-gallery > a > img {
+  border-radius: 4px;
+}
+
+.nbsphinx-gallery > a > div {
+  font-size: 0.85rem;
+  margin-top: 0.4rem;
+}
+
+/* ---------------------------------------------------------------------------
+ * JupyterLite
+ * ------------------------------------------------------------------------- */
+
+iframe.jupyterlite_sphinx_iframe,
+.jupyterlite_sphinx_iframe {
+  border: 1px solid var(--pst-color-border);
+  border-radius: 8px;
+}
+
+/* ---------------------------------------------------------------------------
+ * sphinx-design cards, buttons and admonitions
+ * ------------------------------------------------------------------------- */
+
+.sd-card {
+  border: 1px solid var(--pst-color-border);
+  border-radius: 10px;
+  box-shadow: none;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.sd-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--pst-color-primary);
+  box-shadow: 0 12px 24px -16px var(--pst-color-shadow);
+}
+
+.sd-card .sd-card-title {
+  font-family: var(--pst-font-family-heading);
+  font-weight: 600;
+  font-size: 1.05rem;
+}
+
+.sd-card .sd-card-text {
+  color: var(--pst-color-text-muted);
+  font-size: 0.925rem;
+}
+
+.sd-btn {
+  border-radius: 999px;
+  padding: 0.55rem 1.2rem;
+  font-weight: 500;
+}
+
+.optiland-hero {
+  padding: 0.5rem 0 1rem;
+}
+
+.optiland-hero .sd-btn {
+  margin: 0.25rem 0.5rem 0.25rem 0;
+}
+
+div.admonition,
+.admonition {
+  border-radius: 8px;
+  border-left-width: 4px;
+  box-shadow: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * Tables
+ * ------------------------------------------------------------------------- */
+
+.bd-content table.table,
+.bd-content .table {
+  font-size: 0.925rem;
+}
+
+.bd-content .table td,
+.bd-content .table th {
+  border-color: var(--pst-color-border);
+}
+
+/* ---------------------------------------------------------------------------
+ * Sidebars
+ * ------------------------------------------------------------------------- */
+
+nav.bd-links li > a {
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+}
+
+nav.bd-links li > a:hover {
+  background: var(--pst-color-surface);
+  text-decoration: none;
+}
+
+nav.bd-links .current > a {
+  font-weight: 600;
+}
+
+.bd-sidebar-secondary .page-toc .nav-link {
+  font-size: 0.85rem;
+}
+
+/* ---------------------------------------------------------------------------
+ * Footer
+ * ------------------------------------------------------------------------- */
+
+.bd-footer {
+  border-top: 1px solid var(--pst-color-border);
+  font-size: 0.85rem;
+}
+
+.optiland-build-info {
+  margin: 0;
+  color: var(--pst-color-text-muted);
+}
+
+.optiland-build-info code {
+  font-size: 0.85em;
+}
+
+.optiland-footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.optiland-footer-links a {
+  color: var(--pst-color-text-muted);
+  text-decoration: none;
+}
+
+.optiland-footer-links a:hover {
+  color: var(--pst-color-link-hover);
+  text-decoration: underline;
+}
+
+/* ---------------------------------------------------------------------------
+ * Accessibility and responsiveness
+ * ------------------------------------------------------------------------- */
+
+:focus-visible {
+  outline: 2px solid var(--pst-color-primary);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sd-card,
+  .sd-card:hover,
+  .nbsphinx-gallery > a,
+  .nbsphinx-gallery > a:hover {
+    transition: none;
+    transform: none;
+  }
+}
+
+@media (max-width: 959px) {
+  h1 {
+    font-size: 1.8rem;
+  }
+
+  .bd-main .bd-content .bd-article-container {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+}
