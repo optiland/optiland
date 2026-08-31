@@ -14,14 +14,17 @@ class LinearGratingPhaseProfile(BasePhaseProfile):
     This profile defines a constant phase gradient across the surface,
     representing a simple transmission or reflection grating.
 
-    The phase is defined as:
-    φ(x, y) = K_x * x + K_y * y
-    where (K_x, K_y) is the grating wavevector.
+    The phase is defined as::
 
-    The grating vector is defined by its magnitude |K| = 2π / period and its
-    angle (theta) relative to the positive x-axis.
-    K_x = (2π / period) * cos(angle)
-    K_y = (2π / period) * sin(angle)
+        φ(x, y) = K_x * x + K_y * y
+
+    where ``(K_x, K_y)`` is the grating wavevector.
+
+    The grating vector is defined by its magnitude ``|K| = 2π / period`` and
+    its angle (theta) relative to the positive x-axis::
+
+        K_x = (2π / period) * cos(angle)
+        K_y = (2π / period) * sin(angle)
 
     Args:
         period (float): The spatial period of the grating in mm. Must be positive.

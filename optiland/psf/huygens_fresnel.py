@@ -8,6 +8,7 @@ class. The PSF is normalized against the peak of an ideal diffraction-limited
 system calculated using the same Huygens-Fresnel principle.
 
 The module exposes:
+
 - ``ScalarHuygensPSF``: scalar (intensity-only) Huygens PSF.
 - ``HuygensPSF``: factory that automatically dispatches to
   ``VectorialHuygensPSF`` when a polarization state is set on the optic,
