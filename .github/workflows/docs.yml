@@ -184,7 +184,9 @@ jobs:
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "Preview: $url" >> "$GITHUB_STEP_SUMMARY"
       - name: Smoke test preview
-        run: python3 scripts/docs/smoke_test.py --base-url "${{ steps.deploy.outputs.url }}/" --expect-commit "${{ github.event.pull_request.head.sha }}"
+        # Pull request runs build the merge ref, so the artifact is stamped
+        # with github.sha (the merge commit), not the branch head.
+        run: python3 scripts/docs/smoke_test.py --base-url "${{ steps.deploy.outputs.url }}/" --expect-commit "${{ github.sha }}"
 
   deploy:
     name: Production deployment
