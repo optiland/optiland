@@ -57,17 +57,27 @@ def fetch(url: str, timeout: float = 30.0):
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--base-url", required=True)
-    ap.add_argument("--expect-commit", help="Expected source_commit in _meta/build.json")
+    ap.add_argument(
+        "--expect-commit", help="Expected source_commit in _meta/build.json"
+    )
     ap.add_argument("--canonical-base", default="https://www.optiland.org/docs/")
-    ap.add_argument("--first-party", action="store_true", help="Also assert CDN-cacheable, auth-free responses")
+    ap.add_argument(
+        "--first-party",
+        action="store_true",
+        help="Also assert CDN-cacheable, auth-free responses",
+    )
     args = ap.parse_args(argv)
 
     base = args.base_url.rstrip("/") + "/"
     errors: list[str] = []
 
-    def check(rel: str, *, expect_status: int = 200, expect_html: bool = True) -> tuple[int, dict, bytes]:
+    def check(
+        rel: str, *, expect_status: int = 200, expect_html: bool = True
+    ) -> tuple[int, dict, bytes]:
         url = base + rel
         try:
             status, headers, body, final = fetch(url)
@@ -97,7 +107,10 @@ def main(argv: list[str] | None = None) -> int:
                 if not m:
                     errors.append(f"{url}: no canonical link")
                 elif not m.group(1).startswith(args.canonical_base):
-                    errors.append(f"{url}: canonical {m.group(1)} not rooted at {args.canonical_base}")
+                    errors.append(
+                        f"{url}: canonical {m.group(1)} "
+                        f"not rooted at {args.canonical_base}"
+                    )
         return status, headers, body
 
     for rel in PAGES:
@@ -114,7 +127,10 @@ def main(argv: list[str] | None = None) -> int:
             meta = {}
         print(f"build metadata: {json.dumps(meta)}")
         if args.expect_commit and meta.get("source_commit") != args.expect_commit:
-            errors.append(f"_meta/build.json source_commit {meta.get('source_commit')} != expected {args.expect_commit}")
+            errors.append(
+                "_meta/build.json source_commit "
+                f"{meta.get('source_commit')} != expected {args.expect_commit}"
+            )
 
     # 404 handling keeps users inside the docs experience.
     status, _, body = check("this-page-does-not-exist.html", expect_status=404)

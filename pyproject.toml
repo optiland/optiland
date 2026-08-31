@@ -100,6 +100,8 @@ convention = "google"
 "docs/**" = ["D100", "D101", "D103"]
 # Standalone debug/reproduction scripts, not part of the package API.
 "optiland/scripts/**" = ["D100", "D101", "D103"]
+# Documentation build tooling (scripts/docs), not part of the package API.
+"scripts/**" = ["D100", "D101", "D103"]
 
 [tool.ruff.lint.isort]
 required-imports = ["from __future__ import annotations"]

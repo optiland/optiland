@@ -26,18 +26,45 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--source", type=Path, default=REPO_ROOT / "docs")
-    ap.add_argument("--output", type=Path, default=REPO_ROOT / "docs" / "_build" / "html")
-    ap.add_argument("--doctrees", type=Path, default=REPO_ROOT / "docs" / "_build" / "doctrees")
-    ap.add_argument("--warnings-log", type=Path, default=REPO_ROOT / "docs" / "_build" / "warnings.log")
-    ap.add_argument("--canonical-base-url", default=os.environ.get("OPTILAND_DOCS_BASE_URL", "https://www.optiland.org/docs/"))
+    ap.add_argument(
+        "--output", type=Path, default=REPO_ROOT / "docs" / "_build" / "html"
+    )
+    ap.add_argument(
+        "--doctrees", type=Path, default=REPO_ROOT / "docs" / "_build" / "doctrees"
+    )
+    ap.add_argument(
+        "--warnings-log",
+        type=Path,
+        default=REPO_ROOT / "docs" / "_build" / "warnings.log",
+    )
+    ap.add_argument(
+        "--canonical-base-url",
+        default=os.environ.get(
+            "OPTILAND_DOCS_BASE_URL", "https://www.optiland.org/docs/"
+        ),
+    )
     ap.add_argument("--git-sha", default=os.environ.get("OPTILAND_DOCS_GIT_SHA", ""))
     ap.add_argument("--builder", default="html")
-    ap.add_argument("--strict", action="store_true", help="Pass -W: turn every warning into an error")
-    ap.add_argument("--skip-jupyterlite", action="store_true", help="Skip the JupyterLite build (local hosts without an emscripten toolchain)")
-    ap.add_argument("--fresh", action="store_true", help="Ignore cached doctrees (sphinx -E)")
-    ap.add_argument("--jobs", default=None, help="Sphinx -j value (e.g. 'auto'); serial by default")
+    ap.add_argument(
+        "--strict",
+        action="store_true",
+        help="Pass -W: turn every warning into an error",
+    )
+    ap.add_argument(
+        "--skip-jupyterlite",
+        action="store_true",
+        help="Skip the JupyterLite build (local hosts without an emscripten toolchain)",
+    )
+    ap.add_argument(
+        "--fresh", action="store_true", help="Ignore cached doctrees (sphinx -E)"
+    )
+    ap.add_argument(
+        "--jobs", default=None, help="Sphinx -j value (e.g. 'auto'); serial by default"
+    )
     args = ap.parse_args(argv)
 
     env = dict(os.environ)
@@ -72,8 +99,17 @@ def main(argv: list[str] | None = None) -> int:
     print("+", " ".join(cmd), flush=True)
     result = subprocess.run(cmd, cwd=REPO_ROOT, env=env)
     if args.warnings_log.is_file():
-        count = sum(1 for line in args.warnings_log.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip())
-        print(f"sphinx exit code {result.returncode}; {count} warning line(s) in {args.warnings_log}")
+        count = sum(
+            1
+            for line in args.warnings_log.read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines()
+            if line.strip()
+        )
+        print(
+            f"sphinx exit code {result.returncode}; "
+            f"{count} warning line(s) in {args.warnings_log}"
+        )
     return result.returncode
 
 

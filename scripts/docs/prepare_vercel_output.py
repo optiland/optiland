@@ -112,10 +112,14 @@ def copy_tree(source: Path, target: Path) -> tuple[int, int]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--source", type=Path, default=Path("docs/_build/html"))
     ap.add_argument("--output", type=Path, default=Path(".vercel/output"))
-    ap.add_argument("--no-robots", action="store_true", help="Do not add the origin robots.txt")
+    ap.add_argument(
+        "--no-robots", action="store_true", help="Do not add the origin robots.txt"
+    )
     args = ap.parse_args(argv)
 
     source: Path = args.source.resolve()
@@ -138,11 +142,15 @@ def main(argv: list[str] | None = None) -> int:
         (static / "robots.txt").write_text(ROBOTS_TXT, encoding="utf-8")
         files += 1
         total += len(ROBOTS_TXT)
-    (output / "config.json").write_text(json.dumps(build_config(), indent=2) + "\n", encoding="utf-8")
+    (output / "config.json").write_text(
+        json.dumps(build_config(), indent=2) + "\n", encoding="utf-8"
+    )
 
     meta = json.loads((static / "_meta" / "build.json").read_text(encoding="utf-8"))
     print(f"packaged {files} files, {total:,} bytes -> {output}")
-    print(f"source commit {meta.get('source_commit')} version {meta.get('docs_version')}")
+    print(
+        f"source commit {meta.get('source_commit')} version {meta.get('docs_version')}"
+    )
     return 0
 
 

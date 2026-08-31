@@ -23,7 +23,7 @@ import argparse
 import json
 import re
 import sys
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
@@ -49,7 +49,11 @@ REQUIRED_FILES = [
     "gallery/introduction.html",
     "try_it.html",
 ]
-JUPYTERLITE_FILES = ["lite/index.html", "lite/repl/index.html", "lite/jupyter-lite.json"]
+JUPYTERLITE_FILES = [
+    "lite/index.html",
+    "lite/repl/index.html",
+    "lite/jupyter-lite.json",
+]
 FORBIDDEN_HOSTS = ("optiland.readthedocs.io", "readthedocs.org/projects/optiland")
 LINK_ATTRS = {
     "a": ("href",),
@@ -63,7 +67,15 @@ LINK_ATTRS = {
     "object": ("data",),
     "embed": ("src",),
 }
-EXTERNAL_SCHEMES = ("http:", "https:", "mailto:", "tel:", "data:", "javascript:", "blob:")
+EXTERNAL_SCHEMES = (
+    "http:",
+    "https:",
+    "mailto:",
+    "tel:",
+    "data:",
+    "javascript:",
+    "blob:",
+)
 
 
 @dataclass
@@ -71,7 +83,9 @@ class Page:
     path: Path
     rel: str
     ids: Counter = field(default_factory=Counter)
-    links: list[tuple[str, str, str]] = field(default_factory=list)  # (tag, attr, value)
+    links: list[tuple[str, str, str]] = field(
+        default_factory=list
+    )  # (tag, attr, value)
     canonical: str | None = None
     title: str | None = None
     has_main: bool = False
@@ -121,7 +135,10 @@ def parse_pages(root: Path) -> dict[str, Page]:
     for path in sorted(root.rglob("*.html")):
         # Skip the JupyterLite app and theme-internal template fragments
         # shipped under _static (e.g. pydata's webpack-macros.html).
-        if ".doctrees" in path.parts or path.parts[len(root.parts)] in {"lite", "_static"}:
+        if ".doctrees" in path.parts or path.parts[len(root.parts)] in {
+            "lite",
+            "_static",
+        }:
             continue
         rel = path.relative_to(root).as_posix()
         page = Page(path=path, rel=rel)
@@ -166,14 +183,33 @@ def resolve_local(page_rel: str, value: str) -> tuple[str | None, str | None]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("build_dir", type=Path)
-    ap.add_argument("--base-url", default="https://www.optiland.org/docs/", help="Canonical base URL (with trailing slash)")
+    ap.add_argument(
+        "--base-url",
+        default="https://www.optiland.org/docs/",
+        help="Canonical base URL (with trailing slash)",
+    )
     ap.add_argument("--warnings", type=Path, help="Sphinx warning log written with -w")
-    ap.add_argument("--allowlist", type=Path, help="File of regexes for tolerated warnings (one per line, # comments)")
+    ap.add_argument(
+        "--allowlist",
+        type=Path,
+        help="File of regexes for tolerated warnings (one per line, # comments)",
+    )
     ap.add_argument("--report", type=Path, help="Write a JSON report to this path")
-    ap.add_argument("--forbid-text", action="append", default=["Optiland 0.5.8"], help="Page text that must not appear (repeatable)")
-    ap.add_argument("--allow-missing-jupyterlite", action="store_true", help="Do not require the JupyterLite bundle (local builds only)")
+    ap.add_argument(
+        "--forbid-text",
+        action="append",
+        default=["Optiland 0.5.8"],
+        help="Page text that must not appear (repeatable)",
+    )
+    ap.add_argument(
+        "--allow-missing-jupyterlite",
+        action="store_true",
+        help="Do not require the JupyterLite bundle (local builds only)",
+    )
     ap.add_argument("--min-searchindex-bytes", type=int, default=100_000)
     args = ap.parse_args(argv)
 
@@ -196,10 +232,17 @@ def main(argv: list[str] | None = None) -> int:
             if not (root / rel).is_file():
                 errors.append(f"missing JupyterLite file: {rel}")
         if (root / "lite").is_dir() and not any((root / "lite").rglob("*.wasm")):
-            errors.append("JupyterLite bundle contains no WebAssembly kernel assets (*.wasm)")
+            errors.append(
+                "JupyterLite bundle contains no WebAssembly kernel assets (*.wasm)"
+            )
     searchindex = root / "searchindex.js"
-    if searchindex.is_file() and searchindex.stat().st_size < args.min_searchindex_bytes:
-        errors.append(f"searchindex.js is suspiciously small ({searchindex.stat().st_size} bytes)")
+    if (
+        searchindex.is_file()
+        and searchindex.stat().st_size < args.min_searchindex_bytes
+    ):
+        errors.append(
+            f"searchindex.js is suspiciously small ({searchindex.stat().st_size} bytes)"
+        )
 
     # 2. Build metadata -------------------------------------------------------
     meta_path = root / "_meta" / "build.json"
@@ -209,13 +252,25 @@ def main(argv: list[str] | None = None) -> int:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
             errors.append(f"_meta/build.json is not valid JSON: {exc}")
-        for key in ("source_repository", "source_commit", "docs_version", "canonical_base_url", "built_at_utc"):
+        for key in (
+            "source_repository",
+            "source_commit",
+            "docs_version",
+            "canonical_base_url",
+            "built_at_utc",
+        ):
             if not meta.get(key):
                 errors.append(f"_meta/build.json is missing '{key}'")
         if meta.get("canonical_base_url") and meta["canonical_base_url"] != base_url:
-            errors.append(f"_meta/build.json canonical_base_url {meta['canonical_base_url']!r} != {base_url!r}")
+            errors.append(
+                "_meta/build.json canonical_base_url "
+                f"{meta['canonical_base_url']!r} != {base_url!r}"
+            )
         if meta.get("docs_version") in {"0.5.8", "unknown", "0.0.0+unknown"}:
-            errors.append(f"_meta/build.json reports a stale or unknown version: {meta.get('docs_version')!r}")
+            errors.append(
+                "_meta/build.json reports a stale or unknown version: "
+                f"{meta.get('docs_version')!r}"
+            )
         if meta.get("jupyterlite") is False and not args.allow_missing_jupyterlite:
             errors.append("_meta/build.json reports the JupyterLite build was skipped")
 
@@ -231,18 +286,22 @@ def main(argv: list[str] | None = None) -> int:
             errors.append(f"{rel}: no <title>")
         if not page.has_main:
             errors.append(f"{rel}: no <main> element (malformed page?)")
-        for tag, attr, value in page.links:
+        for tag, _attr, value in page.links:
             if tag == "parser":
                 errors.append(f"{rel}: HTML parse error: {value}")
         dupes = [i for i, n in page.ids.items() if n > 1]
         if dupes:
             duplicate_ids += len(dupes)
-            errors.append(f"{rel}: duplicate element id(s): {', '.join(sorted(dupes)[:5])}")
+            errors.append(
+                f"{rel}: duplicate element id(s): {', '.join(sorted(dupes)[:5])}"
+            )
         if rel != "404.html":
             if not page.canonical:
                 errors.append(f"{rel}: missing <link rel=canonical>")
             elif not page.canonical.startswith(base_url):
-                errors.append(f"{rel}: canonical {page.canonical!r} is not rooted at {base_url}")
+                errors.append(
+                    f"{rel}: canonical {page.canonical!r} is not rooted at {base_url}"
+                )
         for needle in args.forbid_text:
             if needle in page.text:
                 errors.append(f"{rel}: forbidden text {needle!r} found in page")
@@ -259,9 +318,11 @@ def main(argv: list[str] | None = None) -> int:
             checked_links += 1
             if target.startswith("/"):
                 if rel == "404.html" and target.startswith(url_prefix):
-                    target = target[len(url_prefix):]
+                    target = target[len(url_prefix) :]
                 else:
-                    errors.append(f"{rel}: absolute internal link escapes {url_prefix}: {value}")
+                    errors.append(
+                        f"{rel}: absolute internal link escapes {url_prefix}: {value}"
+                    )
                     broken_links += 1
                     continue
             if target == "" or target.endswith("/"):
@@ -270,25 +331,34 @@ def main(argv: list[str] | None = None) -> int:
                 errors.append(f"{rel}: broken <{tag} {attr}> target: {value}")
                 broken_links += 1
                 continue
-            if fragment and target in pages and fragment not in pages[target].ids:
-                # Sphinx search / notebook anchors are generated client-side in
-                # some cases; only flag anchors on regular pages.
-                if not target.startswith("lite/"):
-                    errors.append(f"{rel}: broken anchor #{fragment} in {target}")
-                    broken_links += 1
-    infos.append(f"checked {checked_links} internal links; {broken_links} broken; {duplicate_ids} duplicate ids")
+            # JupyterLite anchors are generated client-side; only flag anchors
+            # on regular pages.
+            if (
+                fragment
+                and target in pages
+                and fragment not in pages[target].ids
+                and not target.startswith("lite/")
+            ):
+                errors.append(f"{rel}: broken anchor #{fragment} in {target}")
+                broken_links += 1
+    infos.append(
+        f"checked {checked_links} internal links; {broken_links} broken; "
+        f"{duplicate_ids} duplicate ids"
+    )
 
     # 4. Sitemap -------------------------------------------------------------
     sitemap = root / "sitemap.xml"
     if sitemap.is_file():
-        locs = re.findall(r"<loc>\s*([^<\s]+)\s*</loc>", sitemap.read_text(encoding="utf-8"))
+        locs = re.findall(
+            r"<loc>\s*([^<\s]+)\s*</loc>", sitemap.read_text(encoding="utf-8")
+        )
         if not locs:
             errors.append("sitemap.xml contains no <loc> entries")
         for loc in locs:
             if not loc.startswith(base_url):
                 errors.append(f"sitemap.xml entry not rooted at base URL: {loc}")
                 continue
-            path = unquote(loc[len(base_url):]) or "index.html"
+            path = unquote(loc[len(base_url) :]) or "index.html"
             if path not in all_files:
                 errors.append(f"sitemap.xml entry has no file: {loc}")
         infos.append(f"sitemap.xml lists {len(locs)} URLs")
@@ -297,9 +367,14 @@ def main(argv: list[str] | None = None) -> int:
         # always fresh; enforce coverage so a partial sitemap never ships.
         # sphinx-sitemap skips viewcode source pages (_modules/) and the four
         # pages excluded in conf.py (search, genindex, py-modindex, 404).
-        expected = max(sum(1 for rel in pages if not rel.startswith("_modules/")) - 4, 1)
+        expected = max(
+            sum(1 for rel in pages if not rel.startswith("_modules/")) - 4, 1
+        )
         if len(locs) < 0.95 * expected:
-            errors.append(f"sitemap.xml covers {len(locs)} of ~{expected} pages; rebuild from scratch (sphinx -E)")
+            errors.append(
+                f"sitemap.xml covers {len(locs)} of ~{expected} pages; "
+                "rebuild from scratch (sphinx -E)"
+            )
 
     # 5. Warnings vs allowlist ----------------------------------------------
     unused_allow: list[str] = []
@@ -313,7 +388,9 @@ def main(argv: list[str] | None = None) -> int:
         used = set()
         unexpected: list[str] = []
         if args.warnings.is_file():
-            for line in args.warnings.read_text(encoding="utf-8", errors="replace").splitlines():
+            for line in args.warnings.read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines():
                 if not line.strip():
                     continue
                 for pat in patterns:
@@ -327,7 +404,10 @@ def main(argv: list[str] | None = None) -> int:
         for line in unexpected:
             errors.append(f"unexpected Sphinx warning: {line}")
         unused_allow = [p.pattern for p in patterns if p.pattern not in used]
-        infos.append(f"warnings: {len(unexpected)} unexpected, {len(used)} allowlist patterns matched, {len(unused_allow)} unused")
+        infos.append(
+            f"warnings: {len(unexpected)} unexpected, {len(used)} allowlist "
+            f"patterns matched, {len(unused_allow)} unused"
+        )
 
     # 6. Report --------------------------------------------------------------
     report = {
