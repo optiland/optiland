@@ -90,3 +90,4 @@ Here’s a quick overview of what you’ll find in the Developer’s Guide:
    extension_recipes
    plugin_packages
    deprecations
+   documentation_operations

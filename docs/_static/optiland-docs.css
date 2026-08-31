@@ -331,8 +331,16 @@ iframe.jupyterlite_sphinx_iframe,
   padding: 0.5rem 0 1rem;
 }
 
-.optiland-hero .sd-btn {
-  margin: 0.25rem 0.5rem 0.25rem 0;
+/* Each sphinx-design button is its own paragraph; lay them out in a row. */
+.optiland-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  margin: 1rem 0 0.5rem;
+}
+
+.optiland-hero-actions > p {
+  margin: 0;
 }
 
 div.admonition,

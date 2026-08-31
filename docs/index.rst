@@ -15,32 +15,34 @@ Optiland documentation
    backend for everyday CPU work or a **PyTorch** backend for GPU acceleration
    and automatic differentiation.
 
-   .. button-ref:: start_here
-      :ref-type: doc
-      :color: primary
+   .. div:: optiland-hero-actions
 
-      Get started
+      .. button-ref:: start_here
+         :ref-type: doc
+         :color: primary
 
-   .. button-ref:: installation
-      :ref-type: doc
-      :color: secondary
-      :outline:
+         Get started
 
-      Install
+      .. button-ref:: installation
+         :ref-type: doc
+         :color: secondary
+         :outline:
 
-   .. button-ref:: gallery/introduction
-      :ref-type: doc
-      :color: secondary
-      :outline:
+         Install
 
-      Explore examples
+      .. button-ref:: gallery/introduction
+         :ref-type: doc
+         :color: secondary
+         :outline:
 
-   .. button-ref:: api/api_introduction
-      :ref-type: doc
-      :color: secondary
-      :outline:
+         Explore examples
 
-      API reference
+      .. button-ref:: api/api_introduction
+         :ref-type: doc
+         :color: secondary
+         :outline:
+
+         API reference
 
 .. grid:: 1 1 2 2
    :gutter: 4
