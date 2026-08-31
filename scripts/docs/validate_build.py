@@ -362,11 +362,17 @@ def main(argv: list[str] | None = None) -> int:
             if path not in all_files:
                 errors.append(f"sitemap.xml entry has no file: {loc}")
         infos.append(f"sitemap.xml lists {len(locs)} URLs")
+        listed_sources = [loc for loc in locs if "/_modules/" in loc]
+        if listed_sources:
+            errors.append(
+                f"sitemap.xml lists {len(listed_sources)} viewcode source page(s) "
+                f"(_modules/), e.g. {listed_sources[0]}"
+            )
         # sphinx-sitemap only sees pages written in the current run, so an
         # incremental build produces a partial sitemap. Deployed builds are
         # always fresh; enforce coverage so a partial sitemap never ships.
-        # sphinx-sitemap skips viewcode source pages (_modules/) and the four
-        # pages excluded in conf.py (search, genindex, py-modindex, 404).
+        # conf.py excludes the viewcode source pages (_modules/) and the four
+        # utility pages from the sitemap, so those are not expected here.
         expected = max(
             sum(1 for rel in pages if not rel.startswith("_modules/")) - 4, 1
         )

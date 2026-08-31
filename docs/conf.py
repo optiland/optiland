@@ -291,7 +291,18 @@ html_baseurl = (
 sitemap_url_scheme = "{link}"
 sitemap_locales = [None]
 sitemap_show_lastmod = True
-sitemap_excludes = ["search.html", "genindex.html", "py-modindex.html", "404.html"]
+# Viewcode source listings (_modules/) are reachable from the API pages but
+# add nothing for search engines; excluding them explicitly also keeps the
+# sitemap deterministic (viewcode only regenerates those pages when the output
+# directory does not already hold newer copies, and sphinx-sitemap lists only
+# pages written in the current run).
+sitemap_excludes = [
+    "search.html",
+    "genindex.html",
+    "py-modindex.html",
+    "404.html",
+    "_modules/*",
+]
 
 # The 404 page can be served at any depth, so its links must be absolute
 # under the public path prefix (``/docs/`` in production).
