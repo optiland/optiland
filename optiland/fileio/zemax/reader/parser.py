@@ -14,7 +14,7 @@ import optiland.backend as be
 from optiland.fileio.zemax.model import ZemaxDataModel
 from optiland.materials import AbbeMaterial, BaseMaterial, Material
 from optiland.materials.material_spec import MatchPolicy
-from optiland.physical_apertures import RadialAperture
+from optiland.physical_apertures import OffsetRadialAperture, RadialAperture
 
 # Fraunhofer d-line (um), used to evaluate a candidate glass's index for
 # comparison against the Nd recorded on a GLAS line.
@@ -37,6 +37,7 @@ class ZemaxDataParser:
         self.data_model = ZemaxDataModel()
         self._current_surf = -1
         self._current_surf_data: dict[str, Any] = {}
+        self._current_aperture_offset = (0.0, 0.0)
         self._ftyp = None
 
         # Operand dispatch table — maps operand string to handler method
@@ -72,6 +73,7 @@ class ZemaxDataParser:
             "VCYN": self._read_vignette_compress_y,
             "VANN": self._read_vignette_tangent_angle,
             "CLAP": self._read_circular_aperture,
+            "OBDC": self._read_aperture_decenter,
         }
 
     def parse(self) -> ZemaxDataModel:
@@ -198,6 +200,7 @@ class ZemaxDataParser:
         if self._current_surf >= 0:
             self.data_model.surfaces[self._current_surf] = self._current_surf_data
         self._current_surf += 1
+        self._current_aperture_offset = (0.0, 0.0)
         self._current_surf_data = {
             "type": "standard",
             "is_stop": False,
@@ -374,8 +377,30 @@ class ZemaxDataParser:
         ]
 
     def _read_circular_aperture(self, data: list[str]) -> None:
-        self._current_surf_data["aperture"] = RadialAperture(
-            r_min=float(data[1]), r_max=float(data[2])
+        r_min = float(data[1])
+        r_max = float(data[2])
+        self._current_surf_data["aperture"] = self._make_circular_aperture(r_min, r_max)
+
+    def _make_circular_aperture(self, r_min: float, r_max: float) -> RadialAperture:
+        offset_x, offset_y = self._current_aperture_offset
+        if offset_x == 0.0 and offset_y == 0.0:
+            return RadialAperture(r_min=r_min, r_max=r_max)
+        return OffsetRadialAperture(
+            r_min=r_min,
+            r_max=r_max,
+            offset_x=offset_x,
+            offset_y=offset_y,
+        )
+
+    def _read_aperture_decenter(self, data: list[str]) -> None:
+        offset_x = float(data[1])
+        offset_y = float(data[2])
+        self._current_aperture_offset = (offset_x, offset_y)
+        aperture = self._current_surf_data["aperture"]
+        if aperture is None:
+            return
+        self._current_surf_data["aperture"] = self._make_circular_aperture(
+            aperture.r_min, aperture.r_max
         )
 
     # ------------------------------------------------------------------
