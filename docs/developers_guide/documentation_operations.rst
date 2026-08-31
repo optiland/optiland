@@ -119,11 +119,14 @@ Vercel
    as ``projectId`` and ``orgId``. Assign a stable production alias, for
    example ``optiland-docs.vercel.app``.
 GitHub
-   Create the ``docs-production`` and ``docs-preview`` environments and add
-   the secrets ``VERCEL_TOKEN``, ``VERCEL_ORG_ID`` (the ``orgId``; a personal
-   account has one too, no team required), ``VERCEL_DOCS_PROJECT_ID`` (the
+   Add ``VERCEL_TOKEN``, ``VERCEL_ORG_ID`` (the ``orgId``; a personal account
+   has one too, no team required), ``VERCEL_DOCS_PROJECT_ID`` (the
    ``projectId``) and ``DOCS_ORIGIN_URL`` (the production alias, without a
-   trailing slash). Restrict ``docs-production`` to the ``master`` branch.
+   trailing slash) as repository Actions secrets. Create the
+   ``docs-production`` environment and restrict its deployment branches to
+   ``master``; ``docs-preview`` needs no setup — GitHub creates it on the
+   first preview run and the job reads the repository secrets. Scoping the
+   secrets to the two environments instead of the repository also works.
 Website
    In ``optiland/optiland-website`` set ``DOCS_ORIGIN`` (Preview and
    Production environments) to the production alias. ``next.config.mjs``
