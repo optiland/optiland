@@ -113,14 +113,17 @@ One-time setup
 
 Vercel
    Create a dedicated project for the docs origin (static, no framework
-   preset, no build command; deployments arrive prebuilt from CI). Note its
-   project id and the team id. Assign a stable production alias, for example
-   ``optiland-docs.vercel.app``.
+   preset, no build command; deployments arrive prebuilt from CI). Note the
+   ids of the project and of the owning team or personal account: running
+   ``vercel link`` against the project writes both to ``.vercel/project.json``
+   as ``projectId`` and ``orgId``. Assign a stable production alias, for
+   example ``optiland-docs.vercel.app``.
 GitHub
    Create the ``docs-production`` and ``docs-preview`` environments and add
-   the secrets ``VERCEL_TOKEN``, ``VERCEL_ORG_ID``, ``VERCEL_DOCS_PROJECT_ID``
-   and ``DOCS_ORIGIN_URL`` (the production alias, without a trailing slash).
-   Restrict ``docs-production`` to the ``master`` branch.
+   the secrets ``VERCEL_TOKEN``, ``VERCEL_ORG_ID`` (the ``orgId``; a personal
+   account has one too, no team required), ``VERCEL_DOCS_PROJECT_ID`` (the
+   ``projectId``) and ``DOCS_ORIGIN_URL`` (the production alias, without a
+   trailing slash). Restrict ``docs-production`` to the ``master`` branch.
 Website
    In ``optiland/optiland-website`` set ``DOCS_ORIGIN`` (Preview and
    Production environments) to the production alias. ``next.config.mjs``
