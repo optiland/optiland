@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 SystemCheck = Callable[["Optic"], "list[Diagnostic]"]
 
-_DOC_BASE = "https://optiland.readthedocs.io/en/latest/conventions.html"
+_DOC_BASE = "https://www.optiland.org/docs/conventions.html"
 
 
 def _doc_url(code: str) -> str:
