@@ -1,5 +1,5 @@
 ![Tests](https://github.com/optiland/optiland/actions/workflows/ci.yml/badge.svg?label=Tests)
-[![Documentation Status](https://readthedocs.org/projects/optiland/badge/?version=latest)](https://optiland.readthedocs.io/en/latest/?badge=latest)
+[![Docs](https://github.com/optiland/optiland/actions/workflows/docs.yml/badge.svg)](https://www.optiland.org/docs/)
 [![codecov](https://codecov.io/github/optiland/optiland/graph/badge.svg?token=KAOE152K5O)](https://codecov.io/github/optiland/optiland)
 [![Maintainability](https://qlty.sh/gh/optiland/projects/optiland/maintainability.svg)](https://qlty.sh/gh/optiland/projects/optiland)
 ![Stars](https://img.shields.io/github/stars/optiland/optiland.svg)
@@ -9,7 +9,7 @@
 
 
 <div align="center">
-  <a href="https://optiland.readthedocs.io/">
+  <a href="https://www.optiland.org/docs/">
     <img src="https://github.com/optiland/optiland/raw/master/docs/images/optiland.svg" alt="Optiland">
   </a>
 </div>
@@ -70,7 +70,7 @@ print(lens.paraxial.f2())         # effective focal length -> 37.04 mm
 Stuck? `from optiland.diagnostics import check_system; print(check_system(lens))` reports what
 is missing or inconsistent about a system, each finding with a runnable fix.
 
-→ [Start Here](https://optiland.readthedocs.io/en/latest/start_here.html) · [Conventions](https://optiland.readthedocs.io/en/latest/conventions.html) · [How do I …?](https://optiland.readthedocs.io/en/latest/how_do_i.html) · [5-minute quickstart](https://optiland.readthedocs.io/en/latest/quickstart.html) · [Example Gallery](https://optiland.readthedocs.io/en/latest/gallery/introduction.html) · [Full Learning Guide](https://optiland.readthedocs.io/en/latest/learning_guide.html)
+→ [Start Here](https://www.optiland.org/docs/start_here.html) · [Conventions](https://www.optiland.org/docs/conventions.html) · [How do I …?](https://www.optiland.org/docs/how_do_i.html) · [5-minute quickstart](https://www.optiland.org/docs/quickstart.html) · [Example Gallery](https://www.optiland.org/docs/gallery/introduction.html) · [Full Learning Guide](https://www.optiland.org/docs/learning_guide.html)
 
 
 
@@ -109,7 +109,7 @@ is missing or inconsistent about a system, each finding with a runnable fix.
 - If you're using a non-NVIDIA GPU or running on Apple Silicon, use the CPU-only installation instead.
 
 
-For more details, see the [installation guide](https://optiland.readthedocs.io/en/latest/installation.html) in the docs.
+For more details, see the [installation guide](https://www.optiland.org/docs/installation.html) in the docs.
 
 ## Core Capabilities
 
@@ -130,7 +130,7 @@ For more details, see the [installation guide](https://optiland.readthedocs.io/e
 | **🤖 ML Integration** | Compatible with PyTorch pipelines for deep learning, differentiable modeling, and end-to-end training. |
 
 
-For a full breakdown of Optiland’s functionalities, see the [complete feature list](https://optiland.readthedocs.io/en/latest/functionalities.html).
+For a full breakdown of Optiland’s functionalities, see the [complete feature list](https://www.optiland.org/docs/functionalities.html).
 
 > [!NOTE]
 > The code itself is in constant flux and new functionalities are always being added.
@@ -142,7 +142,7 @@ For a full breakdown of Optiland’s functionalities, see the [complete feature 
 Optiland is continually evolving to provide new functionalities for optical design and analysis. Below are some of the planned features and enhancements we aim to implement in future versions. We welcome contributions in any of these areas:
 
 ### Physics & Core Engine
-- [x] **Non-Sequential Ray Tracing** (pre-release) — differentiable illumination, stray-light & ghost analysis, with coatings, required mirror reflectance, Beer–Lambert absorption, and self-diagnosing results. See the [Limitations & Roadmap](https://optiland.readthedocs.io/en/latest/gallery/nonsequential/limitations_and_roadmap.html) page (canonical) for the full capability envelope and these follow-ups:
+- [x] **Non-Sequential Ray Tracing** (pre-release) — differentiable illumination, stray-light & ghost analysis, with coatings, required mirror reflectance, Beer–Lambert absorption, and self-diagnosing results. See the [Limitations & Roadmap](https://www.optiland.org/docs/gallery/nonsequential/limitations_and_roadmap.html) page (canonical) for the full capability envelope and these follow-ups:
   - [ ] Reparameterization for visibility gradients (silhouette/vignetting)
   - [ ] Optimization-system integration (Variable/operand wiring)
   - [ ] Path Replay Backpropagation (constant-memory gradients)
@@ -205,7 +205,7 @@ If you have a **question** or would like to start a broader **discussion**, plea
 This keeps all project-related communication public, searchable, and helpful for others who may encounter the same problems or questions.
 
 Before opening an issue or discussion, please make sure you have:  
-- Checked the [documentation](https://optiland.readthedocs.io/en/latest/) and API reference  
+- Checked the [documentation](https://www.optiland.org/docs/) and API reference  
 - Searched existing [issues](https://github.com/optiland/optiland/issues) and [discussions](https://github.com/optiland/optiland/discussions)  
 - Made a reasonable attempt to solve the problem on your own  
 

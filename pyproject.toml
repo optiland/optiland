@@ -38,7 +38,7 @@ torch = ["torch"]
 [project.urls]
 Homepage = "https://github.com/optiland/optiland"
 Repository = "https://github.com/optiland/optiland"
-Documentation = "https://optiland.readthedocs.io/en/latest/"
+Documentation = "https://www.optiland.org/docs/"
 "Bug Tracker" = "https://github.com/optiland/optiland/issues"
 
 [project.scripts]
