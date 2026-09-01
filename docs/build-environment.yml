@@ -1,17 +1,34 @@
+# Documentation build environment.
+#
+# This single file is the contract for every documentation build: Read the Docs
+# (see .readthedocs.yaml), the docs GitHub Actions workflow
+# (.github/workflows/docs.yml), and local builds (`micromamba create -f`).
+# docs/requirements.txt mirrors the Python pins for pip/uv users.
+#
+# All versions are pinned exactly. Bump them deliberately and re-run the full
+# build + scripts/docs/validate_build.py before merging.
 name: sphinx-build
 channels:
     - conda-forge
 dependencies:
-    - ipython=8.26.0
-    - nbsphinx=0.9.5
-    - sphinx=7.4.7
-    - sphinx-gallery=0.17.1
-    - sphinx-rtd-theme=2.0.0
-    - micromamba=2.0.5
+    - python=3.12
     - pip
-    - pandoc
-    - Pygments=2.18.0
+    # System tools that are not pip-installable:
+    - pandoc                      # nbsphinx converts notebook Markdown cells with pandoc
+    - micromamba=2.9.0            # jupyterlite-xeus builds the WebAssembly kernel environment
+    # Sphinx core and presentation layer:
+    - sphinx=8.2.3
+    - docutils=0.21.2
+    - pydata-sphinx-theme=0.21.0
+    - sphinx-design=0.7.0
+    - sphinx-copybutton=0.5.2
+    - sphinx-sitemap=2.9.0
+    - sphinx-notfound-page=1.1.0
+    - pygments=2.21.0
+    # Notebooks and in-browser execution:
+    - nbsphinx=0.9.8
+    - ipython=9.17.0
+    - jupyterlite-sphinx=0.23.0
+    - jupyterlite-xeus=5.0.0
     - pip:
-        - jupyterlite-sphinx
-        - jupyterlite-xeus >=2.1.2
         - ..

@@ -1,3 +1,4 @@
+.. _learning_guide:
 .. _learning_guide_page:
 
 Learning Guide

@@ -1,0 +1,28 @@
+{#- Optiland: favicons, font preconnects and social metadata on every page. -#}
+{%- extends "!layout.html" %}
+
+{%- block extrahead %}
+{{ super() }}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="icon" type="image/png" sizes="32x32" href="{{ pathto('_static/favicon-32x32.png', 1) }}">
+<link rel="apple-touch-icon" sizes="180x180" href="{{ pathto('_static/apple-touch-icon.png', 1) }}">
+{%- set og_title = "Optiland documentation" if pagename == master_doc else (title|striptags|e) ~ " — Optiland" %}
+{%- if 'name="description"' not in metatags %}
+<meta name="description" content="{{ optiland_description|e }}">
+{%- endif %}
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Optiland documentation">
+<meta property="og:title" content="{{ og_title }}">
+<meta property="og:description" content="{{ optiland_description|e }}">
+{%- if pageurl %}
+<meta property="og:url" content="{{ pageurl }}">
+{%- endif %}
+<meta property="og:image" content="{{ optiland_base_url }}_static/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{{ og_title }}">
+<meta name="twitter:description" content="{{ optiland_description|e }}">
+<meta name="twitter:image" content="{{ optiland_base_url }}_static/og-image.png">
+{%- endblock %}

@@ -1,0 +1,12 @@
+# Sphinx warnings tolerated by scripts/docs/validate_build.py.
+#
+# One Python regular expression per line; a warning line from the build log
+# is accepted if any pattern matches it. Every entry must explain why the
+# warning cannot be fixed at the source. Keep this file short: the validator
+# reports patterns that never matched so stale entries can be removed.
+
+# `BaseBSDF` exists twice on purpose: the legacy `optiland.scatter.BaseBSDF`
+# (sequential scattering) and `optiland.nonsequential.bsdf.BaseBSDF`. Bare
+# type annotations of that name are therefore ambiguous for Sphinx. Resolved
+# when the legacy scatter module is retired or renamed.
+more than one target found for cross-reference 'BaseBSDF'

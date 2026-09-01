@@ -1,0 +1,11 @@
+{#- Build identity shown in the footer: version, source commit and metadata link. -#}
+<p class="optiland-build-info">
+  Version <code>{{ optiland_release }}</code>
+  {%- if optiland_git_sha and optiland_git_sha != "unknown" %}
+  · built from <a href="https://github.com/optiland/optiland/commit/{{ optiland_git_sha }}"><code>{{ optiland_git_sha[:7] }}</code></a>
+  {%- endif %}
+  {%- if last_updated %}
+  · page updated {{ last_updated }}
+  {%- endif %}
+  · <a href="{{ pathto('_meta/build.json', 1) }}">build metadata</a>
+</p>
