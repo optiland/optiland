@@ -18,6 +18,7 @@ import optiland.backend as be
 from optiland.fileio import load_zemax_file, save_zemax_file
 from optiland.fileio.zemax.writer.formatter import OpticToZemaxConverter
 from optiland.optic import Optic
+from optiland.physical_apertures import OffsetRadialAperture
 from tests.utils import assert_allclose
 
 _ZEMAX_DIR = os.path.join(
@@ -156,6 +157,55 @@ class TestRoundTripFloaAperture:
     def test_aperture_value(self, tmp_path, set_test_backend):
         orig, reloaded = _round_trip("lens_floa.zmx", tmp_path)
         assert_allclose(orig.aperture.value, reloaded.aperture.value, rtol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# Round-trip: decentered circular surface aperture
+# ---------------------------------------------------------------------------
+
+
+class TestRoundTripOffsetAperture:
+    def test_offset_survives_round_trip(self, tmp_path, set_test_backend):
+        original, reloaded = _round_trip("lens_offset_aperture.zmx", tmp_path)
+
+        original_aperture = original.surfaces[1].aperture
+        reloaded_aperture = reloaded.surfaces[1].aperture
+        assert isinstance(original_aperture, OffsetRadialAperture)
+        assert isinstance(reloaded_aperture, OffsetRadialAperture)
+        assert reloaded_aperture.r_min == original_aperture.r_min
+        assert reloaded_aperture.r_max == original_aperture.r_max
+        assert reloaded_aperture.offset_x == original_aperture.offset_x
+        assert reloaded_aperture.offset_y == original_aperture.offset_y
+
+    def test_writer_places_obdc_after_clap(self, tmp_path, set_test_backend):
+        optic = load_zemax_file(_zemax("lens_offset_aperture.zmx"))
+        out = tmp_path / "offset.zmx"
+        save_zemax_file(optic, str(out))
+        surface_lines = [line.strip() for line in out.read_text().splitlines()]
+
+        clap_index = next(
+            index
+            for index, line in enumerate(surface_lines)
+            if line.startswith("CLAP ")
+        )
+        assert surface_lines[clap_index + 1].startswith("OBDC ")
+        obdc_tokens = surface_lines[clap_index + 1].split()
+        assert float(obdc_tokens[1]) == 2.25
+        assert float(obdc_tokens[2]) == -3.5
+
+    def test_writer_omits_zero_obdc(self):
+        from optiland.fileio.zemax.model import ZemaxDataModel
+        from optiland.fileio.zemax.writer.encoder import ZemaxFileEncoder
+
+        encoder = ZemaxFileEncoder(ZemaxDataModel())
+        lines = []
+        encoder._encode_physical_aperture(
+            lines,
+            {"CLAP": OffsetRadialAperture(r_min=0, r_max=5)},
+        )
+
+        assert len(lines) == 1
+        assert lines[0].strip().startswith("CLAP ")
 
 
 # ---------------------------------------------------------------------------
