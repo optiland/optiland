@@ -175,14 +175,13 @@ def test_cross_product(set_test_backend):
 
 def test_histogram2d(set_test_backend):
     if hasattr(be, "histogram2d"):
-        x = be.array([0.5, 1.5])
-        y = be.array([0.5, 1.5])
+        x = be.array([0.0, 1.0, 2.0, 1.0, 0.5, -0.1, 1.0])
+        y = be.array([0.0, 1.0, 2.0, 0.5, 1.0, 0.5, 2.1])
         bins = (be.array([0, 1, 2]), be.array([0, 1, 2]))
-        H, _, _ = be.histogram2d(x, y, bins)
-        # Should have count 1 at (0,0) and (1,1)
-        # H is (ny, nx) -> (2, 2)
-        assert H[0, 0] == 1
-        assert H[1, 1] == 1
+        histogram, _, _ = be.histogram2d(x, y, bins)
+
+        expected = be.array([[1.0, 1.0], [1.0, 2.0]])
+        assert be.allclose(histogram, expected)
 
 
 def test_poly(set_test_backend):

@@ -184,8 +184,9 @@ class MiscMixin:
         nx = x_edges.numel() - 1
         ny = y_edges.numel() - 1
 
-        x_bin_indices = torch.searchsorted(x_edges, x, right=False) - 1
-        y_bin_indices = torch.searchsorted(y_edges, y, right=False) - 1
+        # Match NumPy: internal edges belong to the bin on their right.
+        x_bin_indices = torch.searchsorted(x_edges, x, right=True) - 1
+        y_bin_indices = torch.searchsorted(y_edges, y, right=True) - 1
         x_bin_indices = torch.clamp(x_bin_indices, 0, nx - 1)
         y_bin_indices = torch.clamp(y_bin_indices, 0, ny - 1)
 
