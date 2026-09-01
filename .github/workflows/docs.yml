@@ -61,6 +61,9 @@ jobs:
           cache-environment: true
           cache-environment-key: docs-env-${{ hashFiles('docs/build-environment.yml', 'pyproject.toml', 'uv.lock') }}
 
+      - name: Reject links to the retired Read the Docs site
+        run: python3 scripts/docs/check_no_rtd_links.py
+
       - name: Build documentation
         shell: bash -el {0}
         run: |

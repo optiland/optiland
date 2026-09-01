@@ -16,9 +16,11 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -47,13 +49,42 @@ ASSETS = [
 UA = "optiland-docs-smoke-test/1.0"
 
 
+def _decode(headers: dict, body: bytes) -> bytes | None:
+    """Undo a Content-Encoding; None when the body cannot be decoded."""
+    enc = headers.get("Content-Encoding") or headers.get("content-encoding") or ""
+    enc = enc.strip().lower()
+    if enc in ("", "identity"):
+        return body
+    if enc == "gzip":
+        return gzip.decompress(body)
+    if enc == "br":
+        try:
+            import brotli  # type: ignore[import-not-found]
+        except ImportError:
+            try:
+                import brotlicffi as brotli  # type: ignore[import-not-found,no-redef]
+            except ImportError:
+                return None
+        return brotli.decompress(body)
+    return None
+
+
 def fetch(url: str, timeout: float = 30.0):
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    # A unique query string bypasses CDN caches so every check observes the
+    # current deployment rather than a previously cached variant (the edge may
+    # otherwise serve a compressed cached copy regardless of Accept-Encoding).
+    sep = "&" if "?" in url else "?"
+    req = urllib.request.Request(
+        f"{url}{sep}smoke={int(time.time() * 1000)}",
+        headers={"User-Agent": UA, "Accept-Encoding": "identity"},
+    )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.status, dict(resp.headers), resp.read(), resp.geturl()
+            headers = dict(resp.headers)
+            return resp.status, headers, _decode(headers, resp.read()), resp.geturl()
     except urllib.error.HTTPError as exc:
-        return exc.code, dict(exc.headers), exc.read(), exc.geturl()
+        headers = dict(exc.headers)
+        return exc.code, headers, _decode(headers, exc.read()), exc.geturl()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -96,6 +127,12 @@ def main(argv: list[str] | None = None) -> int:
                 errors.append(f"{url}: not cacheable: Cache-Control: {cc}")
             if "set-cookie" in {k.lower() for k in headers}:
                 errors.append(f"{url}: response sets a cookie")
+        if body is None:
+            enc = headers.get("Content-Encoding") or headers.get("content-encoding")
+            errors.append(
+                f"{url}: cannot decode Content-Encoding {enc!r} (pip install brotli)"
+            )
+            return status, headers, b""
         if expect_html and status == expect_status:
             text = body.decode("utf-8", errors="replace")
             if "<html" not in text.lower():
