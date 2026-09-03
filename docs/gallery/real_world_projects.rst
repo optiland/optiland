@@ -13,3 +13,4 @@ aid for teaching, prototyping, and experimentation.
 
     real_world_projects/Cooke_Triplet_with_Stock_Lenses
     real_world_projects/Scan_Lens_System_for_UV
+    real_world_projects/Portrait_Lens_with_Achromats
