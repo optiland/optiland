@@ -219,10 +219,9 @@ def test_invalid_working_FNO(make_fftpsf):
     def tweak(optic):
         optic.surfaces[0].geometry.cs.z = -be.array(1e100)
 
-    fftpsf = make_fftpsf(field=(0, 1), tweak_optic=tweak)
+    # Error now surfaces at construction, not at .view().
     with pytest.raises(ValueError):
-        fig, ax = fftpsf.view()
-        plt.close(fig)
+        make_fftpsf(field=(0, 1), tweak_optic=tweak)
 
 
 def test_interpolate_zoom_factor_one(make_fftpsf):

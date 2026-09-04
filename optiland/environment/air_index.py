@@ -7,6 +7,7 @@ requirements for accuracy, environmental conditions, or consistency with other
 tools.
 
 The supported models include:
+
 - Ciddor (1996): A highly accurate model for a wide range of wavelengths and
   atmospheric conditions.
 - Edlén (1966): A widely used model, implemented here with the NIST

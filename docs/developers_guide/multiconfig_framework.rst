@@ -20,7 +20,7 @@ This ensures that each configuration has its own independent set of Surfaces, Fi
 Data Linking (Pickups)
 ----------------------
 
-To maintain the relationships required for a multi-configuration system (where most parameters are shared across configurations), Optiland uses :class:`optiland.pickups.Pickup`.
+To maintain the relationships required for a multi-configuration system (where most parameters are shared across configurations), Optiland uses :class:`optiland.pickup.Pickup`.
 
 When a new configuration is added, the framework automatically establishes pickups for:
 - Surface Radii

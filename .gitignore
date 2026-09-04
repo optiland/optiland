@@ -3,6 +3,7 @@
 **/.venv/
 **/__pycache__/
 **/jupyter/
+docs/.jupyterlite.doit.db
 build/
 dist/
 **/.ipynb_checkpoints/
@@ -18,3 +19,7 @@ sg_execution_times.rst
 .qlty/
 .claude/
 scratch/
+**/*.doit.db
+# The rule above targets Windows virtualenv Scripts/ directories; on
+# case-insensitive filesystems it also hides the repository scripts/ tree.
+!/scripts/

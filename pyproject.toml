@@ -38,7 +38,7 @@ torch = ["torch"]
 [project.urls]
 Homepage = "https://github.com/optiland/optiland"
 Repository = "https://github.com/optiland/optiland"
-Documentation = "https://optiland.readthedocs.io/en/latest/"
+Documentation = "https://www.optiland.org/docs/"
 "Bug Tracker" = "https://github.com/optiland/optiland/issues"
 
 [project.scripts]
@@ -60,6 +60,8 @@ packages = ["optiland", "optiland_gui"]
 
 [tool.hatch.metadata.files]
 "optiland/database" = ["*.csv", "*.yml", "**/*.yml", "*.npy"]
+"optiland" = ["py.typed"]
+"optiland_gui" = ["py.typed"]
 
 [tool.hatch.version]
 source = "versioningit"
@@ -67,7 +69,7 @@ default-version = "0.0.0+unknown"
 
 [tool.ruff]
 line-length = 88
-exclude = ["tests", "docs", "optiland_gui/resources/resources_rc.py"]
+exclude = ["tests", "docs", "optiland_gui/resources/resources_rc.py", "README.md"]
 
 [tool.ruff.lint]
 select = [
@@ -98,6 +100,8 @@ convention = "google"
 "docs/**" = ["D100", "D101", "D103"]
 # Standalone debug/reproduction scripts, not part of the package API.
 "optiland/scripts/**" = ["D100", "D101", "D103"]
+# Documentation build tooling (scripts/docs), not part of the package API.
+"scripts/**" = ["D100", "D101", "D103"]
 
 [tool.ruff.lint.isort]
 required-imports = ["from __future__ import annotations"]
@@ -122,5 +126,36 @@ warn_unused_ignores = true
 exclude = ["^tests/", "^docs/", "^optiland_gui/"]
 
 [[tool.mypy.overrides]]
-module = "optiland.wavelength"
-strict = true
+# The rest of the package hasn't been annotated yet, so its errors are
+# suppressed by default; modules move out of this block and into the strict
+# allowlist below as they get cleaned up.
+module = "optiland.*"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+# Modules graduate into this strict allowlist as their annotations are
+# cleaned up; the global baseline above stays permissive so CI never goes
+# red while the rest of the package is ratcheted up module by module.
+#
+# `strict = true` is deliberately not used: in a per-module override it
+# leaks strictness onto every other module in the run instead of scoping to
+# these. The flags below are `--strict`'s expansion minus the two options
+# mypy rejects per-module (warn_unused_configs, warn_redundant_casts).
+ignore_errors = false
+module = [
+    "optiland.wavelength",
+    "optiland.diagnostics.*",
+    "optiland._types",
+    "optiland._deprecation",
+]
+disallow_any_generics = true
+disallow_subclassing_any = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+warn_return_any = true
+no_implicit_reexport = true
+strict_equality = true
+strict_concatenate = true

@@ -71,14 +71,8 @@ class InteractionManager:
             self.fig.canvas.mpl_disconnect(cid)
         self.cids = []
 
-    def on_hover(self, event):
-        """Handles hover events to show tooltips and highlight artists."""
-        if event.inaxes != self.ax:
-            if self.active_artist:
-                self.clear_hover_effects()
-            return
-
-        found_artist = None
+    def _find_hovered_artist(self, event):
+        """The topmost artist under the cursor, or None."""
         # Prioritize surfaces over other artists
         artists = sorted(
             self.artist_registry.keys(),
@@ -88,21 +82,31 @@ class InteractionManager:
         for artist in artists:
             contains, _ = artist.contains(event)
             if contains:
-                found_artist = artist
-                break
+                return artist
+        return None
 
-        if self.active_artist != found_artist:
+    def on_hover(self, event):
+        """Handles hover events to show tooltips and highlight artists."""
+        if event.inaxes != self.ax:
             if self.active_artist:
                 self.clear_hover_effects()
-            if self.hover_timer:
-                self.hover_timer.cancel()
+            return
 
-            if found_artist:
-                self.active_artist = found_artist
-                self.hover_timer = Timer(
-                    self.hover_delay, self.show_tooltip, args=[found_artist, event]
-                )
-                self.hover_timer.start()
+        found_artist = self._find_hovered_artist(event)
+        if self.active_artist == found_artist:
+            return
+
+        if self.active_artist:
+            self.clear_hover_effects()
+        if self.hover_timer:
+            self.hover_timer.cancel()
+
+        if found_artist:
+            self.active_artist = found_artist
+            self.hover_timer = Timer(
+                self.hover_delay, self.show_tooltip, args=[found_artist, event]
+            )
+            self.hover_timer.start()
 
     # TODO: Re-enable pop-up box functionality in a future update.
     # The following methods are temporarily disabled.
@@ -111,17 +115,29 @@ class InteractionManager:
     # def on_info_panel_click(self, event):
     # def close_info_panel(self, event=None):
 
-    def highlight_artist(self, artist):
-        """Highlights the given artist."""
+    def _hover_group(self, artist):
+        """Artists that highlight/clear together with `artist`.
+
+        A bundled artist (e.g. one ray among a RayBundle) drags every artist
+        sharing its bundle_id along with it; an unbundled artist acts alone,
+        as long as it actually supports `get_linewidth`.
+        """
         obj = self.artist_registry[artist]
         if hasattr(obj, "bundle_id"):
-            for art, o in self.artist_registry.items():
-                if hasattr(o, "bundle_id") and o.bundle_id == obj.bundle_id:
-                    self.original_props[art] = {"linewidth": art.get_linewidth()}
-                    art.set_linewidth(art.get_linewidth() * 2)
-        elif hasattr(artist, "get_linewidth"):
-            self.original_props[artist] = {"linewidth": artist.get_linewidth()}
-            artist.set_linewidth(artist.get_linewidth() * 2)
+            return [
+                art
+                for art, o in self.artist_registry.items()
+                if hasattr(o, "bundle_id") and o.bundle_id == obj.bundle_id
+            ]
+        if hasattr(artist, "get_linewidth"):
+            return [artist]
+        return []
+
+    def highlight_artist(self, artist):
+        """Highlights the given artist."""
+        for art in self._hover_group(artist):
+            self.original_props[art] = {"linewidth": art.get_linewidth()}
+            art.set_linewidth(art.get_linewidth() * 2)
         self.fig.canvas.draw_idle()
 
     def show_tooltip(self, artist, event):
@@ -139,34 +155,29 @@ class InteractionManager:
         """Clears any active hover effects."""
         if self.hover_timer:
             self.hover_timer.cancel()
-        if self.active_artist:
-            obj = self.artist_registry[self.active_artist]
-            if hasattr(obj, "bundle_id"):
-                for art, o in self.artist_registry.items():
-                    if (
-                        hasattr(o, "bundle_id")
-                        and o.bundle_id == obj.bundle_id
-                        and art in self.original_props
-                    ):
-                        art.set_linewidth(self.original_props[art]["linewidth"])
-                        del self.original_props[art]
-            elif (
-                hasattr(self.active_artist, "get_linewidth")
-                and self.active_artist in self.original_props
-            ):
-                self.active_artist.set_linewidth(
-                    self.original_props[self.active_artist]["linewidth"]
-                )
-                del self.original_props[self.active_artist]
-            self.active_artist = None
-            self.tooltip.set_visible(False)
-            self.fig.canvas.draw_idle()
+        if not self.active_artist:
+            return
+
+        for art in self._hover_group(self.active_artist):
+            if art in self.original_props:
+                art.set_linewidth(self.original_props[art]["linewidth"])
+                del self.original_props[art]
+
+        self.active_artist = None
+        self.tooltip.set_visible(False)
+        self.fig.canvas.draw_idle()
+
+    def _registry_info(self, optiland_object) -> str:
+        """Fallback lookup of an info provider by the object's class name."""
+        provider = INFO_PROVIDER_REGISTRY.get(type(optiland_object).__name__)
+        if provider is None:
+            return "No information available."
+        return provider.get_info(optiland_object)
 
     def default_tooltip_format(self, optiland_object):
         """Default formatter for the tooltip text."""
         # Import here to avoid circular dependencies
         from optiland.visualization.info.providers import (
-            INFO_PROVIDER_REGISTRY,
             LensInfoProvider,
             SurfaceInfoProvider,
         )
@@ -174,25 +185,12 @@ class InteractionManager:
         from optiland.visualization.system.surface import Surface2D
 
         if isinstance(optiland_object, Surface2D):
-            provider = SurfaceInfoProvider(self.optic.surfaces)
-            return provider.get_info(optiland_object)
-
-        elif isinstance(optiland_object, RayBundle):
-            provider = INFO_PROVIDER_REGISTRY["RayBundle"]
-            return provider.get_info(optiland_object)
-
-        elif isinstance(optiland_object, Lens2D):
-            provider = LensInfoProvider(self.optic.surfaces)
-            return provider.get_info(optiland_object)
-
-        else:
-            # Fallback for any other types
-            obj_type = type(optiland_object).__name__
-            if obj_type in INFO_PROVIDER_REGISTRY:
-                provider = INFO_PROVIDER_REGISTRY[obj_type]
-                return provider.get_info(optiland_object)
-            else:
-                return "No information available."
+            return SurfaceInfoProvider(self.optic.surfaces).get_info(optiland_object)
+        if isinstance(optiland_object, RayBundle):
+            return INFO_PROVIDER_REGISTRY["RayBundle"].get_info(optiland_object)
+        if isinstance(optiland_object, Lens2D):
+            return LensInfoProvider(self.optic.surfaces).get_info(optiland_object)
+        return self._registry_info(optiland_object)
 
     def show_info_panel(self, optiland_object):
         """Shows an information panel for the given object."""
@@ -256,12 +254,5 @@ class InteractionManager:
         from optiland.visualization.system.ray_bundle import RayBundle
 
         if isinstance(optiland_object, RayBundle):
-            provider = INFO_PROVIDER_REGISTRY["RayBundle"]
-            return provider.get_info(optiland_object)
-
-        obj_type = type(optiland_object).__name__
-        if obj_type in INFO_PROVIDER_REGISTRY:
-            provider = INFO_PROVIDER_REGISTRY[obj_type]
-            return provider.get_info(optiland_object)
-        else:
-            return "No information available."
+            return INFO_PROVIDER_REGISTRY["RayBundle"].get_info(optiland_object)
+        return self._registry_info(optiland_object)

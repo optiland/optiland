@@ -9,7 +9,12 @@ import optiland.backend as be
 from optiland.coordinate_system import CoordinateSystem
 from optiland.materials.ideal import IdealMaterial
 from optiland.optic import Optic
+from optiland.physical_apertures.radial import RadialAperture
 from optiland.rays import RealRays
+from optiland.rays.ray_aiming.initialization import (
+    ParaxialReferenceStrategy,
+    RealReferenceStrategy,
+)
 from optiland.rays.ray_aiming.iterative import IterativeRayAimer
 from optiland.rays.ray_aiming.paraxial import ParaxialRayAimer
 from optiland.rays.ray_aiming.robust import RobustRayAimer
@@ -149,15 +154,21 @@ def test_robust_caching_regression(set_test_backend):
     optic.trace(0, 0, 0.55, num_rays=1)
 
 
-def test_robust_aimer_infinite_object_90_degree_field(set_test_backend):
-    """Regression test: verify RobustRayAimer aims correctly for 90 deg field @ infinity.
+def test_robust_aimer_infinite_object_near_90_degree_field(set_test_backend):
+    """Regression test: verify RobustRayAimer aims correctly near a 90 deg
+    field at infinity.
 
-    See bug fix where IterativeRayAimer inherited bad L,M,N from initial_guess.
+    See bug fix where IterativeRayAimer inherited bad L,M,N from
+    initial_guess. The field sits just off the pole: an exact 90 degree
+    component angle is now rejected before its tangent is evaluated
+    (SINGULAR_ANGLE_TANGENT), so the direction-inheritance regression is
+    pinned at the closest supported geometry instead.
     """
     optic = Optic()
-    # Construct a minimal wide angle lens setup that reproduces the infinite + 90 deg scenario
-    # We'll use a simplified version of the user's lens to avoid clutter,
-    # but ensure it has infinite object and large field.
+    # Construct a minimal wide-angle setup reproducing the infinite +
+    # near-90-deg scenario. We use a simplified version of the user's lens
+    # to avoid clutter, but ensure it has an infinite object and a large
+    # field.
 
     optic.surfaces.add(index=0, radius=float("inf"), thickness=float("inf"))
     # A dummy surface to aim at
@@ -169,7 +180,7 @@ def test_robust_aimer_infinite_object_90_degree_field(set_test_backend):
     optic.set_aperture("EPD", 1.0)
     optic.fields.set_type("angle")
     optic.fields.add(y=0)
-    optic.fields.add(y=90)
+    optic.fields.add(y=89.9)
     optic.wavelengths.add(0.55, is_primary=True)
 
     optic.ray_tracer.set_aiming("robust")
@@ -178,16 +189,42 @@ def test_robust_aimer_infinite_object_90_degree_field(set_test_backend):
 
     rg = RayGenerator(optic)
 
-    # Generate rays for 90 degree field (Hy=1.0)
-    # 90 degrees means rays come from +Y relative to Z.
-    # Direction vector should be approx (0, 1, 0).
-    # N (z-dir cosine) should be near 0.
+    # Generate rays for the near-90-degree field (Hy=1.0): rays come from
+    # +Y relative to Z, so the direction vector should be approx (0, 1, 0)
+    # and N (the z direction cosine) near 0.
     rays = rg.generate_rays(Hx=0, Hy=1, Px=0, Py=0, wavelength=0.55)
 
     # Check N is close to 0 (allow small tolerance due to numerical precision/mapping)
     # Using the fixed code, we saw N ~ 0.02 which is small enough compared to N ~ 1.
     assert abs(rays.N[0]) < 0.1
     assert rays.M[0] > 0.9  # Should be largely in Y direction
+
+
+def test_exact_90_degree_field_rejected_before_tangent(set_test_backend):
+    """An exact 90 degree component angle raises the dedicated singularity
+    diagnostic instead of silently evaluating tan(90 deg)."""
+    from optiland.paraxial_path import UnsupportedParaxialGeometryError
+
+    optic = Optic()
+    optic.surfaces.add(index=0, radius=float("inf"), thickness=float("inf"))
+    optic.surfaces.add(
+        index=1, radius=100.0, thickness=10.0, material="air", is_stop=True
+    )
+    optic.surfaces.add(index=2)
+    optic.set_aperture("EPD", 1.0)
+    optic.fields.set_type("angle")
+    optic.fields.add(y=0)
+    optic.fields.add(y=90)
+    optic.wavelengths.add(0.55, is_primary=True)
+    optic.ray_tracer.set_aiming("robust")
+
+    from optiland.rays.ray_generator import RayGenerator
+
+    rg = RayGenerator(optic)
+    with pytest.raises(
+        UnsupportedParaxialGeometryError, match="SINGULAR_ANGLE_TANGENT"
+    ):
+        rg.generate_rays(Hx=0, Hy=1, Px=0, Py=0, wavelength=0.55)
 
 
 def test_instantiate_wide_angle_lenses(set_test_backend):
@@ -458,6 +495,9 @@ from optiland.distribution import create_distribution  # noqa: E402
 from optiland.rays.ray_aiming.initialization import (  # noqa: E402
     get_stop_radius_strategy,
 )
+from optiland.rays.ray_aiming.parameterization import (  # noqa: E402
+    LaunchParameterization,
+)
 from optiland.rays.ray_aiming.pupil_map import PupilMap  # noqa: E402
 from optiland.samples.lithography import UVProjectionLens  # noqa: E402
 
@@ -471,13 +511,18 @@ _WIDE_ANGLE_SAMPLES = [
 
 
 def test_pupil_map_seed_affine_arithmetic(set_test_backend):
-    """Unit test for the affine fit itself: launch(Px, Py) = c + A @ [Px, Py],
-    with the non-solved DOF held fixed at their chief-ray values."""
+    """Unit test for the affine fit itself: (xi, eta) = A @ [Px, Py] offsets
+    applied around the chief launch in the local transverse basis, with the
+    non-solved DOF (the direction, for infinite conjugates) held fixed at
+    their chief-ray values. For a +z entry the basis is global (+x, +y), so
+    the offsets read directly as x/y displacements."""
+    param = LaunchParameterization(
+        is_infinite=True, u=(1.0, 0.0, 0.0), v=(0.0, 1.0, 0.0)
+    )
     pmap = PupilMap(
-        c=(1.0, 2.0),
+        base=(1.0, 2.0, 10.0, 0.0, 0.0, 1.0),
         A=((0.5, 0.1), (0.2, 0.3)),
-        is_infinite=True,
-        fixed=(10.0, 0.0, 0.0, 1.0),
+        param=param,
     )
     x, y, z, L, M, N = pmap.seed(be.array([0.0, 1.0]), be.array([0.0, -1.0]))
     assert_allclose(x, [1.0, 1.4])
@@ -511,7 +556,7 @@ def test_robust_aimer_chief_ray_matches_field_angle_per_field(set_test_backend):
         # Fresh aimer per field: no cross-field warm start available, so
         # this also exercises the cold chief-ray marching fallback.
         aimer_fresh = RobustRayAimer(WideAngle170FOV())
-        chief = aimer_fresh._solve_chief(
+        chief, _strategy, _report = aimer_fresh._solve_chief(
             Hx, Hy, optic.primary_wavelength, stop_idx, is_inf, None
         )
         _, _, _, L, M, N = chief
@@ -864,6 +909,58 @@ def _issue_654_tilted_finite_stop(tilt_deg=120.0):
     return optic
 
 
+def _issue_654_decentered_stop(decenter_y=5.0):
+    """Infinite-conjugate system whose stop is a small decentered lens
+    (issue #654 follow-up).
+
+    The entrance pupil is the image of the stop, so decentering the stop
+    decenters the pupil too. The EPD is scaled so the paraxial marginal ray
+    exactly fills the stop's physical radius, as in the reported system.
+    """
+    glass = IdealMaterial(n=1.5168)
+    # Explicit RadialAperture: a scalar `aperture=` is a *diameter*, and these
+    # radii must match the reported system exactly.
+    optic = Optic()
+    optic.surfaces.add(index=0, thickness=np.inf)
+    optic.surfaces.add(index=1, thickness=0.0)
+    optic.surfaces.add(
+        index=2,
+        radius=61.0,
+        thickness=4.67,
+        material=glass,
+        aperture=RadialAperture(r_max=12.7),
+    )
+    optic.surfaces.add(
+        index=3, radius=-61.0, thickness=5.33, aperture=RadialAperture(r_max=12.7)
+    )
+    optic.surfaces.add(
+        index=4,
+        radius=5.0,
+        thickness=1.0,
+        material=glass,
+        is_stop=True,
+        aperture=RadialAperture(r_max=1.0),
+    )
+    optic.surfaces.add(
+        index=5, radius=-5.0, thickness=4.2, aperture=RadialAperture(r_max=1.0)
+    )
+    optic.surfaces.add(index=6)
+    optic.fields.set_type("angle")
+    optic.fields.add(y=0)
+    optic.fields.add(y=5)
+    optic.wavelengths.add(0.52, is_primary=True)
+    optic.set_aperture("EPD", 2.0)
+
+    # Shift the stop doublet off axis, then rescale the EPD so the paraxial
+    # marginal ray lands exactly on the stop's r_max = 1.0 edge.
+    optic.surfaces[4].geometry.cs.y = decenter_y
+    optic.surfaces[5].geometry.cs.y = decenter_y
+    y_marginal, _ = optic.paraxial.marginal_ray()
+    r_par = float(be.to_numpy(y_marginal[4]).ravel()[0])
+    optic.set_aperture("EPD", 2.0 / r_par)
+    return optic
+
+
 def _disk_pupil(n=5):
     """Return the (Px, Py) of an ``n x n`` grid clipped to the unit disk."""
     t = np.linspace(-1, 1, n)
@@ -968,3 +1065,62 @@ def test_tilted_finite_stop_converges_all_pupil_rays_issue654(set_test_backend):
 
     sx = be.to_numpy(optic.surfaces[stop_idx].x).ravel()
     assert not np.any(np.isnan(sx))
+
+
+def test_decentered_stop_radius_matches_paraxial_issue654(set_test_backend):
+    """The real-ray stop radius must be measured from the *decentered* entrance
+    pupil (issue #654 follow-up).
+
+    Probing from the on-axis pupil edge instead measured the distance from the
+    stop centre to a ray that never went near the pupil: ~4 mm against a true
+    radius of ~1 mm.
+    """
+    optic = _issue_654_decentered_stop(decenter_y=5.0)
+
+    real_r = RealReferenceStrategy(optic).calculate_stop_radius()
+    paraxial_r = ParaxialReferenceStrategy(optic).calculate_stop_radius()
+
+    # The paraxial marginal ray fills the stop edge by construction, so the
+    # real-ray radius may differ only by pupil aberration (a few percent).
+    assert_allclose(real_r, paraxial_r, atol=0.05)
+
+
+def test_decentered_stop_fills_pupil_issue654(set_test_backend):
+    """Every pupil ray of a decentered stop must aim inside the stop's clear
+    aperture and reach the image unvignetted (issue #654 follow-up).
+
+    With the stop radius mis-measured, the aimer targeted a radius several
+    times too large: the outer rays missed the stop surface entirely (NaN) and
+    the rest were vignetted by its physical aperture, leaving only the chief
+    ray.
+    """
+    optic = _issue_654_decentered_stop(decenter_y=5.0)
+    optic.ray_tracer.set_aiming("robust")
+    stop_idx = optic.surfaces.stop_index
+    Px, Py = _disk_pupil(5)
+    zeros = be.zeros(len(Px))
+
+    rays = optic.trace_generic(zeros, zeros, be.array(Px), be.array(Py), 0.52)
+
+    # Rays land on the stop, within its r_max = 1.0 clear aperture, measured
+    # in the stop's own (decentered) frame.
+    local = RealRays(
+        be.copy(optic.surfaces[stop_idx].x),
+        be.copy(optic.surfaces[stop_idx].y),
+        be.copy(optic.surfaces[stop_idx].z),
+        be.zeros(len(Px)),
+        be.zeros(len(Px)),
+        be.ones(len(Px)),
+        intensity=be.ones(len(Px)),
+        wavelength=be.full(len(Px), 0.52),
+    )
+    optic.surfaces[stop_idx].geometry.cs.localize(local)
+    r_local = np.hypot(be.to_numpy(local.x).ravel(), be.to_numpy(local.y).ravel())
+    assert not np.any(np.isnan(r_local))
+    assert np.all(r_local <= 1.0 + 1e-9)
+
+    # The pupil is actually filled, not collapsed onto the chief ray, and no
+    # ray is vignetted away.
+    assert r_local.max() > 0.9
+    assert not np.any(np.isnan(be.to_numpy(rays.y).ravel()))
+    assert np.all(be.to_numpy(rays.i).ravel() > 0.0)

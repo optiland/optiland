@@ -1,0 +1,289 @@
+name: Docs
+
+# Builds, validates and deploys the Sphinx documentation.
+#
+# - Pull requests: full build + validation, screenshots, and a Vercel preview
+#   deployment for branches of this repository (forks get build + validation
+#   only; production secrets are never exposed to forks).
+# - Push to master: the validated artifact is deployed to the dedicated docs
+#   Vercel project (the origin behind https://www.optiland.org/docs/), then
+#   smoke-tested through both the origin alias and the first-party route.
+# - Weekly schedule / manual: external link check and production smoke test.
+#
+# API pages are generated from docstrings, so pushes to master always rebuild
+# regardless of which paths changed. Required secrets (environment
+# "docs-production", also available to preview deployments): VERCEL_TOKEN,
+# VERCEL_ORG_ID, VERCEL_DOCS_PROJECT_ID, DOCS_ORIGIN_URL.
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - "docs/**"
+      - "optiland/**"
+      - "optiland_gui/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".readthedocs.yaml"
+      - "scripts/docs/**"
+      - ".github/workflows/docs.yml"
+  push:
+    branches: [master]
+  workflow_dispatch:
+  schedule:
+    - cron: "17 5 * * 1"
+
+permissions:
+  contents: read
+
+env:
+  DOCS_BASE_URL: https://www.optiland.org/docs/
+  SPHINX_OUTPUT: docs/_build/html
+  PYTHONIOENCODING: utf-8
+
+jobs:
+  build:
+    name: Build and validate
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: docs-build-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # versioningit and page "last updated" dates need history and tags
+
+      - name: Create the documentation environment (docs/build-environment.yml)
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: docs/build-environment.yml
+          cache-environment: true
+          cache-environment-key: docs-env-${{ hashFiles('docs/build-environment.yml', 'pyproject.toml', 'uv.lock') }}
+
+      - name: Reject links to the retired Read the Docs site
+        run: python3 scripts/docs/check_no_rtd_links.py
+
+      - name: Build documentation
+        shell: bash -el {0}
+        run: |
+          python scripts/docs/build_docs.py \
+            --canonical-base-url "$DOCS_BASE_URL" \
+            --git-sha "$GITHUB_SHA" \
+            --warnings-log docs/_build/warnings.log
+
+      - name: Validate build
+        shell: bash -el {0}
+        run: |
+          python scripts/docs/validate_build.py "$SPHINX_OUTPUT" \
+            --base-url "$DOCS_BASE_URL" \
+            --warnings docs/_build/warnings.log \
+            --allowlist scripts/docs/warnings-allowlist.txt \
+            --report docs/_build/validation.json
+
+      - name: Package for Vercel (Build Output API)
+        shell: bash -el {0}
+        run: python scripts/docs/prepare_vercel_output.py --source "$SPHINX_OUTPUT" --output .vercel/output
+
+      - name: Build summary
+        if: always()
+        shell: bash -el {0}
+        run: |
+          {
+            echo "## Documentation build"
+            echo
+            echo "- Source: \`$GITHUB_SHA\`"
+            if [ -f "$SPHINX_OUTPUT/_meta/build.json" ]; then
+              echo "- Version: \`$(python -c 'import json;print(json.load(open("docs/_build/html/_meta/build.json"))["docs_version"])')\`"
+            fi
+            echo "- Pages: $(find "$SPHINX_OUTPUT" -name '*.html' | wc -l)"
+            echo "- Size: $(du -sh .vercel/output/static 2>/dev/null | cut -f1)"
+            echo "- Warnings: $(grep -c . docs/_build/warnings.log 2>/dev/null || echo 0) line(s)"
+            echo
+            if [ -s docs/_build/warnings.log ]; then
+              echo "<details><summary>Sphinx warnings</summary>"; echo; echo '```'
+              head -c 20000 docs/_build/warnings.log; echo '```'; echo "</details>"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docs-site
+          path: .vercel/output
+          retention-days: 14
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: docs-logs
+          path: |
+            docs/_build/warnings.log
+            docs/_build/validation.json
+          if-no-files-found: warn
+
+  screenshots:
+    name: Screenshots
+    needs: build
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: docs-site
+          path: site
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Serve the built site
+        run: |
+          (cd site/static && python3 -m http.server 8000 >/dev/null 2>&1 &)
+          sleep 2
+      - name: Capture representative pages
+        run: |
+          npx --yes playwright@1.47.2 install --with-deps chromium
+          mkdir -p shots
+          shot() { npx --yes playwright@1.47.2 screenshot --browser chromium --viewport-size="$2" ${3:+--color-scheme=$3} --full-page --wait-for-timeout=1500 "http://localhost:8000/$1" "shots/$4.png"; }
+          shot "index.html"                  "1440,900"  light "landing-light-desktop"
+          shot "index.html"                  "1440,900"  dark  "landing-dark-desktop"
+          shot "quickstart.html"             "390,844"   light "quickstart-light-mobile"
+          shot "api/api_optic.html"          "1440,900"  dark  "api-dark-desktop"
+          shot "examples/Tutorial_1a_Optiland_for_Beginners.html" "1440,900" light "notebook-light-desktop"
+          shot "search.html?q=aberration"    "1440,900"  light "search-light-desktop"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docs-screenshots
+          path: shots
+          if-no-files-found: warn
+
+  preview:
+    name: Preview deployment
+    needs: build
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment:
+      name: docs-preview
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_DOCS_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: docs-site
+          path: .vercel/output
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Deploy preview
+        id: deploy
+        run: |
+          npm install --global vercel@latest
+          url=$(vercel deploy --prebuilt --token="$VERCEL_TOKEN" --yes)
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Preview: $url" >> "$GITHUB_STEP_SUMMARY"
+      - name: Smoke test preview
+        # Pull request runs build the merge ref, so the artifact is stamped
+        # with github.sha (the merge commit), not the branch head.
+        run: python3 scripts/docs/smoke_test.py --base-url "${{ steps.deploy.outputs.url }}/" --expect-commit "${{ github.sha }}"
+
+  deploy:
+    name: Production deployment
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    environment:
+      name: docs-production
+      url: https://www.optiland.org/docs/
+    concurrency:
+      group: docs-production
+      cancel-in-progress: false
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_DOCS_PROJECT_ID }}
+      DOCS_ORIGIN_URL: ${{ secrets.DOCS_ORIGIN_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: docs-site
+          path: .vercel/output
+      - name: Assert the artifact was built from this commit
+        run: |
+          built=$(python3 -c 'import json;print(json.load(open(".vercel/output/static/_meta/build.json"))["source_commit"])')
+          test "$built" = "$GITHUB_SHA" || { echo "artifact commit $built != $GITHUB_SHA"; exit 1; }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Deploy to the docs origin (atomic; promoted only on success)
+        id: deploy
+        run: |
+          npm install --global vercel@latest
+          url=$(vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN" --yes)
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Documentation deployment"
+            echo "- Source: \`$GITHUB_SHA\`"
+            echo "- Deployment: $url"
+            echo "- Origin alias: $DOCS_ORIGIN_URL"
+            echo "- First-party: https://www.optiland.org/docs/"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Smoke test the origin alias
+        run: python3 scripts/docs/smoke_test.py --base-url "$DOCS_ORIGIN_URL/" --expect-commit "$GITHUB_SHA"
+      - name: Smoke test the first-party route
+        run: |
+          # The website rewrite serves the same origin; allow a short window for CDN caches to refresh.
+          for attempt in 1 2 3 4 5 6; do
+            if python3 scripts/docs/smoke_test.py --base-url "$DOCS_BASE_URL" --expect-commit "$GITHUB_SHA" --first-party; then exit 0; fi
+            echo "attempt $attempt failed; retrying in 60s"; sleep 60
+          done
+          echo "First-party smoke test failed. Roll back with: vercel rollback --token=... (see docs/contributing.rst)."
+          exit 1
+
+  linkcheck:
+    name: External link check
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: docs/build-environment.yml
+          cache-environment: true
+          cache-environment-key: docs-env-${{ hashFiles('docs/build-environment.yml', 'pyproject.toml', 'uv.lock') }}
+      - name: Check external links (third-party failures are reported, not blocking)
+        shell: bash -el {0}
+        run: |
+          OPTILAND_DOCS_SKIP_JUPYTERLITE=1 python -m sphinx -b linkcheck --keep-going docs docs/_build/linkcheck || true
+          echo "## External link check" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f docs/_build/linkcheck/output.txt ]; then
+            echo '```' >> "$GITHUB_STEP_SUMMARY"; head -c 20000 docs/_build/linkcheck/output.txt >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Fail on broken first-party links (optiland.org, github.com/optiland)
+        shell: bash -el {0}
+        run: |
+          if [ -f docs/_build/linkcheck/output.txt ] && grep -E "broken.*(optiland\.org|github\.com/optiland)" docs/_build/linkcheck/output.txt; then
+            echo "Broken first-party links found"; exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: docs-linkcheck
+          path: docs/_build/linkcheck
+          if-no-files-found: warn
+
+  production-smoke:
+    name: Production smoke test
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify https://www.optiland.org/docs/
+        run: python3 scripts/docs/smoke_test.py --base-url "$DOCS_BASE_URL" --first-party

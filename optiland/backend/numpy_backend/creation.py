@@ -64,7 +64,11 @@ class CreationMixin:
 
         Returns:
             NDArray: NumPy array with dtype matching current precision.
+                Boolean inputs are returned as bool arrays (dtype preserved).
         """
+        # Preserve bool dtype so bitwise ops receive bool arrays, not floats.
+        if isinstance(x, np.ndarray) and x.dtype == np.bool_:
+            return x
         return np.array(x, dtype=self._dtype)
 
     def zeros(self, shape: Sequence[int], dtype: Any = None) -> NDArray:

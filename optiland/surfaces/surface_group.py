@@ -18,6 +18,12 @@ from typing import TYPE_CHECKING
 
 import optiland.backend as be
 from optiland.coatings import BaseCoatingPolarized
+from optiland.paraxial_path import (
+    ParaxialPath,
+    build_paraxial_path,
+    require_global_z_geometry,
+    transverse_basis,
+)
 from optiland.surfaces.factories.surface_factory import SurfaceFactory
 from optiland.surfaces.standard_surface import Surface
 
@@ -102,7 +108,25 @@ class SurfaceGroup:
             optical element with finite thickness, its propagation space is
             still honoured via the junction-z calculation even though the
             surface itself is not retained.
+
+        Raises:
+            UnsupportedParaxialGeometryError: If either operand's beam path
+                is folded off global +z (or entered along another
+                direction), before anything is copied or shifted.
+                Composition places ``other`` by shifting global z only,
+                which is meaningless for a folded operand. A laterally
+                translated system whose axis remains global +z stays
+                supported.
         """
+        # Preflight-atomic: both operands must be global-z compatible
+        # before any copy or coordinate shift happens.
+        require_global_z_geometry(
+            self._surfaces, "surface-group composition (left operand)"
+        )
+        require_global_z_geometry(
+            other._surfaces, "surface-group composition (right operand)"
+        )
+
         # Deep-copy other's surfaces so the original is never mutated and the
         # combined group does not share mutable objects with other.
         other_copies = [deepcopy(s) for s in other._surfaces]
@@ -212,13 +236,111 @@ class SurfaceGroup:
             [surf.intensity for surf in self.surfaces if be.size(surf.intensity) > 0]
         )
 
+    def build_paraxial_path(self) -> ParaxialPath:
+        """Build the shared folded-path metadata for the current geometry.
+
+        The path is a per-operation snapshot -- geometry is mutable, so it
+        is rebuilt rather than cached. High-level operations should build it
+        once and pass it through their call chain instead of re-deriving
+        frames, directions and parity in each consumer.
+        """
+        return build_paraxial_path(list(self.surfaces))
+
     @property
     def positions(self):
-        """np.array: z positions of surface vertices"""
+        """np.array: signed unfolded axial positions of surface vertices.
+
+        The axial coordinate is the one the paraxial model is written in: a
+        1-D scalar coordinate along the unfolded optical axis, with each
+        reflection reversing the direction of travel (so spacings after an
+        odd number of mirrors are negative). While every leg of the beam
+        path runs along ±z entered along +z -- straight systems and mirrors
+        at normal incidence -- that is exactly the global z of each vertex,
+        and this property returns it unchanged.
+
+        A mirror that folds the beam off the z axis (or an entry along any
+        other direction, including -z) breaks that equivalence: two vertices
+        on opposite sides of a 90° fold can share a z, so their spacing
+        would read as zero. For those systems the coordinate is continued as
+        signed cumulative vertex-to-vertex path length along the beam, which
+        is what the surrounding first-order machinery -- pupil locations,
+        paraxial ray heights, solves -- needs to stay correct through a
+        fold.
+
+        This is an unfolded axial scalar, never a Cartesian coordinate: use
+        ``global_z_positions`` for the global z component of the vertices,
+        and ``vertices_gcs`` for full three-dimensional vertex positions.
+        """
+        return self.build_paraxial_path().axial_positions.reshape(-1, 1)
+
+    @property
+    def global_z_positions(self):
+        """np.array: global z coordinates of the surface vertices.
+
+        Unlike :attr:`positions` this is a real-space coordinate, never an
+        unfolded one. Use it for anything that has to place something in the
+        global frame (drawing limits, reference spheres); use ``positions``
+        for first-order calculations.
+        """
         positions = be.array(
             [surf.geometry.cs.position_in_gcs[2] for surf in self.surfaces]
         )
         return positions.reshape(-1, 1)
+
+    @property
+    def vertices_gcs(self):
+        """np.array: full 3-D surface vertex positions in global coordinates.
+
+        Shape ``(num_surfaces, 3)``. Use this whenever a consumer needs a
+        real-space point; ``positions`` is an unfolded axial scalar and
+        ``global_z_positions`` is only the z component of these vertices.
+        """
+        path = self.build_paraxial_path()
+        rows = [
+            be.array([vertex[0], vertex[1], vertex[2]]) for vertex in path.vertices_gcs
+        ]
+        return be.stack(rows) if rows else be.array([])
+
+    def _entry_frame(self, path: ParaxialPath | None = None):
+        """Object-space entry frame, or ``None`` on the canonical z axis.
+
+        ``None`` is the common case -- every leg on ±z, entered along +z
+        through global x = y = 0 -- and keeps z-based callers (the paraxial
+        ray aimer, the angle-field launch seeds) on their existing code path
+        bit-for-bit. For any other aiming geometry (folded, off-axis entry,
+        -z entry, or a system rigidly translated off the z axis) it returns
+        ``(anchor, axial, direction, u, v)``: the first physical surface's
+        vertex and its axial coordinate, the unit entry direction, and the
+        transverse basis completing it.
+
+        Object-space constructs live on the entry line, anchored at the
+        first physical surface's vertex -- a decentered first vertex shifts
+        the pupil line with it. The entrance pupil is the stop imaged into
+        object space, so a launch ray aims at its apparent, unfolded
+        position ``anchor + (axial_pupil - axial) * direction``, never at a
+        refolded downstream point; the fold mirrors then carry the ray onto
+        the physical stop. The basis gauge (and its pole near ±y entry) is
+        documented on :func:`optiland.paraxial_path.transverse_basis`.
+
+        Args:
+            path: Optional prebuilt path to reuse (avoids a second walk).
+        """
+        if path is None:
+            if len(self.surfaces) < 2:
+                return None
+            path = self.build_paraxial_path()
+        if path.num_surfaces < 2 or path.legacy_aiming_compatible:
+            return None
+        return path.entry_frame()
+
+    @staticmethod
+    def _transverse_basis(direction):
+        """Deterministic transverse pair ``(u, v)`` completing ``direction``.
+
+        Delegates to :func:`optiland.paraxial_path.transverse_basis`; see
+        there for the gauge convention and the pole near ±y.
+        """
+        return transverse_basis(direction)
 
     @property
     def radii(self):
@@ -243,12 +365,22 @@ class SurfaceGroup:
             if surface.is_stop:
                 return index
 
-        raise ValueError("No stop surface found.")
+        raise ValueError(
+            "No stop surface found. Exactly one surface must be marked as "
+            "the aperture stop, either by passing is_stop=True to "
+            "lens.add_surface(...) or by setting "
+            "lens.surface_group.stop_index = <index>."
+        )
 
     @stop_index.setter
     def stop_index(self, index: int):
         if index < 1 or index > len(self.surfaces) - 2:
-            raise ValueError("Index out of range")
+            raise ValueError(
+                f"Invalid stop index, got {index}. The stop must be an "
+                f"optical surface, so its index must lie between 1 and "
+                f"{len(self.surfaces) - 2} (index 0 is the object surface "
+                f"and index {len(self.surfaces) - 1} is the image surface)."
+            )
         for idx, surf in enumerate(self.surfaces):
             surf.is_stop = index == idx
 
@@ -267,10 +399,41 @@ class SurfaceGroup:
 
     @property
     def total_track(self):
-        """float: the total track length of the system"""
+        """float: the span of the unfolded signed axial surface coordinates.
+
+        This is the extent of :attr:`positions` over the physical surfaces
+        (object excluded) -- the track length of the scalar paraxial system.
+        For straight systems it equals the global-z span. For a folded
+        system it is the span along the unfolded axis (the length the
+        equivalent unfolded system would have), which is what the
+        ``total_track`` optimization operand constrains. Use
+        :attr:`global_z_span` for the extent of the vertices in global z.
+        """
         if self.num_surfaces < 2:
-            raise ValueError("Not enough surfaces to calculate total track.")
+            raise ValueError(
+                f"Cannot compute the total track: the system has "
+                f"{self.num_surfaces} surface(s), and at least 2 are "
+                "required. Add surfaces with lens.add_surface(...)."
+            )
         z = self.positions[1:]
+        return be.max(z) - be.min(z)
+
+    @property
+    def global_z_span(self):
+        """float: the extent of the surface vertices in global z.
+
+        The old (pre-fold-aware) meaning of ``total_track``: the span of the
+        global z coordinates of the physical surface vertices. For straight
+        systems this equals :attr:`total_track`; for folded systems it is
+        the bounding extent in z, not a track length along the beam.
+        """
+        if self.num_surfaces < 2:
+            raise ValueError(
+                f"Cannot compute the global z span: the system has "
+                f"{self.num_surfaces} surface(s), and at least 2 are "
+                "required. Add surfaces with lens.add_surface(...)."
+            )
+        z = self.global_z_positions[1:]
         return be.max(z) - be.min(z)
 
     def n(self, wavelength):
@@ -302,18 +465,23 @@ class SurfaceGroup:
         t = self.positions
         return t[surface_number + 1] - t[surface_number]
 
-    def trace(self, rays, skip=0):
+    def trace(self, rays, skip=0, record=True):
         """Trace the given rays through the surfaces.
 
         Args:
             rays (BaseRays): List of rays to be traced.
             skip (int, optional): Number of surfaces to skip before tracing.
                 Defaults to 0.
+            record (bool, optional): Whether to store per-surface snapshots of
+                the ray state (positions, directions, intensity, OPD). The
+                snapshots feed analyses and visualization but keep eight
+                full-size arrays alive per surface; pass False when only the
+                rays returned at the image are needed. Defaults to True.
 
         """
         self.reset()
         for surface in self.surfaces[skip:]:
-            surface.trace(rays)
+            surface.trace(rays, record=record)
         return rays
 
     def add(
@@ -351,7 +519,11 @@ class SurfaceGroup:
         """
         if new_surface is None:
             if index is None:
-                raise ValueError("Must define index when defining surface.")
+                raise ValueError(
+                    "No index was given for the new surface. Pass the "
+                    "position it should occupy, e.g. "
+                    "lens.add_surface(index=1, radius=50, thickness=5)."
+                )
 
             new_surface = self.surface_factory.create_surface(
                 surface_type,
@@ -372,24 +544,45 @@ class SurfaceGroup:
             index = len(self._surfaces) - 1
         else:
             if index < 0:
-                raise IndexError(f"Index {index} cannot be negative.")
+                raise IndexError(
+                    f"Cannot add a surface at index {index}: surface indices "
+                    "are non-negative, counting from the object surface at "
+                    "index 0."
+                )
             if index > len(self._surfaces):
                 raise IndexError(
-                    f"Index {index} is out of bounds for insertion. "
-                    f"Max index for insertion is {len(self._surfaces)} (to append)."
+                    f"Cannot add a surface at index {index}: the system "
+                    f"currently has {len(self._surfaces)} surface(s), so the "
+                    f"highest valid index is {len(self._surfaces)}. Surfaces "
+                    "must be added in order, starting with the object "
+                    "surface at index 0."
                 )
             if index == 0 and len(self.surfaces) > 0:
                 raise ValueError(
-                    "Surface index cannot be zero after first surface is created."
+                    "Cannot add a surface at index 0: index 0 is the object "
+                    "surface and it already exists. Insert at index 1 or "
+                    "later, or remove the existing object surface first."
+                )
+
+            # Whether an interior insertion will rebuild downstream cs.z from
+            # cumulative thicknesses (only in relative-coordinate mode).
+            will_rebuild = not self.surface_factory.use_absolute_cs and index < len(
+                self._surfaces
+            )
+            if will_rebuild:
+                # Preflight-atomic: validate the would-be chain before the
+                # list is mutated, so a rejected insertion leaves the group
+                # exactly as it was.
+                require_global_z_geometry(
+                    self._surfaces[:index] + [new_surface] + self._surfaces[index:],
+                    "surface insertion into a relative-coordinate chain",
                 )
 
             self._surfaces.insert(index, new_surface)
             self._update_surface_links()
 
             # Update coordinate systems if surface was inserted
-            if not self.surface_factory.use_absolute_cs and index < (
-                len(self._surfaces) - 1
-            ):
+            if will_rebuild:
                 self._update_coordinate_systems(start_index=index)
 
         if new_surface.is_stop:
@@ -421,12 +614,22 @@ class SurfaceGroup:
 
         num_surfaces_before_removal = len(self.surfaces)
 
+        will_rebuild = (
+            not self.surface_factory.use_absolute_cs
+            and index < num_surfaces_before_removal - 1
+        )
+        if will_rebuild:
+            # Preflight-atomic: validate the would-be chain before the list
+            # is mutated, so a rejected removal leaves the group unchanged.
+            require_global_z_geometry(
+                self._surfaces[:index] + self._surfaces[index + 1 :],
+                "surface removal from a relative-coordinate chain",
+            )
+
         del self._surfaces[index]
 
-        if not self.surface_factory.use_absolute_cs:
-            was_not_last_surface = index < num_surfaces_before_removal - 1
-            if was_not_last_surface:
-                self._update_coordinate_systems(start_index=index)
+        if will_rebuild:
+            self._update_coordinate_systems(start_index=index)
 
         self._update_surface_links()
 
@@ -487,9 +690,30 @@ class SurfaceGroup:
                             not the object surface (index 0) and has a predecessor.
                             If `start_index` is 0, updates effectively begin
                             for surface 1 based on surface 0.
+
+        Raises:
+            UnsupportedParaxialGeometryError: If the current chain's beam
+                path is folded off global +z (or entered along another
+                direction), before any coordinate is rewritten.
+                Reconstructing every downstream position as predecessor
+                ``z + thickness`` is only meaningful while the beam path
+                runs along global +z; on a folded chain it would collapse
+                the fold onto the z axis.
         """
         if not self._surfaces:
             return
+
+        # Defensive gate for every entry point (insertion and removal
+        # preflight the would-be chain before mutating the list; direct or
+        # future callers land here). Ordinary relative-coordinate
+        # construction is unaffected: chains classified straight pass
+        # through, and a single surface defines no path to misread.
+        if len(self._surfaces) >= 2:
+            require_global_z_geometry(
+                self._surfaces,
+                "relative-coordinate reconstruction "
+                "(SurfaceGroup._update_coordinate_systems)",
+            )
 
         effective_start_index = max(start_index, 1)  # No update to object surface
 
@@ -541,6 +765,13 @@ class SurfaceGroup:
 
         Raises:
             RuntimeError: If either `start_index` or `end_index` is zero, but not both.
+            UnsupportedParaxialGeometryError: If the beam path is folded off
+                global +z (or entered along another direction), before any
+                surface order, material, coordinate or thickness is touched.
+                Flipping derives new positions and thicknesses from global z
+                differences, which is meaningless on a folded chain. This
+                guard protects the direct ``SurfaceGroup.flip()`` API as
+                well as ``OpticUpdater.flip()``.
 
         """
         n_surfaces_total = len(self._surfaces)
@@ -551,6 +782,10 @@ class SurfaceGroup:
             raise RuntimeError(
                 "Cannot flip object surface or image surface without flipping both"
             )
+
+        # Preflight-atomic: reject before list reversal, material swaps,
+        # coordinate changes or thickness updates.
+        require_global_z_geometry(self._surfaces, "SurfaceGroup.flip")
         flip_object_image_media = start_index == 0 and end_index == 0
 
         if flip_object_image_media:

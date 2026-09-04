@@ -923,5 +923,5 @@ class TestVariablesExtended:
         assert optic.surfaces[1].geometry.cs.x == 1.0
 
     def test_variable_wrapper_invalid_type(self, optic):
-        with pytest.raises(ValueError, match='Invalid variable type "invalid"'):
+        with pytest.raises(ValueError, match="Unknown variable type 'invalid'"):
             Variable(optic, type_name="invalid")

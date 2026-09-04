@@ -47,17 +47,30 @@ class ObjectSurface(Surface):
 
     @property
     def is_infinite(self):
-        """Returns True if the surface is infinitely far away, False otherwise."""
-        return be.isinf(self.geometry.cs.z)
+        """Returns True if the surface is infinitely far away, False otherwise.
+
+        Classic authoring spells an object at infinity as ``cs.z = -inf``,
+        because the axis is z. A system entered off that axis -- a collimated
+        source posed to fire along +x into a fold -- puts the same infinity in
+        x or y, so any infinite vertex coordinate says the same thing.
+        """
+        cs = self.geometry.cs
+        # Tested one axis at a time: under a multi-configuration the three
+        # can hold arrays of different lengths, which will not stack.
+        return any(
+            bool(be.any(be.isinf(be.array(coord)))) for coord in (cs.x, cs.y, cs.z)
+        )
 
     def set_aperture(self):
         """Sets the aperture of the surface."""
 
-    def trace(self, rays: BaseRays) -> BaseRays:
+    def trace(self, rays: BaseRays, record: bool = True) -> BaseRays:
         """Traces the given rays through the surface.
 
         Args:
             rays (BaseRays): The rays to be traced.
+            record (bool, optional): Whether to store the traced ray state on
+                the surface. Defaults to True.
 
         Returns:
             BaseRays: The traced rays.
@@ -65,7 +78,8 @@ class ObjectSurface(Surface):
         """
         self.reset()
         rays.trace_on_surface(self)
-        rays.record_on_surface(self)
+        if record:
+            rays.record_on_surface(self)
         return rays
 
     def _trace_paraxial(self, rays: ParaxialRays) -> ParaxialRays:

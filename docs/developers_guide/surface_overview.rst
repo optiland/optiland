@@ -33,7 +33,7 @@ When a ray interacts with a surface, the following steps are typically performed
 2. **Aperture Check**: The ray's intersection point is checked against the surface's aperture to determine if the ray is blocked.
 3. **Refraction/Reflection**: The ray's direction is updated based on Snell's law or the law of reflection, and the ray properties may be affected by the surface's material/coating properties.
 4. **Scattering**: If the surface has a BSDF, the ray may be scattered based on the scattering distribution function.
-- **Recording**: During a trace, each `Surface` temporarily stores the ray data at the intersection point.
+5. **Recording**: During a trace, each `Surface` temporarily stores the ray data at the intersection point.
 
 Surface Group
 -------------

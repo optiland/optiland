@@ -1,3 +1,9 @@
+.. _learning_guide:
+.. _learning_guide_page:
+
+Learning Guide
+==============
+
 This guide is Optiland's primary learning path. Tutorials are grouped thematically and follow a
 progressive arc where concepts from earlier sections inform later ones. Each notebook is
 self-contained and runnable; you do not need to execute prior notebooks to run any given one.
@@ -14,6 +20,7 @@ New to Optiland? Start with :ref:`start_here` to find the path that fits your go
    Tutorial 1b: Lens Properties and Prescription <examples/Tutorial_1b_Lens_Properties_and_Prescription>
    Tutorial 1c: Material Database and Catalogs <examples/Tutorial_1c_Material_Database_and_Catalogs>
    Tutorial 1d: Saving and Loading <examples/Tutorial_1d_Saving_and_Loading>
+   Tutorial 1e: Design a Doublet, End to End <examples/Tutorial_1e_Design_a_Doublet_End_to_End>
 
 
 2. Real Raytracing & Analysis
@@ -113,3 +120,34 @@ These examples demonstrate how Optiland can be used in conjunction with machine 
    Tutorial 9d: Optimizing Aspheric Singlet Lenses using Reinforcement Learning <examples/Tutorial_9d_Optimizing_Aspheric_Singlets_via_Reinforcement_Learning>
    Tutorial 9e: Wavefront Map Super-Resolution Using Generative Adversarial Networks (SR-GAN) <examples/Tutorial_9e_Wavefront_Super_Resolution_via_Generative_Adversarial_Networks>
    Tutorial 9f: Predicting Physical Lens Misalignments from Optical Spot Diagrams <examples/Tutorial_9f_Predicting_Physical_Lens_Misalignments_from_Spot_Diagrams>
+
+
+10. Non-Sequential & Illumination
+---------------------------------
+
+Optiland's differentiable **non-sequential (NSQ)** engine handles illumination design,
+stray-light and ghost analysis, and non-imaging optics - where light propagates freely
+through a 3-D scene rather than a fixed surface sequence. Start with the numbered on-ramp
+below, then continue into the 11-notebook gallery deep dive (sources, components,
+detectors, scattering, diagnostics, multi-source illumination, stray light, reflective
+systems, advanced topics, and differentiable optimization).
+
+.. toctree::
+   :maxdepth: 1
+
+   Tutorial 10a: Non-Sequential & Illumination <examples/Tutorial_10a_Non_Sequential_and_Illumination>
+
+* :ref:`NSQ gallery deep dive (notebooks 01-11) <gallery_nonsequential>`
+* :ref:`NSQ Limitations & Roadmap <nsq_limitations_and_roadmap>`
+
+Community Resources
+--------------------
+
+`Computational Optics <https://inspiration-overflow.github.io/computational-optics/>`_ is a free,
+open-source (MIT-licensed) textbook by community contributor `goldengrape <https://github.com/goldengrape>`_
+that builds up computational optics from first principles (ray representation, refraction, paraxial
+theory, OPD/wavefront error, PSF/OTF/MTF, and a complete Cooke Triplet worked example) using Optiland
+for validation and worked examples throughout. It is available in English and Chinese. Note that its
+companion code pins a specific Optiland version, so API details may drift slightly from the latest
+release; see its `Companion Code <https://inspiration-overflow.github.io/computational-optics/companion-code.html>`_
+page for details.

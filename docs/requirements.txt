@@ -1,7 +1,15 @@
-sphinx==7.4.7
-sphinx-rtd-theme==2.0.0
-nbsphinx==0.9.5
-sphinx-gallery==0.17.1
-Pygments==2.20.0
-ipython==8.26.0
-pandoc
+# pip/uv mirror of docs/build-environment.yml (the canonical docs build
+# contract). Keep the two files in sync. pandoc and micromamba are system
+# tools and must be installed separately when using this file.
+sphinx==8.2.3
+docutils==0.21.2
+pydata-sphinx-theme==0.21.0
+sphinx-design==0.7.0
+sphinx-copybutton==0.5.2
+sphinx-sitemap==2.9.0
+sphinx-notfound-page==1.1.0
+Pygments==2.21.0
+nbsphinx==0.9.8
+ipython==9.17.0
+jupyterlite-sphinx==0.23.0
+jupyterlite-xeus==5.0.0

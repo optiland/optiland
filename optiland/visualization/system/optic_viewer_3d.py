@@ -1,6 +1,6 @@
 """
 OpticViewer3D: A class for visualizing optical systems in 3D.
-This module provides the `OpticViewer3D` class, which extends the `BaseViewer` class
+This module provides the `OpticViewer3D` class, which extends the `BaseViewer3D` class
 to visualize optical systems using VTK for 3D rendering. It allows for ray tracing and
 system representation in a 3D space, enabling interactive exploration of
 optical components and ray paths.
@@ -14,12 +14,12 @@ from __future__ import annotations
 
 import vtk
 
-from optiland.visualization.base import BaseViewer
+from optiland.visualization.base import BaseViewer3D
 from optiland.visualization.system.rays import Rays3D
 from optiland.visualization.system.system import OpticalSystem
 
 
-class OpticViewer3D(BaseViewer):
+class OpticViewer3D(BaseViewer3D):
     """A class used to visualize optical systems in 3D.
 
     Args:
@@ -33,9 +33,7 @@ class OpticViewer3D(BaseViewer):
         iren: The vtkRenderWindowInteractor object for interaction.
 
     Methods:
-        view(fields='all', wavelengths='primary', num_rays=24,
-             distribution='ring', figsize=(1200, 800), dark_mode=False):
-            Visualizes the optical system in 3D.
+        See :meth:`view` for visualizing the optical system in 3D.
 
     """
 
@@ -80,7 +78,7 @@ class OpticViewer3D(BaseViewer):
                 surface are not shown. Defaults to False.
 
         """
-        renderer = vtk.vtkRenderer()
+        renderer = self._make_renderer(dark_mode)
         self.ren_win.AddRenderer(renderer)
 
         self.iren.SetRenderWindow(self.ren_win)
@@ -98,16 +96,6 @@ class OpticViewer3D(BaseViewer):
             hide_vignetted=hide_vignetted,
         )
         self.system.plot(renderer)
-
-        renderer.GradientBackgroundOn()
-        renderer.SetGradientMode(vtk.vtkViewport.GradientModes.VTK_GRADIENT_VERTICAL)
-
-        if dark_mode:
-            renderer.SetBackground(0.13, 0.15, 0.19)
-            renderer.SetBackground2(0.195, 0.21, 0.24)
-        else:
-            renderer.SetBackground(0.8, 0.9, 1.0)
-            renderer.SetBackground2(0.4, 0.5, 0.6)
 
         self.ren_win.SetSize(*figsize)
         self.ren_win.SetWindowName("Optical System - 3D Viewer")

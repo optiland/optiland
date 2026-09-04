@@ -1,7 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Literal, TypeAlias, TypedDict, TypeVar, Union, Unpack
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    TypeAlias,
+    TypedDict,
+    TypeVar,
+    Union,
+    Unpack,
+)
 
 from numpy.typing import NDArray
 
@@ -11,8 +20,8 @@ if TYPE_CHECKING:
     from optiland.coatings import BaseCoating
     from optiland.physical_apertures.base import BaseAperture
 
-    BEArray: TypeAlias = Tensor | NDArray
-    ScalarOrArray: TypeAlias = float | Tensor | NDArray
+    BEArray: TypeAlias = Tensor | NDArray[Any]
+    ScalarOrArray: TypeAlias = float | Tensor | NDArray[Any]
 
 
 __all__ = [
@@ -33,9 +42,9 @@ __all__ = [
     "ZernikeType",
 ]
 
-BEArrayT = TypeVar("BEArrayT", NDArray, "Tensor", Union[NDArray, "Tensor"])
+BEArrayT = TypeVar("BEArrayT", NDArray[Any], "Tensor", Union[NDArray[Any], "Tensor"])
 ScalarOrArrayT = TypeVar(
-    "ScalarOrArrayT", float, NDArray, "Tensor", Union[NDArray, "Tensor"]
+    "ScalarOrArrayT", float, NDArray[Any], "Tensor", Union[NDArray[Any], "Tensor"]
 )
 
 DistributionType = Literal[

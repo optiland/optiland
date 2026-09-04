@@ -160,9 +160,9 @@ class ThroughFocusMTF(ThroughFocusAnalysis):
 
         Notes
         -----
-        - Spline smoothing uses cubic splines if at least 4 data points are available,
-        linear splines for 2-3 points, and raw data is plotted if fewer points
-        are present.
+        - Spline smoothing uses cubic splines if at least 4 data points are
+          available, linear splines for 2-3 points, and raw data is plotted
+          if fewer points are present.
         - The legend displays the field coordinates (Hx, Hy) for each curve.
         - The plot includes grid lines and is formatted for clarity.
         """

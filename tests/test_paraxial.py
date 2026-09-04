@@ -29,6 +29,7 @@ from optiland.samples.simple import (
     TelescopeDoublet,
 )
 from optiland.samples.telescopes import HubbleTelescope
+from optiland.surfaces.object_surface import ObjectSurface
 
 from .utils import assert_allclose
 
@@ -1273,3 +1274,207 @@ def test_equivalence(paraxial_surfaces, real_surfaces, set_test_backend):
         _get_paraxial_items(paraxial_lens.paraxial),
         _get_paraxial_items(real_lens.paraxial),
     )
+
+
+def test_marginal_ray_without_object_surface_raises_descriptive_error(
+    set_test_backend,
+):
+    lens = CookeTriplet()
+    lens.surfaces.surfaces = [
+        surface
+        for surface in lens.surfaces.surfaces
+        if not isinstance(surface, ObjectSurface)
+    ]
+    assert lens.object_surface is None
+
+    with pytest.raises(ValueError, match="No object surface is defined"):
+        lens.paraxial.marginal_ray()
+
+
+def test_chief_ray_without_field_definition_raises_descriptive_error(set_test_backend):
+    lens = CookeTriplet()
+    lens.fields.field_definition = None
+
+    with pytest.raises(ValueError, match="No field definition is set"):
+        lens.paraxial.chief_ray()
+
+
+def _air_spaced_singlet(n_lens=1.5, r1=50.0, r2=-50.0, d=5.0):
+    """Build a singlet in air, for comparison against analytic formulas."""
+    lens = Optic()
+    lens.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+    lens.surfaces.add(
+        index=1, radius=r1, thickness=d, material=IdealMaterial(n=n_lens), is_stop=True
+    )
+    lens.surfaces.add(index=2, radius=r2, thickness=95.0)
+    lens.surfaces.add(index=3)
+
+    lens.set_aperture(aperture_type="EPD", value=10)
+    lens.fields.set_type(field_type="angle")
+    lens.fields.add(y=0)
+    lens.wavelengths.add(value=0.5876, is_primary=True)
+    return lens
+
+
+@pytest.mark.parametrize("optic_and_values", get_optic_data(), indirect=True)
+def test_f2_range_over_full_system_matches_f2(optic_and_values):
+    """The EFL of the complete surface range equals the system EFL."""
+    optic_instance, values = optic_and_values
+    last = optic_instance.surfaces.num_surfaces - 1
+    assert_allclose(optic_instance.paraxial.f2_range(1, last), values["f2"])
+
+
+def test_f2_range_single_element_matches_thick_lens(set_test_backend):
+    """A lone thick element reproduces the Jenkins & White thick-lens EFL."""
+    n_lens, r1, r2, d = 1.5, 50.0, -50.0, 5.0
+    lens = _air_spaced_singlet(n_lens, r1, r2, d)
+
+    expected = ThickLens(n1=1.0, n2=n_lens, n3=1.0, r1=r1, r2=r2, d=d).f2
+    assert_allclose(lens.paraxial.f2_range(1, 2), expected)
+
+
+def test_f2_range_element_within_system_matches_thick_lens(set_test_backend):
+    """A group embedded in a larger system is evaluated in isolation."""
+    lens = CookeTriplet()
+
+    # First element of the triplet: surfaces 1 and 2, with air on both sides.
+    n_lens = be.to_numpy(lens.surfaces[1].material_post.n(lens.primary_wavelength))
+    radii = be.to_numpy(lens.surfaces.radii)
+    positions = be.to_numpy(be.ravel(lens.surfaces.positions))
+
+    expected = ThickLens(
+        n1=1.0,
+        n2=n_lens.item(),
+        n3=1.0,
+        r1=radii[1].item(),
+        r2=radii[2].item(),
+        d=(positions[2] - positions[1]).item(),
+    ).f2
+    assert_allclose(lens.paraxial.f2_range(1, 2), expected)
+
+
+def test_f2_range_single_surface(set_test_backend):
+    """A single refracting surface has an EFL of n' / power."""
+    n_lens, r1 = 1.5, 50.0
+    lens = _air_spaced_singlet(n_lens=n_lens, r1=r1)
+
+    assert_allclose(lens.paraxial.f2_range(1, 1), n_lens / ((n_lens - 1.0) / r1))
+
+
+def test_f2_range_is_not_a_decomposition_of_system_power(set_test_backend):
+    """Group EFLs are computed in isolation, not by splitting system power."""
+    lens = CookeTriplet()
+    group_powers = sum(
+        1.0 / float(be.to_numpy(lens.paraxial.f2_range(k, k + 1))) for k in (1, 3, 5)
+    )
+    system_power = 1.0 / float(be.to_numpy(lens.paraxial.f2()))
+
+    # The group powers ignore the separations between the groups' principal
+    # planes, so they must not be mistaken for the system power. Assert they
+    # genuinely differ, so the documented caveat stays honest.
+    assert abs(group_powers - system_power) > 1e-3
+
+
+def test_f2_range_afocal_returns_inf(set_test_backend):
+    """A range with no net power has an infinite EFL."""
+    lens = _air_spaced_singlet()
+
+    # Surface 3 is the flat image surface, with air on both sides.
+    assert be.isinf(lens.paraxial.f2_range(3, 3))
+
+
+def test_f2_range_paraxial_surface(set_test_backend):
+    """Ideal (paraxial) surfaces report their own focal length."""
+    lens = Optic()
+    lens.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+    lens.surfaces.add(
+        index=1, surface_type="paraxial", f=-50.0, thickness=0.0, is_stop=True
+    )
+    lens.surfaces.add(index=2)
+    lens.set_aperture(aperture_type="EPD", value=10)
+    lens.fields.set_type(field_type="angle")
+    lens.fields.add(y=0)
+    lens.wavelengths.add(value=0.5876, is_primary=True)
+
+    assert_allclose(lens.paraxial.f2_range(1, 1), -50.0)
+
+
+def test_f2_range_respects_wavelength(set_test_backend):
+    """The wavelength argument selects the dispersion used for the group."""
+    lens = CookeTriplet()
+    blue = float(be.to_numpy(lens.paraxial.f2_range(1, 2, wavelength=0.4861)))
+    red = float(be.to_numpy(lens.paraxial.f2_range(1, 2, wavelength=0.6563)))
+
+    # Normal dispersion: the blue focal length is the shorter of the two.
+    assert blue < red
+
+
+def test_ray_transfer_matrix_determinant(set_test_backend):
+    """det(M) equals n_before / n_after for a purely refractive range."""
+    lens = CookeTriplet()
+    matrix = be.to_numpy(lens.paraxial.ray_transfer_matrix(1, 6))
+    n = be.to_numpy(lens.surfaces.n(lens.primary_wavelength))
+
+    determinant = matrix[0, 0] * matrix[1, 1] - matrix[0, 1] * matrix[1, 0]
+    assert_allclose(determinant, n[0] / n[6])
+
+
+def test_ray_transfer_matrix_composes(set_test_backend):
+    """Splitting a range and re-composing it reproduces the whole matrix."""
+    lens = CookeTriplet()
+    positions = be.ravel(lens.surfaces.positions)
+
+    whole = lens.paraxial.ray_transfer_matrix(1, 6)
+    first = lens.paraxial.ray_transfer_matrix(1, 3)
+    second = lens.paraxial.ray_transfer_matrix(4, 6)
+    gap = float(be.to_numpy(positions[4] - positions[3]))
+    transfer = be.array([[1.0, gap], [0.0, 1.0]])
+
+    assert_allclose(be.matmul(second, be.matmul(transfer, first)), whole)
+
+
+def test_ray_transfer_matrix_invalid_range(set_test_backend):
+    """Out-of-bounds and inverted surface ranges are rejected."""
+    lens = CookeTriplet()
+    last = lens.surfaces.num_surfaces - 1
+
+    with pytest.raises(ValueError, match="at least 1"):
+        lens.paraxial.f2_range(0, 2)
+
+    with pytest.raises(ValueError, match="largest valid index"):
+        lens.paraxial.f2_range(1, last + 1)
+
+    with pytest.raises(ValueError, match="must not exceed end"):
+        lens.paraxial.ray_transfer_matrix(4, 2)
+
+
+def test_f2_range_is_differentiable(set_test_backend):
+    """The group EFL carries gradients back to the surface parameters."""
+    if be.get_backend() != "torch":
+        pytest.skip("Autodiff test only runs for torch backend")
+
+    be.grad_mode.enable()
+    radius_tensor = be.array(50.0)
+    radius_tensor.requires_grad = True
+
+    lens = Optic()
+    lens.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+    lens.surfaces.add(
+        index=1,
+        radius=radius_tensor,
+        thickness=5.0,
+        material=IdealMaterial(n=1.5),
+        is_stop=True,
+    )
+    lens.surfaces.add(index=2, radius=-50.0, thickness=95.0)
+    lens.surfaces.add(index=3)
+    lens.set_aperture(aperture_type="EPD", value=10)
+    lens.fields.set_type(field_type="angle")
+    lens.fields.add(y=0)
+    lens.wavelengths.add(value=0.5876, is_primary=True)
+
+    lens.paraxial.f2_range(1, 2).backward()
+
+    grad = lens.surfaces[1].geometry.radius.grad
+    assert grad is not None
+    assert be.to_numpy(grad) != 0

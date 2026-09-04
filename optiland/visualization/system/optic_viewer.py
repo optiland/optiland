@@ -12,18 +12,16 @@ re-worked by Manuel Fragata Mendes, june 2025
 
 from __future__ import annotations
 
-import matplotlib.pyplot as plt
 import numpy as np
 
 import optiland.backend as be
-from optiland.visualization.base import BaseViewer
+from optiland.visualization.base import BaseViewer2D
 from optiland.visualization.system.interaction import InteractionManager
 from optiland.visualization.system.rays import Rays2D
 from optiland.visualization.system.system import OpticalSystem
-from optiland.visualization.themes import get_active_theme
 
 
-class OpticViewer(BaseViewer):
+class OpticViewer(BaseViewer2D):
     """A class used to visualize optical systems.
 
     Args:
@@ -35,9 +33,8 @@ class OpticViewer(BaseViewer):
         system: An instance of OpticalSystem for system representation.
 
     Methods:
-        view(fields='all', wavelengths='primary', num_rays=3,
-             distribution='line_y', figsize=(10, 4), xlim=None, ylim=None):
-            Visualizes the optical system with specified parameters.
+        See :meth:`view` for visualizing the optical system with specified
+        parameters.
 
     """
 
@@ -64,7 +61,8 @@ class OpticViewer(BaseViewer):
         tooltip_format=None,
         show_legend=True,
         projection="YZ",
-        ax: BaseViewer | None = None,
+        ax=None,
+        theme=None,
     ):
         """Visualizes the optical system.
 
@@ -104,18 +102,8 @@ class OpticViewer(BaseViewer):
             else:
                 distribution = "line_y"
 
-        theme = get_active_theme()
-        params = theme.parameters
-        if figsize is None:
-            figsize = params["figure.figsize"]
-
-        if ax is None:
-            fig, ax = plt.subplots(figsize=figsize)
-            fig.set_facecolor(params["figure.facecolor"])
-        else:
-            fig = ax.get_figure()
-
-        ax.set_facecolor(params["axes.facecolor"])
+        theme = self._resolve_theme(theme)
+        fig, ax = self._make_figure(theme, figsize, ax)
 
         interaction_manager = InteractionManager(fig, ax, self.optic, tooltip_format)
 
@@ -140,39 +128,12 @@ class OpticViewer(BaseViewer):
             interaction_manager.register_artist(artist, surface)
 
         ax.axis("image")
-        if projection == "YZ":
-            ax.set_xlabel("Z [mm]", color=params["axes.labelcolor"])
-            ax.set_ylabel("Y [mm]", color=params["axes.labelcolor"])
-        elif projection == "XZ":
-            ax.set_xlabel("Z [mm]", color=params["axes.labelcolor"])
-            ax.set_ylabel("X [mm]", color=params["axes.labelcolor"])
-        else:  # XY
-            ax.set_xlabel("X [mm]", color=params["axes.labelcolor"])
-            ax.set_ylabel("Y [mm]", color=params["axes.labelcolor"])
-        ax.tick_params(axis="x", colors=params["xtick.color"])
-        ax.tick_params(axis="y", colors=params["ytick.color"])
-        ax.spines["bottom"].set_color(params["axes.edgecolor"])
-        ax.spines["top"].set_color(params["axes.edgecolor"])
-        ax.spines["right"].set_color(params["axes.edgecolor"])
-        ax.spines["left"].set_color(params["axes.edgecolor"])
-
-        if title:
-            ax.set_title(title, color=params["text.color"])
-
         if xlim is None or ylim is None:
             auto_xlim, auto_ylim = self._default_axis_limits(projection)
             xlim = xlim or auto_xlim
             ylim = ylim or auto_ylim
-        if xlim:
-            ax.set_xlim(xlim)
-        if ylim:
-            ax.set_ylim(ylim)
 
-        ax.grid(
-            visible=True,
-            color=params["grid.color"],
-            alpha=params["grid.alpha"],
-        )
+        self._apply_axes_style(ax, projection, theme, title=title, xlim=xlim, ylim=ylim)
 
         # Return the figure, axes and interaction_manager
         return fig, ax, interaction_manager
@@ -209,13 +170,23 @@ class OpticViewer(BaseViewer):
             # A single cross-section at one z -- no object-segment issue.
             return None, None
 
-        positions = be.to_numpy(self.optic.surfaces.positions).reshape(-1)
+        # Axis limits are drawn in the global frame, so use the full 3-D
+        # vertex chain rather than the unfolded axial coordinate
+        # ``positions`` reports. A folded path can double back in z (first/
+        # last surface do not bound the span) and walk off-axis
+        # transversely (the vertical axis is not centered on 0), so both
+        # axes are sized from the min/max vertex coordinates. For a
+        # straight +z system every vertex has x = y = 0 and z increases
+        # monotonically, which reduces to the previous first-to-last-z,
+        # symmetric-about-the-axis behavior exactly.
+        vertices = be.to_numpy(self.optic.surfaces.vertices_gcs)
         start_idx = 1 if self.optic.object_surface.is_infinite else 0
-        if start_idx >= len(positions) - 1:
+        if start_idx >= vertices.shape[0] - 1:
             return None, None
+        vertices = vertices[start_idx:]
 
-        z_min = float(positions[start_idx])
-        z_max = float(positions[-1])
+        z_min = float(vertices[:, 2].min())
+        z_max = float(vertices[:, 2].max())
         z_margin = max(0.15 * (z_max - z_min), 1e-6)
         auto_xlim = (z_min - z_margin, z_max + z_margin)
 
@@ -227,7 +198,12 @@ class OpticViewer(BaseViewer):
         r_max = float(r_extent.max())
         if r_max <= 0:
             return auto_xlim, None
-        r_margin = max(0.15 * r_max, 1e-6)
-        auto_ylim = (-(r_max + r_margin), r_max + r_margin)
+
+        # Vertical axis: transverse component of the drawn projection.
+        t_comp = 0 if projection == "XZ" else 1
+        t_min = float(vertices[:, t_comp].min())
+        t_max = float(vertices[:, t_comp].max())
+        r_margin = max(0.15 * max(r_max, t_max - t_min), 1e-6)
+        auto_ylim = (t_min - r_max - r_margin, t_max + r_max + r_margin)
 
         return auto_xlim, auto_ylim

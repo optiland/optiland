@@ -666,11 +666,14 @@ class TestChebyshevGeometry:
             norm_y=10,
         )
 
+        # Expected values include the 1/norm_x, 1/norm_y chain-rule factors so
+        # the normal describes the same surface as sag(); validated against
+        # central differences of sag() in test_nr_implicit_diff_chebyshev.py.
         rays = RealRays(1.0, 2.0, 3.0, 0.0, 0.0, 1.0, 1.0, 1.0)
         nx, ny, nz = geometry.surface_normal(rays)
-        assert_allclose(nx, 0.14317439)
-        assert_allclose(ny, -0.07668599)
-        assert_allclose(nz, -0.98672202)
+        assert_allclose(nx, -0.02018265)
+        assert_allclose(ny, -0.07704044)
+        assert_allclose(nz, -0.99682367)
 
     def test_invalid_input(self, set_test_backend):
         cs = CoordinateSystem()

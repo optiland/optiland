@@ -30,6 +30,8 @@ This section provides an overview of Optiland modules related to ray aiming.
    optiland.rays.ray_aiming.cached
    optiland.rays.ray_aiming.initialization
    optiland.rays.ray_aiming.iterative
+   optiland.rays.ray_aiming.parameterization
    optiland.rays.ray_aiming.paraxial
+   optiland.rays.ray_aiming.pupil_map
    optiland.rays.ray_aiming.registry
    optiland.rays.ray_aiming.robust

@@ -140,13 +140,35 @@ class ThirdOrderAberrations:
         terms = [term_func(k) for k in range(1, self._N - 1)]
         return be.array(terms)
 
+    def _dispersion_wavelengths(self) -> tuple[float, float]:
+        """Return the (short, long) wavelengths used for the chromatic terms.
+
+        The chromatic aberration coefficients differentiate the system between
+        two wavelengths. Those have to be wavelengths the system is actually
+        specified over: an infrared design differenced across the visible F and
+        C lines produces a meaningless number, and for many infrared glasses
+        there is no refractive index data at 0.4861 µm to evaluate in the first
+        place.
+
+        Uses the extremes of the system's own wavelength set, falling back to
+        the primary wavelength when only one is defined — in which case the
+        chromatic terms are identically zero, which is the correct answer for a
+        monochromatic system.
+        """
+        values = [float(be.to_numpy(w.value)) for w in self._optic.wavelengths]
+        if not values:  # pragma: no cover - an Optic always carries one
+            primary = float(self._optic.primary_wavelength)
+            return primary, primary
+        return min(values), max(values)
+
     def _precalculations(self) -> None:
         self._inv: float = self._optic.paraxial.invariant()
         self._on_axis = be.isclose(self._inv, be.array(0.0))
         self._n = self._signed_refractive_indices(self._optic.primary_wavelength)
-        n_F = self._signed_refractive_indices(0.4861)
-        n_C = self._signed_refractive_indices(0.6563)
-        self._dn = n_F - n_C
+        short, long = self._dispersion_wavelengths()
+        self._dn = self._signed_refractive_indices(
+            short
+        ) - self._signed_refractive_indices(long)
 
         self._N: int = self._optic.surfaces.num_surfaces
         self._C = 1 / self._optic.surfaces.radii
@@ -231,21 +253,27 @@ class ThirdOrderAberrations:
         )
         return spherical + self._get_conic_term(k, p_ya=1, p_yb=3)
 
-    def _TAchC_term(self, k: int) -> BEArray:
+    def _chromatic_prefactor(self, k: int) -> BEArray:
+        """Shared factor of the two chromatic terms at surface ``k``.
+
+        Note the two different index bases in play. ``_ya`` is the full
+        marginal-ray array returned by ``paraxial.marginal_ray()``, indexed by
+        surface with ``_ya[0]`` at the object, so the height *at* surface ``k``
+        is ``_ya[k]``. ``_i`` and ``_ip`` are lists built over
+        ``range(1, N - 1)``, so the value for surface ``k`` is ``_i[k - 1]``.
+        Mixing the two up costs a one-surface shift in the ray height.
+        """
         return (
-            -self._ya[k - 1]
-            * self._i[k - 1]
+            -self._ya[k]
             / (self._n[-1] * self._ua[-1])
             * (self._dn[k - 1] - self._n[k - 1] / self._n[k] * self._dn[k])
         )
 
+    def _TAchC_term(self, k: int) -> BEArray:
+        return self._chromatic_prefactor(k) * self._i[k - 1]
+
     def _TchC_term(self, k: int) -> BEArray:
-        return (
-            -self._ya[k - 1]
-            * self._ip[k - 1]
-            / (self._n[-1] * self._ua[-1])
-            * (self._dn[k - 1] - self._n[k - 1] / self._n[k] * self._dn[k])
-        )
+        return self._chromatic_prefactor(k) * self._ip[k - 1]
 
     def _sum_seidels(
         self,

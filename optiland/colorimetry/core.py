@@ -103,8 +103,8 @@ def spectrum_to_xyz(
 
     References:
         - CIE 15:2004 Colorimetry, 3rd Edition.
-        - ISO 11664-3:2019 (CIE S 014-3/E:2011) Colorimetry — Part 3: CIE T
-        ristimulus Values.
+        - ISO 11664-3:2019 (CIE S 014-3/E:2011) Colorimetry — Part 3: CIE
+          Tristimulus Values.
 
     Args:
         wavelengths: List of wavelengths of the measured spectrum (in nm).
@@ -211,10 +211,11 @@ def xyz_to_srgb(
     Uses the standard sRGB matrix (D65) and sRGB Gamma correction.
 
     References:
-        - IEC 61966-2-1:1999 Multimedia systems and equipment - Colour measurement
-        and management - Part 2-1: Colour management - Default RGB colour space - sRGB.
-        - Anderson, M., Motta, R., Chandrasekar, S., & Stokes, M. (1996). Proposal for
-        a Standard Default Color Space for the Internet—sRGB.
+        - IEC 61966-2-1:1999 Multimedia systems and equipment - Colour
+          measurement and management - Part 2-1: Colour management - Default
+          RGB colour space - sRGB.
+        - Anderson, M., Motta, R., Chandrasekar, S., & Stokes, M. (1996).
+          Proposal for a Standard Default Color Space for the Internet—sRGB.
     """
     X, Y, Z = _extract_xyz(X, Y, Z)
 

@@ -115,10 +115,16 @@ class SurfaceFactory:
             Surface: The created surface object.
 
         Raises:
-            ValueError: If the index is greater than the number of surfaces.
+            IndexError: If the index is greater than the number of surfaces.
         """
         if index > self._surface_group.num_surfaces:
-            raise IndexError("Surface index cannot be greater than number of surfaces.")
+            num_surfaces = self._surface_group.num_surfaces
+            raise IndexError(
+                f"Cannot add surface at index {index}: the system currently has "
+                f"{num_surfaces} surface{'s' if num_surfaces != 1 else ''}, so the "
+                f"highest valid index is {num_surfaces}. Surfaces must be "
+                "added in order, starting with the object surface at index 0."
+            )
 
         # Build coordinate system
         coordinate_system = self._coordinate_factory.create(

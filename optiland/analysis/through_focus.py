@@ -10,6 +10,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 import optiland.backend as be
+from optiland.paraxial_path import require_global_z_geometry
 
 
 class ThroughFocusAnalysis(ABC):
@@ -53,6 +54,10 @@ class ThroughFocusAnalysis(ABC):
         fields="all",
         wavelengths: str | list[float] = "all",
     ):
+        # Guard before any geometry mutation: defocus steps write axial
+        # offsets into the image surface's global cs.z only.
+        require_global_z_geometry(optic.surfaces, "ThroughFocusAnalysis")
+
         self.optic = optic
         self.delta_focus = delta_focus
         self._validate_num_steps(num_steps)

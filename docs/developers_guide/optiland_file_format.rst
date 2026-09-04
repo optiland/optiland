@@ -62,7 +62,7 @@ Example Workflow
    optic = load_optiland_file("example_design.json")
 
 Interoperability with Zemax, CODE V and OSLO
------------------------------------
+---------------------------------------------
 
 Optiland can generate its file format from Zemax `.zmx`, CODE V `.seq`, and OSLO `.len` files. This feature simplifies transitioning optical
 designs from these platforms to Optiland, preserving the integrity of system properties. 

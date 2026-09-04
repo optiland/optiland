@@ -14,6 +14,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Literal
 
 import optiland.backend as be
+from optiland.paraxial_path import require_nonsingular_tangent_angles
 
 from ..fields.field_types import AngleField
 from .reference_geometry import PlanarReference, ReferenceGeometry, SphericalReference
@@ -119,6 +120,9 @@ class ReferenceStrategy(ABC):
         max_field_deg = self.optic.fields.max_field
         fx = hx * max_field_deg
         fy = hy * max_field_deg
+        require_nonsingular_tangent_angles(
+            fx, fy, operation="wavefront tilt correction"
+        )
         fx_rad = be.deg2rad(fx)
         fy_rad = be.deg2rad(fy)
 
@@ -157,8 +161,17 @@ class ChiefRayStrategy(ReferenceStrategy):
 
     def __init__(self, optic: Optic, distribution: BaseDistribution, **kwargs) -> None:
         super().__init__(optic, distribution, **kwargs)
-        self.pupil_z = optic.paraxial.XPL() + optic.surfaces.positions[-1]
+        # The reference-sphere radius is measured to the exit pupil's
+        # real-space 3-D point (image vertex + parity * XPL along the
+        # incoming image-space leg). For a straight system this reduces to
+        # (0, 0, image_z + XPL), the historical scalar anchor.
+        self.exit_pupil_point = optic.paraxial.exit_pupil_point_gcs()
         self._chief_ray = None  # Cache for single field calculation usage
+
+    @property
+    def pupil_z(self):
+        """Legacy scalar accessor: global z of the 3-D exit-pupil point."""
+        return self.exit_pupil_point[2]
 
     def compute_wavefront_data(
         self, field: tuple[float, float], wavelength: float
@@ -199,6 +212,21 @@ class ChiefRayStrategy(ReferenceStrategy):
         pupil_x = rays.x - t * rays.L
         pupil_y = rays.y - t * rays.M
         pupil_z = rays.z - t * rays.N
+
+        valid_mask = (
+            be.isfinite(opd_wv)
+            & be.isfinite(pupil_x)
+            & be.isfinite(pupil_y)
+            & be.isfinite(pupil_z)
+            & be.isfinite(intensity)
+        )
+        if not be.any(valid_mask):
+            raise ValueError("No valid ray samples found for chief-ray wavefront.")
+        opd_wv = be.where(valid_mask, opd_wv, be.zeros_like(opd_wv))
+        pupil_x = be.where(valid_mask, pupil_x, be.zeros_like(pupil_x))
+        pupil_y = be.where(valid_mask, pupil_y, be.zeros_like(pupil_y))
+        pupil_z = be.where(valid_mask, pupil_z, be.zeros_like(pupil_z))
+        intensity = be.where(valid_mask, intensity, be.zeros_like(intensity))
 
         # 6. Handle polarization data if available
         kwargs = {}
@@ -245,7 +273,10 @@ class ChiefRayStrategy(ReferenceStrategy):
         Returns:
             SphericalReference: The spherical reference geometry.
         """
-        R = be.sqrt(x**2 + y**2 + (z - self.pupil_z) ** 2)
+        # Radius = |chief image point - 3-D exit pupil point|; never formed
+        # by adding an axial scalar to global z alone.
+        xp_x, xp_y, xp_z = self.exit_pupil_point
+        R = be.sqrt((x - xp_x) ** 2 + (y - xp_y) ** 2 + (z - xp_z) ** 2)
         return SphericalReference((x.item(), y.item(), z.item()), R.item())
 
     def _calculate_sphere_from_chief_ray(

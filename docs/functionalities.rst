@@ -12,6 +12,10 @@ Design Tools
   Optiland supports both NumPy and PyTorch backends for all core computations. This flexibility enables easy integration with scientific computing pipelines and deep learning frameworks.
 - **Sequential Ray Tracing**:
   Trace rays through traditional or advanced systems, including asymmetric and freeform designs.
+- **Nonsequential Ray Tracing**:
+  Simulate complex light-matter interactions in non-sequential systems, including scattering, multi-source illumination, and stray light analysis.
+- **Multi-Sequence Tracing**:
+  Define sub-sequences that trace the same surfaces in a different order (ghost paths, reverse traces, sub-component views) via ``Optic.add_sequence``. Geometry and materials stay linked by reference to the base system, so edits and optimization on the base system are reflected in every sequence.
 - **Lens System Modeling**:
   Built-in support for spherical, conic, aspheric, and fully freeform surfaces.
 - **Aperture, Field, and Wavelength Configuration**:
@@ -55,7 +59,7 @@ Optimization and Tolerancing
   Add new optimization variables, constraints, or algorithms with minimal overhead.
 
 Extended Source Modeling
------------------------
+-------------------------
 
 - **Extended Source Ray Tracing**:
   Model spatially and angularly extended light sources and trace them through optical systems using the ``ExtendedSourceOptic`` wrapper.
@@ -67,6 +71,26 @@ Extended Source Modeling
   Validate source definitions with multi-panel diagnostic plots showing spatial distributions, angular distributions, cross-sections, and ray propagation paths.
 - **Irradiance Analysis Compatibility**:
   Compute incoherent irradiance distributions at detector surfaces from extended source illumination.
+
+Nonsequential Ray Tracing
+-------------------------
+
+- **Monte Carlo Simulation**:
+  Utilize unbiased Monte Carlo sampling to simulate complex optical systems where light can follow any path.
+- **Complex Scene Modeling**:
+  Define scenes with multiple sources, lenses, mirrors, and detectors placed arbitrarily in 3D space.
+- **Surface Interaction Models**:
+  Support for refraction, reflection (including TIR), absorption, and BSDF-based scattering.
+- **Multiple Source Types**:
+  Model light from point sources, collimated beams, and extended spatial/angular sources.
+- **Advanced Detectors**:
+  Analyze system performance with irradiance maps, spectral detectors, and far-field (angular) distributions.
+- **Stray Light and Ghost Analysis**:
+  Identify and quantify unwanted light paths and ghost reflections.
+- **Two Engines, Two Jobs**:
+  A fast NumPy forward path for production illumination/stray-light traces (1e7+ rays), and a PyTorch path that builds a full autograd graph through the Monte Carlo loop for differentiable design (~1e5 rays, depth 16).
+- **Differentiable Illumination / Stray-Light Design**:
+  Optimize scene parameters (radii, positions, dispersion) end-to-end with ``loss.backward()`` by switching to the PyTorch backend.
 
 Material Database
 -----------------

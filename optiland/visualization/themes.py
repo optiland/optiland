@@ -7,6 +7,7 @@ extensible, allowing for the creation of new themes and the modification of
 existing ones.
 
 The core components of this module are:
+
 - The `Theme` class, which encapsulates all styling parameters.
 - A registry of predefined themes, such as 'light' and 'dark'.
 - A global state that holds the currently active theme.

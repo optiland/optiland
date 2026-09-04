@@ -10,6 +10,7 @@ Implemented in Optiland by Kramer Harrison, 2025
 from __future__ import annotations
 
 import abc
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import matplotlib.pyplot as plt
@@ -27,65 +28,66 @@ if TYPE_CHECKING:
     from matplotlib.figure import Figure
 
 
-def _plot_angle_vs_height(
-    plot_data_list: list,
-    axis: int,
-    optic_name: str,
-    plot_style: str,
-    ax: Axes,
-    title: str,
-    color_label: str,
-    cmap: str | Colormap,
-) -> None:
+@dataclass(frozen=True)
+class _AngleVsHeightPlotSpec:
+    """Everything needed to render one angle-vs-height plot, besides the axes."""
+
+    plot_data_list: list
+    axis: int
+    optic_name: str
+    plot_style: str
+    title: str | None
+    color_label: str
+    cmap: str | Colormap
+
+
+def _compose_title(title: str | None, optic_name: str, legend_labels: list[str]) -> str:
+    base_title = " - ".join(str(part) for part in (title, optic_name) if part)
+    full_title = f"{base_title}\n" if base_title else ""
+    return full_title + ", ".join(legend_labels)
+
+
+def _add_angle_vs_height_line(
+    ax: Axes, spec: _AngleVsHeightPlotSpec, norm, series: tuple
+):
+    """Add one (height, angle) trace as a scan-range-colored LineCollection."""
+    height, angle_deg, scan_range, _ = series
+    points = np.array([height, angle_deg]).T.reshape(-1, 1, 2)
+    segments = np.concatenate([points[:-1], points[1:]], axis=1)
+
+    lc = LineCollection(segments, cmap=spec.cmap, norm=norm, linestyle=spec.plot_style)
+    lc.set_array(scan_range)
+    lc.set_linewidth(3)
+    return ax.add_collection(lc)
+
+
+def _plot_angle_vs_height(plot_spec: _AngleVsHeightPlotSpec, ax: Axes) -> None:
     """Helper function to generate a consistent angle vs. image
     height plot on a given axis.
 
     Args:
-        plot_data_list (list): A list of tuples, where each tuple contains:
-            (height, angle_deg, scan_range, legend_label).
-        axis (int): Specifies the axis for measurement (0 for x, 1 for y).
-        optic_name (str): The name of the optic, used for the plot title.
-        plot_style (str): Matplotlib plot style for the line.
+        plot_spec: The data and styling for the plot.
         ax (matplotlib.axes.Axes): The axes object to plot on.
-        title (str or None): An optional subtitle for the plot.
-        color_label (str): The label for the colorbar.
-        cmap (str): The name of the colormap to use.
     """
     norm = plt.Normalize(-1, 1)
-    linewidth = 3
+    line = None
+    for series in plot_spec.plot_data_list:
+        line = _add_angle_vs_height_line(ax, plot_spec, norm, series)
 
-    base_title = ""
-    if title and optic_name:
-        base_title = f"{title} - {optic_name}"
-    elif title:
-        base_title = str(title)
-    elif optic_name:
-        base_title = str(optic_name)
-
-    # Compose the full title
-    full_title = base_title
-    if full_title:
-        full_title += "\n"
-    full_title += ", ".join([p[3] for p in plot_data_list])
-
-    for height, angle_deg, scan_range, _ in plot_data_list:
-        # Create segments for the LineCollection
-        points = np.array([height, angle_deg]).T.reshape(-1, 1, 2)
-        segments = np.concatenate([points[:-1], points[1:]], axis=1)
-
-        # Create a LineCollection, color it with the scan_range, and add to plot
-        lc = LineCollection(segments, cmap=cmap, norm=norm, linestyle=plot_style)
-        lc.set_array(scan_range)
-        lc.set_linewidth(linewidth)
-        line = ax.add_collection(lc)
+    full_title = _compose_title(
+        plot_spec.title,
+        plot_spec.optic_name,
+        [p[3] for p in plot_spec.plot_data_list],
+    )
 
     fig = ax.get_figure()
-    fig.suptitle("Incident Angle vs Image Height" + (" (x-axis)" if axis == 0 else ""))
+    axis_suffix = " (x-axis)" if plot_spec.axis == 0 else ""
+    fig.suptitle("Incident Angle vs Image Height" + axis_suffix)
     ax.set_title(full_title, fontsize=10)
     ax.set_xlabel("Image Height in Millimeters")
     ax.set_ylabel("Incident Angle in Degrees")
-    cbar = fig.colorbar(line, ax=ax, label=color_label)
-    cbar.set_label(color_label, labelpad=15)
+    cbar = fig.colorbar(line, ax=ax, label=plot_spec.color_label)
+    cbar.set_label(plot_spec.color_label, labelpad=15)
     ax.grid(alpha=0.25)
     ax.autoscale_view()
 
@@ -212,6 +214,76 @@ class BaseAngleVsHeightAnalysis(BaseAnalysis, abc.ABC):
         }
         return data
 
+    @staticmethod
+    def _prepare_axes(
+        fig_to_plot_on: Figure | None, figsize: tuple[float, float]
+    ) -> tuple[Figure, Axes, bool]:
+        is_gui_embedding = fig_to_plot_on is not None
+        if is_gui_embedding:
+            current_fig = fig_to_plot_on
+            current_fig.clear()
+            ax = current_fig.add_subplot(111)
+        else:
+            current_fig, ax = plt.subplots(figsize=figsize)
+        return current_fig, ax, is_gui_embedding
+
+    @staticmethod
+    def _draw_no_data_message(ax: Axes) -> None:
+        ax.text(
+            0.5,
+            0.5,
+            "Error: Data could not be generated.",
+            ha="center",
+            va="center",
+            color="red",
+        )
+
+    def _color_label(self, fixed_coords_type: str) -> str:
+        """The colorbar label for what is being scanned."""
+        if fixed_coords_type == "Pupil":  # Pupil is fixed, Field is scanned
+            kind, coord = "Field", "Hx" if self.axis == 0 else "Hy"
+        else:  # Field is fixed, Pupil is scanned
+            kind, coord = "Pupil", "Px" if self.axis == 0 else "Py"
+        return f"Normalized {kind} Coordinate ({coord})"
+
+    @staticmethod
+    def _legend_label(fixed_coords: str, fixed_p1, fixed_p2, wavelength) -> str:
+        prefix1, prefix2 = ("Px", "Py") if fixed_coords == "Pupil" else ("Hx", "Hy")
+        return (
+            f"{prefix1}={np.round(fixed_p1, 4).item()} "
+            f"{prefix2}={np.round(fixed_p2, 4).item()}, "
+            f"{np.round(wavelength, 4).item()} µm"
+        )
+
+    def _build_plot_data_list(self) -> list[tuple]:
+        """Reshape the generated data into the tuples `_plot_angle_vs_height` needs."""
+        plot_data_list = []
+        for (fixed_p1, fixed_p2, wavelength), plot_data in self.data.items():
+            fixed_p1 = be.to_numpy(fixed_p1)
+            fixed_p2 = be.to_numpy(fixed_p2)
+            wavelength = be.to_numpy(wavelength)
+            legend_label = self._legend_label(
+                plot_data["fixed_coordinates"], fixed_p1, fixed_p2, wavelength
+            )
+            plot_data_list.append(
+                (
+                    plot_data["height"],
+                    np.rad2deg(plot_data["angle"]),
+                    plot_data["scan_range"],
+                    legend_label,
+                )
+            )
+        return plot_data_list
+
+    @staticmethod
+    def _finalize_figure(
+        current_fig: Figure, is_gui_embedding: bool, show: bool
+    ) -> None:
+        if is_gui_embedding and hasattr(current_fig, "canvas"):
+            current_fig.canvas.draw_idle()
+        if show and not is_gui_embedding:
+            plt.show()
+
     def view(
         self,
         fig_to_plot_on: Figure = None,
@@ -240,87 +312,32 @@ class BaseAngleVsHeightAnalysis(BaseAnalysis, abc.ABC):
         Returns:
             tuple: A tuple containing the figure and axes objects used for plotting.
         """
-        is_gui_embedding = fig_to_plot_on is not None
-
-        if is_gui_embedding:
-            current_fig = fig_to_plot_on
-            current_fig.clear()
-            ax = current_fig.add_subplot(111)
-        else:
-            current_fig, ax = plt.subplots(figsize=figsize)
+        current_fig, ax, is_gui_embedding = self._prepare_axes(fig_to_plot_on, figsize)
 
         if not self.data:
-            ax.text(
-                0.5,
-                0.5,
-                "Error: Data could not be generated.",
-                ha="center",
-                va="center",
-                color="red",
-            )
+            self._draw_no_data_message(ax)
             if is_gui_embedding:
                 current_fig.canvas.draw_idle()
             return ax
 
-        plot_data_list = []
-
-        # Determine the colorbar label based on what is being scanned.
         first_item_data = next(iter(self.data.values()))
-        fixed_coords_type = first_item_data["fixed_coordinates"]
-        if fixed_coords_type == "Pupil":  # Pupil is fixed, Field is scanned
-            color_label = (
-                f"Normalized Field Coordinate ({'Hx' if self.axis == 0 else 'Hy'})"
-            )
-        else:  # Field is fixed, Pupil is scanned
-            color_label = (
-                f"Normalized Pupil Coordinate ({'Px' if self.axis == 0 else 'Py'})"
-            )
-
-        # Iterate through the generated data items to prepare for plotting
-        for (fixed_p1, fixed_p2, wavelength), plot_data in self.data.items():
-            fixed_p1 = be.to_numpy(fixed_p1)
-            fixed_p2 = be.to_numpy(fixed_p2)
-            wavelength = be.to_numpy(wavelength)
-
-            fixed_coords = plot_data["fixed_coordinates"]
-            if fixed_coords == "Pupil":
-                legend_label = (
-                    f"Px={np.round(fixed_p1, 4).item()} "
-                    f"Py={np.round(fixed_p2, 4).item()}, "
-                    f"{np.round(wavelength, 4).item()} µm"
-                )
-            else:  # fixed_coords == 'Field'
-                legend_label = (
-                    f"Hx={np.round(fixed_p1, 4).item()} "
-                    f"Hy={np.round(fixed_p2, 4).item()}, "
-                    f"{np.round(wavelength, 4).item()} µm"
-                )
-            plot_data_list.append(
-                (
-                    plot_data["height"],
-                    np.rad2deg(plot_data["angle"]),
-                    plot_data["scan_range"],
-                    legend_label,
-                )
-            )
+        color_label = self._color_label(first_item_data["fixed_coordinates"])
 
         _plot_angle_vs_height(
-            plot_data_list=plot_data_list,
-            axis=self.axis,
-            optic_name=self.optic.name,
-            plot_style=line_style,
+            _AngleVsHeightPlotSpec(
+                plot_data_list=self._build_plot_data_list(),
+                axis=self.axis,
+                optic_name=self.optic.name,
+                plot_style=line_style,
+                title=title,
+                color_label=color_label,
+                cmap=cmap,
+            ),
             ax=ax,
-            title=title,
-            color_label=color_label,
-            cmap=cmap,
         )
 
         current_fig.tight_layout()
-
-        if is_gui_embedding and hasattr(current_fig, "canvas"):
-            current_fig.canvas.draw_idle()
-        if show and not is_gui_embedding:
-            plt.show()
+        self._finalize_figure(current_fig, is_gui_embedding, show)
         return current_fig, ax
 
 
@@ -430,11 +447,9 @@ class FieldIncidentAngleVsHeight(BaseAngleVsHeightAnalysis):
         axis (int): Axis for measurement (0 for x, 1 for y).
         pupil (tuple): The pupil field point (fixed for tracing).
         num_points (int): The number of points generated for the analysis.
-        data (dict): The generated data for the analysis, structured as:
-            {
-                (Px_fixed, Py_fixed, wavelength_value):
-                {'height': np.ndarray, 'angle': np.ndarray}
-            }
+        data (dict): The generated data for the analysis, structured as
+            ``{(Px_fixed, Py_fixed, wavelength_value): {'height': np.ndarray,
+            'angle': np.ndarray}}``.
     """
 
     def __init__(

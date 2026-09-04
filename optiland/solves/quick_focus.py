@@ -51,7 +51,20 @@ class QuickFocusSolve(BaseSolve):
             float: The optimal axial position (z-coordinate) of the image plane
                 that minimizes the RMS spot size.
 
+        Raises:
+            UnsupportedParaxialGeometryError: If the beam path is folded off
+                global +z (or entered along another direction), before any
+                ray is traced. The returned value is a Cartesian global-z
+                focus coordinate, which is not frame-correct for a folded
+                output arm -- a caller writing it into ``cs.z`` would move
+                the image plane off its physical leg.
         """
+        from optiland.paraxial_path import require_global_z_geometry
+
+        require_global_z_geometry(
+            self.optic.surfaces, "QuickFocusSolve.optimal_focus_distance"
+        )
+
         rays = self.optic.trace(
             Hx=Hx,
             Hy=Hy,
@@ -73,7 +86,16 @@ class QuickFocusSolve(BaseSolve):
 
         This method calculates the optimal focus distance and sets the
         z-position of the last surface (image plane) accordingly.
+
+        Raises:
+            UnsupportedParaxialGeometryError: If the beam path is folded off
+                global +z, before any mutation -- moving the image plane
+                along z only would take it off its physical leg.
         """
+        from optiland.paraxial_path import require_global_z_geometry
+
+        require_global_z_geometry(self.optic.surfaces, "QuickFocusSolve")
+
         z_focus = self.optimal_focus_distance(
             wavelength=self.optic.wavelengths.primary_wavelength.value,
         )

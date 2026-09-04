@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from optiland._suggest import options_hint
 from optiland.interactions.diffractive_model import DiffractiveInteractionModel
 from optiland.interactions.phase_interaction_model import PhaseInteractionModel
 from optiland.interactions.refractive_reflective_model import RefractiveReflectiveModel
@@ -157,7 +158,10 @@ class InteractionModelFactory:
             ValueError: If the interaction_type is unknown.
         """
         if interaction_type not in _INTERACTION_REGISTRY:
-            raise ValueError(f"Unknown interaction_type: {interaction_type!r}")
+            raise ValueError(
+                f"Unknown interaction_type, got {interaction_type!r}."
+                f"{options_hint(str(interaction_type), _INTERACTION_REGISTRY)}"
+            )
         builder = _INTERACTION_REGISTRY[interaction_type]
         return builder(
             parent_surface=parent_surface,

@@ -9,9 +9,183 @@ Kramer Harrison, 2025
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Any, NamedTuple
 
 import optiland.backend as be
+
+try:
+    import torch
+except (ImportError, ModuleNotFoundError):
+    torch = None
+
+
+def machine_eps(value) -> float:
+    """Machine epsilon of ``value``'s floating dtype.
+
+    Backend-agnostic: uses ``torch.finfo`` for torch tensors and numpy's
+    ``finfo`` otherwise. Numerical thresholds built from this scale correctly
+    in float32, where a hardcoded float64-sized constant is below round-off
+    and therefore never triggers.
+
+    Args:
+        value: A backend array/tensor, or anything without a ``dtype``
+            attribute (treated as the default Python float precision).
+
+    Returns:
+        float: The machine epsilon for the corresponding dtype.
+    """
+    dtype = getattr(value, "dtype", None)
+    if dtype is None:
+        return float(be.finfo(float).eps)
+    if torch is not None and isinstance(dtype, torch.dtype):
+        return float(torch.finfo(dtype).eps)
+    return float(be.finfo(dtype).eps)
+
+
+# Documented multiplier ``C`` on the machine epsilon for the reciprocal
+# Frobenius-condition singularity test of a per-element 2x2 matrix. A matrix
+# is classified unusable when ``rho_F = |det(A)| / ||A||_F^2 <= C * eps``,
+# where ``A`` is the matrix normalized by its largest-magnitude entry. The
+# test is scale invariant: a global unit or magnification rescaling cannot
+# change the classification. C = 64 (2^6) gives headroom for the few tens of
+# rounding operations that accumulate in the normalized determinant and norm
+# before the comparison, while staying many orders of magnitude below any
+# physically meaningful conditioning.
+RCOND_EPS_MULTIPLIER = 64.0
+
+
+@dataclass
+class Jacobian2x2Condition:
+    """Scale-invariant conditioning state of per-element ``2x2`` matrices.
+
+    Attributes:
+        a, b, c, d: Entries of the normalized matrix ``A = J / s``.
+        scale: Per-element normalization ``s = max(|J11|,|J12|,|J21|,|J22|)``,
+            replaced by 1 where ``s == 0`` (those elements are singular).
+        det: Determinant of the normalized matrix ``A`` (sign preserved).
+        rcond: Reciprocal Frobenius-condition estimate
+            ``|det(A)| / ||A||_F^2``.
+        singular: Per-element mask -- non-finite entries, zero scale, or
+            reciprocal condition at round-off level.
+    """
+
+    a: Any
+    b: Any
+    c: Any
+    d: Any
+    scale: Any
+    det: Any
+    rcond: Any
+    singular: Any
+
+
+def jacobian_2x2_condition(J11, J12, J21, J22) -> Jacobian2x2Condition:
+    """Classify per-element ``2x2`` matrices with a scale-invariant test.
+
+    Normalizes each element's matrix by its largest-magnitude entry and
+    computes the reciprocal Frobenius-condition estimate
+
+    ``rho_F = |det(A)| / (a^2 + b^2 + c^2 + d^2)``,
+
+    which for a ``2x2`` matrix bounds ``1 / cond_F(J)``. The classification is
+    invariant under a global scaling of the matrix, so a well-conditioned
+    but small-magnitude matrix (e.g. ``1e-3 * I`` in float32) is never
+    misclassified as singular. This is the single authority for 2x2
+    conditioning across Optiland (field solves and ray aiming); do not
+    duplicate determinant logic elsewhere.
+    """
+    finite = be.logical_and(
+        be.logical_and(be.isfinite(J11), be.isfinite(J12)),
+        be.logical_and(be.isfinite(J21), be.isfinite(J22)),
+    )
+
+    magnitude = be.maximum(
+        be.maximum(be.abs(J11), be.abs(J12)),
+        be.maximum(be.abs(J21), be.abs(J22)),
+    )
+    zero_scale = magnitude == 0.0
+    # Safe placeholder scale for zero-scale entries only; they are singular.
+    scale = be.where(zero_scale, be.ones_like(magnitude), magnitude)
+
+    a = J11 / scale
+    b = J12 / scale
+    c = J21 / scale
+    d = J22 / scale
+    det = a * d - b * c
+
+    frob_sq = a * a + b * b + c * c + d * d
+    safe_frob_sq = be.where(frob_sq > 0.0, frob_sq, be.ones_like(frob_sq))
+    rcond = be.abs(det) / safe_frob_sq
+
+    singular = be.logical_or(
+        be.logical_or(be.logical_not(finite), zero_scale),
+        be.logical_or(
+            be.logical_not(be.isfinite(det)),
+            rcond <= RCOND_EPS_MULTIPLIER * machine_eps(det),
+        ),
+    )
+    return Jacobian2x2Condition(
+        a=a, b=b, c=c, d=d, scale=scale, det=det, rcond=rcond, singular=singular
+    )
+
+
+@dataclass(frozen=True)
+class LinearSolve2x2Result:
+    """Outcome of a batched, conditioning-aware 2x2 linear solve.
+
+    Attributes:
+        x1, x2: Per-element solution of ``J @ [x1, x2] = [r1, r2]``; exact
+            zeros where ``valid`` is False (never a clipped step).
+        rcond: Scale-invariant reciprocal Frobenius-condition estimate of
+            each element's matrix.
+        valid: Per-element mask; False where the matrix is singular or
+            ill-conditioned at round-off level and no solution was formed.
+    """
+
+    x1: Any
+    x2: Any
+    rcond: Any
+    valid: Any
+
+
+def solve_2x2(J11, J12, J21, J22, r1, r2) -> LinearSolve2x2Result:
+    """Solve per-element ``J @ x = r`` via the normalized system.
+
+    Each element's matrix is normalized by its largest-magnitude entry
+    (see :func:`jacobian_2x2_condition`), which makes both the singularity
+    classification and the solve invariant under global scaling and avoids
+    raw-determinant overflow/underflow. The determinant's sign is preserved
+    for every valid element -- it is never clamped to an arbitrary positive
+    value, so a Newton step formed from the solution can never be silently
+    reversed. Singular elements receive an exact zero solution and
+    ``valid = False``, leaving the caller to refresh, substitute or hold.
+
+    Args:
+        J11, J12, J21, J22: Per-element matrix entries.
+        r1, r2: Per-element right-hand sides.
+
+    Returns:
+        The :class:`LinearSolve2x2Result` with solutions, reciprocal
+        condition estimates and the validity mask.
+    """
+    cond = jacobian_2x2_condition(J11, J12, J21, J22)
+
+    # Placeholder determinant avoids division by ~0; singular elements are
+    # then explicitly zeroed rather than receiving a clipped step.
+    safe_det = be.where(cond.singular, be.ones_like(cond.det), cond.det)
+
+    r1_s = r1 / cond.scale
+    r2_s = r2 / cond.scale
+    x1 = (cond.d * r1_s - cond.b * r2_s) / safe_det
+    x2 = (-cond.c * r1_s + cond.a * r2_s) / safe_det
+
+    zero = be.zeros_like(x1)
+    x1 = be.where(cond.singular, zero, x1)
+    x2 = be.where(cond.singular, zero, x2)
+    return LinearSolve2x2Result(
+        x1=x1, x2=x2, rcond=cond.rcond, valid=be.logical_not(cond.singular)
+    )
 
 
 class FieldPoint(NamedTuple):
@@ -51,14 +225,15 @@ def get_working_FNO(optic, field, wavelength):
 
     Algorithm:
         1. Retrieve the defined given wavelength and field coordinates.
-        2. Determine the image-space refractive index 'n' at the given wavelength.
-        3. Trace four marginal rays (top, bottom, left, right) at the pupil edges,
-            as well as the chief ray.
+        2. Determine the image-space refractive index 'n' at the given
+           wavelength.
+        3. Trace four marginal rays (top, bottom, left, right) at the pupil
+           edges, as well as the chief ray.
         4. Compute the angle between each marginal ray and the chief ray.
-        4. Calculate the average of the squared numerical apertures from all traced
-            marginal rays.
-        5. Compute the working F-number as 1 / (2 * be.sqrt(average_NA_squared)).
-        6. Cap the calculated F/# at 10,000 if it exceeds this value.
+        5. Calculate the average of the squared numerical apertures from all
+           traced marginal rays.
+        6. Compute the working F-number as 1 / (2 * be.sqrt(average_NA_squared)).
+        7. Cap the calculated F/# at 10,000 if it exceeds this value.
 
     Returns:
         float: The working F-number.

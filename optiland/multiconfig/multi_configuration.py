@@ -18,8 +18,11 @@ from optiland.visualization import OpticViewer
 from optiland.visualization.themes import get_active_theme
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from optiland.materials.base import BaseMaterial
     from optiland.optic import Optic
+    from optiland.pickup import Pickup
 
 
 class MultiConfiguration:
@@ -35,6 +38,30 @@ class MultiConfiguration:
     Attributes:
         configurations (list[Optic]): The list of Optic instances.
     """
+
+    # Aliases resolve straight to a dedicated setter; anything else is
+    # treated as a generic dotted attribute path.
+    _PROPERTY_ALIASES = {
+        "radius": "set_radius",
+        "thickness": "set_thickness",
+        "conic": "set_conic",
+        "material": "set_material",
+    }
+
+    # attr_type -> Optic.updater method name, for the standard properties.
+    _STANDARD_UPDATERS = {
+        "radius": "set_radius",
+        "conic": "set_conic",
+        "thickness": "set_thickness",
+        "material": "set_material",
+    }
+
+    # Geometry attributes linked automatically when a configuration is
+    # derived from a source: (attribute on the geometry, pickup attr_type).
+    _LINKED_GEOMETRY_ATTRS = (
+        ("radius", "radius"),
+        ("k", "conic"),
+    )
 
     def __init__(self, base_optic: Optic):
         self.configurations: list[Optic] = [base_optic]
@@ -64,42 +91,57 @@ class MultiConfiguration:
 
         return new_optic
 
-    def _link_configurations(self, source: Optic, target: Optic):
+    def _link_configurations(self, source: Optic, target: Optic) -> None:
         """Internal method to link generic surface properties."""
-        # Link Radii and Conics
-        for i, (surf_s, _surf_t) in enumerate(
-            zip(
-                source.surfaces,
-                target.surfaces,
-                strict=False,
-            )
-        ):
-            # Radius
-            if hasattr(surf_s.geometry, "radius"):
-                target.pickups.add(
-                    source_surface_idx=i,
-                    attr_type="radius",
-                    target_surface_idx=i,
-                    source_optic=source,
-                )
+        num_surfaces = len(source.surfaces)
+        for i, surf_s in enumerate(source.surfaces):
+            for geometry_attr, attr_type in self._LINKED_GEOMETRY_ATTRS:
+                if hasattr(surf_s.geometry, geometry_attr):
+                    target.pickups.add(
+                        source_surface_idx=i,
+                        attr_type=attr_type,
+                        target_surface_idx=i,
+                        source_optic=source,
+                    )
 
-            # Conic
-            if hasattr(surf_s.geometry, "k"):
-                target.pickups.add(
-                    source_surface_idx=i,
-                    attr_type="conic",
-                    target_surface_idx=i,
-                    source_optic=source,
-                )
-
-            # Thickness (except last surface)
-            if i < len(source.surfaces) - 1:
+            # Thickness is linked for every surface except the last.
+            if i < num_surfaces - 1:
                 target.pickups.add(
                     source_surface_idx=i,
                     attr_type="thickness",
                     target_surface_idx=i,
                     source_optic=source,
                 )
+
+    def _resolve_configs(self, configurations) -> tuple[list[int], bool]:
+        """Expand "all" to explicit indices; report whether it was "all"."""
+        if configurations == "all":
+            return list(range(len(self.configurations))), True
+        return configurations, False
+
+    def _apply_across_configs(
+        self,
+        configs_to_update: list[int],
+        all_selected: bool,
+        set_value: Callable[[int], None],
+        ensure_pickup: Callable[[int], None],
+        remove_pickup: Callable[[int], None],
+    ) -> None:
+        """Shared update algorithm for both standard and generic properties.
+
+        Configuration 0 always receives the value directly. Other
+        configurations either stay linked to configuration 0 (when
+        updating "all") or get an independent value with any existing
+        link removed (when updating specific configurations).
+        """
+        for config_idx in configs_to_update:
+            if config_idx == 0:
+                set_value(0)
+            elif all_selected:
+                ensure_pickup(config_idx)
+            else:
+                remove_pickup(config_idx)
+                set_value(config_idx)
 
     def set_property(
         self,
@@ -120,44 +162,25 @@ class MultiConfiguration:
             attribute_path: The dot-separated path to the attribute, or a
                 known alias ('radius', 'thickness', 'conic', 'material').
         """
-        if configurations == "all":
-            configs_to_update = list(range(len(self.configurations)))
-        else:
-            configs_to_update = configurations
-
-        # Standardize aliases
-        if attribute_path == "radius":
-            self.set_radius(surface_index, value, configurations)
-            return
-        elif attribute_path == "thickness":
-            self.set_thickness(surface_index, value, configurations)
-            return
-        elif attribute_path == "conic":
-            self.set_conic(surface_index, value, configurations)
-            return
-        elif attribute_path == "material":
-            self.set_material(surface_index, value, configurations)
+        alias_method = self._PROPERTY_ALIASES.get(attribute_path)
+        if alias_method is not None:
+            getattr(self, alias_method)(surface_index, value, configurations)
             return
 
-        # Generic handling
-        for config_idx in configs_to_update:
-            if config_idx == 0:
-                # Set on base optic
-                self._set_generic_value(0, surface_index, attribute_path, value)
-            else:
-                if configurations == "all":
-                    # If setting "all", we want to ensure it is linked to base
-                    self._ensure_generic_pickup(
-                        config_idx, 0, surface_index, attribute_path
-                    )
-                else:
-                    # If setting specific config (not 0), assume unique val & break link
-                    self._remove_generic_pickup(
-                        config_idx, surface_index, attribute_path
-                    )
-                    self._set_generic_value(
-                        config_idx, surface_index, attribute_path, value
-                    )
+        configs_to_update, all_selected = self._resolve_configs(configurations)
+        self._apply_across_configs(
+            configs_to_update,
+            all_selected,
+            set_value=lambda idx: self._set_generic_value(
+                idx, surface_index, attribute_path, value
+            ),
+            ensure_pickup=lambda idx: self._ensure_generic_pickup(
+                idx, 0, surface_index, attribute_path
+            ),
+            remove_pickup=lambda idx: self._remove_generic_pickup(
+                idx, surface_index, attribute_path
+            ),
+        )
 
     def set_radius(
         self,
@@ -214,138 +237,174 @@ class MultiConfiguration:
         """Convenience wrapper for set_property on the optic."""
         self.set_property(value, configurations, None, attribute_path)
 
-    def _set_standard_property(self, attr_type, surface_index, value, configurations):
-        """Internal helper for standard properties (radius, conic, etc)."""
-        if configurations == "all":
-            configs_to_update = list(range(len(self.configurations)))
+    def _set_standard_property(
+        self,
+        attr_type: str,
+        surface_index: int | None,
+        value: Any,
+        configurations: list[int] | Literal["all"],
+    ) -> None:
+        """Internal helper for standard properties (radius, conic, etc).
+
+        Thickness updates are preflighted across every selected
+        configuration before any configuration is mutated: ``set_thickness``
+        rejects folded/off-axis geometry, and without the preflight an
+        earlier configuration would already have been changed when a later
+        one raises, leaving the group partially updated.
+        """
+        configs_to_update, all_selected = self._resolve_configs(configurations)
+
+        if attr_type == "thickness":
+            from optiland.paraxial_path import require_global_z_geometry
+
+            for config_idx in configs_to_update:
+                require_global_z_geometry(
+                    self.configurations[config_idx].surfaces,
+                    f"multi-configuration set_thickness (configuration {config_idx})",
+                )
+
+        if attr_type == "material":
+            # Materials are pointer-like objects, so they're linked via a
+            # generic pickup on 'material_post' rather than a standard one.
+            def ensure_pickup(idx: int) -> None:
+                self._ensure_generic_pickup(idx, 0, surface_index, "material_post")
+
+            def remove_pickup(idx: int) -> None:
+                self._remove_generic_pickup(idx, surface_index, "material_post")
         else:
-            configs_to_update = configurations
 
-        for config_idx in configs_to_update:
-            if config_idx == 0:
-                # Update base
-                self._apply_standard_value(0, surface_index, attr_type, value)
-            else:
-                if configurations == "all":
-                    # Ensure pickup
-                    if attr_type == "material":
-                        self._ensure_generic_pickup(
-                            config_idx, 0, surface_index, "material_post"
-                        )
-                    else:
-                        self._ensure_pickup(config_idx, surface_index, attr_type)
-                else:
-                    # Remove pickup and set value
-                    if attr_type == "material":
-                        self._remove_generic_pickup(
-                            config_idx, surface_index, "material_post"
-                        )
-                    else:
-                        self._remove_pickup(config_idx, surface_index, attr_type)
+            def ensure_pickup(idx: int) -> None:
+                self._ensure_pickup(idx, surface_index, attr_type)
 
-                    self._apply_standard_value(
-                        config_idx, surface_index, attr_type, value
-                    )
+            def remove_pickup(idx: int) -> None:
+                self._remove_pickup(idx, surface_index, attr_type)
 
-    def _apply_standard_value(self, config_idx, surface_index, attr_type, value):
+        self._apply_across_configs(
+            configs_to_update,
+            all_selected,
+            set_value=lambda idx: self._apply_standard_value(
+                idx, surface_index, attr_type, value
+            ),
+            ensure_pickup=ensure_pickup,
+            remove_pickup=remove_pickup,
+        )
+
+    def _apply_standard_value(
+        self, config_idx: int, surface_index: int, attr_type: str, value: Any
+    ) -> None:
         optic = self.configurations[config_idx]
-        if attr_type == "radius":
-            optic.updater.set_radius(value, surface_index)
-        elif attr_type == "conic":
-            optic.updater.set_conic(value, surface_index)
-        elif attr_type == "thickness":
-            optic.updater.set_thickness(value, surface_index)
-        elif attr_type == "material":
-            optic.updater.set_material(value, surface_index)
+        method = getattr(optic.updater, self._STANDARD_UPDATERS[attr_type])
+        method(value, surface_index)
 
-    def _set_generic_value(self, config_idx, surface_index, path, value):
+    @staticmethod
+    def _full_attribute_path(surface_index: int | None, path: str) -> str:
+        if surface_index is None:
+            return path
+        return f"surfaces.surfaces[{surface_index}].{path}"
+
+    def _set_generic_value(
+        self, config_idx: int, surface_index: int | None, path: str, value: Any
+    ) -> None:
         optic = self.configurations[config_idx]
-        if surface_index is not None:
-            # Relative to surface
-            full_path = f"surfaces.surfaces[{surface_index}].{path}"
-        else:
-            # Relative to optic
-            full_path = path
-
+        full_path = self._full_attribute_path(surface_index, path)
         set_attr_by_path(optic, full_path, value)
 
-    def _ensure_pickup(self, config_idx, surface_index, attr_type):
+    def _find_pickup(
+        self, config_idx: int, matches: Callable[[Pickup], bool]
+    ) -> Pickup | None:
+        return next(
+            (p for p in self.configurations[config_idx].pickups.pickups if matches(p)),
+            None,
+        )
+
+    def _remove_pickups(
+        self, config_idx: int, matches: Callable[[Pickup], bool]
+    ) -> None:
+        pickups = self.configurations[config_idx].pickups.pickups
+        pickups[:] = [p for p in pickups if not matches(p)]
+
+    def _ensure_pickup(
+        self, config_idx: int, surface_index: int, attr_type: str
+    ) -> None:
         """Ensure a standard pickup exists linking to config 0."""
-        optic = self.configurations[config_idx]
-        # Check if pickup exists
-        for p in optic.pickups.pickups:
-            if (
+        source = self.configurations[0]
+
+        def matches(p: Pickup) -> bool:
+            return (
                 p.target_surface_idx == surface_index
                 and p.attr_type == attr_type
-                and p.source_optic == self.configurations[0]
-            ):
-                return  # Exists
+                and p.source_optic == source
+            )
 
-        # Create pickup
-        optic.pickups.add(
+        if self._find_pickup(config_idx, matches) is not None:
+            return
+
+        self.configurations[config_idx].pickups.add(
             source_surface_idx=surface_index,
             attr_type=attr_type,
             target_surface_idx=surface_index,
-            source_optic=self.configurations[0],
+            source_optic=source,
         )
 
-    def _remove_pickup(self, config_idx, surface_index, attr_type):
+    def _remove_pickup(
+        self, config_idx: int, surface_index: int, attr_type: str
+    ) -> None:
         """Remove a standard pickup."""
-        optic = self.configurations[config_idx]
-        to_remove = []
-        for p in optic.pickups.pickups:
-            if p.target_surface_idx == surface_index and p.attr_type == attr_type:
-                to_remove.append(p)
+        self._remove_pickups(
+            config_idx,
+            lambda p: (
+                p.target_surface_idx == surface_index and p.attr_type == attr_type
+            ),
+        )
 
-        for p in to_remove:
-            optic.pickups.pickups.remove(p)
-
-    def _ensure_generic_pickup(self, config_idx, source_idx, surface_index, path):
+    def _ensure_generic_pickup(
+        self, config_idx: int, source_idx: int, surface_index: int | None, path: str
+    ) -> None:
         """Ensure a generic pickup exists.
 
         For Generic Pickups:
         - target_surface_idx: surface_index
         - attr_type: path (e.g. 'geometry.coefficients[0]')
         """
-        optic = self.configurations[config_idx]
         source_optic = self.configurations[source_idx]
+        full_path = self._full_attribute_path(surface_index, path)
 
-        if surface_index is not None:
-            full_path = f"surfaces.surfaces[{surface_index}].{path}"
-        else:
-            full_path = path
+        def matches(p: Pickup) -> bool:
+            return p.attr_type == full_path and p.source_optic == source_optic
 
-        # Check existence
-        for p in optic.pickups.pickups:
-            if p.attr_type == full_path and p.source_optic == source_optic:
-                return
+        if self._find_pickup(config_idx, matches) is not None:
+            return
 
-        # Add generic pickup
-        optic.pickups.add(
+        self.configurations[config_idx].pickups.add(
             source_surface_idx=0,  # Ignored for generic
             attr_type=full_path,
             target_surface_idx=0,  # Ignored for generic
             source_optic=source_optic,
         )
 
-    def _remove_generic_pickup(self, config_idx, surface_index, path):
-        optic = self.configurations[config_idx]
-        if surface_index is not None:
-            full_path = f"surfaces.surfaces[{surface_index}].{path}"
-        else:
-            full_path = path
-
-        to_remove = []
-        for p in optic.pickups.pickups:
-            if p.attr_type == full_path:
-                to_remove.append(p)
-
-        for p in to_remove:
-            optic.pickups.pickups.remove(p)
+    def _remove_generic_pickup(
+        self, config_idx: int, surface_index: int | None, path: str
+    ) -> None:
+        full_path = self._full_attribute_path(surface_index, path)
+        self._remove_pickups(config_idx, lambda p: p.attr_type == full_path)
 
     def current_config(self, index: int) -> Optic:
         """Returns the configuration at the given index."""
         return self.configurations[index]
+
+    @staticmethod
+    def _config_title(base_title: str | None, index: int) -> str:
+        if base_title:
+            return f"{base_title} (Config {index})"
+        return f"Configuration {index}"
+
+    @staticmethod
+    def _as_axes_list(axes: Any, num_configs: int) -> list:
+        if num_configs == 1:
+            return [axes]
+        if hasattr(axes, "flat"):
+            return axes.flatten()
+        return axes
 
     def draw(
         self,
@@ -379,28 +438,16 @@ class MultiConfiguration:
             sharey=sharey,
         )
         fig.set_facecolor(params["figure.facecolor"])
+        axes = self._as_axes_list(axes, num_configs)
 
-        # Ensure axes is iterable
-        if num_configs == 1:
-            axes = [axes]
-        elif hasattr(axes, "flat"):
-            axes = axes.flatten()
-
+        base_title = kwargs.get("title")
         for i, (optic, ax) in enumerate(zip(self.configurations, axes, strict=False)):
             ax.set_facecolor(params["axes.facecolor"])
 
-            viewer = OpticViewer(optic)
-
-            # Handle title (append config name if title exists)
             plot_kwargs = kwargs.copy()
-            base_title = plot_kwargs.get("title")
+            plot_kwargs["title"] = self._config_title(base_title, i)
 
-            if base_title:
-                plot_kwargs["title"] = f"{base_title} (Config {i})"
-            else:
-                plot_kwargs["title"] = f"Configuration {i}"
-
-            viewer.view(ax=ax, **plot_kwargs)
+            OpticViewer(optic).view(ax=ax, **plot_kwargs)
 
         plt.tight_layout()
         return fig, axes

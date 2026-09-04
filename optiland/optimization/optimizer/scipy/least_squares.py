@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import optiland.backend as be
 from scipy import optimize
@@ -12,6 +12,8 @@ from ..live_plotter import LiveOptimizationPlotter
 from .base import OptimizerGeneric
 
 if TYPE_CHECKING:
+    from numpy.typing import ArrayLike
+
     from ...problem import OptimizationProblem
 
 
@@ -69,17 +71,19 @@ class LeastSquares(OptimizerGeneric):
         tol: float = 1e-3,
         callback: Any = None,
         method_choice: str = "lm",  # Default to 'lm' for DLS
-    ):
+        x_scale: ArrayLike | float | Literal["jac"] | None = None,
+    ) -> optimize.OptimizeResult:
         """
         Optimize the problem using a SciPy least squares method.
 
         Args:
-            max_nfev (int, optional): Maximum number of function evaluations (NFEV).
-                                      SciPy's least_squares uses max_nfev.
+            maxiter (int, optional): Maximum number of function evaluations.
+                SciPy's least_squares uses max_nfev.
             disp (bool, optional): Whether to display optimization progress.
-            plot: If True, update live plots during optimization.
+            plot (bool, optional): If True, update live plots during optimization.
             tol (float, optional): Tolerance for termination (ftol - tolerance for the
                                    change in the sum of squares). Defaults to 1e-3.
+            callback (callable, optional): Called after each optimization iteration.
             method_choice (str, optional): Method for scipy.optimize.least_squares.
                                          'lm': Levenberg-Marquardt (DLS,
                                          does not support bounds).
@@ -88,6 +92,14 @@ class LeastSquares(OptimizerGeneric):
                                          'dogbox': Dogleg algorithm
                                          (supports bounds).
                                          Defaults to 'lm'.
+            x_scale (array-like, float, "jac", or None, optional): Characteristic
+                scale of each optimizer-space variable, after any Optiland variable
+                scaling. If set to "jac", SciPy updates the scale using inverse
+                Jacobian column norms. If None, the argument is omitted so the
+                installed SciPy version uses its existing default.
+
+        Returns:
+            OptimizeResult: The SciPy optimization result.
         """
 
         x0_scaled_values = [var.value for var in self.problem.variables]
@@ -171,6 +183,10 @@ class LeastSquares(OptimizerGeneric):
             if live_plotter is not None:
                 live_plotter.update()
 
+        least_squares_kwargs: dict[str, Any] = {}
+        if x_scale is not None:
+            least_squares_kwargs["x_scale"] = x_scale
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=RuntimeWarning)
             result = optimize.least_squares(
@@ -182,6 +198,7 @@ class LeastSquares(OptimizerGeneric):
                 verbose=scipy_verbose_level,
                 ftol=tol,
                 callback=_wrapped_callback,
+                **least_squares_kwargs,
             )
 
         for i, optiland_var_wrapper in enumerate(self.problem.variables):

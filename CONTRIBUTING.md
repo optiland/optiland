@@ -1,6 +1,6 @@
 # Contributing to Optiland
 
-> For a deep dive into Optiland's architecture and step-by-step extension recipes, see the [Developer's Guide](https://optiland.readthedocs.io/en/latest/developers_guide/introduction.html) on Read the Docs.
+> For a deep dive into Optiland's architecture and step-by-step extension recipes, see the [Developer's Guide](https://www.optiland.org/docs/developers_guide/introduction.html).
 
 Thank you for your interest in contributing to **Optiland**! Contributions are welcome in many forms, including but not limited to:
 
@@ -145,6 +145,44 @@ Write docstrings for all public functions, classes, and modules using the [Googl
 
 Use inline comments sparingly and only when necessary to explain complex logic.
 
+## Building the Documentation
+
+The documentation lives in `docs/` as reStructuredText pages, Jupyter notebooks
+(committed **with** their outputs; builds never execute them) and API pages
+generated from docstrings. It is published automatically at
+<https://www.optiland.org/docs/> by the `Docs` workflow on every push to
+`master`, so a documentation change needs nothing beyond a normal pull request.
+
+Build it locally with the same pinned environment the hosted build uses:
+
+```sh
+# one-time: create/update the environment (needs micromamba or conda)
+micromamba create -f docs/build-environment.yml
+micromamba activate sphinx-build
+
+# normal local build -> docs/_build/html/index.html
+make -C docs html
+
+# the exact build + validation CI runs
+python scripts/docs/build_docs.py
+python scripts/docs/validate_build.py docs/_build/html \
+    --warnings docs/_build/warnings.log \
+    --allowlist scripts/docs/warnings-allowlist.txt
+```
+
+Notes:
+
+- `pip install -r docs/requirements.txt` mirrors the Python pins for pip/uv
+  users; `pandoc` must then be installed separately.
+- The "Try Optiland in your browser" page is built by `jupyterlite-xeus` with
+  `micromamba`. On hosts where that is not possible (for example Windows), pass
+  `--skip-jupyterlite` to `build_docs.py`; CI always builds it.
+- CI treats every Sphinx warning as an error unless it is listed, with a
+  reason, in `scripts/docs/warnings-allowlist.txt`. Fix the warning at the
+  source rather than extending the allowlist.
+- Never commit generated HTML. Never hardcode the version: it is derived from
+  the package metadata.
+
 ## Testing
 
 - Write tests for new features or bug fixes in the tests/ directory.
@@ -203,7 +241,7 @@ Once `optiland-my-surface` is installed alongside Optiland,
 to Optiland itself.
 
 The same mechanism works for material catalogs (`optiland.materials`) and analyses
-(`optiland.analyses`) — see the [Plugin Packages](https://optiland.readthedocs.io/en/latest/developers_guide/plugin_packages.html)
+(`optiland.analyses`) — see the [Plugin Packages](https://www.optiland.org/docs/developers_guide/plugin_packages.html)
 guide for full worked examples of all three.
 
 ## Dead-Code Audits

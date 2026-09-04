@@ -198,13 +198,27 @@ New to these concepts? See the :ref:`glossary` first.
    print("XPL:", lens.paraxial.XPL())   # exit pupil location, relative to the image surface
    print("Magnification:", lens.paraxial.magnification())
 
+   # EFL of a lens group, i.e. surfaces 1 through 2 only
+   print("Group EFL:", lens.paraxial.f2_range(1, 2))
+
+.. note::
+
+   ``f2_range(start, end)`` treats the surface range as a lens group **in
+   isolation**, with its own conjugates. It is not a decomposition of the
+   system's power, so the group focal lengths of a design will not add back up
+   to ``f2()``. The underlying 2x2 ray-transfer matrix of a surface range is
+   available as ``lens.paraxial.ray_transfer_matrix(start, end)``.
+
 .. note::
 
    ``EPL()`` is measured **relative to the first physical surface** (surface 1),
    matching the convention of ``XPL()`` (relative to the image surface) and the
-   other first-order quantities. If you need the entrance pupil as a **global**
-   z coordinate — e.g. to compare against object or surface positions — use
-   ``lens.paraxial.entrance_pupil_z()``.
+   other first-order quantities. If you need the entrance pupil on the same
+   axial coordinate as surface positions — e.g. to compare against object or
+   surface positions — use ``lens.paraxial.entrance_pupil_axial_position()``
+   (``entrance_pupil_z()`` is a deprecated alias). For the pupil's real-space
+   location in a folded system, use
+   ``lens.paraxial.entrance_pupil_point_gcs()``.
 
 ----
 
@@ -283,3 +297,56 @@ New to these concepts? See the :ref:`glossary` first.
    p.view()                         # Rich console output
    p.save("prescription.txt")       # plain text
    p.save("prescription.pdf")       # PDF (requires reportlab)
+
+----
+
+21. Non-sequential (illumination / stray-light)
+------------------------------------------------
+
+.. code-block:: python
+
+   from optiland.coordinate_system import CoordinateSystem
+   from optiland.nonsequential import (
+       NSQScene, Spectrum,
+       CollimatedSourceConfig, LensConfig, IrradianceDetectorConfig,
+   )
+
+   scene = NSQScene()
+   spec = Spectrum.monochromatic(0.55)            # wavelengths in µm
+   scene.add_source("S", CoordinateSystem(z=0),
+                    CollimatedSourceConfig(spectrum=spec, total_flux=1.0,
+                                           aperture_radius=10))
+   scene.add_lens("L", CoordinateSystem(z=50),
+                  LensConfig(r1=100, r2=-100, thickness=5, material="N-BK7",
+                             front_aperture_radius=12.5))
+   scene.add_detector("D", CoordinateSystem(z=150),
+                      IrradianceDetectorConfig(width=20, height=20))
+
+   result = scene.trace(num_rays=1_000_000, max_depth=16, seed=42)
+   result.detectors["D"].plot()                   # irradiance map
+
+----
+
+22. Convert a sequential lens to non-sequential
+------------------------------------------------
+
+.. code-block:: python
+
+   from optiland.nonsequential import sequential_to_nonsequential
+
+   scene = sequential_to_nonsequential(lens)      # for stray-light / ghost analysis
+
+----
+
+23. Differentiable non-sequential (gradients)
+----------------------------------------------
+
+.. code-block:: python
+
+   import optiland.backend as be
+   be.set_backend("torch")                        # build scene AFTER this
+
+   # ... build scene with torch.Tensor params, then:
+   result = scene.trace(num_rays=2_000, max_depth=16, seed=42)
+   loss = ((result.detectors["D"].data - target) ** 2).mean()
+   loss.backward()                                # gradients flow to scene params

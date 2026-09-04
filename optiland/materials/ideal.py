@@ -53,7 +53,9 @@ class IdealMaterial(BaseMaterial):
             as wavelength, filled with the constant refractive index.
         """
         if be.is_array_like(wavelength) and be.size(wavelength) > 1:
-            return be.full_like(wavelength, self.index[0])
+            # ``be.full_like(w, value)`` reads the value out as a scalar and
+            # detaches it; broadcasting keeps a trainable index attached.
+            return be.ones_like(wavelength) * self.index[0]
         return self.index[0]
 
     def _calculate_k(self, wavelength, **kwargs):
@@ -70,7 +72,9 @@ class IdealMaterial(BaseMaterial):
             as wavelength, filled with the constant extinction coefficient.
         """
         if be.is_array_like(wavelength) and be.size(wavelength) > 1:
-            return be.full_like(wavelength, self.absorp[0])
+            # Broadcast (rather than full_like) to keep a trainable extinction
+            # coefficient attached to the autograd graph.
+            return be.ones_like(wavelength) * self.absorp[0]
         return self.absorp[0]
 
     def to_dict(self):

@@ -13,7 +13,12 @@ from typing import Any
 import optiland.backend as be
 from optiland.fileio.zemax.model import ZemaxDataModel
 from optiland.materials import AbbeMaterial, BaseMaterial, Material
-from optiland.physical_apertures import RadialAperture
+from optiland.materials.material_spec import MatchPolicy
+from optiland.physical_apertures import OffsetRadialAperture, RadialAperture
+
+# Fraunhofer d-line (um), used to evaluate a candidate glass's index for
+# comparison against the Nd recorded on a GLAS line.
+_WL_D = 0.5875618
 
 
 class ZemaxDataParser:
@@ -32,6 +37,7 @@ class ZemaxDataParser:
         self.data_model = ZemaxDataModel()
         self._current_surf = -1
         self._current_surf_data: dict[str, Any] = {}
+        self._current_aperture_offset = (0.0, 0.0)
         self._ftyp = None
 
         # Operand dispatch table — maps operand string to handler method
@@ -67,6 +73,7 @@ class ZemaxDataParser:
             "VCYN": self._read_vignette_compress_y,
             "VANN": self._read_vignette_tangent_angle,
             "CLAP": self._read_circular_aperture,
+            "OBDC": self._read_aperture_decenter,
         }
 
     def parse(self) -> ZemaxDataModel:
@@ -193,6 +200,7 @@ class ZemaxDataParser:
         if self._current_surf >= 0:
             self.data_model.surfaces[self._current_surf] = self._current_surf_data
         self._current_surf += 1
+        self._current_aperture_offset = (0.0, 0.0)
         self._current_surf_data = {
             "type": "standard",
             "is_stop": False,
@@ -230,19 +238,24 @@ class ZemaxDataParser:
             self._current_surf_data["index"] = None
             self._current_surf_data["abbe"] = None
 
-        # Try to resolve to a real Material from the glass catalog
-        try:
-            self._current_surf_data["material"] = Material(material_name)
-        except ValueError:
-            if self.data_model.glass_catalogs:
-                for mfg in self.data_model.glass_catalogs:
-                    try:
-                        self._current_surf_data["material"] = Material(
-                            material_name, mfg.lower()
-                        )
-                        break
-                    except ValueError:
-                        continue
+        resolved = self._resolve_glass_by_catalog_and_index(material_name)
+
+        if resolved is not None:
+            self._current_surf_data["material"] = resolved
+        else:
+            # Try to resolve to a real Material from the glass catalog
+            try:
+                self._current_surf_data["material"] = Material(material_name)
+            except ValueError:
+                if self.data_model.glass_catalogs:
+                    for mfg in self.data_model.glass_catalogs:
+                        try:
+                            self._current_surf_data["material"] = Material(
+                                material_name, mfg.lower()
+                            )
+                            break
+                        except ValueError:
+                            continue
 
         # Fall back to AbbeMaterial if catalog lookup failed
         if not isinstance(self._current_surf_data["material"], BaseMaterial):
@@ -251,6 +264,57 @@ class ZemaxDataParser:
                 self._current_surf_data["abbe"],
                 model="buchdahl",
             )
+
+    def _resolve_glass_by_catalog_and_index(
+        self, material_name: str
+    ) -> BaseMaterial | None:
+        """Disambiguate a glass name against the file's declared GCAT catalogs.
+
+        A bare ``Material(name)`` lookup silently returns a single "best
+        match" without regard to which catalogs this file actually declares,
+        so a name present in several catalogs (e.g. "F2" in both Schott and
+        Hikari) can resolve to the wrong one on reload. When the GLAS line
+        carries an Nd/Vd pair, use it to pick whichever catalog candidate is
+        the closest match instead.
+
+        Returns:
+            The resolved material, or None if disambiguation isn't
+            applicable (no declared catalogs, no Nd/Vd on the line, or no
+            candidate found in any declared catalog).
+        """
+        index = self._current_surf_data.get("index")
+        abbe = self._current_surf_data.get("abbe")
+        if not self.data_model.glass_catalogs or index is None or index <= 1.0:
+            return None
+
+        candidates = []
+        for mfg in self.data_model.glass_catalogs:
+            try:
+                candidates.append(
+                    Material(material_name, mfg.lower(), match_policy=MatchPolicy.BEST)
+                )
+            except ValueError:
+                continue
+
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0]
+
+        def _scalar(value) -> float:
+            return float(be.atleast_1d(be.array(value)).ravel()[0])
+
+        def _distance(candidate: BaseMaterial) -> float:
+            try:
+                d_n = _scalar(candidate.n(_WL_D)) - index
+                d_v = 0.0
+                if abbe is not None:
+                    d_v = (_scalar(candidate.abbe()) - abbe) / 100.0
+                return d_n**2 + d_v**2
+            except Exception:
+                return float("inf")
+
+        return min(candidates, key=_distance)
 
     def _read_stop(self, data: list[str]) -> None:
         self._current_surf_data["is_stop"] = True
@@ -313,8 +377,30 @@ class ZemaxDataParser:
         ]
 
     def _read_circular_aperture(self, data: list[str]) -> None:
-        self._current_surf_data["aperture"] = RadialAperture(
-            r_min=float(data[1]), r_max=float(data[2])
+        r_min = float(data[1])
+        r_max = float(data[2])
+        self._current_surf_data["aperture"] = self._make_circular_aperture(r_min, r_max)
+
+    def _make_circular_aperture(self, r_min: float, r_max: float) -> RadialAperture:
+        offset_x, offset_y = self._current_aperture_offset
+        if offset_x == 0.0 and offset_y == 0.0:
+            return RadialAperture(r_min=r_min, r_max=r_max)
+        return OffsetRadialAperture(
+            r_min=r_min,
+            r_max=r_max,
+            offset_x=offset_x,
+            offset_y=offset_y,
+        )
+
+    def _read_aperture_decenter(self, data: list[str]) -> None:
+        offset_x = float(data[1])
+        offset_y = float(data[2])
+        self._current_aperture_offset = (offset_x, offset_y)
+        aperture = self._current_surf_data["aperture"]
+        if aperture is None:
+            return
+        self._current_surf_data["aperture"] = self._make_circular_aperture(
+            aperture.r_min, aperture.r_max
         )
 
     # ------------------------------------------------------------------

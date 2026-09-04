@@ -90,11 +90,13 @@ class RangeSampler(BaseSampler):
 
 
 class DistributionSampler(BaseSampler):
-    """A sampler that generates random samples from a given distribution. Options
-    for the distribution include 'normal' and 'uniform' and these require
-    arguments as follows:
-        "normal": loc, scale (corresponding to mean and standard deviation)
-        "uniform": low, high
+    """A sampler that generates random samples from a given distribution.
+
+    Options for the distribution include 'normal' and 'uniform' and these
+    require keyword arguments as follows:
+
+    - ``"normal"``: ``loc``, ``scale`` (mean and standard deviation)
+    - ``"uniform"``: ``low``, ``high``
 
     Args:
         distribution (str): The type of distribution to sample from. Options

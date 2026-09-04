@@ -8,6 +8,7 @@ or unique functionality of Optiland.
 
 .. nbgallery::
 
+    miscellaneous/diagnostics_demo
     miscellaneous/combining_lenses
     miscellaneous/codev_import_demo
     miscellaneous/oslo_import_demo
