@@ -22,6 +22,21 @@ This approach allows for accurate refractive index prediction across the visible
 
 For a detailed walkthrough of the model derivation and validation, please refer to the :doc:`Abbe Material Model Building <../references/AbbeMaterial_Model_Building>` notebook.
 
+6th-Order Buchdahl Model Glass
+------------------------------
+
+The :class:`~optiland.materials.model.ModelMaterial` class implements a highly accurate 6th-order Buchdahl model glass that is parameterized by the refractive index at the d-line ($n_d$), the Abbe number ($V_d$), and the deviation of the relative partial dispersion ($dPgF$). It supports both visible and infrared (IR) routing architectures to provide precise chromatic modeling:
+
+* **Visible Routing:** If no IR partial dispersion anchors are provided, the model predicts higher-order Buchdahl coefficients ($\nu_3..\nu_6$) using a 20-dimensional regression matrix. The lower-order coefficients ($\nu_1..\nu_2$) are then solved exactly using the F-C and g-F partial-dispersion equations as hard boundary anchors.
+* **IR Routing:** An optional IR route is enabled when both reference partial dispersion ($P_{ref}$) and reference wavelength ($\lambda_{ref}$) are supplied. In this mode, the model predicts higher-order coefficients ($\nu_4..\nu_6$) via a 35-dimensional regression matrix. The lower-order coefficients ($\nu_1..\nu_3$) are solved exactly using the F-C, g-F, and the reference-wavelength anchors.
+
+This dual-routing flexibility ensures numerical stability and physical validity for optical design across the visible and infrared spectra.
+
+For an in-depth walkthrough of the model's math, routing logic, and validation details, see the following notebooks:
+* :doc:`Visible Routing Derivation <../Buchdahl_model_material_details/Visible_Routing>`
+* :doc:`IR Routing Derivation <../Buchdahl_model_material_details/IR_Routing>`
+* :doc:`Runtime Model Validation <../Buchdahl_model_material_details/Runtime Validation>`
+
 Catalog-Scoped Lookup
 ---------------------
 
@@ -77,6 +92,7 @@ auto-discovered on the first registry access.
    materials.ideal
    materials.material_file
    materials.material
+   materials.model
    materials.material_spec
    materials.material_utils
    materials.catalog

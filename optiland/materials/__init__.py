@@ -20,6 +20,7 @@ from .material_utils import (
     plot_glass_map,
     plot_nk,
 )
+from .model import ModelMaterial
 from .registry import MaterialRegistry
 from .warnings import OptilandMaterialWarning
 
@@ -47,9 +48,10 @@ __all__ = [
     "glasses_selection",
     "plot_glass_map",
     "plot_nk",
-    find_closest_glass,
+    "find_closest_glass",
     # From registry.py
     "MaterialRegistry",
     # From warnings.py
     "OptilandMaterialWarning",
+    "ModelMaterial",
 ]
