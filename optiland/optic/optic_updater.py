@@ -75,11 +75,6 @@ class OpticUpdater:
         """
         from optiland.paraxial_path import require_global_z_geometry
 
-        # Thickness updates rebuild downstream cs.z from cumulative
-        # thicknesses, which is only meaningful while the beam path runs
-        # along global +z. Guard before touching any geometry.
-        require_global_z_geometry(self.optic.surfaces, "set_thickness")
-
         if surface_number == 0:
             # First surface thickness sets the object distance.
             # We treat this specially to avoid issues with infinite values.
@@ -87,6 +82,10 @@ class OpticUpdater:
             self.optic.surfaces[0].geometry.cs.z = be.array(-value)
             # No need to shift other surfaces as they are relative to S1 at z=0
             return
+
+        # Rebuilding downstream cs.z from cumulative thicknesses only holds while
+        # the beam runs along global +z. Surface 0 returned above, moving nothing.
+        require_global_z_geometry(self.optic.surfaces, "set_thickness")
 
         # Source of truth for downstream positions is each surface's `.thickness`
         # attribute. Update the requested one first, then rebuild every cs.z
@@ -242,8 +241,13 @@ class OpticUpdater:
         yb, _ = self.optic.paraxial.chief_ray()
         ya = be.abs(be.ravel(ya))
         yb = be.abs(be.ravel(yb))
+
+        # Semi-apertures (and the normalization radii derived from them) live in the
+        # surface's own plane, where a tilted surface sees the beam spread over
+        # 1 / cos(tilt) of the paraxial height.
+        obliquity = self.optic.surfaces.obliquity
         for k, surface in enumerate(self.optic.surfaces):
-            r_max = ya[k] + yb[k]
+            r_max = (ya[k] + yb[k]) / obliquity[k]
             if surface.aperture is not None:
                 extent_max = be.max(be.abs(be.array(surface.aperture.extent)))
                 if be.isfinite(be.array(extent_max)):
