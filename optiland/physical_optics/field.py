@@ -126,7 +126,11 @@ class ScalarField(Generic[BEArrayT]):
 
         Args:
             distance: Signed propagation distance in the field's spatial unit.
-            evanescent: Evanescent-wave policy, ``"discard"`` or ``"decay"``.
+            evanescent: ``"discard"`` filters evanescent content even at zero
+                distance. ``"decay"`` preserves the complete field at zero,
+                up to FFT roundoff. See
+                :func:`~optiland.physical_optics.propagation.angular_spectrum`
+                for distance-gradient behavior.
 
         Returns:
             ScalarField: Propagated field on the same sampling grid.

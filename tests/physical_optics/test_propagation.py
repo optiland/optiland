@@ -9,7 +9,8 @@ from tests.utils import assert_allclose
 
 
 @pytest.mark.parametrize("shape", [(31, 32), (32, 31), (33, 35)])
-def test_zero_distance_is_identity(set_test_backend, shape):
+@pytest.mark.parametrize("evanescent", ["discard", "decay"])
+def test_zero_distance_is_identity(set_test_backend, shape, evanescent):
     field = gaussian_field(
         shape=shape,
         dx=0.02,
@@ -18,32 +19,52 @@ def test_zero_distance_is_identity(set_test_backend, shape):
         waist_radius=0.2,
     )
 
-    propagated = angular_spectrum(field, distance=0.0)
+    propagated = angular_spectrum(field, distance=0.0, evanescent=evanescent)
 
     assert_allclose(propagated.data, field.data, rtol=1e-12, atol=1e-12)
 
 
-def test_zero_distance_preserves_evanescent_content(set_test_backend):
+@pytest.mark.parametrize("backend_distance", [False, True])
+def test_zero_distance_decay_preserves_evanescent_content(
+    set_test_backend, backend_distance
+):
     indices = be.arange_indices(32)
     checkerboard = 1 - 2 * (indices % 2)
     data = checkerboard[:, None] * checkerboard[None, :]
     field = ScalarField(data, dx=0.1, wavelength=1.0)
 
-    propagated = field.propagate(0.0, evanescent="discard")
+    distance = be.array(0.0) if backend_distance else 0.0
+    propagated = field.propagate(distance, evanescent="decay")
 
-    assert propagated is field
     assert_allclose(propagated.data, field.data, rtol=1e-12, atol=1e-12)
 
 
-def test_evanescent_discard_applies_at_nonzero_distance(set_test_backend):
+@pytest.mark.parametrize("distance", [-1e-9, 0.0, 1e-9])
+@pytest.mark.parametrize("backend_distance", [False, True])
+def test_evanescent_discard_applies_at_every_distance(
+    set_test_backend, distance, backend_distance
+):
     indices = be.arange_indices(32)
     checkerboard = 1 - 2 * (indices % 2)
     data = checkerboard[:, None] * checkerboard[None, :]
     field = ScalarField(data, dx=0.1, wavelength=1.0)
 
-    propagated = field.propagate(1e-9, evanescent="discard")
+    if backend_distance:
+        distance = be.array(distance)
+    propagated = field.propagate(distance, evanescent="discard")
 
     assert_allclose(propagated.power, 0.0, atol=1e-12)
+
+
+def test_zero_distance_discard_preserves_only_propagating_content(set_test_backend):
+    indices = be.arange_indices(32)
+    checkerboard = 1 - 2 * (indices % 2)
+    data = 1 + checkerboard[:, None] * checkerboard[None, :]
+    field = ScalarField(data, dx=0.1, wavelength=1.0)
+
+    propagated = field.propagate(be.array(0.0), evanescent="discard")
+
+    assert_allclose(propagated.data, be.ones((32, 32)), rtol=1e-12, atol=1e-12)
 
 
 def test_plane_wave_accumulates_expected_phase(set_test_backend):
@@ -194,7 +215,9 @@ def test_numpy_and_torch_results_match():
     assert np.allclose(torch_result, numpy_result, rtol=1e-11, atol=5e-12)
 
 
-def test_torch_autograd_flows_through_field_and_distance():
+@pytest.mark.parametrize("distance_value", [-0.17, 0.0, 0.17])
+@pytest.mark.parametrize("evanescent", ["discard", "decay"])
+def test_torch_autograd_flows_through_field_and_distance(distance_value, evanescent):
     if "torch" not in be.list_available_backends():
         pytest.skip("PyTorch is not available")
 
@@ -204,10 +227,10 @@ def test_torch_autograd_flows_through_field_and_distance():
         be.set_precision("float64")
         be.grad_mode.enable()
         amplitude = be.ones((8, 8))
-        distance = be.array(0.17)
+        distance = be.array(distance_value)
         field = ScalarField(amplitude, dx=1.0, wavelength=1.0)
 
-        propagated = field.propagate(distance)
+        propagated = field.propagate(distance, evanescent=evanescent)
         loss = be.real(propagated.data[0, 0]) + propagated.power
         loss.backward()
 
@@ -215,5 +238,72 @@ def test_torch_autograd_flows_through_field_and_distance():
         assert distance.grad is not None
         assert bool(be.all(be.isfinite(amplitude.grad)))
         assert bool(be.all(be.isfinite(distance.grad)))
+    finally:
+        be.set_backend("numpy")
+
+
+@pytest.mark.parametrize("distance_value", [-0.17, 0.0, 0.17])
+@pytest.mark.parametrize("evanescent", ["discard", "decay"])
+@pytest.mark.parametrize("mode", [0, 1])
+def test_torch_distance_gradient_matches_phase_and_finite_difference(
+    distance_value, evanescent, mode
+):
+    if "torch" not in be.list_available_backends():
+        pytest.skip("PyTorch is not available")
+
+    try:
+        be.set_backend("torch")
+        be.set_device("cpu")
+        be.set_precision("float64")
+        be.grad_mode.enable()
+        size = 16
+        phase = 2 * np.pi * mode * be.cast(be.arange_indices(size)) / size
+        data = be.ones((size, 1)) * be.exp(1j * phase)[None, :]
+        field = ScalarField(data, dx=1.0, wavelength=1.0)
+        distance = be.array(distance_value)
+
+        loss = field.propagate(distance, evanescent=evanescent).data[0, 0].imag
+        loss.backward()
+
+        kz = np.sqrt((2 * np.pi) ** 2 - (2 * np.pi * mode / size) ** 2)
+        expected_gradient = kz * np.cos(kz * distance_value)
+        step = 1e-6
+        forward = field.propagate(distance_value + step, evanescent=evanescent)
+        backward = field.propagate(distance_value - step, evanescent=evanescent)
+        finite_difference = (forward.data[0, 0].imag - backward.data[0, 0].imag) / (
+            2 * step
+        )
+
+        assert distance.grad is not None
+        assert_allclose(distance.grad, expected_gradient, rtol=1e-12, atol=1e-12)
+        assert_allclose(distance.grad, finite_difference, rtol=1e-9, atol=1e-9)
+    finally:
+        be.set_backend("numpy")
+
+
+@pytest.mark.parametrize("distance_value", [-0.02, 0.02])
+def test_torch_evanescent_decay_gradient_away_from_zero(distance_value):
+    if "torch" not in be.list_available_backends():
+        pytest.skip("PyTorch is not available")
+
+    try:
+        be.set_backend("torch")
+        be.set_device("cpu")
+        be.set_precision("float64")
+        be.grad_mode.enable()
+        indices = be.arange_indices(32)
+        checkerboard = 1 - 2 * (indices % 2)
+        data = checkerboard[:, None] * checkerboard[None, :]
+        field = ScalarField(data, dx=0.1, wavelength=1.0)
+        distance = be.array(distance_value)
+
+        power = field.propagate(distance, evanescent="decay").power
+        power.backward()
+
+        decay_rate = np.sqrt(2 * (np.pi / field.dx) ** 2 - (2 * np.pi) ** 2)
+        expected_power = field.power * np.exp(-2 * abs(distance_value) * decay_rate)
+        expected_gradient = -2 * np.sign(distance_value) * decay_rate * expected_power
+        assert_allclose(power, expected_power, rtol=1e-12, atol=1e-12)
+        assert_allclose(distance.grad, expected_gradient, rtol=1e-12, atol=1e-12)
     finally:
         be.set_backend("numpy")

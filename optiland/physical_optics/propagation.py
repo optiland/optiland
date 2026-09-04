@@ -65,12 +65,16 @@ def angular_spectrum(
         field: Input scalar field.
         distance: Signed propagation distance. It must use the same unit as the
             field spacing and wavelength. A backend scalar is accepted so that
-            PyTorch can differentiate with respect to distance.
+            PyTorch can differentiate with respect to distance, including at
+            zero for propagating components.
         evanescent: Handling of spatial frequencies above the propagating
-            cutoff. ``"discard"`` removes them. ``"decay"`` attenuates them
-            exponentially away from the input plane. A zero propagation
-            distance is always treated as a no-op before either policy is
-            applied.
+            cutoff. ``"discard"`` removes them at every distance, including
+            zero, so zero-distance propagation is an identity only for fields
+            without evanescent content. ``"decay"`` attenuates them
+            exponentially with ``abs(distance)`` and preserves the complete
+            field at zero, up to FFT roundoff. With evanescent content, this
+            absolute-value decay has no two-sided distance derivative at zero;
+            PyTorch uses a zero subgradient for the absolute-value factor there.
 
     Returns:
         ScalarField: Propagated field on the original sampling grid.
@@ -85,8 +89,6 @@ def angular_spectrum(
     _validate_distance(distance)
     if evanescent not in ("discard", "decay"):
         raise ValueError("evanescent must be either 'discard' or 'decay'.")
-    if bool(distance == 0):
-        return field
     if not isinstance(distance, Real):
         distance = _cast_real_like(distance, field.data)
 
