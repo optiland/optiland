@@ -105,6 +105,10 @@ class InterpolationMixin:
             scipy_mode = "nearest"
         elif padding_mode == "reflection":
             scipy_mode = "reflect"
+        elif padding_mode == "zeros" and mode == "bilinear":
+            # Interpolate edge pixels with zero-valued neighbors outside the
+            # image, rather than dropping their partial contributions.
+            scipy_mode = "grid-constant"
 
         for n in range(N):
             for c in range(C):
