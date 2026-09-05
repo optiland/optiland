@@ -342,6 +342,7 @@ def _create_nurbs(cs: CoordinateSystem, config: NurbsConfig):
         config.n_points_v,
         config.tol,
         config.max_iter,
+        config.max_stall,
     )
 
 
