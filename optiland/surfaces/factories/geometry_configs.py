@@ -192,6 +192,9 @@ class NurbsConfig(GeometryConfig):
     n_points_v: int = 5
     tol: float = 1e-6
     max_iter: int = 100
+    # Kept in step with NurbsGeometry's own default -- without this field the
+    # factory cannot pass one, and every surface on a bench took the constructor's
+    max_stall: int = 12
 
 
 @dataclass

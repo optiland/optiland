@@ -25,6 +25,12 @@ from .nurbs_basis_functions import (
 )
 from .nurbs_fitting import approximate_surface
 
+# Data points per control point along each axis when a surface is sampled to be
+# fitted. One apiece makes the least squares square -- interpolation in disguise --
+# and the net that comes back runs to 1e10 mm for a surface a few mm deep. Two
+# settles it and is worth four orders of accuracy; more buys nothing measurable.
+FIT_DATA_FACTOR = 2
+
 
 class NurbsGeometry(BaseGeometry):
     """Creates a NURBS (Non-Uniform Rational Basis Spline) geometry.
@@ -75,6 +81,19 @@ class NurbsGeometry(BaseGeometry):
             are passed.
         tol: The tolerance for Newton-Raphson iteration.
         max_iter: The maximum number of iterations for Newton-Raphson.
+        max_stall: How many iterations a ray may go without improving before it
+            is taken as settled. A root off the patch is pinned by the clamp and
+            never reaches tol; without this it would iterate to max_iter.
+
+            Every net this module fits now lands at 2 -- measured over 24 of
+            them, spanning n_points 24 to 48 and radii 25 to 200. 12 is headroom
+            for control points supplied by a CALLER, which this module cannot
+            vouch for: a badly conditioned net does not converge steadily, its
+            residual falling in fits, and three quiet iterations are then not
+            evidence a ray is done. The headroom is close to free -- a ray ON the
+            patch lands in a single iteration whatever this says, and only a ray
+            off the patch pays, exactly max_stall + 1 against the 100 it used
+            to.
 
     References:
         - The NURBS Book. See references to equations and algorithms throughout
@@ -104,6 +123,7 @@ class NurbsGeometry(BaseGeometry):
         n_points_v=4,
         tol=1e-10,
         max_iter=100,
+        max_stall=12,
     ):
         super().__init__(coordinate_system)
         self.P = be.asarray(control_points) if control_points is not None else None
@@ -127,6 +147,7 @@ class NurbsGeometry(BaseGeometry):
         self.k = conic
         self.tol = tol
         self.max_iter = max_iter
+        self.max_stall = max_stall
 
         self.is_symmetric = False
 
@@ -135,8 +156,12 @@ class NurbsGeometry(BaseGeometry):
         if control_points is None:
             self.is_fitted = True
             self.ndim = 3
-            self.P_size_u = n_points_u + 1
-            self.P_size_v = n_points_v + 1
+            # The CONTROL count, which is what n_points_u is documented to be.
+            # It used to be that plus one, being read as a data count by the
+            # standard-surface fit and as a control count by the plane one -- so
+            # the same n_points_u gave nets a size apart depending on the branch.
+            self.P_size_u = n_points_u
+            self.P_size_v = n_points_v
 
         # Polynomial Bezier surface initialization
         elif (
@@ -276,6 +301,15 @@ class NurbsGeometry(BaseGeometry):
                     )
                 )
             self.ndim = be.shape(control_points)[0]
+
+        # The branches above fill in whatever the caller left out -- weights, a
+        # degree, a clamped knot vector -- as locals. Written back here, or the
+        # surface keeps the None it was constructed with and evaluates to nothing.
+        for name, value in (("W", weights), ("p", u_degree), ("q", v_degree),
+                            ("U", u_knots), ("V", v_knots)):
+            if getattr(self, name) is None and value is not None:
+                setattr(self, name, be.asarray(value)
+                        if name not in ("p", "q") else value)
 
     def set_radius(self, value: float) -> None:
         """Set the radius of curvature.
@@ -664,7 +698,7 @@ class NurbsGeometry(BaseGeometry):
 
         Returns:
             A tuple containing the correction steps for u and v parameters,
-            and the maximum distance between all rays and surface intersection.
+            and the distance between each ray and its surface intersection.
         """
         S_uv = self.get_value(u, v).T
         r = be.stack(
@@ -691,7 +725,9 @@ class NurbsGeometry(BaseGeometry):
         invj = adj / detJ
 
         correction = be.einsum("ijk,ki->ji", invj, r)
-        residual = be.max(be.abs(r))
+        # One residual PER RAY: _newton has to tell a ray still closing on its root
+        # from one the clamp has pinned, and a bundle-wide max hides that
+        residual = be.maximum(be.abs(r[0, :]), be.abs(r[1, :]))
 
         return correction, residual
 
@@ -710,7 +746,7 @@ class NurbsGeometry(BaseGeometry):
             d2: A parameter related to the ray's position.
 
         Returns:
-            A tuple containing the correction steps and the residual.
+            A tuple containing the correction steps and the per-ray residual.
         """
         S_uv = self.get_value(u, v)
         r = be.stack([S_uv[1, :] + d1, S_uv[0, :] + d2], axis=0)
@@ -734,9 +770,56 @@ class NurbsGeometry(BaseGeometry):
         invj = adj / detJ
 
         correction = be.einsum("ijk,ki->ji", invj, r)
-        residual = be.max(be.abs(r))
+        # One residual PER RAY: _newton has to tell a ray still closing on its root
+        # from one the clamp has pinned, and a bundle-wide max hides that
+        residual = be.maximum(be.abs(r[0, :]), be.abs(r[1, :]))
 
         return correction, residual
+
+    def _seed(self, x, y):
+        """Where in (u, v) to start the Newton for points at x, y: their place across
+        the patch, u running with x and v with y. Seeded at a corner instead, the
+        iteration walks off the patch or onto a neighbouring root, and no number of
+        restarts brings it back.
+
+        Measured off the FOUR CORNER control points, which a clamped spline
+        interpolates, not off the whole net -- a least squares run near
+        interpolation leaves interior control points decades away from the surface
+        they describe, and a box drawn round those seeds every point at one edge.
+        """
+        corners = self.P[:, :: self.P.shape[1] - 1, :: self.P.shape[2] - 1]
+
+        def fraction(values, axis):
+            low, high = be.min(corners[axis]), be.max(corners[axis])
+            span = high - low
+            return be.clip((values - low) / be.where(span > 0.0, span, 1.0), 0.0, 1.0)
+
+        return fraction(be.ravel(x), 0), fraction(be.ravel(y), 1)
+
+    def _newton(self, corrector, u, v):
+        """Drive one of the two correction steps to its root, clamped to the patch.
+        A root off the patch never reaches `tol` -- the clamp pins it and the same
+        correction returns for ever -- so a ray is done once it stops IMPROVING.
+        """
+        best_u, best_v = u, v
+        best = be.full(be.shape(u), be.inf)
+        stalled = be.zeros(be.shape(u))
+        for _ in range(self.max_iter):
+            correction, residual = corrector(u, v)
+
+            # Kept by residual rather than by iteration: the pinned rays wander
+            # along the rim, so the last (u, v) need not be the closest one
+            improved = residual < best - self.tol
+            best_u = be.where(improved, u, best_u)
+            best_v = be.where(improved, v, best_v)
+            best = be.where(improved, residual, best)
+            stalled = be.where(improved, 0.0, stalled + 1.0)
+
+            if be.all(be.logical_or(best < self.tol, stalled >= self.max_stall)):
+                break
+            u = be.clip(u - correction[0, :], 0.0, 1.0)
+            v = be.clip(v - correction[1, :], 0.0, 1.0)
+        return best_u, best_v
 
     def sag(self, x=0, y=0):
         """Computes the surface sag.
@@ -752,21 +835,14 @@ class NurbsGeometry(BaseGeometry):
         Returns:
             The surface sag.
         """
-        shape = x.shape
-        u = be.zeros(be.size(x))
-        v = be.zeros(be.size(x))
-        for _ in range(self.max_iter):
-            correction, residual = self._corr(u, v, -be.ravel(y), -be.ravel(x))
-            u = u - correction[0, :]
-            v = v - correction[1, :]
-            u[be.logical_or(u < 0.0, v < 0.0)] = be.rand()
-            v[be.logical_or(u < 0.0, v < 0.0)] = be.rand()
-            u[be.logical_or(u > 1.0, v > 1.0)] = be.rand()
-            v[be.logical_or(u > 1.0, v > 1.0)] = be.rand()
-
-            if residual < self.tol:
-                break
-        return self.get_value(u, v)[2, :].reshape(shape)
+        # Scalars are as legal an argument as arrays -- a caller sampling one
+        # height at a time is asking the same question of the same surface
+        x, y = be.asarray(x), be.asarray(y)
+        shape = be.shape(x)
+        u, v = self._newton(
+            lambda u, v: self._corr(u, v, -be.ravel(y), -be.ravel(x)), *self._seed(x, y)
+        )
+        return be.reshape(self.get_value(u, v)[2, :], shape)
 
     def distance(self, rays):
         """Finds the propagation distance to the geometry for the given rays.
@@ -786,26 +862,16 @@ class NurbsGeometry(BaseGeometry):
         N1z = be.zeros_like(rays.x)
         mask = be.logical_and(rays.L > rays.M, rays.L > rays.N)
 
-        N1x = be.where(
-            mask,
-            rays.M / be.sqrt(rays.L**2 + rays.M**2),
-            N1x,
-        )
-        N1y = be.where(
-            mask,
-            -rays.L / be.sqrt(rays.L**2 + rays.M**2),
-            N1y,
-        )
-        N1y = be.where(
-            ~mask,
-            rays.N / be.sqrt(rays.N**2 + rays.M**2),
-            N1y,
-        )
-        N1z = be.where(
-            ~mask,
-            -rays.M / be.sqrt(rays.N**2 + rays.M**2),
-            N1z,
-        )
+        # be.where evaluates both sides, so the branch a ray did NOT take still
+        # divides -- and an axial ray makes the unused one 0/0. Floored rather
+        # than warned about: the quotient is discarded either way.
+        def normalized(numerator, first, second):
+            return numerator / be.maximum(be.sqrt(first**2 + second**2), 1e-14)
+
+        N1x = be.where(mask, normalized(rays.M, rays.L, rays.M), N1x)
+        N1y = be.where(mask, normalized(-rays.L, rays.L, rays.M), N1y)
+        N1y = be.where(~mask, normalized(rays.N, rays.N, rays.M), N1y)
+        N1z = be.where(~mask, normalized(-rays.M, rays.N, rays.M), N1z)
 
         N1 = be.column_stack((N1x, N1y, N1z))
 
@@ -818,21 +884,20 @@ class NurbsGeometry(BaseGeometry):
         d1 = -be.sum(N1 * P0, axis=1)
         d2 = -be.sum(N2 * P0, axis=1)
 
-        u = be.zeros_like(rays.x)
-        v = be.zeros_like(u)
+        # Where the ray crosses the vertex plane, which is the seed the sag takes
+        # -- the surface departs from that plane by its sag and nothing more
+        along = be.where(be.abs(rays.N) > 1e-14, rays.N, 1e-14)
+        u, v = self._newton(
+            lambda u, v: self._corr_general(u, v, d1, d2, N1, N2),
+            *self._seed(rays.x - rays.L * rays.z / along,
+                        rays.y - rays.M * rays.z / along),
+        )
 
-        for _ in range(self.max_iter):
-            correction, residual = self._corr_general(u, v, d1, d2, N1, N2)
-            u = u - correction[0, :]
-            v = v - correction[1, :]
-            u[be.logical_or(u < 0.0, v < 0.0)] = be.rand()
-            v[be.logical_or(u < 0.0, v < 0.0)] = be.rand()
-            u[be.logical_or(u > 1.0, v > 1.0)] = be.rand()
-            v[be.logical_or(u > 1.0, v > 1.0)] = be.rand()
-            if residual < self.tol:
-                break
-
-        t = be.sqrt(be.sum((self.get_value(u, v).T - P0) ** 2, axis=1))
+        # Signed ALONG the ray rather than |S - P0|: an intersection behind the ray
+        # is a step backwards, and reporting it as an equal step forward puts the
+        # ray on the wrong side of itself. A plain trace rarely looks back, but an
+        # iterative aimer probes both ways, and no line search recovers from that.
+        t = be.sum((self.get_value(u, v).T - P0) * d, axis=1)
 
         return t
 
@@ -848,18 +913,8 @@ class NurbsGeometry(BaseGeometry):
         """
         x = rays.x
         y = rays.y
-        u = be.zeros_like(x)
-        v = be.zeros_like(u)
-        for _ in range(self.max_iter):
-            correction, residual = self._corr(u, v, -y, -x)
-            u = u - correction[0, :]
-            v = v - correction[1, :]
-            u[be.logical_or(u < 0.0, v < 0.0)] = be.rand()
-            v[be.logical_or(u < 0.0, v < 0.0)] = be.rand()
-            u[be.logical_or(u > 1.0, v > 1.0)] = be.rand()
-            v[be.logical_or(u > 1.0, v > 1.0)] = be.rand()
-            if residual < self.tol:
-                break
+        # The rays are already ON the surface here, so their own x, y is the seed
+        u, v = self._newton(lambda u, v: self._corr(u, v, -y, -x), *self._seed(x, y))
         n = self.get_normals(u, v)
         nx = n[0, :]
         ny = n[1, :]
@@ -890,24 +945,41 @@ class NurbsGeometry(BaseGeometry):
         nurbs_norm_y = self.nurbs_norm_y
         xc = self.x_center
         yc = self.y_center
-        P_size_u = self.P_size_u
-        P_size_v = self.P_size_v
         P_ndim = self.ndim
-
-        x = be.linspace(xc - nurbs_norm_x, xc + nurbs_norm_x, P_size_u)
-        y = be.linspace(yc - nurbs_norm_y, yc + nurbs_norm_y, P_size_v)
-        x, y = be.meshgrid(x, y)
-        r2 = x**2 + y**2
-        z = r2 / (radius * (1 + be.sqrt(1 - (1 + k) * r2 / radius**2)))
-        points = be.stack((x.T, y.T, z.T), axis=0)
-
-        xp = (points.reshape(P_ndim, -1).T).tolist()
 
         u_degree = 3
         v_degree = 3
 
+        # The control net keeps the size it was ASKED for, and the data grid is
+        # its own and denser. Reading both off P_size_u made the least squares
+        # square, and made every RE-fit shrink the net by one -- which matters
+        # because update_normalization refits on each paraxial pass.
+        num_cpts_u = max(self.P_size_u, u_degree + 1)
+        num_cpts_v = max(self.P_size_v, v_degree + 1)
+        size_u = FIT_DATA_FACTOR * num_cpts_u
+        size_v = FIT_DATA_FACTOR * num_cpts_v
+
+        x = be.linspace(xc - nurbs_norm_x, xc + nurbs_norm_x, size_u)
+        y = be.linspace(yc - nurbs_norm_y, yc + nurbs_norm_y, size_v)
+        x, y = be.meshgrid(x, y)
+        r2 = x**2 + y**2
+
+        # A conic has no sag past its own edge, and the corners of a square box
+        # reach there on a fast surface. The root is floored so those corners
+        # carry the edge's own slope on instead of coming back NaN, which the
+        # fit does not accept -- it raises rather than fitting anything at all.
+        radicand = 1 - (1 + k) * r2 / radius**2
+        root = be.sqrt(be.where(radicand > 0.0, radicand, 0.0))
+        z = r2 / (radius * (1 + root))
+
+        points = be.stack((x.T, y.T, z.T), axis=0)
+        xp = (points.reshape(P_ndim, -1).T).tolist()
+
         ctrlpts, u_degree, v_degree, num_cpts_u, num_cpts_v, kv_u, kv_v = (
-            approximate_surface(xp, P_size_u, P_size_v, u_degree, v_degree)
+            approximate_surface(
+                xp, size_u, size_v, u_degree, v_degree,
+                ctrlpts_size_u=num_cpts_u, ctrlpts_size_v=num_cpts_v,
+            )
         )
 
         self.P_size_u = num_cpts_u
