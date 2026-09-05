@@ -232,9 +232,20 @@ class ImageSimulationEngine:
         # Upsampling
         scale = self.config["oversample"]
         if scale > 1:
-            image_np = be.to_numpy(image)
-            upsampled_np = zoom(image_np, (1, 1, scale, scale), order=1)
-            image = be.array(upsampled_np)
+            if be.get_backend() == "torch":
+                import torch.nn.functional as F
+
+                # Match scipy.ndimage.zoom's endpoint-aligned sampling grid.
+                image = F.interpolate(
+                    image,
+                    scale_factor=scale,
+                    mode="bilinear",
+                    align_corners=True,
+                )
+            else:
+                image_np = be.to_numpy(image)
+                upsampled_np = zoom(image_np, (1, 1, scale, scale), order=1)
+                image = be.array(upsampled_np)
 
         return image, (pad, scale)
 
@@ -244,14 +255,15 @@ class ImageSimulationEngine:
 
         # Downsample
         if scale > 1:
-            if be.get_backend().__class__.__name__ == "TorchBackend":
+            if be.get_backend() == "torch":
                 import torch.nn.functional as F
 
+                # Match scipy.ndimage.zoom's endpoint-aligned sampling grid.
                 image = F.interpolate(
                     image,
                     scale_factor=1 / scale,
                     mode="bilinear",
-                    align_corners=False,
+                    align_corners=True,
                 )
             else:
                 image_np = be.to_numpy(image)
