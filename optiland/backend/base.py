@@ -6,11 +6,12 @@ Kramer Harrison, 2025
 
 from __future__ import annotations
 
+import contextlib
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Generator, Sequence
     from types import ModuleType
 
 
@@ -212,6 +213,17 @@ class AbstractBackend(ABC):
         raise BackendCapabilityError(
             f"autograd is not supported by backend '{self.name}'."
         )
+
+    @contextlib.contextmanager
+    def no_grad_unless_enabled(self) -> Generator[None, None, None]:
+        """Context in which gradient bookkeeping may be suppressed.
+
+        A no-op for backends without gradient support. The torch backend
+        runs the context under ``torch.no_grad`` unless gradients were
+        globally requested via ``grad_mode``, sparing per-op autograd
+        dispatch during plain forward computations.
+        """
+        yield
 
     def set_device(self, device: str) -> None:
         """Set the compute device (torch only).

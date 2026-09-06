@@ -7,12 +7,13 @@ optiland/backend/torch_backend/__init__.py).
 
 from __future__ import annotations
 
+import contextlib
 from typing import TYPE_CHECKING, Any, Literal
 
 import torch
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Generator, Sequence
 
     from numpy.typing import ArrayLike
     from torch import Tensor
@@ -59,6 +60,22 @@ class CapabilitiesMixin:
     def autograd(self) -> Any:
         """Return the torch.autograd submodule."""
         return torch.autograd
+
+    @contextlib.contextmanager
+    def no_grad_unless_enabled(self) -> Generator[None, None, None]:
+        """Suppress autograd bookkeeping unless gradients were requested.
+
+        With ``grad_mode`` disabled no tensor requires grad, so no graph is
+        built either way; running under ``torch.no_grad`` additionally skips
+        the per-op autograd dispatch and version-counter work, which adds up
+        over the hundreds of kernels a trace launches. With ``grad_mode``
+        enabled this is a no-op so differentiable workflows are untouched.
+        """
+        if self._config.grad_mode.requires_grad:
+            yield
+        else:
+            with torch.no_grad():
+                yield
 
     @property
     def nn(self) -> Any:

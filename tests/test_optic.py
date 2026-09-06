@@ -358,6 +358,38 @@ class TestOptic:
         rays = lens.trace_generic(0.0, 0.0, 0.0, 0.0, 0.55)
         assert rays is not None
 
+    def test_trace_respects_grad_mode(self, set_test_backend):
+        """Tracing runs free of autograd bookkeeping when gradients are
+        globally disabled, and stays fully differentiable when enabled."""
+        if be.get_backend() != "torch":
+            pytest.skip("torch-only behavior")
+        import torch
+
+        # the test fixture enables grad mode; exercise the disabled branch
+        was_enabled = be.grad_mode.requires_grad
+        be.grad_mode.disable()
+        try:
+            rays = HeliarLens().trace(0.0, 0.0, 0.55, num_rays=16)
+            assert not rays.x.requires_grad
+        finally:
+            if was_enabled:
+                be.grad_mode.enable()
+
+        with be.grad_mode.temporary_enable():
+            lens = HeliarLens()
+            geometry = lens.surfaces.surfaces[1].geometry
+            radius = torch.tensor(
+                float(be.to_numpy(geometry.radius)),
+                dtype=getattr(torch, f"float{be.get_precision()}"),
+                requires_grad=True,
+            )
+            geometry.radius = radius
+            traced = lens.trace(0.0, 0.0, 0.55, num_rays=16)
+            loss = (traced.x**2 + traced.y**2).sum()
+            loss.backward()
+        assert radius.grad is not None
+        assert bool(torch.isfinite(radius.grad))
+
     def test_trace_without_recording(self, set_test_backend):
         """record=False returns identical rays but stores no per-surface
         snapshots, halving peak memory for large traces."""
