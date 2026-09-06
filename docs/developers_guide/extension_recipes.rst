@@ -33,7 +33,11 @@ Recipe 1: Add a New Surface Geometry
 
    class MyGeometry(BaseGeometry):
        def distance(self, rays):
-           # return propagation distance along ray to surface intersection
+           # return propagation distance along ray to surface intersection.
+           # Optionally accept a keyword argument ``aperture=None``: when the
+           # signature accepts it, the tracer passes the surface's physical
+           # aperture so ambiguous intersections (e.g. off-axis conics) can
+           # prefer the root on the used region of the surface.
            ...
 
        def sag(self, x, y):

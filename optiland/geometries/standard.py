@@ -15,11 +15,17 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
-import warnings
-
 import optiland.backend as be
 from optiland.coordinate_system import CoordinateSystem
 from optiland.geometries.base import BaseGeometry
+from optiland.utils import machine_eps
+
+# Multiplier on the machine epsilon of the ray coordinates when building the
+# scale-aware forward floor for conic root selection. The floor must reject a
+# ray's own starting point (an exact t = 0 plus its round-off halo) without
+# ever rejecting a genuine propagation to a nearby surface. Matches the
+# conservative multiplier used by the Newton-Raphson thresholds.
+_FORWARD_EPS_MULTIPLIER = 32.0
 
 
 def _is_radius_infinite(radius):
@@ -32,6 +38,135 @@ def _is_radius_infinite(radius):
         if hasattr(is_inf_tensor, "item")
         else bool(is_inf_tensor)
     )
+
+
+def _conic_intersection_distance(rays, radius, conic, aperture=None):
+    """Propagation distance of rays to a conic, selecting the physical root.
+
+    The line-conic intersection is the quadratic ``a t^2 + b t + c = 0``,
+    solved in the numerically stable (Numerical Recipes / "citardauque") form
+    rather than the textbook ``(-b +/- sqrt(d)) / (2a)``. For rays close to
+    the optical axis (small L, M) and conics near a parabola (k = -1), ``a``
+    is a tiny value dominated by floating-point noise; the textbook formula
+    then subtracts two nearly-equal numbers (b and sqrt(d)) while dividing by
+    that near-zero ``a``, amplifying the cancellation by orders of magnitude.
+    The stable form avoids the cancellation entirely and reduces continuously
+    to the linear solution as a -> 0.
+
+    The quadric contains every crossing of the ray with the *infinite
+    mathematical* conic: points the sag function does not describe (the far
+    side of a sphere or ellipsoid, the detached second sheet of a k < -1
+    hyperboloid) as well as crossings behind the ray. A root is therefore
+    admissible only when it is
+
+    - in front of the ray: ``t`` above a scale-aware positive floor, and
+    - on the sheet the sag function describes: on the surface,
+      ``sqrt(1 - (1 + k) r^2 / R^2) = 1 - (1 + k) z / R``, so the sag sheet
+      is ``1 - (1 + k) z / R >= 0``.
+
+    Among admissible roots, ones landing inside ``aperture`` (when given) are
+    preferred -- for off-axis sections of a conic, e.g. off-axis parabolic
+    mirrors, both roots can be genuine forward hits on the surface and only
+    the aperture identifies the used region -- and the nearest root of the
+    best tier is returned. Rays with no admissible root (a genuine miss, or a
+    ray leaving the surface's neighborhood) fall back to the legacy
+    vertex-nearest root, NaN when the discriminant is negative.
+
+    All masking is per ray, and denominators and the radicand are guarded
+    *before* dividing / taking the square root: a masked inf or NaN would
+    still enter the autograd graph and backpropagate as NaN.
+
+    Args:
+        rays (RealRays): The rays, in the local frame of the surface.
+        radius (be.ndarray or float): Radius of curvature of the conic.
+        conic (be.ndarray or float): Conic constant of the conic.
+        aperture (BaseAperture, optional): Physical aperture of the surface,
+            used only to prefer intersections on the used region. When None,
+            all admissible roots are equal candidates.
+
+    Returns:
+        be.ndarray: Propagation distance per ray.
+    """
+    if _is_radius_infinite(radius):
+        # intersection with the plane z=0 is z0 + t*Nz = 0
+        N_safe = be.where(be.abs(rays.N) > 1e-14, rays.N, 1e-14)
+        return -rays.z / N_safe
+
+    k = conic
+    a = k * rays.N**2 + rays.L**2 + rays.M**2 + rays.N**2
+    b = (
+        2 * k * rays.N * rays.z
+        + 2 * rays.L * rays.x
+        + 2 * rays.M * rays.y
+        - 2 * rays.N * radius
+        + 2 * rays.N * rays.z
+    )
+    c = k * rays.z**2 - 2 * radius * rays.z + rays.x**2 + rays.y**2 + rays.z**2
+
+    d = b**2 - 4 * a * c
+    d_ok = d >= 0
+
+    eps = machine_eps(d)
+    ones = be.ones_like(d)
+
+    sqrt_d = be.where(d_ok, be.sqrt(be.maximum(d, eps)), be.zeros_like(d))
+    sign_b = be.where(b >= 0, 1.0, -1.0)
+    q = -0.5 * (b + sign_b * sqrt_d)
+    a_ok = be.abs(a) > eps
+    q_ok = be.abs(q) > eps
+    t1 = q / be.where(a_ok, a, ones)
+    t2 = c / be.where(q_ok, q, ones)
+    solvable1 = d_ok & a_ok
+    solvable2 = d_ok & q_ok
+
+    z1 = rays.z + t1 * rays.N
+    z2 = rays.z + t2 * rays.N
+
+    # Scale-aware forward floor: the ray positions enter the quadratic
+    # coefficients, so a would-be-zero root carries their round-off.
+    position_scale = 1.0 + be.abs(rays.x) + be.abs(rays.y) + be.abs(rays.z)
+    t_min = _FORWARD_EPS_MULTIPLIER * eps * position_scale
+
+    sheet1 = 1 - (1 + k) * z1 / radius >= 0
+    sheet2 = 1 - (1 + k) * z2 / radius >= 0
+
+    valid1 = solvable1 & be.isfinite(t1) & (t1 > t_min) & sheet1
+    valid2 = solvable2 & be.isfinite(t2) & (t2 > t_min) & sheet2
+
+    # Nearest root of the best available tier: in-aperture, then any
+    # admissible, then the legacy vertex-nearest fallback. Without an
+    # aperture the preference tier equals the admissible tier, and the
+    # intersection (x, y) coordinates have no consumer, so both are
+    # skipped: identical selection, roughly a third fewer array passes on
+    # the hot no-aperture path.
+    first1 = t1 <= t2
+
+    pick_valid1 = valid1 & (~valid2 | first1)
+    t_valid = be.where(pick_valid1, t1, t2)
+    have_valid = valid1 | valid2
+
+    inf = be.full_like(d, be.inf)
+    abs_z1 = be.where(solvable1, be.abs(z1), inf)
+    abs_z2 = be.where(solvable2, be.abs(z2), inf)
+    t_vertex = be.where(abs_z1 <= abs_z2, t1, t2)
+    t_fallback = be.where(d_ok, t_vertex, be.full_like(d, be.nan))
+
+    t_admissible = be.where(have_valid, t_valid, t_fallback)
+    if aperture is None:
+        return t_admissible
+
+    x1 = rays.x + t1 * rays.L
+    y1 = rays.y + t1 * rays.M
+    x2 = rays.x + t2 * rays.L
+    y2 = rays.y + t2 * rays.M
+    pref1 = valid1 & aperture.contains(x1, y1)
+    pref2 = valid2 & aperture.contains(x2, y2)
+
+    pick_pref1 = pref1 & (~pref2 | first1)
+    t_pref = be.where(pick_pref1, t1, t2)
+    have_pref = pref1 | pref2
+
+    return be.where(have_pref, t_pref, t_admissible)
 
 
 class StandardGeometry(BaseGeometry):
@@ -102,130 +237,25 @@ class StandardGeometry(BaseGeometry):
             self.radius * (1 + be.sqrt(1 - (1 + self.k) * r2 / self.radius**2))
         )
 
-    def distance(self, rays):
+    def distance(self, rays, aperture=None):
         """Find the propagation distance to the geometry for the given rays.
 
         Args:
             rays (RealRays): The rays for which to calculate the distance.
+            aperture (BaseAperture, optional): The physical aperture of the
+                surface this geometry belongs to. When given, intersections
+                landing inside the aperture are preferred over intersections
+                the aperture would clip. This matters for off-axis sections
+                of a conic (e.g. off-axis parabolic mirrors), where both
+                quadratic roots can be genuine forward hits on the surface
+                and only the aperture identifies the used region.
 
         Returns:
             be.ndarray: An array of distances from each ray's current position
             to its intersection point with the geometry.
 
         """
-        if _is_radius_infinite(self.radius):
-            # intersection with the plane z=0 is z0 + t*Nz = 0
-            N_safe = be.where(be.abs(rays.N) > 1e-14, rays.N, 1e-14)
-            return -rays.z / N_safe
-        a = self.k * rays.N**2 + rays.L**2 + rays.M**2 + rays.N**2
-        b = (
-            2 * self.k * rays.N * rays.z
-            + 2 * rays.L * rays.x
-            + 2 * rays.M * rays.y
-            - 2 * rays.N * self.radius
-            + 2 * rays.N * rays.z
-        )
-        c = (
-            self.k * rays.z**2
-            - 2 * self.radius * rays.z
-            + rays.x**2
-            + rays.y**2
-            + rays.z**2
-        )
-
-        # discriminant
-        d = b**2 - 4 * a * c
-
-        # Two solutions for distance to conic, computed via the numerically
-        # stable form (Numerical Recipes / "citardauque" formula) rather
-        # than the textbook (-b +/- sqrt(d)) / (2a). For rays close to the
-        # optical axis (small L, M) and conics near a parabola (k = -1),
-        # "a" is a tiny value dominated by floating-point noise rather than
-        # 0 exactly, so the a == 0 guard below never triggers in practice.
-        # The textbook formula then subtracts two nearly-equal numbers
-        # (b and sqrt(d), both ~ -2*N*R) in the numerator while dividing by
-        # a near-zero "a", amplifying that cancellation error by orders of
-        # magnitude. This form avoids the cancellation entirely and reduces
-        # continuously to the a == 0 (linear) solution as a -> 0, so no
-        # separate branch is needed for that case.
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            sign_b = be.where(b >= 0, 1.0, -1.0)
-            q = -0.5 * (b + sign_b * be.sqrt(d))
-            t1 = q / a
-            t2 = c / q
-
-        # find intersection points in z
-        z1 = rays.z + t1 * rays.N
-        z2 = rays.z + t2 * rays.N
-
-        # take intersection closest to z = 0 (i.e., vertex of geometry)
-        geom_is_1 = be.abs(z1) <= be.abs(z2)
-        t_geom = be.where(geom_is_1, t1, t2)
-
-        # "Closest to vertex" is also always the root a ray genuinely enters
-        # from the object side, *except* for rays steep enough that the two
-        # roots' proximity to the vertex no longer tracks which one is
-        # physically in front (e.g. extreme wide-angle field rays against a
-        # convex surface). That essentially never happens for a ray still
-        # comfortably clear of grazing incidence (|N| comfortably away from
-        # zero), which covers ordinary usage -- including systems where rays
-        # travel in the -z direction throughout (N uniformly negative) -- so
-        # skip the (otherwise unconditional, since which rays in a batch need
-        # it can't be known without computing it) disambiguation below
-        # entirely when every ray in this call clears that bar.
-        if bool(be.all(be.abs(rays.N) > 1e-2)):
-            return t_geom
-
-        # Only the entry-side dot product with the local normal actually
-        # distinguishes the two roots for the remaining (rare) rays: take
-        # "closest to vertex" unless it fails that check and the other root
-        # passes it, in which case take the other root instead. Uses the
-        # unnormalized normal -- only its sign matters here, so the
-        # sqrt(mag) normalization used by surface_normal() (needed for
-        # actual refraction) is skipped.
-        x1 = rays.x + t1 * rays.L
-        y1 = rays.y + t1 * rays.M
-        x2 = rays.x + t2 * rays.L
-        y2 = rays.y + t2 * rays.M
-
-        with be.errstate(invalid="ignore"):
-            dot1 = self._unnormalized_entry_dot(x1, y1, rays.L, rays.M, rays.N)
-            dot2 = self._unnormalized_entry_dot(x2, y2, rays.L, rays.M, rays.N)
-
-        # The "-N" term in the dot product bakes in a forward-propagation
-        # (+z) assumption; for systems where rays travel in -z overall, the
-        # entry side is the opposite sign, so flip the comparison by the
-        # ray's own propagation direction.
-        sign_n = be.where(rays.N < 0, -1.0, 1.0)
-        entry1 = dot1 * sign_n < 0
-        entry2 = dot2 * sign_n < 0
-
-        geom_valid = be.where(geom_is_1, entry1, entry2)
-        other_valid = be.where(geom_is_1, entry2, entry1)
-        other_t = be.where(geom_is_1, t2, t1)
-
-        use_other = be.logical_and(be.logical_not(geom_valid), other_valid)
-        return be.where(use_other, other_t, t_geom)
-
-    def _unnormalized_entry_dot(self, x, y, L, M, N):
-        """Sign of the incident-direction dot the local surface normal, at
-        local (x, y) points on the surface.
-
-        Args:
-            x (be.ndarray): Local x-coordinate(s) on the surface.
-            y (be.ndarray): Local y-coordinate(s) on the surface.
-            L (be.ndarray): Incident direction cosine, x-component.
-            M (be.ndarray): Incident direction cosine, y-component.
-            N (be.ndarray): Incident direction cosine, z-component.
-
-        Returns:
-            be.ndarray: ``dot(incident, normal)`` up to a positive scale
-            factor -- unnormalized, since only its sign is used.
-        """
-        r2 = x**2 + y**2
-        denom = self.radius * be.sqrt(1 - (1 + self.k) * r2 / self.radius**2)
-        return L * x / denom + M * y / denom - N
+        return _conic_intersection_distance(rays, self.radius, self.k, aperture)
 
     def _normal_components(self, x, y):
         """Compute the normalized surface normal at local (x, y) points on

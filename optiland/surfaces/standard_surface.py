@@ -12,6 +12,7 @@ Kramer Harrison, 2023
 
 from __future__ import annotations
 
+import inspect
 import warnings
 from typing import TYPE_CHECKING
 
@@ -28,6 +29,46 @@ from optiland.surfaces.observer import ObserverMixin
 
 if TYPE_CHECKING:
     from optiland.rays import BaseRays, ParaxialRays, RealRays
+
+
+def _aperture_aware_distance(surface, rays: RealRays):
+    """Intersection distance from a surface's geometry, aperture-aware when
+    the geometry supports it.
+
+    Geometries whose ``distance`` accepts an ``aperture`` keyword receive the
+    surface's physical aperture so they can prefer intersections on the used
+    region of the surface (see
+    :func:`optiland.geometries.standard._conic_intersection_distance`).
+    Custom geometries with the plain ``distance(rays)`` signature keep
+    working unchanged. The capability check is cached on ``surface``, keyed
+    to the geometry object so a swapped geometry is re-inspected.
+
+    A module-level function rather than a ``Surface`` method so that every
+    surface-like object works without forwarding: ``SurfaceView`` dispatches
+    the tracing kernels through ``type(base_surface)`` bound to itself, and
+    this helper only needs ``surface.geometry`` / ``surface.aperture``, which
+    views resolve through their passthrough properties.
+
+    Args:
+        surface: A surface-like object exposing ``geometry`` and ``aperture``.
+        rays (RealRays): The rays, localized to the surface.
+
+    Returns:
+        be.ndarray: Propagation distance per ray.
+
+    """
+    geometry = surface.geometry
+    cached = getattr(surface, "_distance_capability", None)
+    if cached is None or cached[0] is not geometry:
+        parameters = inspect.signature(geometry.distance).parameters
+        accepts_aperture = "aperture" in parameters or any(
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values()
+        )
+        cached = (geometry, accepts_aperture)
+        surface._distance_capability = cached
+    if cached[1]:
+        return geometry.distance(rays, aperture=surface.aperture)
+    return geometry.distance(rays)
 
 
 class _TracingCoordinator:
@@ -256,7 +297,7 @@ class Surface(ObserverMixin):
             RealRays: The traced real rays.
 
         """
-        t = self.geometry.distance(rays)
+        t = _aperture_aware_distance(self, rays)
         self.material_pre.propagation_model.propagate(rays, t)
         rays.opd = rays.opd + be.abs(t * self.material_pre.n(rays.w))
         if self.aperture:

@@ -52,6 +52,15 @@ class BaseGeometry(ABC):
     def distance(self, rays):
         """Find the propagation distance to the geometry.
 
+        Implementations may additionally accept an optional ``aperture``
+        keyword argument (the surface's physical aperture). When the
+        signature accepts it, the tracer passes the aperture so the geometry
+        can prefer intersections on the used region of the surface -- this
+        matters for surfaces where several intersections are geometrically
+        valid, e.g. off-axis conic mirrors. Implementations with the plain
+        ``distance(rays)`` signature are fully supported and simply never
+        receive the aperture.
+
         Args:
             rays (RealRays): The rays for which to calculate the distance to
                 the geometry.
