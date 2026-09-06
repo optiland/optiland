@@ -55,6 +55,10 @@ NONOBJECT_INFINITY = "NONOBJECT_INFINITY"
 AMBIGUOUS_WIDE_ANGLE_FIELD = "AMBIGUOUS_WIDE_ANGLE_FIELD"
 SINGULAR_ANGLE_TANGENT = "SINGULAR_ANGLE_TANGENT"
 
+# Fork: codes downgraded from fatal to a warning, so a design whose only fault
+# is astigmatic still yields the approximate first-order values it did before.
+APPROXIMATE_DIAGNOSTIC_CODES = frozenset({OBLIQUE_POWERED_MIRROR})
+
 
 class UnsupportedParaxialGeometryError(ValueError):
     """A geometry outside the supported scalar folded paraxial domain.
@@ -416,6 +420,9 @@ class ParaxialPath:
         aiming for e.g. slightly tilted stop mirrors keeps working -- its
         exactness is guaranteed by the real traces, not the seed.
 
+        Fork: findings in :data:`APPROXIMATE_DIAGNOSTIC_CODES` also warn
+        rather than raise, since the app needs the approximate value.
+
         Args:
             operation: Name of the requested operation, used in the message.
 
@@ -439,6 +446,14 @@ class ParaxialPath:
             warnings.warn(
                 "scalar paraxial values are approximate for this geometry "
                 "and are used only to seed a real-ray solve:\n" + message,
+                ParaxialDomainWarning,
+                stacklevel=2,
+            )
+            return
+        if all(d.code in APPROXIMATE_DIAGNOSTIC_CODES for d in self.diagnostics):
+            warnings.warn(
+                "scalar paraxial values are approximate for this geometry:\n"
+                + message,
                 ParaxialDomainWarning,
                 stacklevel=2,
             )

@@ -72,14 +72,20 @@ class FloatByStopAperture(BaseSystemAperture):
 
         stop_index = paraxial.surfaces.stop_index
 
+        # The stop diameter is a clear aperture, measured in the stop's own plane,
+        # but the paraxial heights below are measured perpendicular to the axis. On
+        # a tilted stop the beam footprint is stretched by 1 / cos(tilt), so only
+        # this projection of the clear aperture gets through.
+        value = self._value * paraxial.surfaces.obliquity[stop_index]
+
         if paraxial.optic.object_surface.is_infinite:
             y, _ = paraxial.trace_generic(1.0, 0.0, -1, wavelength)
-            return self._value / y[stop_index]
+            return value / y[stop_index]
         else:
             obj_z = paraxial.optic.object_surface.geometry.cs.z
             epl_global = paraxial.entrance_pupil_axial_position()
             y, _ = paraxial.trace_generic(0.0, 0.1, obj_z, wavelength)
-            u0 = 0.1 * self._value / y[stop_index]
+            u0 = 0.1 * value / y[stop_index]
             return u0 * (epl_global - obj_z)
 
     def scale(self, factor: float) -> FloatByStopAperture:
