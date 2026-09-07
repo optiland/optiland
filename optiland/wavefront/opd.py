@@ -44,8 +44,11 @@ class OPD(Wavefront):
         field (tuple): The field at which to calculate the OPD.
         wavelength (str | float): The wavelength of the wavefront. Can be 'primary'
             or a float value.
-        num_rings (int, optional): The number of rings for ray tracing.
+        num_rays (int, optional): The sampling parameter that determines the number of
+            rays in the pupil. Its meaning depends on the value of `distribution`.
             Defaults to 15.
+        distribution (DistributionType, optional): The pupil sampling distribution.
+            Defaults to "hexapolar".
         strategy (str): The calculation strategy to use. Supported options are
             "chief_ray", "centroid", and "best_fit".
             Defaults to "chief_ray".
@@ -69,6 +72,14 @@ class OPD(Wavefront):
         view(projection='2d', num_points=256, figsize=(7, 5.5)): Visualizes
             the OPD wavefront.
         rms(): Calculates the root mean square (RMS) of the OPD wavefront.
+
+    Notes:
+        The interpretation of the `num_rays` argument depends on the value of
+        `distribution`. For example, if `distribution` is `hexapolar`, `num_rays`
+        specifies the number of rings, whereas when `distribution` is `uniform`, it
+        specifies the total number of rays per axis.
+
+        The `afocal` argument is forwarded to `Wavefront.__init__()` via `kwargs`.
 
     """
 
