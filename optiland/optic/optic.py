@@ -774,8 +774,9 @@ class Optic:
             Hx: The normalized x field coordinate(s).
             Hy: The normalized y field coordinate(s).
             wavelength (float): The wavelength of the rays in microns.
-            num_rays: The number of rays to trace.
-                Defaults to 100.
+            num_rays (int, optional): The sampling parameter that determines the
+                number of rays in the pupil. Its meaning depends on the value of
+                `distribution`. Defaults to 100.
             distribution:
                 The distribution of rays. Can be a string identifier (e.g.,
                 'hexapolar', 'uniform') or a `BaseDistribution` object.
@@ -788,6 +789,12 @@ class Optic:
 
         Returns:
             RealRays: A `RealRays` object containing the traced rays.
+
+        Notes:
+            The interpretation of the `num_rays` argument depends on the value of
+            `distribution`. For example, if `distribution` is `hexapolar`, `num_rays`
+            specifies the number of rings, whereas when `distribution` is `uniform`, it
+            specifies the total number of rays per axis.
 
         """
         return self.ray_tracer.trace(

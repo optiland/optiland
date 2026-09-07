@@ -38,7 +38,9 @@ class Wavefront:
             Can be "all" to use all fields defined in the optic.
         wavelengths (str or list[float]): The wavelengths to analyze. Can be
             "all" for all wavelengths or "primary" for the primary wavelength.
-        num_rays (int): The number of rays to use for pupil sampling.
+        num_rays (int, optional): The sampling parameter that determines the number of
+            rays in the pupil. Its meaning depends on the value of `distribution`.
+            Defaults to 12.
         distribution (str or Distribution): The ray distribution pattern. Can
             be a name (e.g., "hexapolar") or a Distribution object.
         strategy (str): The calculation strategy to use. Supported options are
@@ -51,6 +53,12 @@ class Wavefront:
     Attributes:
         data (dict): A dictionary containing the computed `WavefrontData` for
             each (field, wavelength) pair.
+
+    Notes:
+        The interpretation of the `num_rays` argument depends on the value of
+        `distribution`. For example, if `distribution` is `hexapolar`, `num_rays`
+        specifies the number of rings, whereas when `distribution` is `uniform`, it
+        specifies the total number of rays per axis.
     """
 
     def __init__(

@@ -71,8 +71,10 @@ class RealRayTracer(BaseRayTracer):
             Hx (float or numpy.ndarray): The normalized x field coordinate.
             Hy (float or numpy.ndarray): The normalized y field coordinate.
             wavelength (float): The wavelength of the rays.
-            num_rays (int, optional): The number of rays to be traced. Defaults
-                to 100.
+            num_rays (int, optional): The sampling parameter that determines the
+                number of rays in the pupil. Its meaning depends on the value of
+                `distribution`.
+                Defaults to 100.
             distribution (str or Distribution, optional): The distribution of
                 the rays. Defaults to 'hexapolar'.
             record (bool, optional): Whether to store per-surface snapshots of
@@ -82,6 +84,12 @@ class RealRayTracer(BaseRayTracer):
 
         Returns:
             RealRays: The RealRays object containing the traced rays."
+
+        Notes:
+            The interpretation of the `num_rays` argument depends on the value of
+            `distribution`. For example, if `distribution` is `hexapolar`, `num_rays`
+            specifies the number of rings, whereas when `distribution` is `uniform`, it
+            specifies the total number of rays per axis.
         """
         self._validate_normalized_coordinates(Hx, Hy, "field")
 
