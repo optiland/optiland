@@ -23,5 +23,3 @@ from optiland.surfaces.factories.surface_factory import (
 from optiland.visualization.component_renderer import (
     ComponentRenderer as ComponentRenderer,
 )
-
-__version__ = "0.6.1"
