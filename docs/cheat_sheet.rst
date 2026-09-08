@@ -160,9 +160,9 @@ New to these concepts? See the :ref:`glossary` first.
 
 .. code-block:: python
 
-   from optiland.wavefront import Wavefront, ZernikeOPD
+   from optiland.wavefront import OPD, ZernikeOPD
 
-   wf = Wavefront(lens, field=(0, 0), wavelength="primary")
+   wf = OPD(lens, field=(0, 0), wavelength="primary")
    wf.view()
 
    zfit = ZernikeOPD(lens, field=(0, 0), wavelength="primary", num_terms=37)

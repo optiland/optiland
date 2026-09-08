@@ -63,6 +63,7 @@ class OpticViewer(BaseViewer2D):
         projection="YZ",
         ax=None,
         theme=None,
+        show=True,
     ):
         """Visualizes the optical system.
 
@@ -89,6 +90,9 @@ class OpticViewer(BaseViewer2D):
                 'XZ', or 'YZ'. Defaults to 'YZ'.
             ax (matplotlib.axes.Axes, optional): The axes to plot on.
                 If None, a new figure and axes are created. Defaults to None.
+            show (bool, optional): If True (default), calls plt.show(). Set
+                False for headless use (e.g. saving to file, CI environments)
+                or when embedding in an existing figure via ``ax``.
 
         """
         if projection not in ["XY", "XZ", "YZ"]:
@@ -102,6 +106,7 @@ class OpticViewer(BaseViewer2D):
             else:
                 distribution = "line_y"
 
+        is_gui_embedding = ax is not None
         theme = self._resolve_theme(theme)
         fig, ax = self._make_figure(theme, figsize, ax)
 
@@ -134,6 +139,11 @@ class OpticViewer(BaseViewer2D):
             ylim = ylim or auto_ylim
 
         self._apply_axes_style(ax, projection, theme, title=title, xlim=xlim, ylim=ylim)
+
+        if show and not is_gui_embedding:
+            import matplotlib.pyplot as plt
+
+            plt.show()
 
         # Return the figure, axes and interaction_manager
         return fig, ax, interaction_manager
