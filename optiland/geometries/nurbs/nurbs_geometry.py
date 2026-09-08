@@ -305,11 +305,17 @@ class NurbsGeometry(BaseGeometry):
         # The branches above fill in whatever the caller left out -- weights, a
         # degree, a clamped knot vector -- as locals. Written back here, or the
         # surface keeps the None it was constructed with and evaluates to nothing.
-        for name, value in (("W", weights), ("p", u_degree), ("q", v_degree),
-                            ("U", u_knots), ("V", v_knots)):
+        for name, value in (
+            ("W", weights),
+            ("p", u_degree),
+            ("q", v_degree),
+            ("U", u_knots),
+            ("V", v_knots),
+        ):
             if getattr(self, name) is None and value is not None:
-                setattr(self, name, be.asarray(value)
-                        if name not in ("p", "q") else value)
+                setattr(
+                    self, name, be.asarray(value) if name not in ("p", "q") else value
+                )
 
     def set_radius(self, value: float) -> None:
         """Set the radius of curvature.
@@ -889,8 +895,9 @@ class NurbsGeometry(BaseGeometry):
         along = be.where(be.abs(rays.N) > 1e-14, rays.N, 1e-14)
         u, v = self._newton(
             lambda u, v: self._corr_general(u, v, d1, d2, N1, N2),
-            *self._seed(rays.x - rays.L * rays.z / along,
-                        rays.y - rays.M * rays.z / along),
+            *self._seed(
+                rays.x - rays.L * rays.z / along, rays.y - rays.M * rays.z / along
+            ),
         )
 
         # Signed ALONG the ray rather than |S - P0|: an intersection behind the ray
@@ -977,8 +984,13 @@ class NurbsGeometry(BaseGeometry):
 
         ctrlpts, u_degree, v_degree, num_cpts_u, num_cpts_v, kv_u, kv_v = (
             approximate_surface(
-                xp, size_u, size_v, u_degree, v_degree,
-                ctrlpts_size_u=num_cpts_u, ctrlpts_size_v=num_cpts_v,
+                xp,
+                size_u,
+                size_v,
+                u_degree,
+                v_degree,
+                ctrlpts_size_u=num_cpts_u,
+                ctrlpts_size_v=num_cpts_v,
             )
         )
 
