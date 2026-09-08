@@ -56,7 +56,7 @@ We determined that contributing to RayOptics was not feasible, as its architectu
 
 Optiland’s architectural goals are two-fold: to provide a robust, professional-grade environment for standard optical engineering while simultaneously enabling seamless integration with neural networks. To achieve this, the software is built on a modular, object-oriented framework. Optical components, fields, and wavelengths are strictly decoupled, ensuring that the codebase is intuitive for engineers to use and easy for developers to extend.
 
-To support its hybrid application in classical design and AI research, Optiland utilizes a backend abstraction layer. This allows the same high-level API to dispatch calculations to either a **NumPy** backend (for broad compatibility and standard CPU workflows) or a **PyTorch** backend (for GPU acceleration and automatic differentiation).
+To support its hybrid application in classical design and AI research, Optiland utilizes a backend abstraction layer. This allows the same high-level API to dispatch calculations to either a **NumPy** backend (for broad compatibility and standard CPU workflows) or a **PyTorch** backend (for GPU acceleration and automatic differentiation). At the time of development, PyTorch was chosen over alternatives such as JAX or TensorFlow due to its mature dynamic autograd engine, robust hardware acceleration support, and ubiquitous adoption across the broader research and computer vision communities. Nonethless, the backend abstraction layer does not preclude additional backends from later being added under the same API.
 
 # Functionalities
 
