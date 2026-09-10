@@ -49,6 +49,7 @@ from PySide6.QtWidgets import (
 from .config import DEFAULT_TAB_POSITION
 from .editor_hover_presentation import EditorHoverPresentation
 from .surface_interaction import EditorHoverTracker, SurfaceInteractionState
+from .widgets.surface_placement import SurfacePlacementWidget
 
 if TYPE_CHECKING:
     from .optiland_connector import OptilandConnector
@@ -127,6 +128,8 @@ class SurfacePropertiesWidget(QWidget):
         self.close_button.setAccessibleName(label)
         self.close_button.clicked.connect(self.closeRequested.emit)
         self.tabs.setCornerWidget(self.close_button, Qt.TopRightCorner)
+        self.placement = SurfacePlacementWidget(self.row, self.connector, self)
+        self.tabs.addTab(self.placement, "Placement")
         shape = QWidget()
         self.tabs.addTab(shape, "Shape")
         main_layout = QVBoxLayout(shape)
@@ -177,6 +180,7 @@ class SurfacePropertiesWidget(QWidget):
 
     def refresh_values(self):
         """Refresh derived values without discarding a focused parameter draft."""
+        self.placement.refresh_values()
         params = self.connector.get_surface_geometry_params(self.row)
         for name, widget in self.input_widgets.items():
             if widget.hasFocus() or name not in params:
@@ -219,7 +223,7 @@ class SurfaceTypeWidget(QWidget):
         self.props_button.clicked.connect(self.propertiesIconClicked.emit)
         self.layout.addWidget(self.props_button)
 
-        # Every row exposes the properties panel, including its empty state.
+        # Every surface has placement, including standard, object and image rows.
 
         self.type_edit = QLineEdit(current_type_info["display_text"])
         self.type_edit.setObjectName("SurfaceTypeLineEdit")
@@ -387,6 +391,29 @@ class LensEditor(QWidget):
         self.load_data()
         self.connect_signals()
         self.hover_tracker = EditorHoverTracker(self)
+        self.connector.placement.about_to_apply.connect(self._rebind_placement)
+
+    def _rebind_placement(self, candidate):
+        """Preserve current UI indices for an index-preserving placement commit."""
+        state = self.interaction_state
+        selected = [state.index_of(surface) for surface in state.selected_surfaces]
+        hovered = state.index_of(state.hovered_surface)
+        column = state.hovered_column
+        old_surfaces = self._displayed_surfaces
+        new_surfaces = tuple(candidate.surfaces)
+        if self._table_loading:
+            identities = {
+                id(old): id(new)
+                for old, new in zip(old_surfaces, new_surfaces, strict=True)
+            }
+            for key in ("current_id", "property_id"):
+                self._pending_table_state[key] = identities.get(
+                    self._pending_table_state[key]
+                )
+        self._displayed_surfaces = new_surfaces
+        state.sync_document(candidate)
+        state.set_selected_indices(selected)
+        state.set_hover(hovered, column)
 
     def _init_ui(self):
         """Initializes the main UI components of the editor."""
@@ -405,6 +432,10 @@ class LensEditor(QWidget):
         self.tableWidget.setItemDelegate(self._focus_delegate)
 
         self.layout.addWidget(self.tableWidget)
+        self._edit_error = QLabel()
+        self._edit_error.setWordWrap(True)
+        self._edit_error.hide()
+        self.layout.addWidget(self._edit_error)
         self._load_progress = QProgressBar(self)
         self._load_progress.setFormat("Updating lens data — %v of %m rows")
         self._load_progress.setAccessibleName("Lens data update progress")
@@ -579,16 +610,19 @@ class LensEditor(QWidget):
             else None
         )
         properties = {}
+        property_frames = {}
         for owner in self.open_prop_source_rows:
             panel = table.cellWidget(self.map_surface_index_to_ui_row(owner) + 1, 0)
             if 0 <= owner < len(old_surfaces) and isinstance(
                 panel, SurfacePropertiesWidget
             ):
                 properties[id(old_surfaces[owner])] = panel.tabs.currentIndex()
+                property_frames[id(old_surfaces[owner])] = panel.placement.frame.currentData()
         return {
             "current_id": current_id,
             "current_column": table.currentColumn(),
             "properties": properties,
+            "property_frames": property_frames,
             "horizontal": table.horizontalScrollBar().value(),
             "vertical": table.verticalScrollBar().value(),
         }
@@ -694,6 +728,7 @@ class LensEditor(QWidget):
     def load_data(self):
         self._load_timer.stop()
         self._pending_table_state = self._capture_table_state()
+        self.tableWidget.verticalHeader().setMaximumSectionSize(70)
         if not self._table_loading:
             self._table_was_enabled = self.tableWidget.isEnabled()
             self._buttons_were_enabled = (
@@ -828,6 +863,9 @@ class LensEditor(QWidget):
         )
         self.tableWidget.setCellWidget(prop_row_index, 0, prop_widget)
         self.tableWidget.setSpan(prop_row_index, 0, 1, self.tableWidget.columnCount())
+        owner_id = id(self._displayed_surfaces[source_row])
+        frame = self._pending_table_state.get("property_frames", {}).get(owner_id, "global")
+        prop_widget.placement.frame.setCurrentIndex(1 if frame == "reference" else 0)
         default_props_height = prop_widget.sizeHint().height()
         self.tableWidget.verticalHeader().setMaximumSectionSize(
             max(
@@ -892,8 +930,14 @@ class LensEditor(QWidget):
             surface_index = self.map_ui_row_to_surface_index(row)
             try:
                 self.connector.set_surface_data(surface_index, col, text)
+                self._edit_error.hide()
                 self._flash_cell(row, col, valid=True)
-            except Exception:
+            except Exception as exc:
+                self._edit_error.setText(str(exc))
+                self._edit_error.show()
+                old_blocked = self.tableWidget.blockSignals(True)
+                item.setText(str(self.connector.get_surface_data(surface_index, col)))
+                self.tableWidget.blockSignals(old_blocked)
                 self._flash_cell(row, col, valid=False)
 
     @Slot()
