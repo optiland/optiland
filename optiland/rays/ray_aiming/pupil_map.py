@@ -48,19 +48,26 @@ class PupilMap:
             pupil coordinates to ``(xi, eta)``.
         param: The launch parameterization (entry-frame basis, conjugate
             mode) the offsets are expressed in.
+        chief_offset: For a finite conjugate, the chief launch's free offset
+            ``(xi, eta)`` from its own field's paraxial chief seed: the
+            rotation a warm start for another field (or a changed system)
+            applies to that field's fresh seed. ``None`` for infinite
+            conjugates, whose warm starts carry the launch point instead.
     """
 
-    __slots__ = ("base", "A", "param")
+    __slots__ = ("base", "A", "param", "chief_offset")
 
     def __init__(
         self,
         base: tuple[float, float, float, float, float, float],
         A: tuple[tuple[float, float], tuple[float, float]],
         param: LaunchParameterization,
+        chief_offset: tuple[float, float] | None = None,
     ) -> None:
         self.base = base
         self.A = A
         self.param = param
+        self.chief_offset = chief_offset
 
     @property
     def is_infinite(self) -> bool:

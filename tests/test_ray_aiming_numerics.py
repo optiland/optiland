@@ -14,6 +14,7 @@ Pins the merge-gate numerics:
 
 from __future__ import annotations
 
+import contextlib
 import math
 
 import numpy as np
@@ -471,6 +472,46 @@ def _fail(result, n):
     return (x_, y_, z_, L_, M_, N_, conv & (be.zeros(n) > 0.0), nan_flag, report)
 
 
+@contextlib.contextmanager
+def _scan_only():
+    """Disable chief marching and fail every solve until the scan starts.
+
+    The first solve (the stop-radius pupil-center computation) is kept
+    intact so r_stop is the genuine real-reference value. The scan is
+    detected by entering ``_scan_chief`` itself rather than by batch size:
+    the scan drops candidates that do not trace before its polish, so that
+    batch can be small.
+    """
+    from optiland.rays.ray_aiming.robust import RobustRayAimer
+
+    state = {"scan_seen": False, "calls": 0}
+    march_orig = RobustRayAimer._march_chief
+    scan_orig = RobustRayAimer._scan_chief
+    solve_orig = IterativeRayAimer._solve_core
+
+    def scan(self, *args, **kwargs):
+        state["scan_seen"] = True
+        return scan_orig(self, *args, **kwargs)
+
+    def solve(self, x, *args, **kwargs):
+        result = solve_orig(self, x, *args, **kwargs)
+        if not state["scan_seen"]:
+            state["calls"] += 1
+            if state["calls"] > 1:
+                return _fail(result, len(be.as_array_1d(x)))
+        return result
+
+    RobustRayAimer._march_chief = lambda self, *a, **k: None
+    RobustRayAimer._scan_chief = scan
+    IterativeRayAimer._solve_core = solve
+    try:
+        yield state
+    finally:
+        RobustRayAimer._march_chief = march_orig
+        RobustRayAimer._scan_chief = scan_orig
+        IterativeRayAimer._solve_core = solve_orig
+
+
 class TestRobustReports:
     def test_fresh_calibration_report(self, set_test_backend):
         from optiland.rays.ray_aiming.robust import RobustRayAimer
@@ -835,37 +876,12 @@ class TestSeedCenteredScan:
     def test_forced_scan_is_used_and_reported(self, set_test_backend):
         """Deterministically force direct solve and marching to fail so the
         scan branch definitely runs, converges and is reported."""
-        from optiland.rays.ray_aiming.iterative import IterativeRayAimer
         from optiland.rays.ray_aiming.robust import RobustRayAimer
 
         optic = stop_mid_straight()
         aimer = RobustRayAimer(optic)
-        march_orig = RobustRayAimer._march_chief
-        RobustRayAimer._march_chief = lambda self, *a, **k: None
-
-        original = IterativeRayAimer._solve_core
-        state = {"scan_seen": False, "calls": 0}
-
-        def fail_single_until_scan(self, x, y, z, L, M, N, *args, **kwargs):
-            n = len(be.as_array_1d(x))
-            if n > 100:
-                state["scan_seen"] = True
-            result = original(self, x, y, z, L, M, N, *args, **kwargs)
-            if n <= 100 and not state["scan_seen"]:
-                state["calls"] += 1
-                # The very first small solve is the stop-radius
-                # pupil-center computation; keep it intact so r_stop is
-                # the genuine real-reference value.
-                if state["calls"] > 1:
-                    return _fail(result, n)
-            return result
-
-        IterativeRayAimer._solve_core = fail_single_until_scan
-        try:
+        with _scan_only() as state:
             x, *_ = aimer.aim_rays((0.0, 0.3), 0.55, _pupil_batch())
-        finally:
-            IterativeRayAimer._solve_core = original
-            RobustRayAimer._march_chief = march_orig
 
         assert state["scan_seen"]
         assert not bool(be.any(be.isnan(x)))
@@ -877,40 +893,15 @@ class TestSeedCenteredScan:
         """A nonsingular 1-D field beyond 90 degrees can be solved through
         the scan fallback when the other strategies are disabled."""
         from optiland.rays import RealRays
-        from optiland.rays.ray_aiming.iterative import IterativeRayAimer
         from optiland.rays.ray_aiming.robust import RobustRayAimer
 
         optic = fisheye_front()
         optic.fields.add(x=0.0, y=95.0)
         aimer = RobustRayAimer(optic)
-        march_orig = RobustRayAimer._march_chief
-        RobustRayAimer._march_chief = lambda self, *a, **k: None
-
-        original = IterativeRayAimer._solve_core
-        state = {"scan_seen": False, "calls": 0}
-
-        def fail_single_until_scan(self, x, y, z, L, M, N, *args, **kwargs):
-            n = len(be.as_array_1d(x))
-            if n > 100:
-                state["scan_seen"] = True
-            result = original(self, x, y, z, L, M, N, *args, **kwargs)
-            if n <= 100 and not state["scan_seen"]:
-                state["calls"] += 1
-                # The very first small solve is the stop-radius
-                # pupil-center computation; keep it intact so r_stop is
-                # the genuine real-reference value.
-                if state["calls"] > 1:
-                    return _fail(result, n)
-            return result
-
-        IterativeRayAimer._solve_core = fail_single_until_scan
-        try:
+        with _scan_only() as state:
             x, y, z, L, M, N = aimer.aim_rays(
                 (0.0, 1.0), 0.55, (be.array([0.0]), be.array([0.0]))
             )
-        finally:
-            IterativeRayAimer._solve_core = original
-            RobustRayAimer._march_chief = march_orig
 
         assert state["scan_seen"]
         field = aimer.last_report.field_reports[0]

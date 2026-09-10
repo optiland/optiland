@@ -165,6 +165,79 @@ def _scan_candidate_offsets(
     return dir_xi * r, dir_eta * r
 
 
+def _offset_from_seed(
+    param: LaunchParameterization, seed: tuple, launch: tuple
+) -> tuple[float, float]:
+    """Free offset ``(xi, eta)`` of a launch state from a paraxial seed.
+
+    For infinite conjugates this is the transverse displacement of the
+    launch point; for finite ones, the tangent-plane rotation of the
+    direction at the seed's object point. For a chief ray it measures how
+    far the real chief deviates from the paraxial one (its pupil
+    aberration).
+
+    Args:
+        param: The shared launch parameterization.
+        seed: Paraxial seed state ``(x, y, z, L, M, N)`` (backend arrays).
+        launch: Launch state ``(x, y, z, L, M, N)`` as plain floats.
+
+    Returns:
+        tuple: ``(xi, eta)`` as plain floats.
+    """
+    bound = param.bind(*seed)
+    xi, eta = bound.project(*(be.array([v]) for v in launch))
+    return to_float(xi), to_float(eta)
+
+
+def _launch_from_seed(
+    param: LaunchParameterization, seed: tuple, offset: tuple[float, float]
+) -> tuple:
+    """Launch state at a paraxial seed displaced by a free offset.
+
+    Inverse of :func:`_offset_from_seed` for the same seed; applied to a
+    different field's seed it transports the offset to that field.
+    """
+    bound = param.bind(*seed)
+    return bound.launch(be.array([offset[0]]), be.array([offset[1]]))
+
+
+def _carry_to_seed(
+    param: LaunchParameterization,
+    seed: tuple,
+    launch: tuple,
+    offset: tuple[float, float] | None,
+) -> tuple:
+    """Warm-start a fresh paraxial seed from another field's converged chief.
+
+    Only the free DOF carries over; the fixed DOF comes from ``seed``. What
+    is carried depends on what the free DOF is:
+
+    - infinite conjugate: the launch point, projected onto the seed's
+      transverse plane. The chief then crosses the launch plane in front of
+      the system where the previous chief did. For wide-angle designs,
+      whose real entrance pupil moves forward with field, that is a closer
+      seed at the extreme fields than carrying the offset from the seed.
+    - finite conjugate: ``offset``, the previous chief's rotation away from
+      *its own* paraxial seed direction. The absolute free DOF here is the
+      launch direction itself, and launching the previous field's direction
+      from this field's object point misses the system at wide fields.
+
+    Args:
+        param: The shared launch parameterization.
+        seed: This field's paraxial chief seed (backend arrays).
+        launch: The converged chief launch state, as plain floats.
+        offset: That chief's offset from its own seed (see
+            :func:`_offset_from_seed`), or ``None`` when unknown, in which
+            case the launch is projected as for an infinite conjugate.
+
+    Returns:
+        tuple: Launch state ``(x, y, z, L, M, N)`` (backend arrays).
+    """
+    if param.is_infinite or offset is None:
+        offset = _offset_from_seed(param, seed, launch)
+    return _launch_from_seed(param, seed, offset)
+
+
 @contextlib.contextmanager
 def _cached_paraxial_constants(optic: Optic):
     """Temporarily memoize ``Paraxial.EPD``/``EPL`` on this optic.
@@ -612,8 +685,9 @@ class RobustRayAimer(BaseRayAimer):
         """
         if param is None:
             param = LaunchParameterization.for_optic(self.optic, bool(is_inf))
+        seed = self._chief_seed(Hx, Hy, be.array([wl]))
         chief, strategy, chief_report = self._solve_chief(
-            Hx, Hy, wl, stop_idx, is_inf, seed_map, param
+            Hx, Hy, wl, stop_idx, is_inf, seed_map, param, seed=seed
         )
         probes = []
         probe_fallbacks = 0
@@ -628,7 +702,18 @@ class RobustRayAimer(BaseRayAimer):
             chief_report=chief_report,
             edge_probe_fallbacks=probe_fallbacks,
         )
-        return self._fit_affine(chief, probes, param), record
+        chief_offset = None
+        if not param.is_infinite:
+            chief_offset = _offset_from_seed(param, seed, chief)
+        return self._fit_affine(chief, probes, param, chief_offset), record
+
+    def _chief_seed(self, Hx: float, Hy: float, wl_a: Any) -> tuple:
+        """Fresh paraxial chief-ray seed (pupil center) for field (Hx, Hy)."""
+        return self._paraxial.aim_rays(
+            (be.array([Hx]), be.array([Hy])),
+            wl_a,
+            (be.array([0.0]), be.array([0.0])),
+        )
 
     def _solve_chief(
         self,
@@ -639,16 +724,19 @@ class RobustRayAimer(BaseRayAimer):
         is_inf: bool,
         seed_map: PupilMap | None,
         param: LaunchParameterization | None = None,
+        seed: tuple | None = None,
     ) -> tuple[tuple, str, SolveReport | None]:
         """Solve the chief ray (stop target (0, 0)) for this field.
 
         Seed order: warm-started map for this field or the nearest
         already-solved field, then a direct paraxial guess. If both fail --
         the paraxial seed can be too far from the real solution at extreme
-        field angles to converge in one Newton solve -- fall back to
-        marching the chief ray outward in field angle from the axis
-        (:meth:`_march_chief`), which is what makes a *cold* extreme-field
-        solve (e.g. WideAngle170FOV) converge without recursive subdivision.
+        field angles to converge in one Newton solve, or may not trace at
+        all -- fall back to marching the chief ray outward in field angle
+        from the axis (:meth:`_march_chief`), which is what makes a *cold*
+        extreme-field solve (e.g. WideAngle170FOV) converge without
+        recursive subdivision, and finally to a scan of the free launch DOF
+        through the paraxial seed (:meth:`_scan_chief`).
 
         The fixed launch components (direction for infinite conjugates,
         object position for finite ones) always come fresh from *this*
@@ -656,8 +744,14 @@ class RobustRayAimer(BaseRayAimer):
         field angle itself, so reusing another field's fixed components
         would silently solve the wrong (e.g. on-axis) problem even though
         Newton still converges. Only the free transverse 2-DOF is
-        warm-started: the seed map's chief launch is projected onto this
-        field's fresh seed through the shared local parameterization.
+        warm-started (see :func:`_carry_to_seed`): the stored chief's launch
+        point for an infinite conjugate, and for a finite one its rotation
+        away from its own paraxial seed (``PupilMap.chief_offset``), since
+        there the free DOF is the launch direction and its absolute value
+        would carry the other field along.
+
+        ``seed`` is this field's paraxial chief seed when the caller already
+        has it (see :meth:`_chief_seed`); it is computed here otherwise.
 
         Returns:
             tuple: ``(launch, strategy, report)`` -- the solved chief
@@ -678,21 +772,14 @@ class RobustRayAimer(BaseRayAimer):
         ty = be.array([0.0])
         self._last_chief_failure_report = None
 
-        px0, py0, pz0, pL0, pM0, pN0 = self._paraxial.aim_rays(
-            (be.array([Hx]), be.array([Hy])),
-            wl_a,
-            (be.array([0.0]), be.array([0.0])),
-        )
+        if seed is None:
+            seed = self._chief_seed(Hx, Hy, wl_a)
+        px0, py0, pz0, pL0, pM0, pN0 = seed
 
         if seed_map is not None:
-            sx0, sy0, sz0, sL0, sM0, sN0 = seed_map.seed(
-                be.array([0.0]), be.array([0.0])
+            x0, y0, z0, L0, M0, N0 = _carry_to_seed(
+                param, seed, seed_map.base, seed_map.chief_offset
             )
-            # Carry only the free transverse offsets of the stored chief
-            # over to this field's fresh seed.
-            bound = param.bind(px0, py0, pz0, pL0, pM0, pN0)
-            xi, eta = bound.project(sx0, sy0, sz0, sL0, sM0, sN0)
-            x0, y0, z0, L0, M0, N0 = bound.launch(xi, eta)
 
             x, y, z, L, M, N, converged, _, report = self._iterative._solve_core(
                 x0, y0, z0, L0, M0, N0, wl_a, stop_idx, is_inf, tx, ty, param=param
@@ -731,19 +818,18 @@ class RobustRayAimer(BaseRayAimer):
                 self._last_chief_failure_report = report
             return launch, "marching", report
 
-        if is_inf:
-            scanned = self._scan_chief(
-                px0, py0, pz0, pL0, pM0, pN0, wl_a, stop_idx, tx, ty, param, Hx, Hy
-            )
-            if scanned is not None:
-                launch, report = scanned
-                self._last_chief_failure_report = report
-                return launch, "scan", report
+        scanned = self._scan_chief(
+            px0, py0, pz0, pL0, pM0, pN0, wl_a, stop_idx, tx, ty, param, Hx, Hy
+        )
+        if scanned is not None:
+            launch, report = scanned
+            self._last_chief_failure_report = report
+            return launch, "scan", report
 
         raise ValueError(
             f"RobustRayAimer: chief ray failed to converge for field "
-            f"(Hx={Hx}, Hy={Hy}) after marching from the axis; check "
-            f"the system configuration."
+            f"(Hx={Hx}, Hy={Hy}) after marching from the axis and scanning "
+            f"around the paraxial seed; check the system configuration."
         )
 
     def _scan_chief(
@@ -763,59 +849,112 @@ class RobustRayAimer(BaseRayAimer):
         Hy: float = 0.0,
         n: int = 2001,
     ) -> tuple[tuple, SolveReport] | None:
-        """Last-resort chief-ray seed search for extreme (beyond +-90 degree)
-        field angles.
+        """Last-resort chief-ray seed search for when neither the paraxial
+        guess nor field marching converges (extreme field angles, or a
+        paraxial seed that does not trace at all).
 
-        Sweeps candidate launch points along the transverse line *through
-        the fresh paraxial seed* ``(px0 ... pN0)`` and returns the first
-        one the Newton polish converges from, for when neither the paraxial
-        guess nor field marching converges. The parameterization is bound
-        to repeated copies of the seed, so the ``r = 0`` candidate
-        reproduces the seed exactly and every candidate displacement is
-        transverse to the entry direction. The sweep direction comes from
-        the field coordinates ``(Hx, Hy)`` (the meridional axis for a
-        degenerate field) and the sweep width from the seed's transverse
-        offset relative to the first-surface anchor -- both invariant under
-        a rigid translation of the system (see
-        :func:`_scan_candidate_offsets`).
+        Sweeps candidate rays along a transverse line *through the fresh
+        paraxial seed* ``(px0 ... pN0)`` and returns the converged candidate
+        nearest the seed. For an infinite conjugate the candidates are
+        parallel rays whose launch points are displaced transverse to the
+        entry direction. For a finite conjugate they fan out from the fixed
+        object point: each candidate crosses the transverse plane through
+        the first-surface vertex at a point displaced along the same line,
+        so both conjugates sweep the same length window across the front of
+        the system. The ``r = 0`` candidate reproduces the seed exactly.
+        The sweep direction comes from the field coordinates ``(Hx, Hy)``
+        (the meridional axis for a degenerate field) and the sweep width
+        from the seed's transverse offset relative to the first-surface
+        anchor -- both invariant under a rigid translation of the system
+        (see :func:`_scan_candidate_offsets`).
         """
         # Seed offset relative to the first physical surface's vertex,
         # expressed on the entry frame's transverse basis. Anchoring at the
         # vertex (not the global origin) keeps the sweep width invariant
         # under rigid translations.
         path = self.optic.surfaces.build_paraxial_path()
-        anchor = path.vertices_gcs[1]
+        anchor = tuple(to_float(c) for c in path.vertices_gcs[1])
         u, v = param.u, param.v
-        g_rel = (
-            to_float(px0) - to_float(anchor[0]),
-            to_float(py0) - to_float(anchor[1]),
-            to_float(pz0) - to_float(anchor[2]),
-        )
+        origin = (to_float(px0), to_float(py0), to_float(pz0))
+        seed_dir = (to_float(pL0), to_float(pM0), to_float(pN0))
+        if param.is_infinite:
+            crossing = origin
+        else:
+            # Where the seed ray crosses the transverse plane through the
+            # anchor. A seed that never reaches that plane leaves nothing
+            # to sweep.
+            d0 = tuple(to_float(c) for c in path.entry_direction)
+            along = sum(seed_dir[i] * d0[i] for i in range(3))
+            reach = sum((anchor[i] - origin[i]) * d0[i] for i in range(3))
+            if along <= 1e-12 or reach <= 0.0:
+                return None
+            s = reach / along
+            crossing = tuple(origin[i] + s * seed_dir[i] for i in range(3))
+        g_rel = tuple(crossing[i] - anchor[i] for i in range(3))
         g_xi = g_rel[0] * u[0] + g_rel[1] * u[1] + g_rel[2] * u[2]
         g_eta = g_rel[0] * v[0] + g_rel[1] * v[1] + g_rel[2] * v[2]
 
         xi_off, eta_off = _scan_candidate_offsets(g_xi, g_eta, Hx, Hy, n)
 
         ones = be.ones(n)
-        sx = ones * to_float(px0)
-        sy = ones * to_float(py0)
-        sz = ones * to_float(pz0)
-        L0 = ones * to_float(pL0)
-        M0 = ones * to_float(pM0)
-        N0 = ones * to_float(pN0)
+        sx = ones * origin[0]
+        sy = ones * origin[1]
+        sz = ones * origin[2]
+        L0 = ones * seed_dir[0]
+        M0 = ones * seed_dir[1]
+        N0 = ones * seed_dir[2]
         wl_b = ones * to_float(wl_a)
         tx_b = ones * to_float(tx)
         ty_b = ones * to_float(ty)
 
-        # Candidates sit on the transverse line through the seed: binding
-        # the parameterization at repeated copies of the seed makes
-        # launch(0, 0) the seed itself and keeps the xi/eta displacements
-        # in the transverse plane for any entry direction.
-        bound = param.bind(sx, sy, sz, L0, M0, N0)
-        x0, y0, z0, L0, M0, N0 = bound.launch(xi_off, eta_off)
+        if param.is_infinite:
+            # Candidates sit on the transverse line through the seed: binding
+            # the parameterization at repeated copies of the seed makes
+            # launch(0, 0) the seed itself and keeps the xi/eta displacements
+            # in the transverse plane for any entry direction.
+            bound = param.bind(sx, sy, sz, L0, M0, N0)
+            x0, y0, z0, L0, M0, N0 = bound.launch(xi_off, eta_off)
+        else:
+            # Aim from the object point through each displaced crossing;
+            # the center candidate keeps the seed direction bit-for-bit.
+            qx = crossing[0] + xi_off * u[0] + eta_off * v[0] - origin[0]
+            qy = crossing[1] + xi_off * u[1] + eta_off * v[1] - origin[1]
+            qz = crossing[2] + xi_off * u[2] + eta_off * v[2] - origin[2]
+            norm = be.sqrt(qx**2 + qy**2 + qz**2)
+            center = be.arange_indices(n) == n // 2
+            x0, y0, z0 = sx, sy, sz
+            L0 = be.where(center, L0, qx / norm)
+            M0 = be.where(center, M0, qy / norm)
+            N0 = be.where(center, N0, qz / norm)
+
+        # A candidate whose seed ray does not reach the stop can never
+        # converge -- the Newton core holds a seed that does not trace where
+        # it is -- but it would still be traced on every iteration. At wide
+        # fields most of the sweep is such rays, so one screening trace
+        # drops them before the polish; which candidates converge does not
+        # change.
+        rays = self._iterative._trace_subset(
+            x0, y0, z0, L0, M0, N0, wl_b, stop_idx, param.is_infinite
+        )
+        lx, ly = self._iterative._get_local_stop_coords(rays, stop_idx)
+        live = be.logical_and(be.isfinite(lx), be.isfinite(ly))
+        if not be.any(live):
+            return None
+        keep = be.arange_indices(n)[live]
 
         x, y, z, L, M, N, converged, _, report = self._iterative._solve_core(
-            x0, y0, z0, L0, M0, N0, wl_b, stop_idx, True, tx_b, ty_b, param=param
+            x0[keep],
+            y0[keep],
+            z0[keep],
+            L0[keep],
+            M0[keep],
+            N0[keep],
+            wl_b[keep],
+            stop_idx,
+            param.is_infinite,
+            tx_b[keep],
+            ty_b[keep],
+            param=param,
         )
         if not be.any(converged):
             return None
@@ -827,9 +966,10 @@ class RobustRayAimer(BaseRayAimer):
         # calibration built on top of it. Nearest-to-seed stays on the
         # seed's own branch.
         conv_np = be.to_numpy(converged).reshape(-1)
+        keep_np = be.to_numpy(keep).reshape(-1)
         offsets_np = (
             be.to_numpy(xi_off).reshape(-1) ** 2 + be.to_numpy(eta_off).reshape(-1) ** 2
-        )
+        )[keep_np]
         candidates = conv_np.nonzero()[0]
         idx = int(candidates[offsets_np[candidates].argmin()])
         launch = (
@@ -862,10 +1002,15 @@ class RobustRayAimer(BaseRayAimer):
         from a failed one -- replaces the old recursive homotopy as the
         cold-start robustness mechanism (D8). It is bounded (a fixed attempt
         budget, no recursion) and physically monotonic: only the free launch
-        DOF carries over between steps, while the fixed DOF (z, and
-        direction for infinite conjugates / object position for finite ones)
-        is refreshed from the paraxial trace at each step's actual field
-        angle.
+        DOF carries over between steps (see :func:`_carry_to_seed`), while
+        the fixed DOF (z, and direction for infinite conjugates / object
+        position for finite ones) is refreshed from the paraxial trace at
+        each step's actual field angle. A failed step is retried once from
+        the fresh paraxial seed before its stride is halved.
+
+        For a finite conjugate the walk starts at half the field: the axis
+        chief's offset from its seed is zero, so a full stride would repeat
+        exactly the direct paraxial solve the caller has already tried.
 
         A step size is never grown back up after a success: this system's
         maximum reliable step tends to shrink (never grow) as the field
@@ -888,13 +1033,12 @@ class RobustRayAimer(BaseRayAimer):
         solve could run).
         """
         t = 0.0
-        # t=0 (the axis) is trivial and always converges: L=M=0, N=+-1.
-        launch = self._paraxial.aim_rays(
-            (be.array([0.0]), be.array([0.0])), wl_a, (be.array([0.0]), be.array([0.0]))
-        )
-        launch = tuple(to_float(v) for v in launch)
+        # t=0 (the axis) is trivial and always converges: L=M=0, N=+-1. The
+        # axis chief is its own paraxial seed, so its offset is zero.
+        launch = tuple(to_float(v) for v in self._chief_seed(0.0, 0.0, wl_a))
+        offset = (0.0, 0.0)
 
-        dt = 1.0
+        dt = 1.0 if param.is_infinite else 0.5
         relaxed_tol = max(self._iterative.tol, 1e-4)
         for _attempt in range(max_attempts):
             if t >= 1.0:
@@ -933,27 +1077,14 @@ class RobustRayAimer(BaseRayAimer):
                 return launch, report
 
             t_next = min(t + dt, 1.0)
-            Hxt, Hyt = Hx * t_next, Hy * t_next
-            px0, py0, pz0, pL0, pM0, pN0 = self._paraxial.aim_rays(
-                (be.array([Hxt]), be.array([Hyt])),
-                wl_a,
-                (be.array([0.0]), be.array([0.0])),
-            )
+            seed = self._chief_seed(Hx * t_next, Hy * t_next, wl_a)
+            px0, py0, pz0, pL0, pM0, pN0 = seed
 
-            # Carry only the free transverse offsets of the last converged
-            # launch onto this step's fresh paraxial seed (the fixed DOF --
-            # direction for infinite conjugates, object point for finite
-            # ones -- encodes the field angle and must stay fresh).
-            bound = param.bind(px0, py0, pz0, pL0, pM0, pN0)
-            xi, eta = bound.project(
-                be.array([launch[0]]),
-                be.array([launch[1]]),
-                be.array([launch[2]]),
-                be.array([launch[3]]),
-                be.array([launch[4]]),
-                be.array([launch[5]]),
-            )
-            x0, y0, z0, L0, M0, N0 = bound.launch(xi, eta)
+            # Carry only the free DOF of the last converged launch onto this
+            # step's fresh paraxial seed (the fixed DOF -- direction for
+            # infinite conjugates, object point for finite ones -- encodes
+            # the field angle and must stay fresh).
+            x0, y0, z0, L0, M0, N0 = _carry_to_seed(param, seed, launch, offset)
 
             with _relaxed_tolerance(self._iterative, relaxed_tol):
                 x, y, z, L, M, N, converged, _, _r = self._iterative._solve_core(
@@ -971,12 +1102,13 @@ class RobustRayAimer(BaseRayAimer):
                     param=param,
                 )
 
-            if not be.any(converged) and is_inf:
-                # The transverse launch warm-started from the previous step
-                # can occasionally be a worse seed than a fresh paraxial
-                # guess at the new angle (e.g. right where marching first
-                # takes a large stride); retry once from the fresh guess
-                # before giving up and shrinking the step.
+            if not be.any(converged) and (param.is_infinite or offset != (0.0, 0.0)):
+                # The launch warm-started from the previous step can
+                # occasionally be a worse seed than a fresh paraxial guess at
+                # the new angle (e.g. right where marching first takes a
+                # large stride); retry once from the fresh guess before
+                # giving up and shrinking the step. A finite-conjugate carry
+                # with a zero offset already is the fresh guess.
                 with _relaxed_tolerance(self._iterative, relaxed_tol):
                     x, y, z, L, M, N, converged, _, _r = self._iterative._solve_core(
                         px0,
@@ -1002,6 +1134,8 @@ class RobustRayAimer(BaseRayAimer):
                     to_float(M),
                     to_float(N),
                 )
+                if not param.is_infinite:
+                    offset = _offset_from_seed(param, seed, launch)
                 t = t_next
                 # Do not grow dt back up -- see docstring.
             else:
@@ -1061,13 +1195,16 @@ class RobustRayAimer(BaseRayAimer):
         chief: tuple[float, float, float, float, float, float],
         probes: list[tuple[float, float, float, float, float, float]],
         param: LaunchParameterization,
+        chief_offset: tuple[float, float] | None = None,
     ) -> PupilMap:
         """Fit the 2x2 affine launch model from the chief ray + 4 probes.
 
         The probes' launch states are projected into the chief-bound local
         transverse parameterization, so the fitted offsets are (xi, eta)
         coordinates -- valid for any entry direction, and stored as plain
-        floats (detached by design).
+        floats (detached by design). ``chief_offset`` (a finite-conjugate
+        chief's offset from its own paraxial seed) is stored on the map for
+        warm starts.
         """
         p_east, p_west, p_north, p_south = probes
         bound = param.bind(*(be.array([v]) for v in chief))
@@ -1086,4 +1223,4 @@ class RobustRayAimer(BaseRayAimer):
             ((e2 - w2) / 2.0, (n2 - s2) / 2.0),
         )
 
-        return PupilMap(base=chief, A=A, param=param)
+        return PupilMap(base=chief, A=A, param=param, chief_offset=chief_offset)
