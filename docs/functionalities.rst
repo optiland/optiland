@@ -94,6 +94,8 @@ Material Database
 
 - **Integrated Refractive Index Library**:
   Access data from refractiveindex.info directly within the package.
+- **Advanced Glass Dispersion Models**:
+  Includes statistical Abbe number models and highly accurate 6th-order Buchdahl model glasses (``ModelMaterial``) with visible/infrared dual routing to ensure high numerical stability and precise chromatic modeling.
 - **User-Defined Materials**:
   Create and register new materials with custom dispersion models.
 
