@@ -91,6 +91,9 @@ class SampledMTF:
         self.opd_waves = wf_data.opd
         self.intensity = wf_data.intensity
 
+        # XPD/XPL are used purely as axial distances (pupil-shift ratio
+        # below), never as real-space coordinates, so the unfolded axial
+        # scalar remains valid on folded paths.
         self.xpd = self.optic.paraxial.XPD()
         self.xpl = -self.optic.paraxial.XPL()
 

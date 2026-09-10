@@ -244,8 +244,24 @@ class MultiConfiguration:
         value: Any,
         configurations: list[int] | Literal["all"],
     ) -> None:
-        """Internal helper for standard properties (radius, conic, etc)."""
+        """Internal helper for standard properties (radius, conic, etc).
+
+        Thickness updates are preflighted across every selected
+        configuration before any configuration is mutated: ``set_thickness``
+        rejects folded/off-axis geometry, and without the preflight an
+        earlier configuration would already have been changed when a later
+        one raises, leaving the group partially updated.
+        """
         configs_to_update, all_selected = self._resolve_configs(configurations)
+
+        if attr_type == "thickness":
+            from optiland.paraxial_path import require_global_z_geometry
+
+            for config_idx in configs_to_update:
+                require_global_z_geometry(
+                    self.configurations[config_idx].surfaces,
+                    f"multi-configuration set_thickness (configuration {config_idx})",
+                )
 
         if attr_type == "material":
             # Materials are pointer-like objects, so they're linked via a

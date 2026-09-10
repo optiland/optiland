@@ -200,7 +200,7 @@ capped at ~1e5 rays. These gaps and the full roadmap
 (reparameterization → optimization integration → PRB → GUI → volumetric
 scattering → polarisation → Dr.Jit/Mitsuba) are tracked on the canonical
 **NSQ Limitations & Roadmap** documentation page:
-https://optiland.readthedocs.io/en/latest/gallery/nonsequential/limitations_and_roadmap.html
+https://www.optiland.org/docs/gallery/nonsequential/limitations_and_roadmap.html
 
 Call to Action
 --------------

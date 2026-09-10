@@ -67,8 +67,12 @@ def _uniform_scalar(value) -> float | None:
     """
     try:
         if torch is not None and isinstance(value, torch.Tensor):
-            first = value.reshape(-1)[0]
-            if bool(torch.eq(value, first).all()):
+            # The key only needs the numeric value; detaching avoids the
+            # scalar-conversion warning for grad-attached bundles and keeps
+            # the uniformity probe off the autograd graph.
+            detached = value.detach()
+            first = detached.reshape(-1)[0]
+            if bool(torch.eq(detached, first).all()):
                 return float(first)
             return None
         array = np.asarray(value)

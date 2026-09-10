@@ -13,7 +13,7 @@ This helps us respond more effectively and keeps the issue tracker focused. -->
 ### Checklist
 
 - [ ] I have searched the [existing issues](https://github.com/HarrisonKramer/optiland/issues) and [discussions](https://github.com/HarrisonKramer/optiland/discussions) for a similar question or problem.
-- [ ] I have read the [documentation](https://optiland.readthedocs.io/en/latest/) and tried to find an answer there.
+- [ ] I have read the [documentation](https://www.optiland.org/docs/) and tried to find an answer there.
 - [ ] I am using the **latest version** of Optiland (if not, please update and retry).
 - [ ] I have tried to reproduce or debug the issue myself before opening this.
 - [ ] I have included **all necessary context**, such as version info, error messages, or minimal reproducible examples.

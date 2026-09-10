@@ -32,6 +32,14 @@ class CachedRayAimer(BaseRayAimer):
     a cached entry, the result is returned immediately. If the system has
     changed but inputs match, the previous result is used as a starting guess.
 
+    Coordinate-frame note: cached entries are full launch states in global
+    coordinates. The system hash covers every surface, so any rigid pose
+    change (translation, fold reorientation) misses the exact-reuse path
+    and the stale state is only ever passed as an ``initial_guess`` to the
+    wrapped aimer, which re-solves (and, for the robust aimer, falls back
+    to a fresh entry-frame calibration if the stale guess fails). A stale
+    global-coordinate state can therefore cost time but never correctness.
+
     Attributes:
         optic (Optic): The optical system being traced.
         wrapped_aimer (BaseRayAimer): The actual aiming strategy being cached.

@@ -2,7 +2,7 @@
 # refractiveindex.info database is in the public domain
 # copyright and related rights waived via CC0 1.0
 
-REFERENCES: "M. R. Anderson. <i>Determination of infrared optical constatns for single components hydrocarbon fuels</i>, Master Thesis (2009) [<a href=\"https://refractiveindex.info/download/data/2000/Anderson - thesis - Determination of infrared optical constants for single component hydrocarbon fuels.pdf\">pdf</a>]"
+REFERENCES: "M. R. Anderson. <i>Determination of infrared optical constants for single components hydrocarbon fuels</i>, Master Thesis (2009) [<a href=\"https://refractiveindex.info/download/data/2000/Anderson - thesis - Determination of infrared optical constants for single component hydrocarbon fuels.pdf\">pdf</a>]"
 COMMENTS: "Iso-octane"
 DATA:
   - type: tabulated nk

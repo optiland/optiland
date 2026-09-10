@@ -47,8 +47,19 @@ class ObjectSurface(Surface):
 
     @property
     def is_infinite(self):
-        """Returns True if the surface is infinitely far away, False otherwise."""
-        return be.isinf(self.geometry.cs.z)
+        """Returns True if the surface is infinitely far away, False otherwise.
+
+        Classic authoring spells an object at infinity as ``cs.z = -inf``,
+        because the axis is z. A system entered off that axis -- a collimated
+        source posed to fire along +x into a fold -- puts the same infinity in
+        x or y, so any infinite vertex coordinate says the same thing.
+        """
+        cs = self.geometry.cs
+        # Tested one axis at a time: under a multi-configuration the three
+        # can hold arrays of different lengths, which will not stack.
+        return any(
+            bool(be.any(be.isinf(be.array(coord)))) for coord in (cs.x, cs.y, cs.z)
+        )
 
     def set_aperture(self):
         """Sets the aperture of the surface."""

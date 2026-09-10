@@ -625,6 +625,7 @@ class Optic:
         reference: ReferenceRay | None = None,
         projection: Literal["XY", "XZ", "YZ"] = "YZ",
         ax: Axes | None = None,
+        show: bool = True,
     ) -> tuple[Figure, Axes]:
         """Draw a 2D representation of the optical system.
 
@@ -656,6 +657,9 @@ class Optic:
                 plane. Defaults to "YZ".
             ax (matplotlib.axes.Axes, optional): The axes to plot on.
                 If None, a new figure and axes are created. Defaults to None.
+            show (bool, optional): If True (default), calls plt.show(). Set
+                False for headless use (e.g. saving to file, CI environments)
+                or when embedding in an existing figure via ``ax``.
 
         Returns:
             tuple[Figure, Axes]: A tuple containing the matplotlib Figure and
@@ -679,6 +683,7 @@ class Optic:
             reference=reference,
             projection=projection,
             ax=ax,
+            show=show,
         )
         return fig, ax
 

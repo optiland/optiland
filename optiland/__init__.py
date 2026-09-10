@@ -5,6 +5,12 @@ from __future__ import annotations
 from optiland.optimization.operand.operand import (
     operand_registry as operand_registry,
 )
+from optiland.paraxial_path import (
+    ParaxialDomainWarning as ParaxialDomainWarning,
+)
+from optiland.paraxial_path import (
+    UnsupportedParaxialGeometryError as UnsupportedParaxialGeometryError,
+)
 from optiland.surfaces.factories.geometry_factory import (
     GeometryFactory as GeometryFactory,
 )
@@ -17,5 +23,3 @@ from optiland.surfaces.factories.surface_factory import (
 from optiland.visualization.component_renderer import (
     ComponentRenderer as ComponentRenderer,
 )
-
-__version__ = "0.6.1"

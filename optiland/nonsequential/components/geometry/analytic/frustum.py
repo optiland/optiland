@@ -57,10 +57,12 @@ class CylindricalFrustumGeometry(AnalyticGeometry):
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Intersect rays with the frustum lateral surface.
 
-        The frustum surface satisfies:
+        The frustum surface satisfies::
+
             x^2 + y^2 = r(z)^2
-        where r(z) = r_front + slope*(z - z_front),
-        slope = (r_back - r_front)/(z_back - z_front).
+
+        where ``r(z) = r_front + slope*(z - z_front)`` and
+        ``slope = (r_back - r_front)/(z_back - z_front)``.
 
         Substituting the ray parametric equations yields a quadratic in t.
         Both roots are tested; the smallest positive root within the axial

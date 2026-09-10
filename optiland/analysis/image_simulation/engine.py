@@ -20,6 +20,7 @@ class ImageSimulationEngine:
     Args:
         optic (Optic): The optical system model.
         config (dict): Configuration dictionary.
+
             - wavelength (list[float]): List of 3 wavelengths (um) for R, G, B.
             - psf_grid_shape (tuple): (ny, nx) for PSF basis generation.
             - psf_size (int): Pixel size for PSFs.

@@ -2,7 +2,7 @@
 # refractiveindex.info database is in the public domain
 # copyright and related rights waived via CC0 1.0
 
-REFERENCES: "1) A. I. Golovashkin and G. P. Motulevich. Optical and electrical properties of tin, <a href=\"http://jetp.ac.ru/cgi-bin/e/index/e/19/2/p310?a=list\"><i>Sov. Phys. JETP</i> <b>19</b>, 310-317 (1964)</a><br>2) A. I. Golovashkin and G. P. Motulevich. Optical properties of tin at helium temperaturs, <a href=\"http://jetp.ac.ru/cgi-bin/e/index/e/20/1/p44?a=list\"><i>Sov. Phys. JETP</i> <b>20</b>, 44-49 (1965)</a>"
+REFERENCES: "1) A. I. Golovashkin and G. P. Motulevich. Optical and electrical properties of tin, <a href=\"http://jetp.ac.ru/cgi-bin/e/index/e/19/2/p310?a=list\"><i>Sov. Phys. JETP</i> <b>19</b>, 310-317 (1964)</a><br>2) A. I. Golovashkin and G. P. Motulevich. Optical properties of tin at helium temperatures, <a href=\"http://jetp.ac.ru/cgi-bin/e/index/e/20/1/p44?a=list\"><i>Sov. Phys. JETP</i> <b>20</b>, 44-49 (1965)</a>"
 COMMENTS: "78 K (-195.15 °C)"
 DATA:
   - type: tabulated nk

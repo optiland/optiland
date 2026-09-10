@@ -73,6 +73,13 @@ class OpticUpdater:
                 thickness to be modified.
 
         """
+        from optiland.paraxial_path import require_global_z_geometry
+
+        # Thickness updates rebuild downstream cs.z from cumulative
+        # thicknesses, which is only meaningful while the beam path runs
+        # along global +z. Guard before touching any geometry.
+        require_global_z_geometry(self.optic.surfaces, "set_thickness")
+
         if surface_number == 0:
             # First surface thickness sets the object distance.
             # We treat this specially to avoid issues with infinite values.
@@ -187,7 +194,22 @@ class OpticUpdater:
             scale_factor (float): The factor by which to scale all relevant
                 system dimensions (radii, thicknesses, EPD, physical apertures).
 
+        Raises:
+            UnsupportedParaxialGeometryError: If the beam path is folded off
+                global +z (or entered along another direction), before any
+                value is read or any geometry is touched. Scaling rebuilds
+                positions from cumulative thicknesses along global z, which
+                would move folded surfaces off their physical legs; guarding
+                only inside ``set_thickness`` would leave the system
+                partially scaled.
         """
+        from optiland.paraxial_path import require_global_z_geometry
+
+        # Preflight-atomic: reject before reading thicknesses (which walk
+        # the unfolded path) and before the first geometry.scale() call, so
+        # a rejected system is left exactly as it was.
+        require_global_z_geometry(self.optic.surfaces, "scale_system")
+
         num_surfaces = self.optic.surfaces.num_surfaces
         thicknesses = [
             self.optic.surfaces.get_thickness(surf_idx)[0]
@@ -263,7 +285,19 @@ class OpticUpdater:
         """Adjusts the position of the image surface (last surface) such that
         the paraxial marginal ray crosses the optical axis at this new location.
         This effectively sets the paraxial focus.
+
+        Raises:
+            UnsupportedParaxialGeometryError: If the system's unfolded axial
+                coordinate is not global z (folded or off-axis-entered
+                systems), before any surface is mutated -- the focus offset
+                is an unfolded axial distance and writing it into ``cs.z``
+                would move the image plane off its physical leg.
         """
+        from optiland.paraxial_path import require_global_z_geometry
+
+        # Guard before any computation touches geometry: no partial mutation.
+        require_global_z_geometry(self.optic.surfaces, "image_solve")
+
         ya, ua = self.optic.paraxial.marginal_ray()
         offset = float(ya[-1, 0] / ua[-1, 0])
         surfaces = self.optic.surfaces

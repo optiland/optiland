@@ -8,5 +8,7 @@
 
    .. autosummary::
    
+      RobustFieldReport
       RobustRayAimer
+      RobustSolveReport
    

@@ -91,12 +91,14 @@ class RealReferenceStrategy(StopSizeStrategy):
 
     def _trace_real_marginal_ray(self) -> float:
         wavelength = self.optic.primary_wavelength
-        EPL = float(self.optic.paraxial.entrance_pupil_z())
+        EPL = float(self.optic.paraxial.entrance_pupil_axial_position())
         EPD = float(self.optic.paraxial.EPD())
 
         stop_index = self.optic.surfaces.stop_index
         obj_surf = self.optic.object_surface
         is_inf = bool(obj_surf and obj_surf.is_infinite)
+
+        frame = self._entry_frame_floats()
 
         # The entrance pupil is the image of the stop, so a decentered stop has
         # a decentered entrance pupil. Offsetting by EPD/2 from the axis would
@@ -104,43 +106,68 @@ class RealReferenceStrategy(StopSizeStrategy):
         # lands at is a distance from the stop center that has nothing to do
         # with the stop radius (issue #654). Locate the pupil center first and
         # offset from there.
-        cx, cy, cz, cL, cM, cN = self._solve_pupil_center(stop_index, is_inf)
+        cx, cy, cz, cL, cM, cN = self._solve_pupil_center(stop_index, is_inf, frame)
 
-        if is_inf:
-            # Object-space rays run parallel to the axis, so the launch height
-            # is the entrance-pupil coordinate and can be offset directly.
-            rays = RealRays(
-                x=be.array([cx]),
-                y=be.array([cy + EPD / 2.0]),
-                z=be.array([cz]),
-                L=be.array([cL]),
-                M=be.array([cM]),
-                N=be.array([cN]),
-                wavelength=be.array([wavelength]),
-                intensity=be.array([1.0]),
-            )
+        if frame is None:
+            if is_inf:
+                # Object-space rays run parallel to the axis, so the launch
+                # height is the entrance-pupil coordinate and can be offset
+                # directly.
+                origin = (cx, cy + EPD / 2.0, cz)
+                direction = (cL, cM, cN)
+            else:
+                # Offset the chief ray's pupil crossing, then re-aim at it
+                # from the same object point.
+                t = (EPL - cz) / cN
+                target_x = cx + cL * t
+                target_y = cy + cM * t + EPD / 2.0
+
+                dx = target_x - cx
+                dy = target_y - cy
+                dz = EPL - cz
+                mag = float(be.sqrt(be.array(dx**2 + dy**2 + dz**2)))
+                origin = (cx, cy, cz)
+                direction = (dx / mag, dy / mag, dz / mag)
         else:
-            # Offset the chief ray's pupil crossing, then re-aim at it from the
-            # same object point.
-            t = (EPL - cz) / cN
-            target_x = cx + cL * t
-            target_y = cy + cM * t + EPD / 2.0
+            # Frame-aware branch: the marginal probe is displaced from the
+            # pupil-center reference along the entry frame's meridional
+            # transverse axis v -- the generalization of the historical +y
+            # offset -- so no global +z assumption remains.
+            _anchor, axial, d0, _u0, v0 = frame
+            if is_inf:
+                origin = (
+                    cx + EPD / 2.0 * v0[0],
+                    cy + EPD / 2.0 * v0[1],
+                    cz + EPD / 2.0 * v0[2],
+                )
+                direction = (cL, cM, cN)
+            else:
+                # Push the chief launch to the pupil plane (the plane through
+                # the apparent pupil point, perpendicular to the entry
+                # direction), offset there by EPD/2 along v, and re-aim.
+                r_ep = tuple(_anchor[i] + (EPL - axial) * d0[i] for i in range(3))
+                c_pos = (cx, cy, cz)
+                c_dir = (cL, cM, cN)
+                denom = sum(c_dir[i] * d0[i] for i in range(3))
+                t = sum((r_ep[i] - c_pos[i]) * d0[i] for i in range(3)) / denom
+                target = tuple(
+                    c_pos[i] + t * c_dir[i] + EPD / 2.0 * v0[i] for i in range(3)
+                )
+                delta = tuple(target[i] - c_pos[i] for i in range(3))
+                mag = float(be.sqrt(be.array(sum(d**2 for d in delta))))
+                origin = c_pos
+                direction = tuple(d / mag for d in delta)
 
-            dx = target_x - cx
-            dy = target_y - cy
-            dz = EPL - cz
-            mag = float(be.sqrt(be.array(dx**2 + dy**2 + dz**2)))
-
-            rays = RealRays(
-                x=be.array([cx]),
-                y=be.array([cy]),
-                z=be.array([cz]),
-                L=be.array([dx / mag]),
-                M=be.array([dy / mag]),
-                N=be.array([dz / mag]),
-                wavelength=be.array([wavelength]),
-                intensity=be.array([1.0]),
-            )
+        rays = RealRays(
+            x=be.array([origin[0]]),
+            y=be.array([origin[1]]),
+            z=be.array([origin[2]]),
+            L=be.array([direction[0]]),
+            M=be.array([direction[1]]),
+            N=be.array([direction[2]]),
+            wavelength=be.array([wavelength]),
+            intensity=be.array([1.0]),
+        )
 
         # Trace from the first surface up to the stop surface
         for i in range(1, stop_index + 1):
@@ -168,7 +195,25 @@ class RealReferenceStrategy(StopSizeStrategy):
         # Return intersection radial height at Stop in local coords
         return float(be.sqrt(local_rays.x[0] ** 2 + local_rays.y[0] ** 2))
 
-    def _solve_pupil_center(self, stop_index: int, is_inf: bool) -> tuple:
+    def _entry_frame_floats(self) -> tuple | None:
+        """The optic's entry frame with components as plain floats.
+
+        ``None`` on the canonical global-z path, keeping the historical
+        code branch (and its exact arithmetic) for legacy systems.
+        """
+        frame = self.optic.surfaces._entry_frame()
+        if frame is None:
+            return None
+        anchor, axial, d0, u0, v0 = frame
+        as_floats = tuple(
+            tuple(to_float(component) for component in vector)
+            for vector in (anchor, d0, u0, v0)
+        )
+        return as_floats[0], to_float(axial), as_floats[1], as_floats[2], as_floats[3]
+
+    def _solve_pupil_center(
+        self, stop_index: int, is_inf: bool, frame: tuple | None = None
+    ) -> tuple:
         """Solve the launch state of the axial ray landing on the stop center.
 
         For a centered system this is the on-axis launch and the solve is a
@@ -179,6 +224,9 @@ class RealReferenceStrategy(StopSizeStrategy):
         Args:
             stop_index: Index of the stop surface.
             is_inf: Whether the object is at infinity.
+            frame: Entry frame as plain floats (see
+                :meth:`_entry_frame_floats`), or ``None`` on the canonical
+                global-z path.
 
         Returns:
             tuple: ``(x, y, z, L, M, N)`` launch state of the axial ray that
@@ -192,35 +240,65 @@ class RealReferenceStrategy(StopSizeStrategy):
         from optiland.rays.ray_aiming.iterative import IterativeRayAimer
 
         wavelength = self.optic.primary_wavelength
-        EPL = float(self.optic.paraxial.entrance_pupil_z())
+        EPL = float(self.optic.paraxial.entrance_pupil_axial_position())
 
-        # First-order seed: the pupil is the image of the stop, so the stop's
-        # decenter maps to the pupil scaled by the pupil magnification. Exact
-        # for a centered system ahead of the stop; elsewhere the Newton polish
-        # below carries it the rest of the way.
-        m = self._pupil_magnification()
-        stop_cs = self.optic.surfaces[stop_index].geometry.cs
-        gx, gy, _gz = stop_cs.position_in_gcs
-        ex = to_float(gx) * m
-        ey = to_float(gy) * m
+        if frame is None:
+            # First-order seed: the pupil is the image of the stop, so the
+            # stop's decenter maps to the pupil scaled by the pupil
+            # magnification. Exact for a centered system ahead of the stop;
+            # elsewhere the Newton polish below carries it the rest of the
+            # way.
+            m = self._pupil_magnification()
+            stop_cs = self.optic.surfaces[stop_index].geometry.cs
+            gx, gy, _gz = stop_cs.position_in_gcs
+            ex = to_float(gx) * m
+            ey = to_float(gy) * m
 
-        if is_inf:
-            # Launch well ahead of surface 1 to ensure robust intersection.
-            z_start = to_float(self.optic.surfaces[1].geometry.cs.z) - 100.0
-            x0, y0, z0 = be.array([ex]), be.array([ey]), be.array([z_start])
-            L0, M0, N0 = be.array([0.0]), be.array([0.0]), be.array([1.0])
+            if is_inf:
+                # Launch well ahead of surface 1 for robust intersection.
+                z_start = to_float(self.optic.surfaces[1].geometry.cs.z) - 100.0
+                x0, y0, z0 = be.array([ex]), be.array([ey]), be.array([z_start])
+                L0, M0, N0 = be.array([0.0]), be.array([0.0]), be.array([1.0])
+            else:
+                obj_z = to_float(self.optic.object_surface.geometry.cs.z)
+                dz = EPL - obj_z
+                mag = float(be.sqrt(be.array(ex**2 + ey**2 + dz**2)))
+                x0, y0, z0 = be.array([0.0]), be.array([0.0]), be.array([obj_z])
+                L0 = be.array([ex / mag])
+                M0 = be.array([ey / mag])
+                N0 = be.array([dz / mag])
         else:
-            obj_z = to_float(self.optic.object_surface.geometry.cs.z)
-            dz = EPL - obj_z
-            mag = float(be.sqrt(be.array(ex**2 + ey**2 + dz**2)))
-            x0, y0, z0 = be.array([0.0]), be.array([0.0]), be.array([obj_z])
-            L0 = be.array([ex / mag])
-            M0 = be.array([ey / mag])
-            N0 = be.array([dz / mag])
+            # Frame-aware seeds: probe origins sit on the entry line, a
+            # chosen axial distance before the first surface along -d0, and
+            # launch along d0 (infinite) or from the object vertex toward
+            # the apparent entrance-pupil point (finite). The supported
+            # folded domain is piecewise-centered, so no decenter seed is
+            # needed; the Newton polish absorbs any residual.
+            anchor, axial, d0, _u0, _v0 = frame
+            r_ep = tuple(anchor[i] + (EPL - axial) * d0[i] for i in range(3))
+            if is_inf:
+                origin = tuple(r_ep[i] - 100.0 * d0[i] for i in range(3))
+                x0 = be.array([origin[0]])
+                y0 = be.array([origin[1]])
+                z0 = be.array([origin[2]])
+                L0 = be.array([d0[0]])
+                M0 = be.array([d0[1]])
+                N0 = be.array([d0[2]])
+            else:
+                obj_cs = self.optic.object_surface.geometry.cs
+                obj_pos = tuple(to_float(c) for c in obj_cs.position_in_gcs)
+                delta = tuple(r_ep[i] - obj_pos[i] for i in range(3))
+                mag = float(be.sqrt(be.array(sum(d**2 for d in delta))))
+                x0 = be.array([obj_pos[0]])
+                y0 = be.array([obj_pos[1]])
+                z0 = be.array([obj_pos[2]])
+                L0 = be.array([delta[0] / mag])
+                M0 = be.array([delta[1] / mag])
+                N0 = be.array([delta[2] / mag])
 
         zero = be.array([0.0])
         aimer = IterativeRayAimer(self.optic)
-        x, y, z, L, M, N, converged, _ = aimer._solve_core(
+        x, y, z, L, M, N, converged, _, _report = aimer._solve_core(
             x0,
             y0,
             z0,

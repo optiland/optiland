@@ -72,7 +72,7 @@ def test_valid_biconvex_lens_does_not_warn(set_test_backend):
 
     with warnings.catch_warnings():
         warnings.simplefilter("error", UserWarning)
-        fig, ax = optic.draw()
+        fig, ax = optic.draw(show=False)
         plt.close(fig)
 
 
@@ -92,7 +92,7 @@ def test_valid_meniscus_lens_does_not_warn(set_test_backend):
 
     with warnings.catch_warnings():
         warnings.simplefilter("error", UserWarning)
-        fig, ax = optic.draw()
+        fig, ax = optic.draw(show=False)
         plt.close(fig)
 
 
@@ -108,7 +108,7 @@ def test_plano_concave_lens_overlap_and_valid(set_test_backend):
     optic_valid = _create_singlet(r1=be.inf, r2=-50.0, thickness=1.5, epd=20.0)
     with warnings.catch_warnings():
         warnings.simplefilter("error", UserWarning)
-        fig, ax = optic_valid.draw()
+        fig, ax = optic_valid.draw(show=False)
         plt.close(fig)
 
 
@@ -124,7 +124,7 @@ def test_convex_plano_lens_overlap_and_valid(set_test_backend):
     optic_valid = _create_singlet(r1=50.0, r2=be.inf, thickness=1.5, epd=20.0)
     with warnings.catch_warnings():
         warnings.simplefilter("error", UserWarning)
-        fig, ax = optic_valid.draw()
+        fig, ax = optic_valid.draw(show=False)
         plt.close(fig)
 
 
@@ -150,7 +150,7 @@ def test_aspheric_lens_overlap_and_valid(set_test_backend):
     )
     with warnings.catch_warnings():
         warnings.simplefilter("error", UserWarning)
-        fig, ax = optic_valid.draw()
+        fig, ax = optic_valid.draw(show=False)
         plt.close(fig)
 
 
@@ -213,7 +213,7 @@ def test_surfaces_overlap_zero_extent(set_test_backend):
     optic_valid = _create_singlet(r1=50.0, r2=-50.0, thickness=2.0, epd=0.0)
     with warnings.catch_warnings():
         warnings.simplefilter("error", UserWarning)
-        fig, ax = optic_valid.draw()
+        fig, ax = optic_valid.draw(show=False)
         plt.close(fig)
 
     # Overlapping lens with epd=0 and thickness <= 0

@@ -160,9 +160,9 @@ New to these concepts? See the :ref:`glossary` first.
 
 .. code-block:: python
 
-   from optiland.wavefront import Wavefront, ZernikeOPD
+   from optiland.wavefront import OPD, ZernikeOPD
 
-   wf = Wavefront(lens, field=(0, 0), wavelength="primary")
+   wf = OPD(lens, field=(0, 0), wavelength="primary")
    wf.view()
 
    zfit = ZernikeOPD(lens, field=(0, 0), wavelength="primary", num_terms=37)
@@ -213,9 +213,12 @@ New to these concepts? See the :ref:`glossary` first.
 
    ``EPL()`` is measured **relative to the first physical surface** (surface 1),
    matching the convention of ``XPL()`` (relative to the image surface) and the
-   other first-order quantities. If you need the entrance pupil as a **global**
-   z coordinate — e.g. to compare against object or surface positions — use
-   ``lens.paraxial.entrance_pupil_z()``.
+   other first-order quantities. If you need the entrance pupil on the same
+   axial coordinate as surface positions — e.g. to compare against object or
+   surface positions — use ``lens.paraxial.entrance_pupil_axial_position()``
+   (``entrance_pupil_z()`` is a deprecated alias). For the pupil's real-space
+   location in a folded system, use
+   ``lens.paraxial.entrance_pupil_point_gcs()``.
 
 ----
 

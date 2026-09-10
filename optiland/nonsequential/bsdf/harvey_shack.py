@@ -29,7 +29,7 @@ _TABLE_SIZE = 4096
 class HarveyShackBSDF(BaseBSDF):
     """Harvey-Shack / ABg scatter model for surface micro-roughness.
 
-    The ABg model is a simplified form of the Harvey-Shack theory:
+    The ABg model is a simplified form of the Harvey-Shack theory::
 
         BSDF(beta - beta0) = b0 / (1 + |beta - beta0| / l0)^s
 

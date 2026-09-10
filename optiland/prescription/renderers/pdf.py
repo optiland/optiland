@@ -14,9 +14,12 @@ if TYPE_CHECKING:
 
     from optiland.prescription.document import Document
 
-import optiland as _optiland_pkg
+import importlib.metadata
 
-_VERSION = getattr(_optiland_pkg, "__version__", "")
+try:
+    _VERSION = importlib.metadata.version("optiland")
+except importlib.metadata.PackageNotFoundError:
+    _VERSION = ""
 
 _MARGIN_H = 25 * 2.8346  # 25 mm in points
 _MARGIN_V = 20 * 2.8346  # 20 mm in points

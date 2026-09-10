@@ -100,7 +100,7 @@ def test_system_change_uses_cached_as_guess(set_test_backend, mock_dependencies)
     )
 
 
-def test_robust_aimer_integration_with_cache(set_test_backend):
+def test_robust_aimer_integration_with_cache(set_test_backend, request):
     """Regression test for RobustRayAimer integration with caching.
 
     Ensures that RobustRayAimer accepts initial_guess passed by CachedRayAimer.
@@ -151,7 +151,11 @@ def test_robust_aimer_integration_with_cache(set_test_backend):
     iterative_mock = MagicMock(spec=IterativeRayAimer)
     iterative_mock.aim_rays.return_value = (1, 1, 1, 0, 0, 1)  # Dummy converged sol
 
-    # Mock _solve_core to avoid AttributeError and ValueError during unpacking
+    # Mock _solve_core to avoid AttributeError and ValueError during
+    # unpacking; the report slot must be a genuine SolveReport because the
+    # robust aimer reads it to build its aggregate last_report.
+    from optiland.rays.ray_aiming.parameterization import SolveReport
+
     iterative_mock._solve_core.side_effect = lambda *args, **kwargs: (
         be.array([1.0]),
         be.array([1.0]),
@@ -160,7 +164,23 @@ def test_robust_aimer_integration_with_cache(set_test_backend):
         be.array([0.0]),
         be.array([1.0]),
         be.array([1.0]) > 0.0,
-        None
+        None,
+        SolveReport(
+            seed_residual=0.0,
+            final_residual=0.0,
+            converged=True,
+            iterations=1,
+            num_rays=1,
+            num_converged=1,
+        ),
+    )
+    iterative_mock.last_report = SolveReport(
+        seed_residual=0.0,
+        final_residual=0.0,
+        converged=True,
+        iterations=1,
+        num_rays=1,
+        num_converged=1,
     )
     iterative_mock.tol = 1e-6
     iterative_mock._paraxial_aimer = paraxial_mock
@@ -177,6 +197,23 @@ def test_robust_aimer_integration_with_cache(set_test_backend):
 
     # Create CachedRayAimer wrapping RobustRayAimer
     cached_aimer = CachedRayAimer(optic, robust_aimer)
+
+    # The launch parameterization is built from the optic's entry frame,
+    # which the MagicMock optic cannot provide; supply the canonical +z one.
+    from unittest.mock import patch
+
+    from optiland.rays.ray_aiming.parameterization import LaunchParameterization
+
+    legacy_param = LaunchParameterization(
+        is_infinite=True, u=(1.0, 0.0, 0.0), v=(0.0, 1.0, 0.0)
+    )
+    patcher = patch.object(
+        LaunchParameterization, "for_optic", return_value=legacy_param
+    )
+    # Exception-safe: a failure inside this test must not leak the patched
+    # class method into later tests (request.addfinalizer over bare stop()).
+    patcher.start()
+    request.addfinalizer(patcher.stop)
 
     # 1. First call (Cache Miss)
     # This will call robust_aimer -> _solve -> iterative.aim_rays

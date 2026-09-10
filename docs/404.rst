@@ -1,0 +1,21 @@
+:orphan:
+
+.. meta::
+   :robots: noindex
+
+Page not found
+==============
+
+The page you requested does not exist at this address. It may have moved when
+the documentation was reorganized.
+
+- Use the search box at the top of the page.
+- :doc:`start_here` — choose a learning path.
+- :doc:`how_do_i` — find the example that answers a specific question.
+- :doc:`learning_guide` — the complete tutorial series.
+- :doc:`gallery/introduction` — the example gallery.
+- :doc:`api/api_introduction` — the API reference.
+
+If you followed a link from optiland.org or from the Optiland repository,
+please `open an issue <https://github.com/optiland/optiland/issues>`_ so we
+can fix it.

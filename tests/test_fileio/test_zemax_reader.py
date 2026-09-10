@@ -18,6 +18,7 @@ from optiland.fileio.zemax.reader.source import ZemaxFileSourceHandler
 from optiland.geometries import ToroidalGeometry
 from optiland.materials import Material
 from optiland.optic import Optic
+from optiland.physical_apertures import OffsetRadialAperture, RadialAperture
 from tests.utils import assert_allclose
 
 # ---------------------------------------------------------------------------
@@ -135,6 +136,80 @@ class TestZemaxDataParser:
     def test_read_diameter(self):
         self.parser._read_diameter(["DIAM", "8.5", "1", "0", "0", "1", '""'])
         assert self.parser._current_surf_data["diameter"] == 8.5
+
+    def test_read_obdc_after_clap(self):
+        self.parser._read_surface(["SURF", "0"])
+        self.parser._operand_table["CLAP"](["CLAP", "1.5", "12.5", "0"])
+        self.parser._operand_table["OBDC"](["OBDC", "2.25", "-3.5"])
+
+        aperture = self.parser._current_surf_data["aperture"]
+        assert isinstance(aperture, OffsetRadialAperture)
+        assert aperture.r_min == 1.5
+        assert aperture.r_max == 12.5
+        assert aperture.offset_x == 2.25
+        assert aperture.offset_y == -3.5
+
+    def test_read_obdc_before_clap(self):
+        self.parser._read_surface(["SURF", "0"])
+        self.parser._operand_table["OBDC"](["OBDC", "-4.0", "6.5"])
+        self.parser._operand_table["CLAP"](["CLAP", "0.5", "10.0", "0"])
+
+        aperture = self.parser._current_surf_data["aperture"]
+        assert isinstance(aperture, OffsetRadialAperture)
+        assert aperture.r_min == 0.5
+        assert aperture.r_max == 10.0
+        assert aperture.offset_x == -4.0
+        assert aperture.offset_y == 6.5
+
+    @pytest.mark.parametrize(
+        ("offset_x", "offset_y"),
+        [(3.0, 0.0), (0.0, -7.0)],
+    )
+    def test_read_obdc_single_axis(self, offset_x, offset_y):
+        self.parser._read_surface(["SURF", "0"])
+        self.parser._operand_table["CLAP"](["CLAP", "0", "8", "0"])
+        self.parser._operand_table["OBDC"](
+            ["OBDC", str(offset_x), str(offset_y)]
+        )
+
+        aperture = self.parser._current_surf_data["aperture"]
+        assert isinstance(aperture, OffsetRadialAperture)
+        assert aperture.offset_x == offset_x
+        assert aperture.offset_y == offset_y
+
+    def test_read_zero_obdc_keeps_radial_aperture(self):
+        self.parser._read_surface(["SURF", "0"])
+        self.parser._operand_table["CLAP"](["CLAP", "0", "8", "0"])
+        self.parser._operand_table["OBDC"](["OBDC", "0", "0"])
+
+        aperture = self.parser._current_surf_data["aperture"]
+        assert type(aperture) is RadialAperture
+
+    def test_read_repeated_obdc_uses_last_value(self):
+        self.parser._read_surface(["SURF", "0"])
+        self.parser._operand_table["CLAP"](["CLAP", "0", "8", "0"])
+        self.parser._operand_table["OBDC"](["OBDC", "1", "2"])
+        self.parser._operand_table["OBDC"](["OBDC", "3", "4"])
+
+        aperture = self.parser._current_surf_data["aperture"]
+        assert isinstance(aperture, OffsetRadialAperture)
+        assert aperture.offset_x == 3.0
+        assert aperture.offset_y == 4.0
+
+    def test_read_obdc_without_clap_does_not_create_aperture(self):
+        self.parser._read_surface(["SURF", "0"])
+        self.parser._operand_table["OBDC"](["OBDC", "1", "2"])
+
+        assert self.parser._current_surf_data["aperture"] is None
+
+    def test_aperture_decenter_resets_between_surfaces(self):
+        self.parser._read_surface(["SURF", "0"])
+        self.parser._operand_table["OBDC"](["OBDC", "1", "2"])
+        self.parser._read_surface(["SURF", "1"])
+        self.parser._operand_table["CLAP"](["CLAP", "0", "8", "0"])
+
+        aperture = self.parser._current_surf_data["aperture"]
+        assert type(aperture) is RadialAperture
 
     def test_read_config_data_legacy_short_ftyp(self):
         # Legacy ZEMAX (e.g. VERS 6133) writes FTYP with only 1-2 tokens

@@ -12,7 +12,7 @@ This helps us respond more effectively and keeps the issue tracker focused. -->
 
 ### Checklist
 
-- [ ] I have read the [documentation](https://optiland.readthedocs.io/en/latest/) and tried to find an answer there.
+- [ ] I have read the [documentation](https://www.optiland.org/docs/) and tried to find an answer there.
 - [ ] I have included **all necessary context**.
 
 *Thanks for taking the time to go through this — it really helps us help you!*

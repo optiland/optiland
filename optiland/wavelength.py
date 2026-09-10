@@ -388,13 +388,16 @@ def add_wavelengths(
         unit: The unit of the wavelength. Default is 'um'.
         sampling: The sampling algorithm used. Defaults to 'chebyshev'.
             Currently supported options are:
-                'chebyshev' - chebyshev nodes of the first type
-                'uniform' - uniformly spaced nodes across the specified range
-        scale: space in which the nodes are sampled. Defaults to 'log'.
+
+            - ``'chebyshev'``: Chebyshev nodes of the first kind.
+            - ``'uniform'``: uniformly spaced nodes across the specified range.
+        scale: Space in which the nodes are sampled. Defaults to 'log'.
             Currently supported options are:
-                'log' - nodes are sampled in the logarithms of wavelength.
-                'frequency' - nodes sampled in the frequency domain.
-                'wavelength' - nodes sampled in the frequency domain. Not recommended.
+
+            - ``'log'``: nodes are sampled in the logarithm of the wavelength.
+            - ``'frequency'``: nodes are sampled in the frequency domain.
+            - ``'wavelength'``: nodes are sampled linearly in wavelength. Not
+              recommended.
     """
     _validate_wavelength_range(min_value, max_value, num_wavelengths)
     scale = _normalize_wavelength_scale(scale)

@@ -12,6 +12,8 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Any
 
+from optiland.physical_apertures import OffsetRadialAperture
+
 if TYPE_CHECKING:
     from optiland.fileio.zemax.model import ZemaxDataModel
 
@@ -214,6 +216,12 @@ class ZemaxFileEncoder:
             return
         if hasattr(clap, "r_min"):
             lines.append(f"  CLAP {_fmt(float(clap.r_min))} {_fmt(float(clap.r_max))}")
+            if isinstance(clap, OffsetRadialAperture) and (
+                clap.offset_x != 0.0 or clap.offset_y != 0.0
+            ):
+                lines.append(
+                    f"  OBDC {_fmt(float(clap.offset_x))} {_fmt(float(clap.offset_y))}"
+                )
         elif hasattr(clap, "x_min"):
             lines.append(f"  CLAP {_fmt(0.0)} {_fmt(float(clap.x_max))}")
 
