@@ -266,6 +266,25 @@ def test_shifted_first_surface_blocks_destructive_thickness_edit(connector):
     assert not c._undo_redo_manager.can_undo()
 
 
+def test_display_precision_does_not_modify_untouched_components(qapp, connector):
+    c = connector
+    surface = c.get_optic().surfaces[2]
+    surface.geometry.cs.z = 18.774066999999999
+    surface.geometry.cs.rx = math.radians(-44.95000000000001)
+    panel = SurfacePropertiesWidget(2, c)
+    widget = panel.placement
+    assert widget.inputs["z"].text() == "18.774067"
+    assert widget.inputs["rx"].text() == "-44.95"
+    widget.inputs["x"].setText(".25")
+    assert set(widget.changes()) == {"x"}
+    before_z, before_rx = float(surface.geometry.cs.z), float(surface.geometry.cs.rx)
+    widget.apply()
+    wait_for(qapp, lambda: not c.placement.busy)
+    assert float(c.get_optic().surfaces[2].geometry.cs.z) == before_z
+    assert float(c.get_optic().surfaces[2].geometry.cs.rx) == before_rx
+    panel.deleteLater()
+
+
 def test_nonfinite_solve_output_fails_without_mutating_source(
     minimal_optic, monkeypatch
 ):

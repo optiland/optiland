@@ -381,6 +381,7 @@ class LensEditor(QWidget):
         self._table_loading = False
         self._table_failed = False
         self._pending_table_state = None
+        self._reveal_properties = False
         self._load_timer = QTimer(self)
         self._load_timer.setSingleShot(True)
         self._load_timer.timeout.connect(self._load_table_batch)
@@ -414,6 +415,7 @@ class LensEditor(QWidget):
         state.sync_document(candidate)
         state.set_selected_indices(selected)
         state.set_hover(hovered, column)
+        self._reveal_properties = self.open_prop_source_row >= 0
 
     def _init_ui(self):
         """Initializes the main UI components of the editor."""
@@ -476,6 +478,7 @@ class LensEditor(QWidget):
         # Prevent excessive column resizing
         self.tableWidget.horizontalHeader().setMinimumSectionSize(60)
         self.tableWidget.horizontalHeader().setMaximumSectionSize(200)
+        self.tableWidget.setColumnWidth(self.connector.COL_TYPE, 160)
         self.tableWidget.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Interactive
         )
@@ -727,6 +730,7 @@ class LensEditor(QWidget):
     @Slot()
     def load_data(self):
         self._load_timer.stop()
+        self._edit_error.hide()
         self._pending_table_state = self._capture_table_state()
         self.tableWidget.verticalHeader().setMaximumSectionSize(70)
         if not self._table_loading:
@@ -851,6 +855,12 @@ class LensEditor(QWidget):
         if error:
             self.loadingFailed.emit(error)
         else:
+            if self._reveal_properties and self.open_prop_source_row >= 0:
+                self.tableWidget.scrollTo(
+                    self.tableWidget.model().index(self.open_prop_source_row + 1, 0),
+                    QAbstractItemView.ScrollHint.PositionAtTop,
+                )
+            self._reveal_properties = False
             self.loadingFinished.emit()
 
     def _insert_properties_widget(self, source_row):

@@ -38,7 +38,7 @@ class SurfacePlacementWidget(QWidget):
         self.setObjectName("SurfacePlacementWidget")
         layout = QVBoxLayout(self)
         frame_row = QHBoxLayout()
-        frame_row.addWidget(QLabel("Coordinates:"))
+        frame_row.addWidget(QLabel(f"Surface {row} — coordinates:"))
         self.frame = QComboBox()
         self.frame.setObjectName("placement_frame")
         self.frame.addItem("Global", "global")
@@ -123,9 +123,12 @@ class SurfacePlacementWidget(QWidget):
             self._editable = all(
                 math.isfinite(value) for key, value in values.items() if key != "z"
             )
-            self._baseline = {key: format(values[key], ".17g") for key in COMPONENTS}
+            # Compare edits with the displayed draft, not rounded model values.
+            # Untouched components are omitted from the request entirely.
+            self._baseline = {key: format(values[key], ".12g") for key in COMPONENTS}
             for key, edit in self.inputs.items():
                 edit.setText(self._baseline[key])
+                edit.setToolTip(f"Full precision: {values[key]:.17g}")
             reference = self.frame.currentData() == "reference"
             parent = self.surface.geometry.cs.reference_cs
             frame_text = (
