@@ -44,7 +44,11 @@ def test_paraxial_image_height_finite_object(set_test_backend):
 
     # verify that the ray's y-coordinate at the image plane matches the
     # expected paraxial image height
-    assert_allclose(y[-1], 9.67243803, rtol=1e-5)
+    assert_allclose(y[-1], 10, rtol=1e-5)
+
+    # the chief ray is the ray through the centre of the stop, so it must cross
+    # the axis there; the intercept above passes even when it misses by units
+    assert_allclose(y[optic.surfaces.stop_index], 0.0, atol=1e-9)
 
 
 def test_field_definition_to_dict(set_test_backend):
