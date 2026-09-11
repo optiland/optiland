@@ -22,7 +22,6 @@ import pytest
 
 from optiland import backend as be
 from optiland.coordinate_system import CoordinateSystem
-from optiland.geometries.nurbs import approximate_surface
 from optiland.geometries.nurbs.nurbs_geometry import NurbsGeometry
 from tests.utils import assert_allclose
 
@@ -52,41 +51,26 @@ def fitted_sphere(count=COUNT, radius=RADIUS, half=HALF):
     return geometry
 
 
-def square_fit_sphere(count=32, radius=RADIUS, half=HALF):
-    """The same sphere through a SQUARE least squares -- count control points from
-    count + 1 data points, which is what _standard_surface did before fix 6.
-
-    Kept deliberately: the net it returns is ill conditioned, its interior control
-    points sitting decades away from the surface they describe, and that is the
-    case the solver has to cope with. A caller may supply control points of its own,
-    and nothing vouches for those.
-    """
-    size = count + 1
-    axis = np.linspace(-half, half, size)
-    x, y = np.meshgrid(axis, axis)
-    z = conic_sag(x, y, radius)
-    points = np.stack((x.T, y.T, z.T), axis=0).reshape(3, -1).T.tolist()
-
-    table, degree_u, degree_v, n_u, n_v, knots_u, knots_v = approximate_surface(
-        points, size, size, 3, 3
-    )
-    net = np.asarray(table).T.reshape((3, n_u, n_v))
-    return NurbsGeometry(
-        CoordinateSystem(),
-        control_points=be.asarray(net),
-        weights=be.asarray(np.ones((n_u, n_v))),
-        u_degree=degree_u,
-        v_degree=degree_v,
-        u_knots=be.asarray(np.asarray(knots_u)),
-        v_knots=be.asarray(np.asarray(knots_v)),
-        nurbs_norm_x=half,
-        nurbs_norm_y=half,
-    )
-
-
 def probe(n=13, reach=12.0):
     """Sample heights across the patch, out to its rim where a lost root shows."""
     x = np.linspace(-reach, reach, n)
+    return (
+        be.asarray(x, dtype=be.float64),
+        be.asarray(np.zeros_like(x), dtype=be.float64),
+        x,
+    )
+
+
+def off_patch(n=7):
+    """Heights well beyond the patch, whose root is not on it at all.
+
+    This is the case that used to hand every ray a fresh random (u, v), and it does
+    so on ANY net -- which is why nothing here needs an ill conditioned one. A net
+    whose control points run to 1e10 does expose the same bugs, but its arithmetic
+    is all cancellation, so whether it converges depends on the BLAS underneath and
+    the test passes on one machine and fails on the next.
+    """
+    x = np.linspace(HALF + 2.0, HALF + 20.0, n)
     return (
         be.asarray(x, dtype=be.float64),
         be.asarray(np.zeros_like(x), dtype=be.float64),
@@ -153,44 +137,58 @@ def test_knot_vectors_are_built_when_omitted(set_test_backend):
 # ── 2. the Newton was seeded at a corner and restarted at random ─────────────
 
 
-def test_solver_lands_on_the_point_it_was_asked_about(set_test_backend):
-    """On an ill conditioned net, which is where the seed used to matter.
+def test_seed_places_a_point_across_the_patch(set_test_backend):
+    """The seed is the fix itself: a point's place across the patch, rather than the
+    corner every ray used to start from however far away its root was.
 
-    Landing error -- how far the point the solver settled on is from the point it
-    was asked about -- is the solver's own error, and says nothing about whether the
-    net is a good sphere. A corner seed leaves it around 1e-1 mm here.
+    A clamped net interpolates its corner control points, so the box those span is
+    the patch's own extent and the fraction across it is exact.
     """
-    geometry = square_fit_sphere()
-    x, y, _ = probe()
+    geometry = fitted_sphere()
+    points = np.array([-HALF, -HALF / 2, 0.0, HALF / 2, HALF])
+    u, v = geometry._seed(
+        be.asarray(points, dtype=be.float64), be.asarray(points, dtype=be.float64)
+    )
+    expected = (points + HALF) / (2 * HALF)
+    assert_allclose(be.to_numpy(u), expected, atol=1e-9)
+    assert_allclose(be.to_numpy(v), expected, atol=1e-9)
+
+
+def test_solver_lands_on_the_point_it_was_asked_about(set_test_backend):
+    """Landing error -- how far the point the solver settled on is from the point it
+    was asked about -- is the solver's own error, and says nothing about whether the
+    net is a good sphere. Probed out to the rim, where a lost root shows.
+    """
+    geometry = fitted_sphere()
+    x, y, _ = probe(reach=HALF)
     u, v = geometry._newton(
         lambda u, v: geometry._corr(u, v, -be.ravel(y), -be.ravel(x)),
         *geometry._seed(x, y),
     )
     surface = be.to_numpy(geometry.get_value(u, v))
-    assert_allclose(surface[0], be.to_numpy(x), atol=1e-6)
-    assert_allclose(surface[1], be.to_numpy(y), atol=1e-6)
+    assert_allclose(surface[0], be.to_numpy(x), atol=1e-9)
+    assert_allclose(surface[1], be.to_numpy(y), atol=1e-9)
 
 
-def test_sag_is_repeatable(set_test_backend):
+def test_sag_is_repeatable_off_the_patch(set_test_backend):
     """The old recovery threw a random (u, v) at every ray that left the patch, so
     the same call on the same surface did not have to give the same answer twice.
+    Four consecutive calls on master return four different sags.
     """
-    geometry = square_fit_sphere()
-    x, y, _ = probe()
+    geometry = fitted_sphere()
+    x, y, _ = off_patch()
     first = be.to_numpy(geometry.sag(x, y))
     for _ in range(4):
         assert_allclose(be.to_numpy(geometry.sag(x, y)), first, atol=0.0, rtol=0.0)
 
 
-def test_sag_is_symmetric_about_a_symmetric_surface(set_test_backend):
+@pytest.mark.parametrize("sampler", [probe, off_patch], ids=["on the patch", "off it"])
+def test_sag_is_symmetric_about_a_symmetric_surface(set_test_backend, sampler):
     """A sphere is even in x, so any left-right difference is the solver rather than
     the surface. This needs no reference to compare against, which is why it is here.
-
-    On the ill conditioned net, where a corner seed settles on a different root
-    depending on which side it approaches from.
     """
-    geometry = square_fit_sphere()
-    x, y, _ = probe()
+    geometry = fitted_sphere()
+    x, y, _ = sampler()
     left = be.to_numpy(geometry.sag(-x, y))
     right = be.to_numpy(geometry.sag(x, y))
     assert_allclose(left, right[::-1], atol=1e-9)
