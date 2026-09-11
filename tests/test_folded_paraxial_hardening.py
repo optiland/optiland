@@ -608,15 +608,19 @@ class TestPoweredSurfaceAuthoring:
 
 
 class TestUnsupportedGeometryRejection:
-    def test_oblique_powered_mirror_raises(self, set_test_backend):
+    def test_oblique_powered_mirror_warns(self, set_test_backend):
+        # Astigmatism alone is approximate rather than fatal: the value still
+        # comes back, so a design faulted only this way stays usable.
         optic = oblique_powered_mirror()
-        with pytest.raises(
-            UnsupportedParaxialGeometryError, match="OBLIQUE_POWERED_MIRROR"
-        ) as excinfo:
-            optic.paraxial.f2()
-        # The error names the surface and carries the measured axis-beam dot.
-        assert "surface 2" in str(excinfo.value)
-        assert "measured" in str(excinfo.value)
+        with pytest.warns(
+            ParaxialDomainWarning, match="OBLIQUE_POWERED_MIRROR"
+        ) as record:
+            f2 = optic.paraxial.f2()
+        # The warning names the surface and carries the measured axis-beam dot.
+        message = str(record[0].message)
+        assert "surface 2" in message
+        assert "measured" in message
+        assert be.all(be.isfinite(be.array(f2)))
 
     def test_tilted_powered_refractive_surface_raises(self, set_test_backend):
         with pytest.raises(

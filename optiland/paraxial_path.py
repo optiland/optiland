@@ -452,8 +452,7 @@ class ParaxialPath:
             return
         if all(d.code in APPROXIMATE_DIAGNOSTIC_CODES for d in self.diagnostics):
             warnings.warn(
-                "scalar paraxial values are approximate for this geometry:\n"
-                + message,
+                "scalar paraxial values are approximate for this geometry:\n" + message,
                 ParaxialDomainWarning,
                 stacklevel=2,
             )

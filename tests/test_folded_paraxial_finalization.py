@@ -372,9 +372,9 @@ class TestOddParityAuthorings:
 
 
 class TestMatrixDomainValidation:
-    def test_oblique_powered_mirror_matrix_raises(self, set_test_backend):
+    def test_oblique_powered_mirror_matrix_warns(self, set_test_backend):
         optic = oblique_powered_mirror()
-        with pytest.raises(UnsupportedParaxialGeometryError):
+        with pytest.warns(ParaxialDomainWarning, match="OBLIQUE_POWERED_MIRROR"):
             optic.paraxial.ray_transfer_matrix(1, optic.surfaces.num_surfaces - 1)
 
     def test_tilted_powered_refractive_matrix_raises(self, set_test_backend):
@@ -382,9 +382,9 @@ class TestMatrixDomainValidation:
         with pytest.raises(UnsupportedParaxialGeometryError):
             optic.paraxial.ray_transfer_matrix(1, optic.surfaces.num_surfaces - 1)
 
-    def test_f2_range_rejects_out_of_domain_geometry(self, set_test_backend):
+    def test_f2_range_warns_for_approximate_geometry(self, set_test_backend):
         optic = oblique_powered_mirror()
-        with pytest.raises(UnsupportedParaxialGeometryError):
+        with pytest.warns(ParaxialDomainWarning, match="OBLIQUE_POWERED_MIRROR"):
             optic.paraxial.f2_range(1, optic.surfaces.num_surfaces - 1)
 
     def test_straight_tilted_lens_matrix_warns_advisory(self, set_test_backend):
