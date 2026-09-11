@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING
 
 import optiland.backend as be
 from optiland._deprecation import deprecated
-from optiland.fields import ObjectHeightField, ParaxialImageHeightField
 from optiland.raytrace.paraxial_ray_tracer import ParaxialRayTracer
 
 if TYPE_CHECKING:
@@ -564,9 +563,9 @@ class Paraxial:
         u_obj_unit = u_rev_unit[-1]
 
         field_definition = self.optic.fields.field_definition
-        if not self.optic.object_surface.is_infinite and isinstance(
-            field_definition, ObjectHeightField
-        ):
+        if not self.optic.object_surface.is_infinite:
+            # The reverse trace stops refracting at surface 1 -- the object
+            # surface only records it -- so carry the height back to the object.
             first_surface_z = pos[1, 0]
             object_z = self.optic.object_surface.geometry.cs.z
             y_obj_unit = y_obj_unit + (first_surface_z - object_z) * u_obj_unit
@@ -583,11 +582,9 @@ class Paraxial:
             self.optic, y_obj_unit, u_obj_unit, y_img_unit
         )
 
-        # Determine initial ray parameters for final forward trace
-        if isinstance(self.optic.fields.field_definition, ParaxialImageHeightField):
-            y_obj_start = y_obj_unit * scaling_factor
-        else:
-            y_obj_start = -(y_obj_unit * scaling_factor)
+        # Determine initial ray parameters for final forward trace. A reverse-frame
+        # (y, u) is (-y, u) forward, up to the overall sign, which is free.
+        y_obj_start = -(y_obj_unit * scaling_factor)
         u_obj_start = u_obj_unit * scaling_factor
 
         if self.optic.object_surface.is_infinite:

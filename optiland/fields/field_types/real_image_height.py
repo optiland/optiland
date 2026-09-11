@@ -195,7 +195,11 @@ class RealImageHeightField(BaseFieldDefinition):
                 "solve."
             )
 
+        # A reverse-frame object height pairs with image height -y_img_unit, so the
+        # finite seed needs the sign conversion the infinite slope scale does not.
         scale = obj_unit / y_img_unit
+        if not optic.object_surface.is_infinite:
+            scale = -scale
         return be.atleast_1d(target_x * scale), be.atleast_1d(target_y * scale)
 
     # ------------------------------------------------------------------

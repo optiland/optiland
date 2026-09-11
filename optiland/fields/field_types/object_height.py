@@ -68,7 +68,7 @@ class ObjectHeightField(BaseFieldDefinition):
         self._reject_non_z_entry(optic)
         obj = optic.object_surface
         field_y = optic.fields.max_field * Hy
-        y = -field_y
+        y = field_y
         z = obj.geometry.cs.z
         y0 = be.ones_like(y1) * y
         z0 = be.ones_like(y1) * z
@@ -91,8 +91,10 @@ class ObjectHeightField(BaseFieldDefinition):
         Returns:
             float: The scaling factor.
         """
+        # Negated because chief_ray applies the reverse-to-forward flip to the
+        # height it scales, and Hy=+1 must land on object height +max_y_field.
         max_field_height = optic.fields.max_y_field
-        return max_field_height / y_obj_unit
+        return -max_field_height / y_obj_unit
 
     def _validate_object_infinite(self, optic):
         """Check if the object surface is at infinity.

@@ -292,7 +292,8 @@ class TestFiniteConjugateAberrations:
 
         assert not be.any(~be.isfinite(y))
         assert not be.any(~be.isfinite(u))
-        assert_allclose(y[0], -5.0)
+        # Hy=+1 is the +max_y_field object point, so the chief ray starts at +5.
+        assert_allclose(y[0], 5.0)
         assert_allclose(y[1], 0.0, atol=1e-12)
 
     def test_third_order_coefficients_are_finite(
