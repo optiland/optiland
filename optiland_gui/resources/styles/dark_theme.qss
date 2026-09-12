@@ -721,3 +721,9 @@ QDoubleSpinBox:focus {
 QWidget#CommandPaletteOverlay {
     background: rgba(0, 0, 0, 120);
 }
+
+/* Reserve text padding for both native Windows 11 arrow hit areas, scaling
+   with the control's font metrics. Keep arrow painting with the native style. */
+QSpinBox, QDoubleSpinBox {
+    padding-right: 2em;
+}
