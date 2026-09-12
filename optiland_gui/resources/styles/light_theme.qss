@@ -769,3 +769,49 @@ QDoubleSpinBox:focus {
     border: 1.5px solid #007ACC;
     outline: none;
 }
+
+/* Explicit indicators remain legible when the native Windows theme differs. */
+QCheckBox {
+    spacing: 6px;
+    padding: 2px;
+    border: 1px solid transparent;
+    border-radius: 3px;
+}
+QCheckBox:focus {
+    border-color: #005FCC;
+}
+QCheckBox::indicator {
+    width: 18px;
+    height: 18px;
+    border: 1px solid #6C757D;
+    border-radius: 3px;
+    background-color: #FFFFFF;
+}
+QCheckBox::indicator:unchecked {
+    image: none;
+}
+QCheckBox::indicator:checked, QCheckBox::indicator:indeterminate {
+    background-color: #495057;
+}
+QCheckBox::indicator:checked {
+    image: url(:/icons/checkbox-tick.svg);
+}
+QCheckBox::indicator:indeterminate {
+    image: url(:/icons/checkbox-minus.svg);
+}
+QCheckBox::indicator:hover, QCheckBox::indicator:pressed {
+    border-color: #005FCC;
+}
+QCheckBox::indicator:checked:hover, QCheckBox::indicator:checked:pressed,
+QCheckBox::indicator:indeterminate:hover, QCheckBox::indicator:indeterminate:pressed {
+    background-color: #343A40;
+}
+QCheckBox:disabled {
+    color: #6C757D;
+}
+QCheckBox::indicator:disabled {
+    border-color: #6C757D;
+}
+QCheckBox::indicator:checked:disabled, QCheckBox::indicator:indeterminate:disabled {
+    background-color: #6C757D;
+}

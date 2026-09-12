@@ -1,5 +1,7 @@
 <!DOCTYPE RCC><RCC version="1.0">
 <qresource prefix="/icons">
+    <file alias="checkbox-tick.svg">icons/checkbox-tick.svg</file>
+    <file alias="checkbox-minus.svg">icons/checkbox-minus.svg</file>
     <file alias="dark/dash.svg">icons/dark/dash.svg</file>
     <file alias="dark/design.svg">icons/dark/design.svg</file>
     <file alias="dark/analysis.svg">icons/dark/analysis.svg</file>
