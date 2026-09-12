@@ -10,6 +10,8 @@ Author: Manuel Fragata Mendes, 2025
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 from PySide6.QtCore import QObject, Signal
 
 from optiland.optic import Optic
@@ -80,8 +82,9 @@ class OptilandConnector(QObject):
 
         # Invalidate before any panel handles the same synchronous notification.
         self.document_state = DocumentState(self)
-        self.opticLoaded.connect(self.document_state.replace)
-        self.opticChanged.connect(self.document_state.change)
+        self._publishing_change = False
+        self.opticLoaded.connect(self._on_optic_loaded)
+        self.opticChanged.connect(self._on_optic_changed)
         self.calculation_jobs = CalculationJobs(self.document_state, self)
 
         self._optic = Optic("Default System")
@@ -103,13 +106,64 @@ class OptilandConnector(QObject):
         self._undo_redo_manager.redoStackAvailabilityChanged.connect(
             self.redoStackAvailabilityChanged
         )
-        self.opticLoaded.emit()
-        self.opticChanged.emit()
+        with self.change_transaction(replacement=True):
+            self.opticLoaded.emit()
+            self.opticChanged.emit()
         self._undo_redo_manager.clear_stacks()
 
     # ------------------------------------------------------------------
     # Shared state utilities (stay on connector; used by services)
     # ------------------------------------------------------------------
+
+    def _on_optic_loaded(self):
+        if self._publishing_change:
+            self._publishing_change = False
+            return
+        self._document_optic = self._optic
+        self.document_state.replace()
+
+    def _on_optic_changed(self):
+        if self._publishing_change:
+            self._publishing_change = False
+            return
+        if getattr(self, "_document_optic", None) is not self._optic:
+            self._document_optic = self._optic
+            self.document_state.replace()
+        else:
+            self.document_state.change()
+
+    def notify_change(self, category="optical", *, surface_indices=(), columns=()):
+        """Publish classified internal changes and preserve the public signal."""
+        if self._document_optic is not self._optic:
+            category = "replacement"
+        self._document_optic = self._optic
+        if category == "optical" and (self._optic.pickups or self._optic.solves):
+            # Generic pickups and solves can modify other rows or system inputs.
+            # Retain a conservative global scope until their dependency graph
+            # can prove a smaller affected set.
+            surface_indices, columns = (), ()
+        self.document_state.record(
+            category, surface_indices=surface_indices, columns=columns
+        )
+        signals = (
+            (self.opticLoaded, self.opticChanged)
+            if category == "replacement"
+            else (self.opticChanged,)
+        )
+        for signal in signals:
+            # The first-connected bridge consumes this flag before public
+            # listeners run. A listener's reentrant external emit is a new edit.
+            self._publishing_change = True
+            try:
+                signal.emit()
+            finally:
+                self._publishing_change = False
+
+    @contextmanager
+    def change_transaction(self, *, replacement=False):
+        """Coalesce notifications for an atomic edit or prepared replacement."""
+        with self.document_state.transaction(replacement=replacement):
+            yield
 
     def set_modified(self, modified: bool) -> None:
         """Set the modified flag and emit ``modifiedStateChanged`` if changed.
@@ -259,7 +313,7 @@ class OptilandConnector(QObject):
         """
         self._optic = Optic.from_dict(state_data)
         self._initialize_optic_structure(self._optic, is_specific_new_system=False)
-        self.opticLoaded.emit()
+        self.notify_change("replacement")
 
     # ------------------------------------------------------------------
     # Undo / Redo

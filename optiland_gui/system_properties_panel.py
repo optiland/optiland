@@ -83,8 +83,15 @@ class SystemPropertiesPanel(QWidget):
             self.navTree.setCurrentItem(self.navTree.topLevelItem(0))
             self.stackedWidget.setCurrentIndex(0)
 
-        self.connector.opticLoaded.connect(self.load_properties)
-        self.connector.opticChanged.connect(self.load_properties)
+        self.connector.document_state.committed.connect(self._on_document_change)
+
+    def _on_document_change(self, change):
+        if "polarization" in change.categories:
+            self.polarizationEditor.load_data()
+        if change.categories <= {"polarization", "presentation"}:
+            return
+        if change.structural or (change.affects_optics and not change.surface_indices):
+            self.load_properties()
 
     def _init_ui(self):
         """Initializes the main layout, navigation tree,
@@ -177,8 +184,10 @@ class PropertyEditorBase(QWidget):
         self.is_loading = False
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.init_ui()
-        self.connector.opticLoaded.connect(self.load_data)
-        self.connector.opticChanged.connect(self.load_data)
+
+    def _notify_optical_edit(self):
+        self.connector.set_modified(True)
+        self.connector.notify_change("optical")
 
     def init_ui(self):
         """
@@ -245,9 +254,15 @@ class ApertureEditor(PropertyEditorBase):
         if optic:
             ap_type = self.cmbApertureType.currentText()
             ap_value = self.spnApertureValue.value()
+            if (
+                optic.aperture
+                and optic.aperture.ap_type == ap_type
+                and optic.aperture.value == ap_value
+            ):
+                return
             try:
                 optic.set_aperture(ap_type, ap_value)
-                self.connector.opticChanged.emit()
+                self._notify_optical_edit()
                 print(f"Aperture updated: {ap_type}, {ap_value}")
             except ValueError as e:
                 print(f"Aperture Error: {e}")
@@ -337,11 +352,13 @@ class FieldsEditor(PropertyEditorBase):
         optic = self.connector.get_optic()
         if optic:
             new_type = self.cmbFieldType.currentData()
-            if new_type is None:
+            if new_type is None or new_type == _FIELD_TYPE_MAP.get(
+                type(optic.fields.field_definition)
+            ):
                 return
             try:
                 optic.fields.set_type(new_type)
-                self.connector.opticChanged.emit()
+                self._notify_optical_edit()
                 print(f"Field type changed to: {new_type}")
             except ValueError as e:
                 print(f"Field Type Error: {e}")
@@ -362,8 +379,7 @@ class FieldsEditor(PropertyEditorBase):
             )
 
             optic.fields.add(y=y_val)
-            self.load_data()
-            self.connector.opticChanged.emit()
+            self._notify_optical_edit()
             print("Field added.")
 
     @Slot()
@@ -373,33 +389,21 @@ class FieldsEditor(PropertyEditorBase):
         current_row = self.tableFields.currentRow()
         if optic and current_row != -1 and optic.fields.num_fields > current_row:
             del optic.fields.fields[current_row]
-            self.load_data()
-            self.connector.opticChanged.emit()
+            self._notify_optical_edit()
             print(f"Field at row {current_row} removed.")
 
-    def _update_field_from_row(self, row_index):
-        """Reads data from a table row and updates the corresponding field object.
-        Returns True if a change was made."""
+    def _field_values_from_row(self, row_index):
+        """Validate one draft row without mutating the live prescription."""
         try:
-            x = float(self.tableFields.item(row_index, 0).text())
-            y = float(self.tableFields.item(row_index, 1).text())
-            vx = float(self.tableFields.item(row_index, 2).text())
-            vy = float(self.tableFields.item(row_index, 3).text())
-
-            field_obj = self.connector.get_optic().fields.fields[row_index]
-            if (
-                field_obj.x != x
-                or field_obj.y != y
-                or field_obj.vx != vx
-                or field_obj.vy != vy
-            ):
-                field_obj.x, field_obj.y, field_obj.vx, field_obj.vy = x, y, vx, vy
-                return True
-        except (ValueError, AttributeError) as e:
-            print(f"Invalid data in fields table row {row_index + 1}: {e}")
-            # Re-raise the exception to be handled by the caller
-            raise ValueError(f"Invalid data in row {row_index + 1}") from e
-        return False
+            values = tuple(
+                float(self.tableFields.item(row_index, column).text())
+                for column in range(4)
+            )
+            if not all(math.isfinite(value) for value in values):
+                raise ValueError("Field values must be finite")
+            return values
+        except (ValueError, AttributeError) as exc:
+            raise ValueError(f"Invalid data in row {row_index + 1}") from exc
 
     @Slot()
     def apply_table_field_changes(self):
@@ -412,18 +416,23 @@ class FieldsEditor(PropertyEditorBase):
             self.load_data()  # Mismatch, so reload to be safe
             return
 
-        any_changed = False
         try:
-            for i in range(self.tableFields.rowCount()):
-                if self._update_field_from_row(i):
-                    any_changed = True
+            rows = [
+                self._field_values_from_row(i)
+                for i in range(self.tableFields.rowCount())
+            ]
         except ValueError:
-            self.load_data()  # Reload table on error to show original valid data
+            self.load_data()
             return
-
-        if any_changed:
-            self.connector.opticChanged.emit()
-            print("Field table changes applied.")
+        fields = optic.fields.fields
+        if all(
+            (field.x, field.y, field.vx, field.vy) == values
+            for field, values in zip(fields, rows, strict=True)
+        ):
+            return
+        for field, values in zip(fields, rows, strict=True):
+            field.x, field.y, field.vx, field.vy = values
+        self._notify_optical_edit()
 
 
 class WavelengthsEditor(PropertyEditorBase):
@@ -508,8 +517,7 @@ class WavelengthsEditor(PropertyEditorBase):
         if optic:
             is_new_primary = optic.wavelengths.num_wavelengths == 0
             optic.wavelengths.add(0.6328, is_primary=is_new_primary, unit="um")
-            self.load_data()
-            self.connector.opticChanged.emit()
+            self._notify_optical_edit()
             print("Wavelength added.")
 
     @Slot()
@@ -532,8 +540,7 @@ class WavelengthsEditor(PropertyEditorBase):
             if was_primary and optic.wavelengths.num_wavelengths > 0:
                 optic.wavelengths.wavelengths[0].is_primary = True
 
-            self.load_data()
-            self.connector.opticChanged.emit()
+            self._notify_optical_edit()
             print(f"Wavelength at row {current_row} removed.")
 
     @Slot()
@@ -546,10 +553,11 @@ class WavelengthsEditor(PropertyEditorBase):
             and current_row != -1
             and optic.wavelengths.num_wavelengths > current_row
         ):
+            if optic.wavelengths.primary_index == current_row:
+                return
             for i, wl_obj in enumerate(optic.wavelengths.wavelengths):
                 wl_obj.is_primary = i == current_row
-            self.load_data()
-            self.connector.opticChanged.emit()
+            self._notify_optical_edit()
             print(f"Wavelength at row {current_row} set as primary.")
 
     @Slot()
@@ -559,28 +567,30 @@ class WavelengthsEditor(PropertyEditorBase):
         if self.is_loading or not optic or not optic.wavelengths:
             return
 
-        changed = False
-        if self.tableWavelengths.rowCount() == optic.wavelengths.num_wavelengths:
-            for i in range(self.tableWavelengths.rowCount()):
-                try:
-                    new_val_um_str = self.tableWavelengths.item(i, 0).text()
-                    new_val_um = float(new_val_um_str)
-
-                    wl_obj = optic.wavelengths.wavelengths[i]
-                    if wl_obj.value != new_val_um:
-                        wl_obj._value = new_val_um
-                        wl_obj._unit = "um"
-                        wl_obj._value_in_um = new_val_um
-                        changed = True
-                except (ValueError, AttributeError):
-                    print(f"Invalid numeric data in Wavelengths table row {i + 1}.")
-                    self.load_data()
-                    return
-            if changed:
-                self.connector.opticChanged.emit()
-                print("Wavelength table changes applied.")
-        else:
+        if self.tableWavelengths.rowCount() != optic.wavelengths.num_wavelengths:
             self.load_data()
+            return
+        try:
+            values = [
+                float(self.tableWavelengths.item(i, 0).text())
+                for i in range(self.tableWavelengths.rowCount())
+            ]
+            if not all(math.isfinite(value) and value > 0 for value in values):
+                raise ValueError("Wavelengths must be finite and positive")
+        except (ValueError, AttributeError):
+            self.load_data()
+            return
+        wavelengths = optic.wavelengths.wavelengths
+        if all(
+            wavelength.value == value
+            for wavelength, value in zip(wavelengths, values, strict=True)
+        ):
+            return
+        for wavelength, value in zip(wavelengths, values, strict=True):
+            wavelength._value = value
+            wavelength._unit = "um"
+            wavelength._value_in_um = value
+        self._notify_optical_edit()
 
 
 class PolarizationEditor(PropertyEditorBase):

@@ -10,7 +10,7 @@ from optiland.visualization.themes import get_active_theme
 from optiland_gui import gui_plot_utils
 
 
-def present_2d(viewer, data, context, restyle=False):
+def present_2d(viewer, data, context, restyle=False, *, reset=False):
     """Reconstruct the 2D canvas and retain surface identities for highlighting."""
     gui_plot_utils.apply_gui_matplotlib_styles(viewer.current_theme)
     theme = get_active_theme().parameters
@@ -19,8 +19,15 @@ def present_2d(viewer, data, context, restyle=False):
         same_document = (
             getattr(viewer, "_scene_document_id", None) == context["document_id"]
         )
-        preserve = same_document and (
-            restyle or viewer._preserve_next or viewer._user_initiated_view_change
+        preserve = (
+            same_document
+            and not reset
+            and (
+                restyle
+                or viewer.preserve_zoom
+                or viewer._preserve_next
+                or viewer._user_initiated_view_change
+            )
         )
         xlim, ylim = viewer.ax.get_xlim(), viewer.ax.get_ylim()
         if hasattr(viewer, "_finish_default_pan"):

@@ -20,6 +20,7 @@ def mock_connector(minimal_optic):
     conn.set_modified.return_value = None
     conn.opticChanged = MagicMock()
     conn.opticChanged.emit.return_value = None
+    conn.notify_change.side_effect = lambda *args, **kwargs: conn.opticChanged.emit()
     # Column constants
     conn.COL_COMMENT = 1
     conn.COL_RADIUS = 2

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal, Slot
+from PySide6.QtCore import QEvent, QItemSelectionModel, QSize, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -114,6 +114,19 @@ class SurfacePropertiesWidget(QWidget):
             params_to_set[name] = widget.text()
         self.connector.set_surface_geometry_params(self.row, params_to_set)
 
+    def refresh_values(self):
+        """Refresh derived values without discarding a focused parameter draft."""
+        params = self.connector.get_surface_geometry_params(self.row)
+        for name, widget in self.input_widgets.items():
+            if widget.hasFocus() or name not in params:
+                continue
+            value = params[name]
+            if isinstance(value, (list, tuple)) or hasattr(value, "tolist"):
+                values = value.tolist() if hasattr(value, "tolist") else value
+                widget.setText(str(values))
+            else:
+                widget.setText(f"{value:.6f}")
+
 
 class SurfaceTypeWidget(QWidget):
     """A custom widget for the 'Type' column, allowing text edit and dropdown."""
@@ -196,6 +209,15 @@ class SurfaceTypeWidget(QWidget):
             self._var_badge.setVisible(True)
         else:
             self._var_badge.setVisible(False)
+
+    def refresh_type_info(self):
+        """Update the stop/type label while retaining the existing controls."""
+        info = self.connector.get_surface_type_info(self.row)
+        if not self.type_edit.hasFocus():
+            self.type_edit.setText(info["display_text"])
+        self.props_button.setVisible(
+            bool(self.connector.get_surface_geometry_params(self.row))
+        )
 
     def type_selected(self, new_type):
         self.type_edit.setText(new_type.title())
@@ -286,11 +308,10 @@ class LensEditor(QWidget):
         self.tableWidget.itemChanged.connect(self.on_item_changed_handler)
         self.tableWidget.customContextMenuRequested.connect(self.show_context_menu)
         self.tableWidget.itemSelectionChanged.connect(self.update_headers_on_selection)
-        self.connector.opticLoaded.connect(self.full_refresh_from_optic)
-        self.connector.opticChanged.connect(self.full_refresh_from_optic)
         self.connector.optimizationVariablesChanged.connect(
             self.full_refresh_from_optic
         )
+        self.connector.document_state.committed.connect(self._on_document_change)
 
     def setup_table(self):
         self.tableWidget.blockSignals(True)
@@ -363,6 +384,93 @@ class LensEditor(QWidget):
     def full_refresh_from_optic(self):
         self.load_data()
         self.update_headers_on_selection()
+
+    def _on_document_change(self, change):
+        """Keep local data updates from replacing active editors or selection."""
+        if change.categories <= {"polarization", "presentation"}:
+            if "presentation" in change.categories:
+                self.tableWidget.viewport().update()
+            return
+        if change.structural:
+            self._refresh_structure()
+            return
+        table = self.tableWidget
+        current = table.currentIndex()
+        editing = table.state() == QAbstractItemView.State.EditingState
+        rows = change.surface_indices or range(self.connector.get_surface_count())
+        columns = change.columns or range(table.columnCount())
+        previous = table.blockSignals(True)
+        try:
+            for surface_index in rows:
+                row = self.map_surface_index_to_ui_row(surface_index)
+                if self.connector.COL_TYPE in columns:
+                    widget = table.cellWidget(row, self.connector.COL_TYPE)
+                    if isinstance(widget, SurfaceTypeWidget):
+                        widget.refresh_type_info()
+                if surface_index == self.open_prop_source_row:
+                    widget = table.cellWidget(row + 1, 0)
+                    if isinstance(widget, SurfacePropertiesWidget):
+                        widget.refresh_values()
+                for column in columns:
+                    if editing and current.row() == row and current.column() == column:
+                        continue
+                    item = table.item(row, column)
+                    if item is not None:
+                        value = self.connector.get_surface_data(surface_index, column)
+                        text = str(value) if value is not None else ""
+                        if item.text() != text:
+                            item.setText(text)
+        finally:
+            table.blockSignals(previous)
+        self.update_headers_on_selection()
+
+    def _refresh_structure(self):
+        """Restore structural UI state by surface identity, never shifted row IDs."""
+        table = self.tableWidget
+        old_surfaces = self._displayed_surfaces
+        selected_ids = {
+            id(old_surfaces[index])
+            for row in table.selectionModel().selectedRows()
+            if 0
+            <= (index := self.map_ui_row_to_surface_index(row.row()))
+            < len(old_surfaces)
+        }
+        current_index = self.map_ui_row_to_surface_index(table.currentRow())
+        current_id = (
+            id(old_surfaces[current_index])
+            if 0 <= current_index < len(old_surfaces)
+            else None
+        )
+        current_column = table.currentColumn()
+        property_id = (
+            id(old_surfaces[self.open_prop_source_row])
+            if 0 <= self.open_prop_source_row < len(old_surfaces)
+            else None
+        )
+        horizontal = table.horizontalScrollBar().value()
+        vertical = table.verticalScrollBar().value()
+        new_surfaces = tuple(self.connector.get_optic().surfaces)
+        self.open_prop_source_row = next(
+            (
+                index
+                for index, surface in enumerate(new_surfaces)
+                if id(surface) == property_id
+            ),
+            -1,
+        )
+        self.full_refresh_from_optic()
+        table.clearSelection()
+        for index, surface in enumerate(new_surfaces):
+            row = self.map_surface_index_to_ui_row(index)
+            if id(surface) in selected_ids:
+                table.selectionModel().select(
+                    table.model().index(row, 0),
+                    QItemSelectionModel.Select | QItemSelectionModel.Rows,
+                )
+            if id(surface) == current_id:
+                table.setCurrentCell(row, current_column, QItemSelectionModel.NoUpdate)
+        table.horizontalScrollBar().setValue(horizontal)
+        table.verticalScrollBar().setValue(vertical)
 
     def _process_table_cell(self, row, col_idx, header):
         """Creates and configures the appropriate widget or item for a
@@ -439,6 +547,7 @@ class LensEditor(QWidget):
     @Slot()
     def load_data(self):
         self.tableWidget.blockSignals(True)
+        self._displayed_surfaces = tuple(self.connector.get_optic().surfaces)
         self.tableWidget.setRowCount(0)
         num_surfaces = self.connector.get_surface_count()
         self.tableWidget.setRowCount(num_surfaces)
@@ -537,9 +646,6 @@ class LensEditor(QWidget):
             if ui_row == -1:
                 return
             surface_index_to_remove = self.map_ui_row_to_surface_index(ui_row)
-
-        if self.open_prop_source_row == surface_index_to_remove:
-            self.open_prop_source_row = -1  # Close properties if its owner is removed
 
         self.connector.remove_surface(surface_index_to_remove)
 
