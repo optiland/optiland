@@ -249,10 +249,16 @@ class BaseMaterial(ABC):
         return backend, be.get_precision(), device, gradients, inference
 
     @staticmethod
-    def _as_backend_array(value):
-        """Use live parameters in the active backend without replacing their storage."""
+    def _as_backend_array(value, *, preserve_dtype: bool = False):
+        """Use live parameters in the active backend without replacing their storage.
+
+        Typed parameters can opt out of conversion to the backend's default
+        precision. Untyped values still use that default.
+        """
         if be.get_backend() == "numpy" and hasattr(value, "detach"):
             value = value.detach().cpu().numpy()
+        if preserve_dtype and hasattr(value, "dtype"):
+            return be.asarray(value, dtype=None)
         return be.asarray(value)
 
     @staticmethod
