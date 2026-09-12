@@ -64,6 +64,11 @@ When you first open the Optiland GUI, you'll see a main window containing severa
     *   **2D View**: Shows a 2D cross-section of the lens, with options to display rays.
     *   **3D View**: Renders a 3D model of the system (if VTK is installed and working).
 
+    In the 2D view, select **Zoom to rectangle** and drag around the area to
+    inspect. The drawing stays fixed while the rectangle is drawn; releasing
+    the mouse applies the zoom. Toolbar pan and ordinary drag-pan use separate
+    gestures. **Back** and **Forward** navigate the resulting view history.
+
     .. image:: _static/gui_viewer_panel.png
        :alt: Viewer Panel (2D/3D)
        :align: center

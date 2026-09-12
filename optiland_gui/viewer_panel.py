@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from PySide6.QtCore import Qt, QTimer, Slot
+from PySide6.QtCore import QEvent, Qt, QTimer, Slot
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -440,6 +440,8 @@ class MatplotlibViewer(QWidget):
         self._pan_start_x = None
         self._pan_start_y = None
         self._is_panning = False
+        self._pan_moved = False
+        self.canvas.installEventFilter(self)
 
         self._preserve_next = False
         self.layout_job = LayoutJobView(
@@ -469,10 +471,19 @@ class MatplotlibViewer(QWidget):
         Args:
             event: The Matplotlib mouse button press event.
         """
-        if event.button == 1 and event.inaxes:  # Left mouse button
+        if (
+            event.button == 1
+            and event.inaxes is self.ax
+            and event.xdata is not None
+            and event.ydata is not None
+            and self._default_pan_available()
+        ):
+            self._finish_default_pan()
+            self.toolbar.push_current()
             self._pan_start_x = event.xdata
             self._pan_start_y = event.ydata
             self._is_panning = True
+            self._pan_moved = False
             self.canvas.setCursor(
                 Qt.ClosedHandCursor
             )  # Change cursor to indicate panning
@@ -484,11 +495,34 @@ class MatplotlibViewer(QWidget):
         Args:
             event: The Matplotlib mouse button release event.
         """
-        if event.button == 1:  # Left mouse button
-            self._is_panning = False
-            self._pan_start_x = None
-            self._pan_start_y = None
-            self.canvas.setCursor(Qt.ArrowCursor)  # Reset cursor
+        if event.button == 1:
+            self._finish_default_pan()
+
+    def _default_pan_available(self) -> bool:
+        """Leave toolbar and interactive-widget gestures to their owner."""
+        return not self.toolbar.mode and self.canvas.widgetlock.available(self)
+
+    def _finish_default_pan(self) -> None:
+        """End only our own drag, without replacing a toolbar tool's cursor."""
+        if not self._is_panning:
+            return
+        self._is_panning = False
+        self._pan_start_x = None
+        self._pan_start_y = None
+        if self._pan_moved:
+            self.toolbar.push_current()
+        self._pan_moved = False
+        if self._default_pan_available():
+            self.canvas.unsetCursor()
+
+    def eventFilter(self, watched, event):
+        """Discard an interrupted custom drag while preserving normal Qt events."""
+        if watched is self.canvas and (
+            event.type() in (QEvent.FocusOut, QEvent.Hide, QEvent.WindowDeactivate)
+            or (event.type() == QEvent.KeyPress and event.key() == Qt.Key_Escape)
+        ):
+            self._finish_default_pan()
+        return super().eventFilter(watched, event)
 
     def on_mouse_move_on_plot(self, event):
         """
@@ -497,7 +531,15 @@ class MatplotlibViewer(QWidget):
         Args:
             event: The Matplotlib motion notify event.
         """
-        if self._is_panning and event.inaxes and self._pan_start_x is not None:
+        if self._is_panning and not self._default_pan_available():
+            self._finish_default_pan()
+
+        has_coordinates = (
+            event.inaxes is self.ax
+            and event.xdata is not None
+            and event.ydata is not None
+        )
+        if self._is_panning and has_coordinates and self._pan_start_x is not None:
             # Calculate the distance moved
             dx = self._pan_start_x - event.xdata
             dy = self._pan_start_y - event.ydata
@@ -510,13 +552,14 @@ class MatplotlibViewer(QWidget):
             # Update the limits by the distance moved
             ax.set_xlim(xlim[0] + dx, xlim[1] + dx)
             ax.set_ylim(ylim[0] + dy, ylim[1] + dy)
+            self._pan_moved = self._pan_moved or dx != 0 or dy != 0
 
             # Redraw the canvas
             self.canvas.draw_idle()
             return  # Skip the coordinate display when panning
 
         # Original coordinate display code
-        if event.inaxes:
+        if has_coordinates:
             x_coord = f"{event.xdata:.3f}"
             y_coord = f"{event.ydata:.3f}"
             self.cursor_coord_label.setText(f"(Z, Y) = ({x_coord}, {y_coord})")
@@ -581,6 +624,7 @@ class MatplotlibViewer(QWidget):
 
     def plot_optic(self, preserve_zoom=False):
         """Request the latest visible layout; calculation belongs to its worker."""
+        self._finish_default_pan()
         self._preserve_next = bool(preserve_zoom)
         self.layout_job.request()
 
