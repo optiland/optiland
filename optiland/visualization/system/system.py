@@ -151,8 +151,13 @@ class OpticalSystem:
             if k == 0 and surf.is_infinite:
                 continue
 
-            # Object, image, or paraxial surface
-            if k == 0 or k == num_surf - 1 or surf.surface_type == "paraxial":
+            # Unbounded image planes have a schematic, ray-count-independent
+            # marker. Explicit physical apertures remain authoritative.
+            if k == num_surf - 1:
+                self._add_component("surface", surf, extent, is_image_plane=True)
+
+            # Object or paraxial surface
+            elif k == 0 or surf.surface_type == "paraxial":
                 self._add_component("surface", surf, extent)
 
             # Surface is a mirror
@@ -198,18 +203,20 @@ class OpticalSystem:
             return []
         return lens_surfaces
 
-    def _add_component(self, component_name, *args):
+    def _add_component(self, component_name, *args, **kwargs):
         """Adds a component to the list of components."""
         if component_name in _CUSTOM_RENDERER_REGISTRY:
             renderer = _CUSTOM_RENDERER_REGISTRY[component_name]
             component_data = {"args": args, "projection": self.projection}
+            if kwargs:
+                component_data["kwargs"] = kwargs
             self.components.append(
                 _CustomRendererAdapter(renderer, component_data, self.projection)
             )
             return
         if component_name in self.component_registry:
             component_class = self.component_registry[component_name][self.projection]
-            self.components.append(component_class(*args))
+            self.components.append(component_class(*args, **kwargs))
             return
         raise ValueError(f"Component {component_name} not found in registry.")
 

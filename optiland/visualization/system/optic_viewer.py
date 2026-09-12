@@ -17,8 +17,11 @@ import numpy as np
 import optiland.backend as be
 from optiland.visualization.base import BaseViewer2D
 from optiland.visualization.system.interaction import InteractionManager
+from optiland.visualization.system.lens import Lens2D
 from optiland.visualization.system.rays import Rays2D
+from optiland.visualization.system.surface import Surface2D
 from optiland.visualization.system.system import OpticalSystem
+from optiland.visualization.system.utils import transform
 
 
 class OpticViewer(BaseViewer2D):
@@ -195,12 +198,34 @@ class OpticViewer(BaseViewer2D):
             return None, None
         vertices = vertices[start_idx:]
 
-        z_min = float(vertices[:, 2].min())
-        z_max = float(vertices[:, 2].max())
+        # Resolve bounds from the components that will actually be drawn. In
+        # particular, a ray's first blocking hit can be far outside a finite
+        # physical aperture and must not enlarge the auto-fit region.
+        surfaces = []
+        for component in self.system.components:
+            if isinstance(component, Surface2D):
+                surfaces.append(component)
+            elif isinstance(component, Lens2D):
+                surfaces.extend(component.surfaces)
+        r_extent = (
+            np.asarray([float(be.to_numpy(surface.extent)) for surface in surfaces])
+            if surfaces
+            else be.to_numpy(self.rays.r_extent)[start_idx:]
+        )
+
+        # A tilted image marker can extend past the first/last vertex along Z.
+        # Include its transformed outline, without tracing any additional rays.
+        z_bounds = [vertices[:, 2].ravel()]
+        for surface in surfaces:
+            x, y, z = surface._compute_sag(projection)
+            _, _, z = transform(x, y, z, surface.surf, is_global=False)
+            z = be.to_numpy(z)
+            z_bounds.append(z[np.isfinite(z)])
+        z_bounds = np.concatenate(z_bounds)
+        z_min, z_max = float(z_bounds.min()), float(z_bounds.max())
         z_margin = max(0.15 * (z_max - z_min), 1e-6)
         auto_xlim = (z_min - z_margin, z_max + z_margin)
 
-        r_extent = be.to_numpy(self.rays.r_extent)[start_idx:]
         r_extent = r_extent[np.isfinite(r_extent)]
         if r_extent.size == 0:
             return auto_xlim, None

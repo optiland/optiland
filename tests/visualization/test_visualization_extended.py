@@ -35,6 +35,7 @@ class TestInfoProviders:
         real_surf.thickness = 5.0
         real_surf.material_post.name = "Glass"
         surf_2d.surf = real_surf
+        surf_2d.extent_source = "physical_aperture"
 
         # Add to group so index can be found
         mock_optic.surfaces = [real_surf]
@@ -83,7 +84,7 @@ class TestInteractionManager:
     def test_init(self, mock_fig_ax, mock_optic):
         fig, ax = mock_fig_ax
         manager = interaction.InteractionManager(fig, ax, mock_optic)
-        assert manager.tooltip.get_visible() == False
+        assert not manager.tooltip.get_visible()
 
     def test_register_artist(self, mock_fig_ax, mock_optic):
         fig, ax = mock_fig_ax
@@ -146,7 +147,7 @@ class TestInteractionManager:
         ):
             manager.show_tooltip(artist, event)
             assert manager.tooltip.get_text() == "Tooltip Info"
-            assert manager.tooltip.get_visible() == True
+            assert manager.tooltip.get_visible()
 
     def test_info_panel(self, mock_fig_ax, mock_optic):
         fig, ax = mock_fig_ax

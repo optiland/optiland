@@ -47,6 +47,8 @@ class SurfaceInfoProvider(BaseInfoProvider):
 
         if hasattr(surface, "comment") and surface.comment:
             info.append(f"Comment: {surface.comment}")
+        if obj.extent_source == "schematic":
+            info.append("Image plane marker: schematic; physical size unspecified")
         if hasattr(surface, "geometry") and hasattr(surface.geometry, "radius"):
             info.append(f"Radius: {surface.geometry.radius:.3f}")
         if hasattr(surface, "geometry") and hasattr(surface.geometry, "conic"):

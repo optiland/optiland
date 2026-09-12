@@ -87,6 +87,7 @@ class Rays2D:
         fields_coords = [fp.coord for fp in field_points]
         wavelengths_vals = [wp.value for wp in wl_points]
 
+        self.r_extent = be.zeros(self.optic.surfaces.num_surfaces)
         artists = {}
 
         for i, field in enumerate(fields_coords):
@@ -177,15 +178,38 @@ class Rays2D:
     def _update_surface_extents(self):
         """Updates the extents of the surfaces in the optic's surface group."""
         r_extent_new = be.copy(be.zeros_like(self.r_extent))
+        alive_before = be.ones_like(self.i[0]) > 0
         for i, surf in enumerate(self.optic.surfaces):
             x_surf = self.x[i]
             y_surf = self.y[i]
             z_surf = self.z[i]
 
-            # Convert to local coordinate system
-            x, y, _ = transform(x_surf, y_surf, z_surf, surf, is_global=True)
+            finite_points = (
+                be.isfinite(x_surf) & be.isfinite(y_surf) & be.isfinite(z_surf)
+            )
+            # Replace invalid inputs before rotating them, avoiding inf * 0
+            # warnings. The validity mask still excludes these placeholder hits.
+            x, y, _ = transform(
+                be.where(finite_points, x_surf, 0.0),
+                be.where(finite_points, y_surf, 0.0),
+                be.where(finite_points, z_surf, 0.0),
+                surf,
+                is_global=True,
+            )
 
-            r_extent_new[i] = be.nanmax(be.hypot(x, y))
+            radius = be.hypot(x, y)
+            # Retain the incident hit at the first blocking surface, but never
+            # use an already-extinguished ray's later mathematical coordinates.
+            valid = (
+                alive_before
+                & finite_points
+                & be.isfinite(self.i[i])
+                & (self.i[i] >= 0)
+                & be.isfinite(radius)
+            )
+            if be.size(radius):
+                r_extent_new[i] = be.max(be.where(valid, radius, 0.0))
+            alive_before = alive_before & be.isfinite(self.i[i]) & (self.i[i] > 0)
         self.r_extent = be.fmax(self.r_extent, r_extent_new)
 
     def _plot_lines(
@@ -338,6 +362,7 @@ class Rays3D(Rays2D):
         fields_coords = [fp.coord for fp in field_points]
         wavelengths_vals = [wp.value for wp in wl_points]
 
+        self.r_extent = be.zeros(self.optic.surfaces.num_surfaces)
         for i, field in enumerate(fields_coords):
             for j, wavelength in enumerate(wavelengths_vals):
                 # if only one field, use different colors for each wavelength
