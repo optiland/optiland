@@ -232,6 +232,7 @@ def test_replacement_kills_stubborn_active_and_runs_latest(qapp, jobs):
     assert receiver.results[1].request == second
     assert receiver.results[1].data == "latest"
     assert not receiver.results[0].current
+    assert not receiver.results[0].infrastructure_error
 
 
 def test_document_replacement_rejects_old_completion(qapp, jobs):
@@ -266,14 +267,19 @@ def test_hidden_target_never_dispatches(qapp, jobs):
     assert not receiver.progress
 
 
-def test_crash_has_terminal_error_and_service_recovers(qapp, jobs):
+@pytest.mark.parametrize("stderr", ["", "Native library aborted"])
+def test_crash_has_terminal_error_and_service_recovers(qapp, jobs, stderr):
     state, service, receiver = jobs
-    service.submit("2d", "unused", None, {"crash": True})
+    service.submit("2d", "unused", None, {"crash": True, "stderr": stderr})
     wait_for(qapp, lambda: receiver.results)
     assert receiver.results[0].status == "failed"
+    assert receiver.results[0].infrastructure_error
+    if stderr:
+        assert stderr in receiver.results[0].error
     service.submit("2d", "unused", None, {})
     wait_for(qapp, lambda: len(receiver.results) == 2)
     assert receiver.results[1].status == "succeeded"
+    assert not receiver.results[1].infrastructure_error
 
 
 def test_shutdown_revokes_and_reaps_without_blocking(qapp, jobs):
@@ -297,6 +303,7 @@ def test_failed_start_finishes_queued_request(qapp):
     service.submit("2d", "unused", None, {})
     wait_for(qapp, lambda: receiver.results)
     assert receiver.results[0].status == "failed"
+    assert receiver.results[0].infrastructure_error
     assert not service.running
     service.shutdown()
 
@@ -322,9 +329,40 @@ def test_actual_worker_reports_handler_failure_and_closes(qapp):
         wait_for(qapp, lambda: receiver.results)
         assert receiver.results[0].status == "failed"
         assert "does_not_exist" in receiver.results[0].error
+        assert not receiver.results[0].infrastructure_error
     finally:
         service.shutdown()
         wait_for(qapp, lambda: service._process is None)
+
+
+def test_malformed_worker_transport_is_infrastructure_failure(qapp, jobs):
+    _, service, receiver = jobs
+    service.submit("bad-transport", "unused", None, {"malformed": True})
+    wait_for(qapp, lambda: receiver.results)
+    assert receiver.results[0].status == "failed"
+    assert receiver.results[0].infrastructure_error
+    assert "Invalid calculation-worker message size" in receiver.results[0].error
+
+
+def test_local_request_encoding_failure_is_infrastructure_error(
+    qapp, jobs, monkeypatch
+):
+    _, service, receiver = jobs
+    service.submit("warmup", "unused", None, {})
+    wait_for(qapp, lambda: receiver.results)
+    original = service._send
+
+    def failing_send(message):
+        if message["command"] == "run":
+            raise ValueError("Request exceeds transport limit")
+        original(message)
+
+    monkeypatch.setattr(service, "_send", failing_send)
+    service.submit("oversized", "unused", None, {})
+    wait_for(qapp, lambda: len(receiver.results) == 2)
+    result = receiver.results[-1]
+    assert result.status == "failed" and result.infrastructure_error
+    assert "transport limit" in result.error
 
 
 def test_detached_explicit_job_survives_document_edit_as_stale(qapp, jobs):
@@ -354,3 +392,30 @@ def test_current_must_be_rechecked_at_commit(qapp, jobs):
     assert receiver.results[0].current
     state.change()
     assert not service.is_current(request)
+
+
+def test_sequential_batch_preserves_its_captured_document_token(qapp, jobs):
+    state, service, receiver = jobs
+    captured = state.token
+    service.submit(
+        "batch-first",
+        "unused",
+        None,
+        {},
+        document_token=captured,
+        cancel_on_document_change=False,
+    )
+    wait_for(qapp, lambda: receiver.results)
+    state.change()
+    second = service.submit(
+        "batch-second",
+        "unused",
+        None,
+        {},
+        document_token=captured,
+        cancel_on_document_change=False,
+    )
+    wait_for(qapp, lambda: len(receiver.results) == 2)
+    assert second.document == captured
+    assert receiver.results[-1].status == "succeeded"
+    assert not receiver.results[-1].current
