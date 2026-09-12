@@ -37,7 +37,12 @@ class EllipticalAperture(BaseAperture):
             tuple: The extent of the aperture in the x and y directions.
 
         """
-        return -self.a, self.a, -self.b, self.b
+        return (
+            self.offset_x - self.a,
+            self.offset_x + self.a,
+            self.offset_y - self.b,
+            self.offset_y + self.b,
+        )
 
     def contains(self, x, y):
         """Checks if the given point is inside the aperture.
