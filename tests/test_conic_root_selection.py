@@ -15,7 +15,7 @@ off-axis parabolic (OAP) mirrors:
 
 The fix (``_conic_intersection_distance`` in
 ``optiland/geometries/standard.py``) admits a root only when it is solvable,
-finite, in front of the ray (above a scale-aware floor), and on the sheet
+finite, strictly in front of the ray, and on the sheet
 described by the sag function (``1 - (1 + k) z / R >= 0``); roots inside the
 surface's physical aperture are preferred, the nearest admissible root wins,
 and rays without any admissible root fall back to the legacy vertex-nearest
@@ -132,7 +132,7 @@ class TestConicRootSelection:
         Starting at (0, 25.4, -12.7) -- exactly on the R = -25.4 parabola --
         and traveling along -y, the quadratic has roots t = 0 (the starting
         point itself, c = 0 exactly) and t = 50.8 (the genuine second
-        crossing at y = -25.4). The scale-aware forward floor must reject the
+        crossing at y = -25.4). Root selection must reject the
         t = 0 self-intersection; the legacy code could return 0 or swap to
         it, freezing the ray in place.
         """
@@ -459,7 +459,7 @@ class TestTorchAutogradSafety:
     def test_gradients_finite_normal_case(self, set_test_backend):
         """An ordinary conic hit backpropagates finite pose gradients.
 
-        The guards (``maximum(d, eps)`` before the sqrt, floored
+        The guards (safe inactive inputs before the sqrt and nonzero
         denominators before every division) must keep the backward pass
         clean even where the unguarded expressions would be singular.
         """

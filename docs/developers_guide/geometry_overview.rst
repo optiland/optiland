@@ -41,6 +41,78 @@ Geometries provide methods for:
 
    - Normals are derived from the mathematical description of the geometry and are essential for determining the ray's direction after refraction or reflection.
 
+Conic Intersection Numerics and Execution
+-----------------------------------------
+
+Geometry modules remain backend agnostic. They pass coordinate/direction arrays,
+radius, conic constant, and an optional aperture-membership callable to
+``be.conic_intersection``. The operation is part of ``AbstractBackend`` and the
+normal NumPy/Torch backend implementations. Backend code does not import ray,
+geometry, or aperture classes; the callable returns a boolean mask and only
+selects a discrete branch, without gradients through the aperture's state.
+
+``optiland.backend._conic`` holds the single shared mathematical root/selection
+policy. NumPy compilation belongs to ``backend.numpy_backend.conic``; tensor
+dispatch and custom autograd belong to ``backend.torch_backend.conic``. Keep
+framework imports, device/dtype dispatch, and storage adapters in the backend
+package rather than adding a parallel Torch implementation for each geometry.
+Torch remains optional: importing geometry and tracing with NumPy must work
+when Torch is unavailable.
+
+``StandardGeometry`` and ``StandardGratingGeometry`` share the conic solver,
+which also supplies the initial intersection for Newton-Raphson geometries.
+It solves the factored implicit equation using a cancellation-resistant
+quadratic formula. Each ray selects the nearest strictly positive root on
+the sag sheet, preferring roots inside a supplied physical aperture. If
+neither root is admissible, it returns the finite root nearest the vertex,
+including negative distances needed by virtual propagation. An equation
+with no finite solution returns NaN.
+
+The solver classifies zero coefficients directly and preserves positive
+discriminants. Exact self-crossings are excluded. Sag evaluation can also
+leave a rounded origin slightly off the surface: when its implicit residual
+is within ``4 * eps * (x*x + y*y + abs(z)*(abs((1+k)*z) + 2*abs(R)))``,
+the smaller-magnitude root is a possible self-hit. It is excluded from forward
+selection only if its displacement is also within
+``4 * eps * sqrt(x*x + y*y + z*z)``. A small residual alone is insufficient
+near tangency, where it can correspond to a resolved propagation distance.
+The signed fallback remains available. Both bounds rescale with the geometry;
+there is no absolute distance floor. As with other floating-point calculations,
+roots near tangency remain ill-conditioned and large intermediate values can
+overflow.
+
+Torch execution preserves the input tensors' device and dtype and supports
+autograd through regular selected roots. An exact double root has a singular
+intersection derivative. Its forward value is preserved, but its gradient
+contribution is explicitly zero. Root selection and aperture boundaries are
+also discrete transitions; derivatives describe the selected branch away
+from those boundaries.
+
+Matching one-dimensional NumPy float64 arrays and scalar float64 geometry
+parameters use cached Numba loops. The no-aperture loop returns the selected
+distance directly. When an aperture is supplied, a second loop retains both
+roots so the existing aperture code can choose between them. Both loops and
+the general array path share their arithmetic and selection policy.
+
+Ordinary Torch CPU float64 tensors with the same ray shapes and scalar or
+single-element surface parameters reuse these loops through NumPy views of
+their existing storage. The solver neither copies nor mutates the input ray
+arrays. A custom autograd function supplies the implicit derivatives of the
+selected root. For hit coordinates ``(u, v, w)``, define
+``D = u*L + v*M + ((1+k)*w-R)*N``. Differentiating the implicit conic gives
+``dt/dx = -u/D``, ``dt/dy = -v/D``, ``dt/dz = -((1+k)*w-R)/D``,
+``dt/dR = w/D``, and ``dt/dk = -w*w/(2*D)``. Direction partials are the
+corresponding position partials multiplied by ``t``. These operations remain
+in the Torch graph for higher derivatives. Forward-mode differentiation and
+batching are supported by the finite-conic kernel; the existing public
+plane/conic wrapper still requires an unbatched radius for its plane check.
+
+CUDA, float32, broadcasting, and tensor subclasses use native backend array
+operations. CUDA inputs never enter the CPU loop. NumPy array subclasses also
+keep the general path. Benchmark after a warmup: the first compiled call has
+a compilation or cache-loading cost. CUDA benchmarks additionally require
+synchronization around the timed operation.
+
 Supported Geometry Types
 ------------------------
 

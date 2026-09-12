@@ -2,7 +2,7 @@
 NumPy backend — implements AbstractBackend using NumPy and SciPy.
 
 The implementation is split across same-package modules by operation
-category (creation, indexing, math, linalg, interpolation, random,
+category (creation, indexing, math, conic, linalg, interpolation, random,
 misc); this module composes them into the concrete ``NumpyBackend``
 class. See ``creation.py`` etc. for the actual method bodies.
 
@@ -16,6 +16,7 @@ from typing import Literal
 import numpy as np
 
 from optiland.backend.base import AbstractBackend
+from optiland.backend.numpy_backend.conic import ConicMixin
 from optiland.backend.numpy_backend.creation import CreationMixin
 from optiland.backend.numpy_backend.indexing import IndexingMixin
 from optiland.backend.numpy_backend.interpolation import InterpolationMixin
@@ -26,6 +27,7 @@ from optiland.backend.numpy_backend.random import RandomMixin
 
 
 class NumpyBackend(
+    ConicMixin,
     CreationMixin,
     IndexingMixin,
     MathMixin,

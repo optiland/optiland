@@ -845,7 +845,7 @@ class TestSeedCenteredScan:
         aimer, param, seed = self._seed_and_param(optic)
         (x, y, z, L, M, N), _ = self._candidates(optic, param, seed, n=41)
         path = optic.surfaces.build_paraxial_path()
-        d = [float(be.to_numpy(be.array(c))) for c in path.entry_direction]
+        d = [be.to_numpy(be.array(c)).item() for c in path.entry_direction]
         sx = float(be.to_numpy(seed[0]).reshape(-1)[0])
         sy = float(be.to_numpy(seed[1]).reshape(-1)[0])
         sz = float(be.to_numpy(seed[2]).reshape(-1)[0])

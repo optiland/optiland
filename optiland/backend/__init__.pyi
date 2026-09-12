@@ -43,6 +43,17 @@ finfo: Any  # numpy.finfo — for machine-epsilon queries
 def set_backend(name: str) -> None: ...
 def get_backend() -> str: ...
 def list_available_backends() -> list[str]: ...
+def conic_intersection(
+    x: ScalarOrArrayT,
+    y: ScalarOrArrayT,
+    z: ScalarOrArrayT,
+    L: ScalarOrArrayT,
+    M: ScalarOrArrayT,
+    N: ScalarOrArrayT,
+    radius: ScalarOrArrayT,
+    conic: ScalarOrArrayT,
+    contains: Callable[[Any, Any], Any] | None = None,
+) -> ndarray: ...
 
 # ---------------------------------------------------------------------------
 # Torch-backend-only configuration

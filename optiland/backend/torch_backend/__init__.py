@@ -2,7 +2,7 @@
 PyTorch backend — implements AbstractBackend using PyTorch.
 
 The implementation is split across same-package modules by operation
-category (capabilities, creation, indexing, reductions, passthrough,
+category (capabilities, creation, indexing, conic, reductions, passthrough,
 linalg, interpolation, random, misc); this module composes them into
 the concrete ``TorchBackend`` class. See ``capabilities.py`` etc. for
 the actual method bodies, and ``config.py`` for the ``GradMode``/
@@ -18,6 +18,7 @@ import torch
 from optiland.backend.base import AbstractBackend
 from optiland.backend.torch_backend.capabilities import CapabilitiesMixin
 from optiland.backend.torch_backend.config import _Config
+from optiland.backend.torch_backend.conic import ConicMixin
 from optiland.backend.torch_backend.creation import CreationMixin
 from optiland.backend.torch_backend.indexing import IndexingMixin
 from optiland.backend.torch_backend.interpolation import InterpolationMixin
@@ -30,6 +31,7 @@ from optiland.backend.torch_backend.reductions import ReductionsMixin
 
 class TorchBackend(
     CapabilitiesMixin,
+    ConicMixin,
     CreationMixin,
     IndexingMixin,
     ReductionsMixin,

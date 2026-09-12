@@ -630,6 +630,48 @@ class AbstractBackend(ABC):
     # ------------------------------------------------------------------
 
     @abstractmethod
+    def conic_intersection(
+        self,
+        x: Any,
+        y: Any,
+        z: Any,
+        L: Any,
+        M: Any,
+        N: Any,
+        radius: Any,
+        conic: Any,
+        contains: Callable[[Any, Any], Any] | None = None,
+    ) -> Any:
+        """Return ray parameters at the selected finite-conic intersections.
+
+        Solve ``x_hit**2 + y_hit**2 + (1+k)*z_hit**2 - 2*R*z_hit = 0``
+        for hits along ``(x, y, z) + t*(L, M, N)``. Prefer the nearest
+        positive root on the sag sheet, with an optional membership predicate
+        selecting the used surface patch. If neither root is admissible,
+        choose the finite root nearest the vertex; return NaN if none exists.
+        Preserve positive discriminants and resolved near-tangent crossings.
+
+        Args:
+            x: Local ray x coordinates.
+            y: Local ray y coordinates.
+            z: Local ray z coordinates.
+            L: Local direction x components.
+            M: Local direction y components.
+            N: Local direction z components.
+            radius: Finite, nonzero radius, scalar or broadcastable array.
+            conic: Conic constant, scalar or broadcastable array.
+            contains: Optional ``contains(x_hit, y_hit)`` callable returning
+                a boolean array on this backend. It only chooses a discrete
+                branch; it is not differentiated with respect to its state.
+
+        Returns:
+            Intersection parameters with the backend's broadcasting and dtype
+            semantics. Inputs are not mutated or moved between devices.
+            Torch differentiates regular selected branches; exact double roots
+            retain their forward value but contribute zero gradient.
+        """
+
+    @abstractmethod
     def factorial(self, n: Any) -> Any:
         """Compute the factorial of n."""
 

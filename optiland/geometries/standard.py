@@ -18,14 +18,6 @@ from __future__ import annotations
 import optiland.backend as be
 from optiland.coordinate_system import CoordinateSystem
 from optiland.geometries.base import BaseGeometry
-from optiland.utils import machine_eps
-
-# Multiplier on the machine epsilon of the ray coordinates when building the
-# scale-aware forward floor for conic root selection. The floor must reject a
-# ray's own starting point (an exact t = 0 plus its round-off halo) without
-# ever rejecting a genuine propagation to a nearby surface. Matches the
-# conservative multiplier used by the Newton-Raphson thresholds.
-_FORWARD_EPS_MULTIPLIER = 32.0
 
 
 def _is_radius_infinite(radius):
@@ -47,7 +39,7 @@ def _conic_intersection_distance(rays, radius, conic, aperture=None):
     solved in the numerically stable (Numerical Recipes / "citardauque") form
     rather than the textbook ``(-b +/- sqrt(d)) / (2a)``. For rays close to
     the optical axis (small L, M) and conics near a parabola (k = -1), ``a``
-    is a tiny value dominated by floating-point noise; the textbook formula
+    can be tiny; the textbook formula
     then subtracts two nearly-equal numbers (b and sqrt(d)) while dividing by
     that near-zero ``a``, amplifying the cancellation by orders of magnitude.
     The stable form avoids the cancellation entirely and reduces continuously
@@ -59,7 +51,7 @@ def _conic_intersection_distance(rays, radius, conic, aperture=None):
     hyperboloid) as well as crossings behind the ray. A root is therefore
     admissible only when it is
 
-    - in front of the ray: ``t`` above a scale-aware positive floor, and
+    - in front of the ray: ``t > 0``, excluding exact or rounded self-hits, and
     - on the sheet the sag function describes: on the surface,
       ``sqrt(1 - (1 + k) r^2 / R^2) = 1 - (1 + k) z / R``, so the sag sheet
       is ``1 - (1 + k) z / R >= 0``.
@@ -70,11 +62,17 @@ def _conic_intersection_distance(rays, radius, conic, aperture=None):
     the aperture identifies the used region -- and the nearest root of the
     best tier is returned. Rays with no admissible root (a genuine miss, or a
     ray leaving the surface's neighborhood) fall back to the legacy
-    vertex-nearest root, NaN when the discriminant is negative.
+    vertex-nearest finite root, or NaN when no finite solution exists.
 
     All masking is per ray, and denominators and the radicand are guarded
     *before* dividing / taking the square root: a masked inf or NaN would
     still enter the autograd graph and backpropagate as NaN.
+    Positive discriminants and coefficients are not clamped to epsilon.
+    A rounded self-hit must have both a residual within the uncancelled
+    implicit surface terms' roundoff band and a displacement below position
+    roundoff. The displacement check preserves resolved near-tangent hits.
+    Exact double roots retain their value but contribute zero Torch gradient
+    because the intersection derivative is singular there.
 
     Args:
         rays (RealRays): The rays, in the local frame of the surface.
@@ -92,81 +90,17 @@ def _conic_intersection_distance(rays, radius, conic, aperture=None):
         N_safe = be.where(be.abs(rays.N) > 1e-14, rays.N, 1e-14)
         return -rays.z / N_safe
 
-    k = conic
-    a = k * rays.N**2 + rays.L**2 + rays.M**2 + rays.N**2
-    b = (
-        2 * k * rays.N * rays.z
-        + 2 * rays.L * rays.x
-        + 2 * rays.M * rays.y
-        - 2 * rays.N * radius
-        + 2 * rays.N * rays.z
+    return be.conic_intersection(
+        rays.x,
+        rays.y,
+        rays.z,
+        rays.L,
+        rays.M,
+        rays.N,
+        radius,
+        conic,
+        contains=aperture.contains if aperture is not None else None,
     )
-    c = k * rays.z**2 - 2 * radius * rays.z + rays.x**2 + rays.y**2 + rays.z**2
-
-    d = b**2 - 4 * a * c
-    d_ok = d >= 0
-
-    eps = machine_eps(d)
-    ones = be.ones_like(d)
-
-    sqrt_d = be.where(d_ok, be.sqrt(be.maximum(d, eps)), be.zeros_like(d))
-    sign_b = be.where(b >= 0, 1.0, -1.0)
-    q = -0.5 * (b + sign_b * sqrt_d)
-    a_ok = be.abs(a) > eps
-    q_ok = be.abs(q) > eps
-    t1 = q / be.where(a_ok, a, ones)
-    t2 = c / be.where(q_ok, q, ones)
-    solvable1 = d_ok & a_ok
-    solvable2 = d_ok & q_ok
-
-    z1 = rays.z + t1 * rays.N
-    z2 = rays.z + t2 * rays.N
-
-    # Scale-aware forward floor: the ray positions enter the quadratic
-    # coefficients, so a would-be-zero root carries their round-off.
-    position_scale = 1.0 + be.abs(rays.x) + be.abs(rays.y) + be.abs(rays.z)
-    t_min = _FORWARD_EPS_MULTIPLIER * eps * position_scale
-
-    sheet1 = 1 - (1 + k) * z1 / radius >= 0
-    sheet2 = 1 - (1 + k) * z2 / radius >= 0
-
-    valid1 = solvable1 & be.isfinite(t1) & (t1 > t_min) & sheet1
-    valid2 = solvable2 & be.isfinite(t2) & (t2 > t_min) & sheet2
-
-    # Nearest root of the best available tier: in-aperture, then any
-    # admissible, then the legacy vertex-nearest fallback. Without an
-    # aperture the preference tier equals the admissible tier, and the
-    # intersection (x, y) coordinates have no consumer, so both are
-    # skipped: identical selection, roughly a third fewer array passes on
-    # the hot no-aperture path.
-    first1 = t1 <= t2
-
-    pick_valid1 = valid1 & (~valid2 | first1)
-    t_valid = be.where(pick_valid1, t1, t2)
-    have_valid = valid1 | valid2
-
-    inf = be.full_like(d, be.inf)
-    abs_z1 = be.where(solvable1, be.abs(z1), inf)
-    abs_z2 = be.where(solvable2, be.abs(z2), inf)
-    t_vertex = be.where(abs_z1 <= abs_z2, t1, t2)
-    t_fallback = be.where(d_ok, t_vertex, be.full_like(d, be.nan))
-
-    t_admissible = be.where(have_valid, t_valid, t_fallback)
-    if aperture is None:
-        return t_admissible
-
-    x1 = rays.x + t1 * rays.L
-    y1 = rays.y + t1 * rays.M
-    x2 = rays.x + t2 * rays.L
-    y2 = rays.y + t2 * rays.M
-    pref1 = valid1 & aperture.contains(x1, y1)
-    pref2 = valid2 & aperture.contains(x2, y2)
-
-    pick_pref1 = pref1 & (~pref2 | first1)
-    t_pref = be.where(pick_pref1, t1, t2)
-    have_pref = pref1 | pref2
-
-    return be.where(have_pref, t_pref, t_admissible)
 
 
 class StandardGeometry(BaseGeometry):
