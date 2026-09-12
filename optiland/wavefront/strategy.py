@@ -14,7 +14,6 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Literal
 
 import optiland.backend as be
-from optiland.paraxial_path import require_nonsingular_tangent_angles
 
 from ..fields.field_types import AngleField
 from .reference_geometry import PlanarReference, ReferenceGeometry, SphericalReference
@@ -86,26 +85,32 @@ class ReferenceStrategy(ABC):
             ReferenceGeometry: The computed reference geometry (sphere or plane).
         """
 
-    def _correct_tilt(
+    def _restore_launch_phase(
         self,
-        field: tuple[float, float],
+        rays: RealRays,
         opd: BEArrayT,
-        x: BEArrayT | float | None = None,
-        y: BEArrayT | float | None = None,
+        wavelength: float,
+        reference_rays: RealRays,
     ) -> BEArrayT:
-        """Corrects for tilt in the OPD based on the field angle.
+        """Restore the incident phase across the ray launch plane.
 
-        This step is needed because, in the case of angular fields, rays launch from a
-        plane at z=const in object space. This results in an artificla tilt of the
-        wavefront that must be removed prior to wavefront calculations.
+        Infinite-conjugate angular fields launch rays on a common object-space plane
+        with a common starting optical path, which holds their phase equal across that
+        plane. For an oblique beam the constant-phase surfaces are tilted with respect
+        to the launch plane, so the incident relative eikonal ``n * (u . r)`` is
+        restored here.
+
+        The generated positions and directions are retained before propagation or
+        surface interaction, so the phase follows the active ray aimer without
+        reconstructing its launch geometry. The result is weighted by the object-space
+        refractive index so that it is an optical path length, matching ``rays.opd``.
 
         Args:
-            field (tuple[float, float]): The field coordinates (Hx, Hy).
-            opd (ndarray): The optical path difference array to correct.
-            x (ndarray, optional): The x-coordinates of the pupil distribution.
-                If None, uses the strategy's distribution. Defaults to None.
-            y (ndarray, optional): The y-coordinates of the pupil distribution.
-                If None, uses the strategy's distribution. Defaults to None.
+            rays: Traced rays whose launch phase is restored.
+            opd: Optical path array to correct.
+            wavelength (float): Wavelength used to evaluate the object-space
+                refractive index, matching the wavelength being analyzed.
+            reference_rays: Rays whose launch state defines zero relative phase.
 
         Returns:
             ndarray: The OPD array with tilt correction applied.
@@ -116,31 +121,47 @@ class ReferenceStrategy(ABC):
         if not self.optic.object_surface.is_infinite:
             return opd
 
-        hx, hy = field
-        max_field_deg = self.optic.fields.max_field
-        fx = hx * max_field_deg
-        fy = hy * max_field_deg
-        require_nonsingular_tangent_angles(
-            fx, fy, operation="wavefront tilt correction"
+        launch = rays._launch_state
+        reference = reference_rays._launch_state
+        if launch is None or reference is None:
+            raise ValueError("Wavefront analysis requires retained ray launch state.")
+
+        x_ref = reference.x[0]
+        y_ref = reference.y[0]
+        z_ref = reference.z[0]
+        n_object = self._launch_refractive_index(wavelength)
+        incident_phase = n_object * (
+            launch.L * (launch.x - x_ref)
+            + launch.M * (launch.y - y_ref)
+            + launch.N * (launch.z - z_ref)
         )
-        fx_rad = be.deg2rad(fx)
-        fy_rad = be.deg2rad(fy)
+        return opd + incident_phase
 
-        # direction cosines
-        tx, ty = be.tan(fx_rad), be.tan(fy_rad)
-        uz = 1.0 / be.sqrt(1.0 + tx**2 + ty**2)
-        ux, uy = tx * uz, ty * uz
+    def _launch_refractive_index(self, wavelength: float) -> BEArrayT:
+        """Return the index of the medium from launch to the first traced step."""
+        definition_optic = getattr(self.optic, "base_optic", self.optic)
+        if definition_optic is self.optic:
+            material = self.optic.object_surface.material_post
+        else:
+            first_step = self.optic.surfaces[0]
+            if first_step.base_surface is definition_optic.object_surface:
+                material = first_step.material_post
+            else:
+                material = first_step.material_pre
+        return material.n(wavelength)
 
-        # physical pupil coords
-        xs = be.array(self.distribution.x) if x is None else be.array(x)
-        ys = be.array(self.distribution.y) if y is None else be.array(y)
-        epd = self.optic.paraxial.EPD()
-        X_m = xs * epd / 2
-        Y_m = ys * epd / 2
-
-        # remove artificial tilt from launch plane
-        tilt = ux * X_m + uy * Y_m
-        return opd + tilt
+    def _generate_chief_launch(
+        self, field: tuple[float, float], wavelength: float
+    ) -> RealRays:
+        """Generate the chief ray and retain its untraced launch state."""
+        definition_optic = getattr(self.optic, "base_optic", self.optic)
+        return definition_optic.ray_tracer.ray_generator.generate_rays(
+            *field,
+            Px=0.0,
+            Py=0.0,
+            wavelength=wavelength,
+            retain_launch=True,
+        )
 
     def _opd_image_to_xp(
         self,
@@ -187,24 +208,31 @@ class ChiefRayStrategy(ReferenceStrategy):
         """
         # 1. Trace chief ray and determine reference sphere
         self._chief_ray = self.optic.trace_generic(
-            *field, Px=0.0, Py=0.0, wavelength=wavelength
+            *field, Px=0.0, Py=0.0, wavelength=wavelength, retain_launch=True
         )
         geometry = self._create_reference_geometry(self._chief_ray)
 
         # 2. Calculate reference OPD from the chief ray
         opd_img_ref = geometry.path_length(self._chief_ray, self.n_image)
         opd_ref = self._chief_ray.opd - opd_img_ref
-        opd_ref = self._correct_tilt(field, opd_ref, x=0, y=0)
 
         # 3. Trace the full grid of rays for the field
-        rays = self.optic.trace(*field, wavelength, None, self.distribution)
+        rays = self.optic.trace(
+            *field,
+            wavelength,
+            None,
+            self.distribution,
+            retain_launch=True,
+        )
         intensity = self.optic.surfaces.intensity[-1, :]
 
         # 4. Compute OPD for all rays
         opd_img = geometry.path_length(rays, self.n_image)
         opd = rays.opd - opd_img
 
-        opd = self._correct_tilt(field, opd)
+        opd = self._restore_launch_phase(rays, opd, wavelength, self._chief_ray)
+        rays._launch_state = None
+        self._chief_ray._launch_state = None
 
         # 5. Normalize OPD and calculate pupil coordinates
         opd_wv = (opd_ref - opd) / (wavelength * 1e-3)
@@ -348,10 +376,19 @@ class CentroidStrategy(ReferenceStrategy):
             WavefrontData: Structured data for the computed wavefront.
         """
         # 1. Trace ray bundle to image surface
-        rays = self.optic.trace(*field, wavelength, None, self.distribution)
+        reference_ray = self._generate_chief_launch(field, wavelength)
+        rays = self.optic.trace(
+            *field,
+            wavelength,
+            None,
+            self.distribution,
+            retain_launch=True,
+        )
 
-        # 2. Tilt correction in object space (assures rays have identical starting OPL)
-        rays.opd = self._correct_tilt(field, rays.opd)
+        # 2. Restore the relative incident phase in object space
+        rays.opd = self._restore_launch_phase(rays, rays.opd, wavelength, reference_ray)
+        rays._launch_state = None
+        reference_ray._launch_state = None
 
         # 3. Determine reference geometry
         geometry = self._create_reference_geometry(rays)

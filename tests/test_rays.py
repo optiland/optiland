@@ -721,6 +721,47 @@ class TestRayGenerator:
         assert_allclose(rays.i, be.array([1.0, 1.0]), atol=1e-8)
         assert_allclose(rays.w, be.array([0.55, 0.55]), atol=1e-8)
 
+    def test_retain_launch_state_is_opt_in(self):
+        lens = TessarLens()
+        generator = RayGenerator(lens)
+        pupil = be.array([0.1, 0.2])
+
+        ordinary = generator.generate_rays(0.5, 0.5, pupil, pupil, 0.55)
+        retained = generator.generate_rays(
+            0.5, 0.5, pupil, pupil, 0.55, retain_launch=True
+        )
+
+        assert ordinary._launch_state is None
+        assert retained._launch_state is not None
+        assert retained._launch_state.x is not retained.x
+        assert retained._launch_state.L is not retained.L
+        assert_allclose(retained._launch_state.x, retained.x)
+        assert_allclose(retained._launch_state.L, retained.L)
+        launch_state = retained._launch_state
+        launch_values = {
+            name: be.to_numpy(getattr(launch_state, name)).copy()
+            for name in ("x", "y", "z", "L", "M", "N")
+        }
+
+        for name in launch_values:
+            be.to_numpy(getattr(retained, name))[0] += 1e-6
+
+        for name, expected in launch_values.items():
+            assert_allclose(getattr(launch_state, name), expected)
+
+        traced = generator.generate_rays(
+            0.5, 0.5, pupil, pupil, 0.55, retain_launch=True
+        )
+        traced_state = traced._launch_state
+        traced_values = {
+            name: be.to_numpy(getattr(traced_state, name)).copy()
+            for name in ("x", "y", "z", "L", "M", "N")
+        }
+        lens.surfaces.trace(traced)
+
+        for name, expected in traced_values.items():
+            assert_allclose(getattr(traced_state, name), expected)
+
     def test_generate_rays_telecentric(self):
         lens = UVProjectionLens()
         generator = RayGenerator(lens)
@@ -789,9 +830,10 @@ class TestRayGenerator:
         state = PolarizationState(is_polarized=False)
         lens.updater.set_polarization(state)
         generator = RayGenerator(lens)
-        rays = generator.generate_rays(Hx, Hy, Px, Py, wavelength)
+        rays = generator.generate_rays(Hx, Hy, Px, Py, wavelength, retain_launch=True)
 
         assert isinstance(rays, PolarizedRays)
+        assert rays._launch_state is not None
         assert rays.x.shape == (2,)
         assert rays.y.shape == (2,)
         assert rays.z.shape == (2,)

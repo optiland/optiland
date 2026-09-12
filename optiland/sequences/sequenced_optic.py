@@ -129,6 +129,8 @@ class SequencedOptic:
         wavelength: float,
         num_rays: int | None = 100,
         distribution: DistributionType | BaseDistribution | None = "hexapolar",
+        *,
+        retain_launch: bool = False,
     ) -> RealRays:
         """Trace a distribution of rays through this sequence.
 
@@ -142,6 +144,8 @@ class SequencedOptic:
             wavelength: The wavelength of the rays in microns.
             num_rays: The number of rays to trace. Defaults to 100.
             distribution: The distribution of rays. Defaults to 'hexapolar'.
+            retain_launch: Whether to retain the generated ray state for an
+                analysis. Defaults to False.
 
         Returns:
             RealRays: The traced rays.
@@ -165,7 +169,12 @@ class SequencedOptic:
         Py_full = be.tile(Py, num_fields)
 
         rays = tracer.ray_generator.generate_rays(
-            Hx_full, Hy_full, Px_full, Py_full, wavelength
+            Hx_full,
+            Hy_full,
+            Px_full,
+            Py_full,
+            wavelength,
+            retain_launch=retain_launch,
         )
         rays = self.surfaces.trace(rays)
 
@@ -174,7 +183,16 @@ class SequencedOptic:
 
         return rays
 
-    def trace_generic(self, Hx, Hy, Px, Py, wavelength: float) -> RealRays:
+    def trace_generic(
+        self,
+        Hx,
+        Hy,
+        Px,
+        Py,
+        wavelength: float,
+        *,
+        retain_launch: bool = False,
+    ) -> RealRays:
         """Trace a single generic ray (given field and pupil coordinates).
 
         As with :meth:`trace`, the ray is generated exactly as it would be
@@ -186,6 +204,8 @@ class SequencedOptic:
             Px: The normalized x pupil coordinate(s).
             Py: The normalized y pupil coordinate(s).
             wavelength: The wavelength of the rays in microns.
+            retain_launch: Whether to retain the generated ray state for an
+                analysis. Defaults to False.
 
         Returns:
             RealRays: The traced rays.
@@ -200,7 +220,9 @@ class SequencedOptic:
 
         Hx, Hy, Px, Py = tracer._validate_array_size(Hx, Hy, Px, Py)
 
-        rays = tracer.ray_generator.generate_rays(Hx, Hy, Px, Py, wavelength)
+        rays = tracer.ray_generator.generate_rays(
+            Hx, Hy, Px, Py, wavelength, retain_launch=retain_launch
+        )
         return self.surfaces.trace(rays)
 
     def __repr__(self) -> str:

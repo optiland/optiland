@@ -8,6 +8,7 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import optiland.backend as be
@@ -18,6 +19,18 @@ if TYPE_CHECKING:
 
     from optiland._types import BEArray, ScalarOrArray
     from optiland.surfaces.standard_surface import Surface
+
+
+@dataclass(frozen=True, slots=True)
+class _RayLaunchState:
+    """Ray state before propagation or surface interaction."""
+
+    x: BEArray
+    y: BEArray
+    z: BEArray
+    L: BEArray
+    M: BEArray
+    N: BEArray
 
 
 class RealRays(BaseRays):
@@ -81,12 +94,25 @@ class RealRays(BaseRays):
         self.w = be.atleast_1d(wavelength)
         self.opd = be.zeros_like(self.x)
 
+        self._launch_state: _RayLaunchState | None = None
+
         # variables to hold pre-surface direction cosines
         self.L0: BEArray | None = None
         self.M0: BEArray | None = None
         self.N0: BEArray | None = None
 
         self.is_normalized = True
+
+    def _capture_launch_state(self) -> None:
+        """Retain generated positions and directions for internal analyses."""
+        self._launch_state = _RayLaunchState(
+            be.copy(self.x),
+            be.copy(self.y),
+            be.copy(self.z),
+            be.copy(self.L),
+            be.copy(self.M),
+            be.copy(self.N),
+        )
 
     def trace_on_surface(self, surface: Surface) -> RealRays:
         """Dispatch to the surface's real ray trace kernel.
