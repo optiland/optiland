@@ -45,6 +45,10 @@ class Lens2D:
 
     def __init__(self, surfaces: list[Any]) -> None:
         self.surfaces = surfaces
+        # Sidecar ownership metadata preserves the existing public
+        # artist-to-component plot return value.
+        self.artist_surfaces = {}
+        self.boundary_coordinates = {}
         self._check_surface_overlap()
 
     def _check_surface_overlap(self) -> None:
@@ -145,6 +149,8 @@ class Lens2D:
                 'XZ', or 'YZ'. Defaults to 'YZ'.
 
         """
+        self.artist_surfaces = {}
+        self.boundary_coordinates = {}
         if projection == "XY":
             # For XY projection, draw a circle representing the lens aperture
             max_extent = self._get_max_extent()
@@ -174,9 +180,17 @@ class Lens2D:
                 label="Lens",
             )
             ax.add_patch(circle)
+            self.artist_surfaces[circle] = tuple(s.surf for s in self.surfaces)
             return {circle: self}
         else:
             sags = self._compute_sag(projection=projection)
+            self.boundary_coordinates = {
+                surface.surf: (
+                    be.to_numpy(z),
+                    be.to_numpy(x if projection == "XZ" else y),
+                )
+                for surface, (x, y, z) in zip(self.surfaces, sags, strict=True)
+            }
             return self._plot_lenses(ax, sags, theme=theme, projection=projection)
 
     def _compute_sag(self, apply_transform=True, projection="YZ"):
@@ -342,6 +356,10 @@ class Lens2D:
                 artists_for_lens = [artists_for_lens]
             for artist in artists_for_lens:
                 artists[artist] = self
+                self.artist_surfaces[artist] = (
+                    self.surfaces[k].surf,
+                    self.surfaces[k + 1].surf,
+                )
         return artists
 
 

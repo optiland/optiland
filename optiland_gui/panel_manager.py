@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QDockWidget, QMainWindow, QWidget
 from .analysis_panel import AnalysisPanel
 from .lens_editor import LensEditor
 from .optimization_panel import OptimizationPanel
+from .surface_interaction import SurfaceInteractionState
 from .system_properties_panel import SystemPropertiesPanel
 from .viewer_panel import ViewerPanel
 from .widgets.custom_dock_widget import CustomDockWidget
@@ -64,12 +65,17 @@ class PanelManager:
         self.sidebar.setTitleBarWidget(QWidget())
 
         # Main panels
+        self.surface_interaction = SurfaceInteractionState(self.main_window)
+        self.surface_interaction.sync_document(self.connector.get_optic())
         self.viewer_panel = ViewerPanel(self.connector)
+        self.viewer_panel.viewer2D.set_interaction_state(self.surface_interaction)
         self.viewer_dock = self._create_dock(
             self.viewer_panel, "ViewerDock", "System Viewer"
         )
 
-        self.lens_editor = LensEditor(self.connector)
+        self.lens_editor = LensEditor(
+            self.connector, interaction_state=self.surface_interaction
+        )
         self.lens_editor_dock = self._create_dock(
             self.lens_editor, "LensEditorDock", "Lens Data Editor"
         )

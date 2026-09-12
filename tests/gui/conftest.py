@@ -18,6 +18,23 @@ def qapp():
     yield app
 
 
+@pytest.fixture
+def highlighting_connector(qapp, minimal_optic):
+    """Real document and worker service for selection/presentation integration."""
+    from PySide6.QtCore import QCoreApplication, QEvent
+
+    from optiland_gui.optiland_connector import OptilandConnector
+    from tests.gui.test_calculation_jobs import wait_for
+
+    connector = OptilandConnector()
+    connector.load_optic_from_object(minimal_optic)
+    yield connector
+    connector.calculation_jobs.shutdown()
+    wait_for(qapp, lambda: connector.calculation_jobs._process is None)
+    connector.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
 @pytest.fixture()
 def minimal_optic():
     """A 4-surface singlet (object, lens front, lens back/stop, image).

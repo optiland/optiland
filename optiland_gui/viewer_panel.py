@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING
 
 from . import gui_plot_utils
 from .analysis_panel import CustomMatplotlibToolbar
+from .layout_highlighting import LayoutHighlightController
 from .layout_presenter import present_2d, present_3d, present_sag
 from .widgets.layout_job_view import LayoutJobView
 
@@ -370,6 +371,9 @@ class MatplotlibViewer(QWidget):
         self.canvas = FigureCanvas(self.figure)
         plot_layout.addWidget(self.canvas)
         self.ax = self.figure.add_subplot(111)
+        self.interaction_state = None
+        self.highlight_controller = None
+        self._highlight_bindings = None
 
         self._is_plotting = False
         self._user_initiated_view_change = False
@@ -569,6 +573,39 @@ class MatplotlibViewer(QWidget):
             gui_plot_utils.apply_gui_matplotlib_styles(theme=self.current_theme)
             self.layout_job.redraw()
         self.settings_toggle_btn.setIcon(QIcon(f":/icons/{theme}/settings.svg"))
+
+    def set_interaction_state(self, state):
+        """Attach shared editor state without recomputing the existing scene."""
+        if self.highlight_controller is not None:
+            self.interaction_state.changed.disconnect(self.highlight_controller.apply)
+            self.highlight_controller.clear()
+            self.highlight_controller.deleteLater()
+        self.interaction_state = state
+        self.highlight_controller = LayoutHighlightController(
+            self.ax, self.canvas, state, lambda: self.current_theme
+        )
+        if self._highlight_bindings is not None:
+            self.install_2d_highlight_bindings(*self._highlight_bindings)
+
+    def clear_2d_highlights(self):
+        """Forget artist references before replacing the axes contents."""
+        self._highlight_bindings = None
+        if self.highlight_controller is not None:
+            self.highlight_controller.clear()
+
+    def install_2d_highlight_bindings(
+        self, body_artists, surface_artists, boundary_coordinates, reference_coordinates
+    ):
+        """Install GUI-local ownership of an accepted worker-prepared scene."""
+        self._highlight_bindings = (
+            body_artists,
+            surface_artists,
+            boundary_coordinates,
+            reference_coordinates,
+        )
+        if self.highlight_controller is not None:
+            self.interaction_state.sync_document(self.connector.get_optic())
+            self.highlight_controller.install_bindings(*self._highlight_bindings)
 
     def _layout_parameters(self):
         return {

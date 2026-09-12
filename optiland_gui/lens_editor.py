@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal, Slot
+from PySide6.QtCore import QEvent, QItemSelectionModel, QSize, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -30,6 +30,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from .surface_interaction import EditorHoverTracker, SurfaceInteractionState
 
 if TYPE_CHECKING:
     from .optiland_connector import OptilandConnector
@@ -239,16 +241,20 @@ class _AccentFocusDelegate(QStyledItemDelegate):
 class LensEditor(QWidget):
     """A widget for editing the properties of an optical system's surfaces."""
 
-    def __init__(self, connector: OptilandConnector, parent=None):
+    def __init__(
+        self, connector: OptilandConnector, parent=None, *, interaction_state=None
+    ):
         super().__init__(parent)
         self.connector = connector
         self.setWindowTitle("Lens Editor")
         self.open_prop_source_row = -1
+        self.interaction_state = interaction_state or SurfaceInteractionState(self)
 
         self._init_ui()
         self.setup_table()
         self.load_data()
         self.connect_signals()
+        self.hover_tracker = EditorHoverTracker(self)
 
     def _init_ui(self):
         """Initializes the main UI components of the editor."""
@@ -286,6 +292,7 @@ class LensEditor(QWidget):
         self.tableWidget.itemChanged.connect(self.on_item_changed_handler)
         self.tableWidget.customContextMenuRequested.connect(self.show_context_menu)
         self.tableWidget.itemSelectionChanged.connect(self.update_headers_on_selection)
+        self.tableWidget.itemSelectionChanged.connect(self._update_surface_selection)
         self.connector.opticLoaded.connect(self.full_refresh_from_optic)
         self.connector.opticChanged.connect(self.full_refresh_from_optic)
         self.connector.optimizationVariablesChanged.connect(
@@ -350,6 +357,13 @@ class LensEditor(QWidget):
         if self.open_prop_source_row != -1 and ui_row > self.open_prop_source_row:
             return ui_row - 1
         return ui_row
+
+    def _update_surface_selection(self):
+        indices = (
+            self.map_ui_row_to_surface_index(index.row())
+            for index in self.tableWidget.selectionModel().selectedRows()
+        )
+        self.interaction_state.set_selected_indices(indices)
 
     def map_surface_index_to_ui_row(self, surface_index):
         if (
@@ -438,6 +452,7 @@ class LensEditor(QWidget):
 
     @Slot()
     def load_data(self):
+        self.interaction_state.sync_document(self.connector.get_optic())
         self.tableWidget.blockSignals(True)
         self.tableWidget.setRowCount(0)
         num_surfaces = self.connector.get_surface_count()
@@ -449,7 +464,17 @@ class LensEditor(QWidget):
         if self.open_prop_source_row != -1 and self.open_prop_source_row < num_surfaces:
             self._insert_properties_widget(self.open_prop_source_row)
 
+        for surface in self.interaction_state.selected_surfaces:
+            index = self.interaction_state.index_of(surface)
+            ui_row = self.map_surface_index_to_ui_row(index)
+            model_index = self.tableWidget.model().index(ui_row, 0)
+            self.tableWidget.selectionModel().select(
+                model_index, QItemSelectionModel.Select | QItemSelectionModel.Rows
+            )
+
         self.tableWidget.blockSignals(False)
+        if hasattr(self, "hover_tracker"):
+            self.hover_tracker.refresh()
 
     def _insert_properties_widget(self, source_row):
         prop_row_index = source_row + 1
