@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 import vtk
+from vtk.util.numpy_support import numpy_to_vtk, numpy_to_vtkIdTypeArray
 
 import optiland.backend as be
 from optiland.physical_apertures import RadialAperture
@@ -222,13 +223,7 @@ class Surface3D(Surface2D):
         return actor
 
     def _get_asymmetric_surface(self):
-        """Generates an asymmetric surface using Delaunay triangulation and
-        returns a VTK actor for rendering.
-
-        This method computes the 3D sag values, creates a VTK poly data object
-        to store the points, applies Delaunay triangulation to generate a
-        surface mesh, maps the surface to a VTK actor, configures the actor's
-        material properties, and converts the actor to global coordinates.
+        """Build a clipped quad grid with bulk VTK point/connectivity arrays.
 
         Returns:
             vtk.vtkActor: A VTK actor representing the asymmetric surface.
@@ -246,34 +241,29 @@ class Surface3D(Surface2D):
             r = np.hypot(x, y)
             mask = r <= be.to_numpy(self.extent)
 
-        # Create VTK points.
+        # Preserve the original row-major vertex order and vtkPoints float32
+        # precision, but avoid one Python/VTK call per coordinate and quad.
         points = vtk.vtkPoints()
         num_rows, num_cols = x.shape
-
-        # Map grid indices to point IDs
-        point_ids = -np.ones((num_rows, num_cols), dtype=int)
-        for i in range(num_rows):
-            for j in range(num_cols):
-                point_ids[i, j] = points.InsertNextPoint(x[i, j], y[i, j], z[i, j])
-
-        # Create cells (quads) for the surface
-        # Only include a quad if all four of its vertices lie inside aperture
+        coordinates = np.column_stack((x.ravel(), y.ravel(), z.ravel()))
+        points.SetData(numpy_to_vtk(coordinates.astype(np.float32), deep=True))
+        point_ids = np.arange(num_rows * num_cols, dtype=np.int64).reshape(x.shape)
+        mask = np.asarray(be.to_numpy(mask), dtype=bool)
+        inside = mask[:-1, :-1] & mask[1:, :-1] & mask[1:, 1:] & mask[:-1, 1:]
+        quads = np.column_stack(
+            (
+                point_ids[:-1, :-1][inside],
+                point_ids[1:, :-1][inside],
+                point_ids[1:, 1:][inside],
+                point_ids[:-1, 1:][inside],
+            )
+        ).ravel()
+        offsets = np.arange(0, len(quads) + 1, 4, dtype=np.int64)
         cells = vtk.vtkCellArray()
-        for i in range(num_rows - 1):
-            for j in range(num_cols - 1):
-                # Check the four corners of the cell.
-                if (
-                    mask[i, j]
-                    and mask[i + 1, j]
-                    and mask[i + 1, j + 1]
-                    and mask[i, j + 1]
-                ):
-                    quad = vtk.vtkQuad()
-                    quad.GetPointIds().SetId(0, point_ids[i, j])
-                    quad.GetPointIds().SetId(1, point_ids[i + 1, j])
-                    quad.GetPointIds().SetId(2, point_ids[i + 1, j + 1])
-                    quad.GetPointIds().SetId(3, point_ids[i, j + 1])
-                    cells.InsertNextCell(quad)
+        cells.SetData(
+            numpy_to_vtkIdTypeArray(offsets, deep=True),
+            numpy_to_vtkIdTypeArray(quads, deep=True),
+        )
 
         polydata = vtk.vtkPolyData()
         polydata.SetPoints(points)

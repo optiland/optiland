@@ -230,6 +230,78 @@ class TestThinLensInteractionModel:
         )
         assert_allclose(rays.opd, rays.opd[0], atol=1e-10)
 
+    @pytest.mark.parametrize("start_z", [0.0, 5.0], ids=["at_lens", "virtual"])
+    def test_surface_phase_with_virtual_propagation(
+        self, start_z: float, set_test_backend
+    ) -> None:
+        """Lens phase equalizes focal OPL even after virtual incident travel."""
+        air = IdealMaterial(1.0)
+        lens = Surface(
+            None,
+            air,
+            Plane(CoordinateSystem()),
+            interaction_model=ThinLensInteractionModel(None, 20.0, False),
+        )
+        focus = Surface(lens, air, Plane(CoordinateSystem(z=20.0)))
+        rays = RealRays(
+            x=be.zeros(2),
+            y=be.array([0.0, 3.0]),
+            z=be.full(2, start_z),
+            L=be.zeros(2),
+            M=be.zeros(2),
+            N=be.ones(2),
+            intensity=be.ones(2),
+            wavelength=be.full(2, 0.55),
+        )
+
+        lens.trace(rays)
+        assert_allclose(rays.z, 0.0, rtol=0, atol=1e-12)
+        focus.trace(rays)
+
+        assert_allclose(rays.x, 0.0, rtol=0, atol=1e-12)
+        assert_allclose(rays.y, 0.0, rtol=0, atol=1e-12)
+        assert_allclose(rays.z, 20.0, rtol=0, atol=1e-12)
+        # The lens compensates the longer off-axis path to the same focus.
+        assert_allclose(rays.opd, rays.opd[0], rtol=0, atol=1e-12)
+        # The axial ray has zero lens phase and travels 20 - start_z in air.
+        assert_allclose(rays.opd, 20.0 - start_z, rtol=0, atol=1e-12)
+
+    @pytest.mark.parametrize("focal_length", [-40.0, 40.0], ids=["virtual", "real"])
+    def test_equal_opl_at_virtual_and_real_focus(
+        self, focal_length: float, set_test_backend
+    ) -> None:
+        """Lens phase equalizes pupil-dependent travel to either kind of focus."""
+        air = IdealMaterial(1.0)
+        lens = Surface(
+            None,
+            air,
+            Plane(CoordinateSystem()),
+            interaction_model=ThinLensInteractionModel(None, focal_length, False),
+        )
+        focus = Surface(lens, air, Plane(CoordinateSystem(z=focal_length)))
+        rays = RealRays(
+            x=be.zeros(3),
+            y=be.array([0.0, 3.0, 7.0]),
+            z=be.full(3, -5.0),
+            L=be.zeros(3),
+            M=be.zeros(3),
+            N=be.ones(3),
+            intensity=be.ones(3),
+            wavelength=be.full(3, 0.55),
+        )
+
+        lens.trace(rays)
+        focus.trace(rays)
+
+        assert_allclose(rays.x, 0.0, rtol=0, atol=1e-12)
+        assert_allclose(rays.y, 0.0, rtol=0, atol=1e-12)
+        assert_allclose(rays.z, focal_length, rtol=0, atol=1e-12)
+        # Equal phase at the ideal focus includes the signed off-axis paths.
+        assert_allclose(rays.opd, rays.opd[0], rtol=0, atol=1e-12)
+        # The axial ray has zero lens phase: 5 mm incident plus oriented f.
+        # For these ~40 mm float64 paths, 1e-12 mm allows only roundoff.
+        assert_allclose(rays.opd, 5.0 + focal_length, rtol=0, atol=1e-12)
+
     def test_flip(self, surface):
         f_initial = be.copy(surface.interaction_model.f)
         surface.interaction_model.flip()

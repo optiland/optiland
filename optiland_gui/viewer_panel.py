@@ -10,10 +10,9 @@ plots and `VTKViewer` for 3D rendering.
 
 from __future__ import annotations
 
-import matplotlib
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from PySide6.QtCore import Qt, Slot
+from PySide6.QtCore import Qt, QTimer, Slot
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -41,14 +40,10 @@ except ImportError:
 
 from typing import TYPE_CHECKING
 
-from optiland.visualization.analysis.surface_sag import SurfaceSagViewer
-from optiland.visualization.system.rays import Rays2D, Rays3D
-from optiland.visualization.system.system import (
-    OpticalSystem as OptilandOpticalSystemPlotter,
-)
-
 from . import gui_plot_utils
 from .analysis_panel import CustomMatplotlibToolbar
+from .layout_presenter import present_2d, present_3d, present_sag
+from .widgets.layout_job_view import LayoutJobView
 
 if TYPE_CHECKING:
     from .optiland_connector import OptilandConnector
@@ -104,7 +99,7 @@ class SagViewer(QWidget):
         for action in self.toolbar.actions():
             if action.toolTip() == "Reset original view":
                 action.triggered.disconnect()
-                action.triggered.connect(self.plot_sag)
+                action.triggered.connect(self.reset_view)
                 break
 
         # --- Cursor Coordinate Label ---
@@ -161,10 +156,24 @@ class SagViewer(QWidget):
         main_layout.addWidget(self.settings_area)
 
         # Initial setup
+        self.layout_job = LayoutJobView(
+            self, "sag", plot_layout, self._layout_parameters, self._present_layout
+        )
         self.connector.opticChanged.connect(self.update_surface_range)
         self.update_surface_range()
-        self.plot_sag()
+        self.layout_job.redraw()
         self.update_theme()
+
+    def _layout_parameters(self):
+        return {
+            "surface_index": self.surface_selector.value(),
+            "x_cross_section": self.x_cross_section.value(),
+            "y_cross_section": self.y_cross_section.value(),
+            "max_extent": self.maxExtentSpinBox.value(),
+        }
+
+    def _present_layout(self, data, context, restyle=False):
+        present_sag(self, data, context, restyle)
 
     def _toggle_settings(self, checked):
         """Toggle the visibility of the settings panel."""
@@ -203,41 +212,19 @@ class SagViewer(QWidget):
     def update_theme(self, theme="dark"):
         self.current_theme = theme
         self.settings_toggle_btn.setIcon(QIcon(f":/icons/{theme}/settings.svg"))
-        self.plot_sag()
+        self.layout_job.redraw()
 
     @Slot()
     def plot_sag(self):
-        gui_plot_utils.apply_gui_matplotlib_styles(theme=self.current_theme)
-        optic = self.connector.get_optic()
-        surface_index = self.surface_selector.value()
-        self.figure.clear()
+        """Request a visible sag update without evaluating geometry on Qt."""
+        self.layout_job.request()
 
-        if not optic or not (0 <= surface_index < optic.surface_group.num_surfaces):
-            ax = self.figure.add_subplot(111)
-            ax.text(
-                0.5,
-                0.5,
-                f"Invalid Surface Index: {surface_index}",
-                ha="center",
-                va="center",
-            )
-            self.canvas.draw()
-            return
-
-        # Use the existing backend SurfaceSagViewer class
-        viewer = SurfaceSagViewer(optic)
-
-        # Call its view method, passing our figure to be plotted on
-        viewer.view(
-            surface_index=surface_index,
-            y_cross_section=self.y_cross_section.value(),
-            x_cross_section=self.x_cross_section.value(),
-            max_extent=self.maxExtentSpinBox.value(),
-            fig_to_plot_on=self.figure,
-        )
-
-        # Redraw our canvas
-        self.canvas.draw()
+    def reset_view(self):
+        """Fit the retained sag data without rerunning surface calculations."""
+        if self.layout_job.data is not None:
+            self.layout_job.redraw()
+        else:
+            self.layout_job.request()
 
 
 class ViewerPanel(QWidget):
@@ -454,6 +441,10 @@ class MatplotlibViewer(QWidget):
         self._pan_start_y = None
         self._is_panning = False
 
+        self._preserve_next = False
+        self.layout_job = LayoutJobView(
+            self, "2d", self.layout, self._layout_parameters, self._present_layout
+        )
         self.plot_optic()
         self.update_theme()
 
@@ -463,9 +454,13 @@ class MatplotlibViewer(QWidget):
             self._user_initiated_view_change = True
 
     def reset_view(self):
-        """Resets the view to the default 1:1 aspect ratio and zoom."""
+        """Fit retained geometry without launching another optical calculation."""
         self._user_initiated_view_change = False
-        self.plot_optic(preserve_zoom=False)
+        self._preserve_next = False
+        if self.layout_job.data is not None:
+            self._present_layout(self.layout_job.data, self.layout_job.context)
+        else:
+            self.layout_job.request()
 
     def on_mouse_button_press(self, event):
         """
@@ -572,110 +567,22 @@ class MatplotlibViewer(QWidget):
         if self.current_theme != theme:
             self.current_theme = theme
             gui_plot_utils.apply_gui_matplotlib_styles(theme=self.current_theme)
-            self.plot_optic()
+            self.layout_job.redraw()
         self.settings_toggle_btn.setIcon(QIcon(f":/icons/{theme}/settings.svg"))
 
+    def _layout_parameters(self):
+        return {
+            "num_rays": self.num_rays_spinbox.value(),
+            "distribution": self.dist_combo.currentText(),
+        }
+
+    def _present_layout(self, data, context, restyle=False):
+        present_2d(self, data, context, restyle)
+
     def plot_optic(self, preserve_zoom=False):
-        """
-        Clears the current plot and redraws the optical system.
-
-        This method retrieves the current optical system from the connector and
-        uses Optiland's plotting utilities to generate a 2D layout.
-
-        Args:
-            preserve_zoom (bool): If True, maintains the current view
-            limits after redrawing.
-        """
-        self._is_plotting = True
-        try:
-            gui_plot_utils.apply_gui_matplotlib_styles(theme=self.current_theme)
-
-            should_preserve_limits = preserve_zoom or self._user_initiated_view_change
-            xlim = self.ax.get_xlim() if should_preserve_limits else None
-            ylim = self.ax.get_ylim() if should_preserve_limits else None
-
-            self.ax.clear()
-            face_color = matplotlib.rcParams["figure.facecolor"]
-            self.figure.set_facecolor(face_color)
-            self.ax.set_facecolor(face_color)
-
-            optic = self.connector.get_optic()
-            num_rays = self.num_rays_spinbox.value()
-            distribution = self.dist_combo.currentText()
-            if optic and optic.surface_group.num_surfaces > 0:
-                try:
-                    rays2d_plotter = Rays2D(optic)
-                    system_plotter = OptilandOpticalSystemPlotter(
-                        optic, rays2d_plotter, projection="2d"
-                    )
-                    from optiland.visualization.themes import get_active_theme
-
-                    theme = get_active_theme()
-                    rays2d_plotter.plot(
-                        self.ax,
-                        fields="all",
-                        wavelengths="primary",
-                        num_rays=num_rays,
-                        distribution=distribution,
-                        theme=theme,
-                    )
-                    system_plotter.plot(self.ax, theme=theme)
-                    self.ax.set_title(
-                        f"System: {optic.name} (2D)",
-                        color=matplotlib.rcParams["text.color"],
-                    )
-                    self.ax.set_xlabel("Z-axis (mm)")
-                    self.ax.set_ylabel("Y-axis (mm)")
-                    self.ax.grid(True, linestyle="--", alpha=0.7)
-
-                    if should_preserve_limits and xlim is not None and ylim is not None:
-                        self.ax.set_xlim(xlim)
-                        self.ax.set_ylim(ylim)
-                        self.ax.set_aspect("auto")
-                    else:
-                        fig_width, fig_height = self.figure.get_size_inches()
-                        widget_aspect = fig_height / fig_width
-
-                        xlim_data = self.ax.get_xlim()
-                        ylim_data = self.ax.get_ylim()
-                        x_range = xlim_data[1] - xlim_data[0]
-                        y_range = ylim_data[1] - ylim_data[0]
-
-                        if x_range == 0:
-                            x_range = 1e-6
-                        if y_range == 0:
-                            y_range = 1e-6
-
-                        data_aspect = y_range / x_range
-
-                        # determine which axis to expand to achieve equal aspect ratio
-                        if data_aspect < widget_aspect:
-                            # expand Y
-                            y_center = (ylim_data[0] + ylim_data[1]) / 2
-                            new_y_range = x_range * widget_aspect
-                            self.ax.set_ylim(
-                                y_center - new_y_range / 2, y_center + new_y_range / 2
-                            )
-                        else:
-                            # expand X
-                            x_center = (xlim_data[0] + xlim_data[1]) / 2
-                            new_x_range = y_range / widget_aspect
-                            self.ax.set_xlim(
-                                x_center - new_x_range / 2, x_center + new_x_range / 2
-                            )
-
-                        self.ax.set_aspect("equal")
-
-                except Exception:
-                    self.ax.text(
-                        0.5, 0.5, "Error plotting system", ha="center", va="center"
-                    )
-            else:
-                self.ax.text(0.5, 0.5, "No system loaded", ha="center", va="center")
-
-            self.canvas.draw()
-        finally:
-            self._is_plotting = False
+        """Request the latest visible layout; calculation belongs to its worker."""
+        self._preserve_next = bool(preserve_zoom)
+        self.layout_job.request()
 
 
 class VTKViewer(QWidget):
@@ -702,6 +609,8 @@ class VTKViewer(QWidget):
         super().__init__(parent)
 
         self.connector = connector
+        self.current_theme = "dark"
+        self._has_scene = False
         if not VTK_AVAILABLE:
             self.layout = QVBoxLayout(self)
             self.layout.addWidget(QLabel("VTK is not available."))
@@ -716,7 +625,29 @@ class VTKViewer(QWidget):
         self.iren = self.vtkWidget.GetRenderWindow().GetInteractor()
         self.iren.SetInteractorStyle(vtk.vtkInteractorStyleTrackballCamera())
         self.setup_default_camera()
-        self.iren.Initialize()
+        self._initialized = False
+        self.layout_job = LayoutJobView(
+            self, "3d", self.layout, self._layout_parameters, self._present_layout
+        )
+
+    def _layout_parameters(self):
+        return {}
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Context initialization can incur a native driver startup cost. Keep it
+        # separate from result installation and never initialize a hidden tab.
+        if VTK_AVAILABLE and not self._initialized:
+            QTimer.singleShot(0, self._initialize_interactor)
+
+    @Slot()
+    def _initialize_interactor(self):
+        if self.isVisible() and not self._initialized:
+            self.iren.Initialize()
+            self._initialized = True
+
+    def _present_layout(self, data, context, restyle=False):
+        present_3d(self, data, context, restyle)
 
     def setup_default_camera(self):
         """Sets up the default camera position and orientation for the 3D view."""
@@ -731,98 +662,12 @@ class VTKViewer(QWidget):
             camera.Azimuth(150)
 
     def update_theme(self, theme="dark"):
-        """
-        Updates the background color of the VTK renderer based on the theme.
-
-        Args:
-            theme (str, optional): The theme name ('dark' or 'light').
-                                   Defaults to "dark".
-        """
-        from matplotlib.colors import to_rgb
-
-        from optiland.visualization.themes import get_active_theme, set_theme
-
-        set_theme(theme)
-        theme = get_active_theme()
-        background = to_rgb(theme.parameters["axes.facecolor"])
-        self.renderer.SetBackground(*background)
-        self.vtkWidget.GetRenderWindow().Render()
+        """Restyle retained scene data and defer native rendering for hidden tabs."""
+        self.current_theme = theme
+        if VTK_AVAILABLE:
+            self.layout_job.redraw()
 
     def render_optic(self):
-        """
-        Clears the current scene and re-renders the optical system in 3D.
-
-        This method retrieves the current optical system and uses Optiland's
-        VTK plotting utilities to generate the 3D visualization.
-        """
-        if not VTK_AVAILABLE:
-            return
-
-        self.renderer.RemoveAllViewProps()
-        optic = self.connector.get_optic()
-
-        # Check if optic has surfaces and a valid aperture
-        if (
-            optic
-            and optic.surface_group.num_surfaces > 0
-            and hasattr(optic, "aperture")
-            and optic.aperture is not None
-        ):
-            try:
-                rays3d_plotter = Rays3D(optic)
-                system_plotter = OptilandOpticalSystemPlotter(
-                    optic, rays3d_plotter, projection="3d"
-                )
-
-                from optiland.visualization.themes import get_active_theme
-
-                theme = get_active_theme()
-                rays3d_plotter.plot(
-                    self.renderer,
-                    fields="all",
-                    wavelengths="primary",
-                    num_rays=24,
-                    distribution="ring",
-                    theme=theme,
-                )
-
-                system_plotter.plot(self.renderer, theme=theme)
-
-                if not self.renderer.GetActiveCamera():
-                    self.setup_default_camera()
-                else:
-                    self.renderer.ResetCameraClippingRange()
-                    self.renderer.ResetCamera()
-
-            except Exception as e:
-                print(f"VTKViewer Error: {e}")
-                textActor = vtk.vtkTextActor()
-                textActor.SetInput(f"Error rendering 3D view:\n{e}")
-                textActor.GetTextProperty().SetColor(1, 0, 0)
-                self.renderer.AddActor2D(textActor)
-        else:
-            # Display a message if the optic doesn't have a valid aperture
-            if (
-                optic
-                and optic.surface_group.num_surfaces > 0
-                and (not hasattr(optic, "aperture") or optic.aperture is None)
-            ):
-                textActor = vtk.vtkTextActor()
-                textActor.SetInput("Please set an aperture in System Properties.")
-                textActor.GetTextProperty().SetColor(1, 0, 0)
-                self.renderer.AddActor2D(textActor)
-
-            # Add a default sphere for empty systems
-            sphereSource = vtk.vtkSphereSource()
-            sphereSource.SetRadius(0.1)
-            mapper = vtk.vtkPolyDataMapper()
-            mapper.SetInputConnection(sphereSource.GetOutputPort())
-            actor = vtk.vtkActor()
-            actor.SetMapper(mapper)
-            self.renderer.AddActor(actor)
-            if not self.renderer.GetActiveCamera():
-                self.setup_default_camera()
-            else:
-                self.renderer.ResetCamera()
-
-        self.vtkWidget.GetRenderWindow().Render()
+        """Request 3D geometry only when this viewer is visible."""
+        if VTK_AVAILABLE:
+            self.layout_job.request()

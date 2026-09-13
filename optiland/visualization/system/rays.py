@@ -13,6 +13,10 @@ import vtk
 import optiland.backend as be
 from optiland.utils import resolve_fields, resolve_wavelengths
 from optiland.visualization.system.ray_bundle import RayBundle
+from optiland.visualization.system.ray_path import (
+    neutral_reference_mask,
+    physical_ray_path,
+)
 from optiland.visualization.system.utils import transform
 
 
@@ -218,21 +222,8 @@ class Rays2D:
         """
         artists = {}
         bundle_id = f"bundle_{color_idx}"
-        # loop through rays
-        for k in range(self.z.shape[1]):
-            xk = be.to_numpy(self.x[:, k])
-            yk = be.to_numpy(self.y[:, k])
-            zk = be.to_numpy(self.z[:, k])
-            ik = be.to_numpy(self.i[:, k])
-
-            if np.any(ik == 0):
-                if hide_vignetted:
-                    continue
-                first_zero_idx = np.where(ik == 0)[0][0]
-                xk[first_zero_idx + 1 :] = np.nan
-                yk[first_zero_idx + 1 :] = np.nan
-                zk[first_zero_idx + 1 :] = np.nan
-
+        for path in self._iter_physical_paths(hide_vignetted):
+            xk, yk, zk = path.T
             artist, ray_bundle = self._plot_single_line(
                 ax,
                 xk,
@@ -247,6 +238,22 @@ class Rays2D:
             ray_bundle.bundle_id = bundle_id
             artists[artist] = ray_bundle
         return artists
+
+    def _iter_physical_paths(self, hide_vignetted=False):
+        """Yield shared 3D polylines for both display backends."""
+        neutral = neutral_reference_mask(list(self.optic.surfaces))
+        x, y, z, intensity = (
+            be.to_numpy(values) for values in (self.x, self.y, self.z, self.i)
+        )
+        for index in range(z.shape[1]):
+            path = physical_ray_path(
+                np.column_stack((x[:, index], y[:, index], z[:, index])),
+                intensity[:, index],
+                neutral,
+                hide_vignetted=hide_vignetted,
+            )
+            if len(path):
+                yield path
 
     def _plot_single_line(
         self, ax, x, y, z, color_idx, field, linewidth=1, theme=None, projection="YZ"
@@ -382,21 +389,8 @@ class Rays3D(Rays2D):
     def _plot_lines(
         self, ax, color_idx, field, linewidth=1, theme=None, hide_vignetted=False
     ):
-        # loop through rays
-        for k in range(self.z.shape[1]):
-            xk = be.to_numpy(self.x[:, k])
-            yk = be.to_numpy(self.y[:, k])
-            zk = be.to_numpy(self.z[:, k])
-            ik = be.to_numpy(self.i[:, k])
-
-            if np.any(ik == 0):
-                if hide_vignetted:
-                    continue
-                first_zero_idx = np.where(ik == 0)[0][0]
-                xk[first_zero_idx + 1 :] = np.nan
-                yk[first_zero_idx + 1 :] = np.nan
-                zk[first_zero_idx + 1 :] = np.nan
-
+        for path in self._iter_physical_paths(hide_vignetted):
+            xk, yk, zk = path.T
             self._plot_single_line(
                 ax, xk, yk, zk, color_idx, field, linewidth, theme=theme
             )

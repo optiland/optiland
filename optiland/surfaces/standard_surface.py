@@ -299,7 +299,9 @@ class Surface(ObserverMixin):
         """
         t = _aperture_aware_distance(self, rays)
         self.material_pre.propagation_model.propagate(rays, t)
-        rays.opd = rays.opd + be.abs(t * self.material_pre.n(rays.w))
+        # t is oriented along the ray: virtual propagation subtracts OPL.
+        # Real return paths after reflection still have t > 0 and add OPL.
+        rays.opd = rays.opd + t * self.material_pre.n(rays.w)
         if self.aperture:
             self.aperture.clip(rays)
         rays = self.interaction_model.interact_real_rays(rays)

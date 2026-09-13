@@ -23,6 +23,7 @@ from PySide6.QtCore import (
     QPropertyAnimation,
     QSettings,
     Qt,
+    QTimer,
     Slot,
 )
 from PySide6.QtGui import QAction, QIcon, QKeySequence, QResizeEvent, QShortcut
@@ -873,11 +874,24 @@ class MainWindow(FramelessWindow):
         self._load_layout_from_slot(2)
 
     def closeEvent(self, event: QEvent) -> None:
-        """Shut down the Jupyter kernel and accept the close event."""
+        """Revoke calculations and wait asynchronously before destroying Qt owners."""
+        if not getattr(self, "_calculation_shutdown_complete", False):
+            event.ignore()
+            if not getattr(self, "_calculation_shutdown_requested", False):
+                self._calculation_shutdown_requested = True
+                jobs = self.connector.calculation_jobs
+                jobs.stopped.connect(self._calculations_stopped)
+                jobs.shutdown()
+            return
         logger.debug("Closing application.")
         if hasattr(self, "panel_manager") and self.panel_manager.python_terminal:
             self.panel_manager.python_terminal.shutdown_kernel()
         event.accept()
+
+    @Slot()
+    def _calculations_stopped(self) -> None:
+        self._calculation_shutdown_complete = True
+        QTimer.singleShot(0, self.close)
 
     @Slot()
     def show_settings_wip(self):

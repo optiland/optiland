@@ -14,6 +14,7 @@ from PySide6.QtCore import QObject, Signal
 
 from optiland.optic import Optic
 from optiland_gui.services.analysis_runner import AnalysisRunner
+from optiland_gui.services.calculation_jobs import CalculationJobs, DocumentState
 from optiland_gui.services.file_service import (
     FileService,
     SpecialFloatEncoder,  # re-exported for backward compat
@@ -76,6 +77,12 @@ class OptilandConnector(QObject):
 
     def __init__(self) -> None:
         super().__init__()
+
+        # Invalidate before any panel handles the same synchronous notification.
+        self.document_state = DocumentState(self)
+        self.opticLoaded.connect(self.document_state.replace)
+        self.opticChanged.connect(self.document_state.change)
+        self.calculation_jobs = CalculationJobs(self.document_state, self)
 
         self._optic = Optic("Default System")
         self._undo_redo_manager = UndoRedoManager(self)

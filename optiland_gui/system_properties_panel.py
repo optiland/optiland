@@ -632,10 +632,16 @@ class PolarizationEditor(PropertyEditorBase):
 
         self.btnApply = QPushButton("Apply Polarization")
         main_layout.addWidget(self.btnApply)
+        self.lblApplied = QLabel()
+        self.lblApplied.setWordWrap(True)
+        main_layout.addWidget(self.lblApplied)
         main_layout.addStretch()
 
         self.cmbMode.currentIndexChanged.connect(self._on_mode_changed)
         self.btnApply.clicked.connect(self.apply_polarization)
+        self.cmbMode.currentIndexChanged.connect(self.lblApplied.clear)
+        for control in (self.spnEx, self.spnEy, self.spnPhaseX, self.spnPhaseY):
+            control.valueChanged.connect(self.lblApplied.clear)
 
         self._set_inputs_enabled(False)
 
@@ -751,6 +757,9 @@ class PolarizationEditor(PropertyEditorBase):
             )
             # Reload to display the normalized values the core computed
             self.load_data()
+            self.lblApplied.setText(
+                "Polarization applied. View updates are shown in the System Viewer."
+            )
         except ValueError as exc:
             self.lblError.setText(str(exc))
             self.lblError.show()

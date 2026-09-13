@@ -11,6 +11,7 @@ from mpl_toolkits.mplot3d import Axes3D
 
 import optiland.backend as be
 from optiland import distribution
+from optiland.materials import IdealMaterial
 from optiland.optic import Optic
 from optiland.samples.eyepieces import EyepieceErfle
 from optiland.samples.objectives import CookeTriplet, DoubleGauss
@@ -142,6 +143,66 @@ class TestOPD:
         opd = OPD(optic, (0, 1), 0.55)
         rms = opd.rms()
         assert_allclose(rms, 0.9709788038168692)
+
+    def test_virtual_dummy_planes_preserve_wavefront(self, set_test_backend) -> None:
+        """Index-matched virtual detours preserve the finite-object wavefront."""
+        optics = []
+        wavefronts = []
+        # Stop-relative paths: 0 -> 20 versus 0 -> 10 -> 5 -> 20 mm.
+        for thicknesses in ([100.0, 20.0], [100.0, 10.0, -5.0, 15.0]):
+            optic = Optic()
+            medium = IdealMaterial(1.5)
+            for index, thickness in enumerate(thicknesses):
+                optic.surfaces.add(
+                    index=index,
+                    thickness=thickness,
+                    material=medium,
+                    is_stop=index == 1,
+                )
+            optic.surfaces.add(index=len(thicknesses), material=medium)
+            optic.set_aperture("EPD", 4.0)
+            optic.fields.set_type("object_height")
+            optic.fields.add(y=0.0)
+            optic.wavelengths.add(0.55, is_primary=True)
+
+            analysis = OPD(
+                optic,
+                (0.0, 0.0),
+                0.55,
+                num_rays=6,
+                strategy="chief_ray",
+                afocal=True,
+                remove_tilt=False,
+            )
+            data = analysis.get_data((0.0, 0.0), 0.55)
+            assert be.size(data.opd) > 1
+            assert be.all(data.intensity > 0)
+            assert be.all(be.isfinite(data.opd))
+            # Angular diversity makes the virtual-path error pupil-dependent.
+            final_ns = optic.surfaces.N[-1]
+            assert be.max(final_ns) - be.min(final_ns) > 1e-6
+            optics.append(optic)
+            wavefronts.append(data)
+
+        direct, detour = optics
+        for component in ("x", "y", "z", "L", "M", "N"):
+            assert_allclose(
+                getattr(direct.surfaces, component)[-1],
+                getattr(detour.surfaces, component)[-1],
+                rtol=0,
+                atol=1e-12,
+            )
+        for component in ("pupil_x", "pupil_y"):
+            assert_allclose(
+                getattr(wavefronts[0], component),
+                getattr(wavefronts[1], component),
+                rtol=0,
+                atol=1e-12,
+            )
+        # Subtracting ~180 mm paths in float64 then dividing by 0.00055 mm
+        # amplifies roundoff to ~1e-10 waves; 1e-9 allows a few dozen ulps.
+        # The direct finite-object wavefront need not itself be flat.
+        assert_allclose(wavefronts[0].opd, wavefronts[1].opd, rtol=0, atol=1e-9)
 
 
 class TestZernikeOPD:
