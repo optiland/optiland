@@ -102,30 +102,30 @@ from optiland import optic
 lens = optic.Optic()
 
 # Define lens surfaces
-lens.add_surface(index=0, radius=np.inf, thickness=np.inf)  # Object plane
-lens.add_surface(index=1, radius=+22.01359, thickness=3.25896, material="SK16")
-lens.add_surface(index=2, radius=-435.7604, thickness=6.00755)
-lens.add_surface(index=3, radius=-22.21328, thickness=0.99997, material=("F2", "schott"))
-lens.add_surface(index=4, radius=+20.29192, thickness=4.75041, is_stop=True)
-lens.add_surface(index=5, radius=+79.68360, thickness=2.95208, material="SK16")
-lens.add_surface(index=6, radius=-18.39533, thickness=42.2077)
-lens.add_surface(index=7)
+lens.surfaces.add(index=0, radius=np.inf, thickness=np.inf)  # Object plane
+lens.surfaces.add(index=1, radius=+22.01359, thickness=3.25896, material="SK16")
+lens.surfaces.add(index=2, radius=-435.7604, thickness=6.00755)
+lens.surfaces.add(index=3, radius=-22.21328, thickness=0.99997, material=("F2", "schott"))
+lens.surfaces.add(index=4, radius=+20.29192, thickness=4.75041, is_stop=True)
+lens.surfaces.add(index=5, radius=+79.68360, thickness=2.95208, material="SK16")
+lens.surfaces.add(index=6, radius=-18.39533, thickness=42.2077)
+lens.surfaces.add(index=7)
 
 # Add an aperture
 lens.set_aperture(aperture_type="EPD", value=10)
 
 # Add fields
-lens.set_field_type(field_type="angle")
-lens.add_field(y=0)
-lens.add_field(y=14)
-lens.add_field(y=20)
+lens.fields.set_type(field_type="angle")
+lens.fields.add(y=0)
+lens.fields.add(y=14)
+lens.fields.add(y=20)
 
 # Add wavelengths
-lens.add_wavelength(value=0.48)
-lens.add_wavelength(value=0.55, is_primary=True)
-lens.add_wavelength(value=0.65)
+lens.wavelengths.add(value=0.48)
+lens.wavelengths.add(value=0.55, is_primary=True)
+lens.wavelengths.add(value=0.65)
 
-lens.update_paraxial()
+lens.updater.update_paraxial()
 
 # Visualize in 3D (note: this opens a new window)
 lens.draw3D()
@@ -142,7 +142,7 @@ from optiland import optimization
 problem = optimization.OptimizationProblem()
 
 # Set all radii as variables
-for k in range(1, lens.surface_group.num_surfaces - 1):
+for k in range(1, lens.surfaces.num_surfaces - 1):
     problem.add_variable(lens, "radius", surface_number=k)
 
 # Set all thicknesses as variables
