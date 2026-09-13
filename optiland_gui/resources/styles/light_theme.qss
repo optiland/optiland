@@ -295,15 +295,6 @@ QLineEdit:focus, QDoubleSpinBox:focus, QComboBox:focus {
 QLineEdit:read-only {
     background-color: #E9ECEF; /* --toolbar-sidebar-bg: Background for read-only fields */
 }
-QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { /* Buttons for QDoubleSpinBox */
-    border: 1px solid #CED4DA; /* --border-pressed-bg */
-    background-color: #E9ECEF; /* --toolbar-sidebar-bg */
-    min-width: 16px;
-}
-QDoubleSpinBox::up-arrow, QDoubleSpinBox::down-arrow { /* Arrows within spinbox buttons */
-     width: 7px; height: 7px;
-     /* Consider using themed SVG icons */
-}
 QComboBox::down-arrow { /* Style for the dropdown arrow area of QComboBox */
     border: 1px solid #CED4DA; /* --border-pressed-bg */
     background-color: #E9ECEF; /* --toolbar-sidebar-bg */
@@ -768,4 +759,10 @@ QSpinBox:focus,
 QDoubleSpinBox:focus {
     border: 1.5px solid #007ACC;
     outline: none;
+}
+
+/* Reserve text padding for both native Windows 11 arrow hit areas, scaling
+   with the control's font metrics. Keep arrow painting with the native style. */
+QSpinBox, QDoubleSpinBox {
+    padding-right: 2em;
 }
