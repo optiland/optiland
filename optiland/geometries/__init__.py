@@ -34,8 +34,6 @@ __all__ = [
     "BiconicGeometry",
     # From chebyshev.py
     "ChebyshevPolynomialGeometry",
-    # From forbes.py
-    "ForbesGeometry",
     # From even_asphere.py
     "EvenAsphere",
     # From newton_raphson.py
