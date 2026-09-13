@@ -801,17 +801,6 @@ class AnalysisPanel(QWidget):
         text = ", ".join(map(str, value)) if isinstance(value, tuple) else str(value)
         widget.setText(text)
 
-    def _set_combobox_value(self, widget, value, param_name):
-        """Sets the value of a QComboBox, dispatching to a special handler if needed."""
-        if param_name in ["fields", "wavelengths", "wavelength"]:
-            self._set_special_combobox_value(widget, value)
-        elif param_name == "axis":
-            widget.setCurrentIndex(0 if value == 1 else 1)
-        else:
-            index = widget.findText(str(value))
-            if index != -1:
-                widget.setCurrentIndex(index)
-
     def _set_special_combobox_value(self, widget, value):
         """Sets the value for a QComboBox that uses itemData."""
         for i in range(widget.count()):
@@ -1056,50 +1045,6 @@ class AnalysisPanel(QWidget):
         for param_name, widget in self.current_settings_widgets.items():
             if param_name in page_args:
                 self._set_widget_value(widget, page_args[param_name], param_name)
-
-    # --- Load/Save Settings ---
-    def _apply_loaded_settings_to_ui(self, loaded_settings):
-        """Applies settings loaded from a file to the current UI widgets."""
-        analysis_name = loaded_settings.get("analysis_name")
-        if not analysis_name:
-            raise ValueError("Settings file does not contain an 'analysis_name'.")
-
-        self.analysisTypeCombo.setCurrentText(analysis_name)
-        self.on_analysis_type_changed(
-            analysis_name
-        )  # Rebuilds the UI for this analysis
-
-        all_args = {
-            **loaded_settings.get("constructor_args", {}),
-            **loaded_settings.get("view_args", {}),
-        }
-
-        for param_name, value in all_args.items():
-            if param_name in self.current_settings_widgets:
-                widget = self.current_settings_widgets[param_name]
-                self._set_widget_value(widget, value)
-
-    @Slot()
-    def _load_analysis_settings_slot(self):
-        """Loads and applies settings for an analysis from a JSON file."""
-        filepath, _ = QFileDialog.getOpenFileName(
-            self, "Load Analysis Settings", "", self.JSON_FILE_FILTER
-        )
-        if not filepath:
-            return
-
-        try:
-            with open(filepath, encoding="utf-8") as f:
-                loaded_settings = json.load(f)
-            self._apply_loaded_settings_to_ui(loaded_settings)
-            self.logArea.append(
-                f"Settings loaded from {filepath}. Click 'Apply' or 'Run' "
-                "to see results."
-            )
-        except Exception as e:
-            QMessageBox.critical(
-                self, "Load Error", f"Could not load or apply settings:\n{e}"
-            )
 
     def _create_new_plot_canvas(self, page_data):
         """Creates a new FigureCanvas and connects mouse interaction events."""
