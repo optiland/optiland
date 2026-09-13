@@ -107,6 +107,13 @@ track their live parameter arrays; changing a parameter invalidates old results.
 Their calculations convert parameters for the active backend without replacing
 the original arrays, preserving existing Torch parameter identity and gradients.
 
+``IdealMaterial.n`` and ``IdealMaterial.k`` retain the dtype of their stored index
+and extinction coefficient, including for array-valued wavelength queries.
+Changing the default backend precision after creating the material does not
+recast these parameters or their returned values. Conversion still follows the
+active backend and device. This preserves mixed-precision calculations such as
+object-space NA with a float64 material and a Python scalar aperture value.
+
 Each concrete custom material opts into caching by implementing ``_cache_state``.
 An immutable model may return ``()``. A mutable model can use
 ``self._state_key((self.parameter, ...))`` for all numerical state used by its

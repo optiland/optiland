@@ -23,6 +23,9 @@ class IdealMaterial(BaseMaterial):
     """Represents an ideal material with a fixed refractive index and extinction
     coefficient for all wavelengths.
 
+    Evaluation preserves each stored parameter's dtype when the backend's default
+    precision changes, while converting to the active backend and device.
+
     Attributes:
         index (float): The refractive index of the material.
         absorp (float): The extinction coefficient of the material.
@@ -56,11 +59,12 @@ class IdealMaterial(BaseMaterial):
             scalar if wavelength is scalar, otherwise an array of the same shape
             as wavelength, filled with the constant refractive index.
         """
+        index = self._as_backend_array(self.index, preserve_dtype=True)[0]
         if be.is_array_like(wavelength) and be.size(wavelength) > 1:
-            # ``be.full_like(w, value)`` reads the value out as a scalar and
-            # detaches it; broadcasting keeps a trainable index attached.
-            return be.ones_like(wavelength) * self._as_backend_array(self.index)[0]
-        return self._as_backend_array(self.index)[0]
+            # Broadcast the parameter itself: multiplying by default-precision
+            # ones can downcast a scalar parameter and lose its precision.
+            return self._broadcast_like(index, wavelength)
+        return index
 
     def _calculate_k(self, wavelength, **kwargs):
         """Returns the extinction coefficient of the material.
@@ -75,11 +79,11 @@ class IdealMaterial(BaseMaterial):
             scalar if wavelength is scalar, otherwise an array of the same shape
             as wavelength, filled with the constant extinction coefficient.
         """
+        absorp = self._as_backend_array(self.absorp, preserve_dtype=True)[0]
         if be.is_array_like(wavelength) and be.size(wavelength) > 1:
-            # Broadcast (rather than full_like) to keep a trainable extinction
-            # coefficient attached to the autograd graph.
-            return be.ones_like(wavelength) * self._as_backend_array(self.absorp)[0]
-        return self._as_backend_array(self.absorp)[0]
+            # A broadcast view preserves both parameter precision and gradients.
+            return self._broadcast_like(absorp, wavelength)
+        return absorp
 
     def to_dict(self):
         """Returns a dictionary representation of the material.
