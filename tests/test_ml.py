@@ -55,40 +55,42 @@ def setup_problem(
     return problem, lens
 
 
+def test_init_runtime_error_wrong_backend():
+    original_backend = be.get_backend()
+    try:
+        be.set_backend("numpy")
+        problem, lens = setup_problem()
+        requirement = "package" if torch is None else "backend"
+        with pytest.raises(RuntimeError, match=f"requires the 'torch' {requirement}"):
+            OpticalSystemModule(lens, problem)
+    finally:
+        be.set_backend(original_backend)
+
+
 def _physical_value(problem, index=0):
     """Return the unscaled value of a problem variable as a float."""
     return float(be.to_numpy(problem.variables[index].variable.get_value()))
 
 
-@pytest.fixture(scope="module", autouse=True)
+@pytest.fixture(scope="module")
 def set_torch_backend():
     """
-    Fixture to ensure the torch backend is set for all tests in this file.
+    Configure Torch for the tests that require the optional backend.
     It will set the backend to torch before the tests run and revert to the
     original backend after all tests are completed.
     """
+    pytest.importorskip("torch")
     original_backend = be.get_backend()
     be.set_backend("torch")
     yield
     be.set_backend(original_backend)
 
 
+@pytest.mark.usefixtures("set_torch_backend")
 class TestOpticalSystemModule:
     """
     Tests for the OpticalSystemModule wrapper class.
     """
-
-    def test_init_runtime_error_wrong_backend(self):
-        """
-        Test that a RuntimeError is raised if the backend is not 'torch'.
-        """
-        original_backend = be.get_backend()
-        be.set_backend("numpy")
-        problem, lens = setup_problem()
-        with pytest.raises(RuntimeError) as e:
-            _ = OpticalSystemModule(lens, problem)
-        assert "requires the 'torch' backend" in str(e.value)
-        be.set_backend(original_backend)  # Reset backend for other tests
 
     def test_init_enables_gradients(self):
         """

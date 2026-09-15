@@ -85,8 +85,8 @@ class TestStringKeyedLookups:
     def test_backend_name(self, set_test_backend):
         current = be.get_backend()
         try:
-            with pytest.raises(ValueError, match="Did you mean: torch"):
-                be.set_backend("torhc")
+            with pytest.raises(ValueError, match="Did you mean: numpy"):
+                be.set_backend("nupmy")
         finally:
             be.set_backend(current)
 

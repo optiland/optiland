@@ -26,7 +26,7 @@ def test_to_numpy_list():
 
 
 def test_to_numpy_torch():
-    import torch
+    torch = pytest.importorskip("torch")
 
     t = torch.tensor([1.0, 2.0])
     res = utils.to_numpy(t)
@@ -35,7 +35,7 @@ def test_to_numpy_torch():
 
 
 def test_to_numpy_list_of_tensors():
-    import torch
+    torch = pytest.importorskip("torch")
 
     lst = [torch.tensor(1.0), torch.tensor(2.0)]
     res = utils.to_numpy(lst)
@@ -52,9 +52,12 @@ def test_to_numpy_unsupported():
 
 
 def test_is_torch_tensor():
-    import torch
+    torch = pytest.importorskip("torch")
 
     t = torch.tensor([1.0])
     assert utils.is_torch_tensor(t)
+
+
+def test_is_torch_tensor_with_non_tensors():
     assert not utils.is_torch_tensor(np.array([1.0]))
     assert not utils.is_torch_tensor(1.0)

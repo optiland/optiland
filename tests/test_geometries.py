@@ -1346,6 +1346,9 @@ class TestZernikeGeometry:
 
         assert_allclose(actual, expected, atol=1e-8)
 
+    @pytest.mark.skipif(
+        "torch" not in be.list_available_backends(), reason="Requires the Torch backend"
+    )
     @pytest.mark.parametrize("set_test_backend", ["torch"], indirect=True)
     def test_surface_normal_at_center_autograd(self, set_test_backend):
         geometry = self.create_geometry(
@@ -2453,12 +2456,12 @@ class TestForbesQbfsGeometry:
         optic.surfaces.add(index=4)
         return optic
 
-    @pytest.mark.parametrize("backend_name", ["torch"])
-    def test_ray_tracing_autodiff_off_axis(self, backend_name):
+    @pytest.mark.skipif(
+        "torch" not in be.list_available_backends(), reason="Requires the Torch backend"
+    )
+    @pytest.mark.parametrize("set_test_backend", ["torch"], indirect=True)
+    def test_ray_tracing_autodiff_off_axis(self, set_test_backend):
         """Tests that ray tracing is differentiable for a general off-axis ray."""
-        be.set_backend(backend_name)
-        if be.get_backend() != "torch":
-            pytest.skip("Autodiff test requires the torch backend.")
 
         optic = self._create_forbes_autodiff_optic()
         forbes_surface = optic.surfaces[3].geometry
@@ -2481,15 +2484,15 @@ class TestForbesQbfsGeometry:
         assert any(g is not None and be.to_numpy(g) != 0 for g in grads)
 
     # --- NEW TEST ADDED ---
-    @pytest.mark.parametrize("backend_name", ["torch"])
-    def test_ray_tracing_autodiff_at_vertex(self, backend_name):
+    @pytest.mark.skipif(
+        "torch" not in be.list_available_backends(), reason="Requires the Torch backend"
+    )
+    @pytest.mark.parametrize("set_test_backend", ["torch"], indirect=True)
+    def test_ray_tracing_autodiff_at_vertex(self, set_test_backend):
         """
         Tests that ray tracing is differentiable for a ray hitting the exact
         vertex, which was the source of the NaN gradient bug.
         """
-        be.set_backend(backend_name)
-        if be.get_backend() != "torch":
-            pytest.skip("Autodiff test requires the torch backend.")
 
         be.grad_mode.enable()
 
@@ -2514,13 +2517,15 @@ class TestForbesQbfsGeometry:
         assert grad is not None, "Gradient at vertex should not be None"
         assert not be.isnan(grad), "Gradient at vertex must not be NaN"
 
-    @pytest.mark.parametrize("backend_name", ["torch"])
-    def test_forbes_qbfs_autodiff_inplace_modification(self, backend_name):
+    @pytest.mark.skipif(
+        "torch" not in be.list_available_backends(), reason="Requires the Torch backend"
+    )
+    @pytest.mark.parametrize("set_test_backend", ["torch"], indirect=True)
+    def test_forbes_qbfs_autodiff_inplace_modification(self, set_test_backend):
         """
         Tests for in-place modification errors during backpropagation with ForbesQbfsGeometry.
         This test replicates the conditions that led to the RuntimeError in the user's notebook.
         """
-        be.set_backend(backend_name)
         be.grad_mode.enable()
         from optiland.analysis import IncoherentIrradiance
         from optiland.physical_apertures import RectangularAperture
@@ -2821,9 +2826,11 @@ class TestForbesQ2dGeometry:
         optic.surfaces.add(index=2)
         return optic, trainable_coeff
 
-    @pytest.mark.parametrize("backend_name", ["torch"])
-    def test_gradient_stability_at_vertex(self, backend_name):
-        be.set_backend(backend_name)
+    @pytest.mark.skipif(
+        "torch" not in be.list_available_backends(), reason="Requires the Torch backend"
+    )
+    @pytest.mark.parametrize("set_test_backend", ["torch"], indirect=True)
+    def test_gradient_stability_at_vertex(self, set_test_backend):
         be.grad_mode.enable()
 
         optic, trainable_coeff = self._create_forbes_q2d_autodiff_optic()

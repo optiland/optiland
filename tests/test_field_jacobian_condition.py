@@ -27,10 +27,9 @@ from optiland.fields.field_types.real_image_height import (
 from .nr_implicit_test_utils import backend_state
 
 BACKEND_PRECISION = [
-    ("numpy", "float64"),
-    ("numpy", "float32"),
-    ("torch", "float64"),
-    ("torch", "float32"),
+    (backend, precision)
+    for backend in be.list_available_backends()
+    for precision in ("float64", "float32")
 ]
 
 # Fixed, well-conditioned reference matrix with all entries and both
@@ -133,7 +132,7 @@ class TestTrueRankDeficiency:
 
 
 class TestIllConditionedTransition:
-    @pytest.mark.parametrize("backend", ["numpy", "torch"])
+    @pytest.mark.parametrize("backend", be.list_available_backends())
     @pytest.mark.parametrize("global_scale", [1.0, 1.0e6, 1.0e-6])
     def test_transition_follows_reciprocal_condition_threshold(
         self, backend, global_scale

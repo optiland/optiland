@@ -839,7 +839,7 @@ class TestTangentSingularityRejection:
                 90.0, operation="wavefront tilt correction"
             )
 
-    @pytest.mark.parametrize("backend", ["numpy", "torch"])
+    @pytest.mark.parametrize("backend", be.list_available_backends())
     def test_boundary_scales_with_backend_precision(self, backend):
         """The rejection width is derived from the active precision: a
         near-pole angle inside the float32 width but far outside the

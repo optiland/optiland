@@ -249,6 +249,7 @@ class TestCrossBackendAgreement:
         return scene
 
     def test_flux_and_centroid_match_across_backends(self):
+        pytest.importorskip("torch")
         import optiland.backend as be
         from optiland.backend.utils import to_numpy
         from optiland.nonsequential.backends.numpy_backend import NumpyBackend

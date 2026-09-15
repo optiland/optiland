@@ -323,6 +323,7 @@ class TestBaseMaterialTorchCaching:
 
     @pytest.fixture(autouse=True)
     def _setup_torch(self):
+        pytest.importorskip("torch")
         be.set_backend("torch")
         be.set_device("cpu")
         be.grad_mode.enable()

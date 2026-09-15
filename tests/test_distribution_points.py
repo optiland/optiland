@@ -39,7 +39,7 @@ def count_unique_points(x_coords, y_coords, tol=1e-9):
     return unique_points.shape[0]
 
 
-@pytest.mark.parametrize("backend", ["numpy", "torch"])
+@pytest.mark.parametrize("backend", be.list_available_backends())
 class TestDistributionPoints:
     def test_cross_distribution_odd_points(self, backend):
         be.set_backend(backend)

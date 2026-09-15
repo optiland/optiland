@@ -43,6 +43,10 @@ Thank you for your interest in contributing to **Optiland**! Contributions are w
 
 ## Quality Gates
 
+The [weekly dependency compatibility guide](docs/development/weekly-compatibility.md)
+explains the Friday matrix, how to update version combinations in one file, and
+how to reproduce or investigate dependency-specific failures.
+
 Every pull request runs the following in CI. Understanding what each one does (and doesn't) do
 helps you land a first PR without surprises:
 
