@@ -31,6 +31,7 @@ from optiland.paraxial_path import (
     UnsupportedParaxialGeometryError,
 )
 from optiland.rays import RealRays
+from optiland.wavefront import OPD
 
 from .test_folded_paraxial import _finish, folded, retro, straight
 from .test_folded_paraxial_hardening import (
@@ -829,14 +830,30 @@ class TestTangentSingularityRejection:
         ):
             optic.paraxial.chief_ray()
 
-    def test_wavefront_tilt_correction_is_guarded(self, set_test_backend):
-        from optiland.wavefront.strategy import require_nonsingular_tangent_angles
+    @pytest.mark.parametrize("strategy", ["chief_ray", "centroid", "best_fit"])
+    @pytest.mark.parametrize("axis", ["x", "y"])
+    @pytest.mark.parametrize("angle", [90.0, -90.0, 270.0, -270.0])
+    def test_wavefront_analysis_rejects_singular_angles(
+        self, set_test_backend: None, strategy: str, axis: str, angle: float
+    ) -> None:
+        """Public wavefront analysis rejects singular angular fields."""
+        optic = straight()
+        optic.fields.add(
+            x=angle if axis == "x" else 0.0,
+            y=angle if axis == "y" else 0.0,
+        )
+        field = optic.fields.get_field_coords()[-1]
 
         with pytest.raises(
             UnsupportedParaxialGeometryError, match="SINGULAR_ANGLE_TANGENT"
         ):
-            require_nonsingular_tangent_angles(
-                90.0, operation="wavefront tilt correction"
+            OPD(
+                optic,
+                field,
+                0.55,
+                num_rays=3,
+                distribution="line_y",
+                strategy=strategy,
             )
 
     @pytest.mark.parametrize("backend", ["numpy", "torch"])

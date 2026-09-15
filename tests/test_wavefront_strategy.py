@@ -7,7 +7,11 @@ import pytest
 # Set a backend before importing optiland modules
 import optiland.backend as be
 from optiland.distribution import create_distribution
+from optiland.materials import IdealMaterial
+from optiland.optic import Optic
+from optiland.rays import RealRays
 from optiland.samples.objectives import DoubleGauss
+from optiland.wavefront import OPD
 from optiland.wavefront.strategy import (
     BestFitSphereStrategy,
     CentroidReferenceSphereStrategy,
@@ -97,8 +101,8 @@ class TestReferenceStrategy:
         # The second root should be chosen, resulting in a positive distance
         assert be.all(opd > 0)
 
-    def test_correct_tilt_angle_field(self, set_test_backend):
-        """Test tilt correction for a field specified by angle."""
+    def test_restore_launch_phase_angle_field(self, set_test_backend):
+        """Test launch-phase restoration for an angular field."""
         optic = DoubleGauss()
         dist = create_distribution("hexapolar")
         dist.generate_points(15)
@@ -107,30 +111,66 @@ class TestReferenceStrategy:
         opd = be.ones(strategy.distribution.x.shape)
         field = (0.5, 0.5)  # Hx, Hy
 
-        corrected_opd = strategy._correct_tilt(field, opd)
+        reference = optic.trace_generic(
+            *field,
+            Px=0.0,
+            Py=0.0,
+            wavelength=optic.primary_wavelength,
+            retain_launch=True,
+        )
+        rays = optic.trace(
+            *field,
+            optic.primary_wavelength,
+            None,
+            dist,
+            retain_launch=True,
+        )
+        corrected_opd = strategy._restore_launch_phase(
+            rays, opd, optic.primary_wavelength, reference
+        )
 
         assert corrected_opd.shape == opd.shape
         assert not be.all(corrected_opd == opd)
 
-    def test_correct_tilt_object_height_field(self, strategy, optic, set_test_backend):
-        """Test tilt correction when field type is not 'angle'."""
+    def test_restore_launch_phase_object_height_field(
+        self, strategy, optic, set_test_backend
+    ):
+        """Test launch phase when the field type is not angular."""
         optic.fields.set_type("object_height")
         opd = be.ones(strategy.distribution.x.shape)
-        field = (0.5, 0.5)
+        rays = MagicMock(opd=opd)
 
-        corrected_opd = strategy._correct_tilt(field, opd)
+        corrected_opd = strategy._restore_launch_phase(
+            rays, opd, optic.primary_wavelength, rays
+        )
         # No correction should be applied
         assert be.all(corrected_opd == opd)
 
-    def test_correct_tilt_with_custom_coords(self, strategy, optic, set_test_backend):
-        """Test tilt correction with explicitly passed coordinates."""
+    def test_restore_launch_phase_uses_generated_state(self, set_test_backend):
+        """Test launch phase with explicitly traced pupil coordinates."""
+        optic = DoubleGauss()
+        dist = create_distribution("hexapolar")
+        dist.generate_points(15)
+        strategy = ConcreteReferenceStrategy(optic, dist)
         optic.fields.set_type("angle")
         opd = be.ones(5)
         x = be.linspace(-1, 1, 5)
         y = be.linspace(-1, 1, 5)
         field = (0.5, 0.5)
 
-        corrected_opd = strategy._correct_tilt(field, opd, x=x, y=y)
+        reference = optic.trace_generic(
+            *field,
+            Px=0.0,
+            Py=0.0,
+            wavelength=optic.primary_wavelength,
+            retain_launch=True,
+        )
+        rays = optic.trace_generic(
+            *field, x, y, optic.primary_wavelength, retain_launch=True
+        )
+        corrected_opd = strategy._restore_launch_phase(
+            rays, opd, optic.primary_wavelength, reference
+        )
 
         assert corrected_opd.shape == opd.shape
         assert not be.all(corrected_opd == opd)
@@ -426,3 +466,385 @@ class TestBestFitSphereStrategy:
 
         # when at best focus, both strategies should yield similar results
         assert_allclose(data_bfs.radius, data_centroid.radius)
+
+
+# Waves. Float64 noise on a several-hundred-wave signal sits near 1e-11.
+ZERO_WAVEFRONT_TOLERANCE = 1e-10
+
+# Millimetres. Curving the index-matched stop adds sag without adding refractive
+# power, so the plane wave stays flat while the stop is no longer its own tangent
+# plane. Paraxial aiming targets that tangent plane and iterative aiming targets
+# the real surface, which is what makes the two aimers select different launch
+# coordinates for an oblique field.
+AIMING_DIVERGENT_RADIUS = 20.0
+
+
+def collimated_planes(
+    index: float = 1.0,
+    field: tuple[float, float] = (0.0, 5.0),
+    vignette: tuple[float, float] = (0.0, 0.0),
+    first_radius: float = be.inf,
+) -> Optic:
+    """Create index-matched planes that preserve a collimated plane wave."""
+    medium = IdealMaterial(index)
+    optic = Optic()
+    optic.surfaces.add(index=0, thickness=be.inf, material=medium)
+    optic.surfaces.add(
+        index=1,
+        radius=first_radius,
+        thickness=10.0,
+        material=medium,
+        is_stop=True,
+    )
+    optic.surfaces.add(index=2, thickness=10.0, material=medium)
+    optic.surfaces.add(index=3, material=medium)
+    optic.set_aperture("EPD", 4.0)
+    optic.fields.set_type("angle")
+    optic.fields.add(y=0.0)
+    optic.fields.add(x=field[0], y=field[1], vx=vignette[0], vy=vignette[1])
+    optic.wavelengths.add(0.55, is_primary=True)
+    return optic
+
+
+def max_abs_wavefront(
+    optic: Optic, num_rays: int = 6, strategy: str = "chief_ray"
+) -> float:
+    """Return the peak absolute wavefront error over valid samples."""
+    field = optic.fields.get_field_coords()[-1]
+    analysis = OPD(
+        optic,
+        field,
+        "primary",
+        num_rays=num_rays,
+        strategy=strategy,
+        afocal=True,
+        remove_tilt=False,
+    )
+    data = analysis.get_data(field, optic.primary_wavelength)
+    opd = be.to_numpy(data.opd)
+    keep = be.to_numpy(data.intensity) > 0
+    return float(abs(opd[keep]).max())
+
+
+@pytest.mark.parametrize("index", [1.0, 1.33, 1.5, 2.0])
+@pytest.mark.parametrize(
+    "field", [(0.0, 0.0), (0.0, 5.0), (0.0, -5.0), (5.0, 0.0), (3.0, 4.0)]
+)
+def test_plane_wave_is_flat_for_any_object_index(
+    set_test_backend: None, index: float, field: tuple[float, float]
+) -> None:
+    """The launch term is an optical path, so it carries the object index."""
+    optic = collimated_planes(index=index, field=field)
+    assert max_abs_wavefront(optic) < ZERO_WAVEFRONT_TOLERANCE
+
+
+@pytest.mark.parametrize("vignette", [(0.0, 0.25), (0.25, 0.0), (0.4, 0.1)])
+@pytest.mark.parametrize("index", [1.0, 1.5])
+def test_plane_wave_is_flat_with_vignetted_pupils(
+    set_test_backend: None, index: float, vignette: tuple[float, float]
+) -> None:
+    """Vignetting scales the launch offsets and their relative phase."""
+    optic = collimated_planes(index=index, field=(3.0, 4.0), vignette=vignette)
+    assert max_abs_wavefront(optic) < ZERO_WAVEFRONT_TOLERANCE
+
+
+@pytest.mark.parametrize("first_radius", [be.inf, AIMING_DIVERGENT_RADIUS])
+@pytest.mark.parametrize("aiming", ["paraxial", "iterative", "robust"])
+@pytest.mark.parametrize("strategy", ["chief_ray", "centroid", "best_fit"])
+def test_plane_wave_is_flat_for_each_ray_aimer(
+    set_test_backend: None, aiming: str, strategy: str, first_radius: float
+) -> None:
+    """Launch phase follows the coordinates selected by the active aimer."""
+    optic = collimated_planes(
+        index=1.5,
+        field=(3.0, 4.0),
+        vignette=(0.4, 0.1),
+        first_radius=first_radius,
+    )
+    optic.ray_tracer.set_aiming(aiming, max_iter=20, tol=1e-8)
+    assert max_abs_wavefront(optic, strategy=strategy) < ZERO_WAVEFRONT_TOLERANCE
+
+
+def test_iterative_aiming_changes_the_vignetted_launch_map(
+    set_test_backend: None,
+) -> None:
+    """The aiming regression exercises distinct generated launch coordinates."""
+    optic = collimated_planes(
+        index=1.5,
+        field=(3.0, 4.0),
+        vignette=(0.4, 0.1),
+        first_radius=AIMING_DIVERGENT_RADIUS,
+    )
+    field = optic.fields.get_field_coords()[-1]
+    distribution = create_distribution("hexapolar")
+    distribution.generate_points(6)
+
+    optic.ray_tracer.set_aiming("paraxial")
+    paraxial = optic.trace(
+        *field, optic.primary_wavelength, None, distribution, retain_launch=True
+    )
+    optic.ray_tracer.set_aiming("iterative", max_iter=20, tol=1e-8)
+    iterative = optic.trace(
+        *field, optic.primary_wavelength, None, distribution, retain_launch=True
+    )
+
+    paraxial_launch = paraxial._launch_state
+    iterative_launch = iterative._launch_state
+    displacement = be.sqrt(
+        (paraxial_launch.x - iterative_launch.x) ** 2
+        + (paraxial_launch.y - iterative_launch.y) ** 2
+        + (paraxial_launch.z - iterative_launch.z) ** 2
+    )
+    assert float(be.to_numpy(be.max(displacement))) > 1e-3
+
+
+@pytest.mark.parametrize("strategy", ["centroid", "best_fit"])
+def test_wavefront_is_independent_of_pupil_sample_order(
+    set_test_backend: None, strategy: str
+) -> None:
+    """Reference geometry uses the chief launch rather than an array element."""
+    optic = DoubleGauss()
+    field = optic.fields.get_field_coords()[-1]
+    wavelength = optic.primary_wavelength
+    forward = create_distribution("hexapolar")
+    forward.generate_points(6)
+    reverse = create_distribution("hexapolar")
+    reverse.generate_points(6)
+    reverse.x = be.flip(reverse.x)
+    reverse.y = be.flip(reverse.y)
+
+    forward_data = OPD(
+        optic, field, wavelength, distribution=forward, strategy=strategy
+    ).get_data(field, wavelength)
+    reverse_data = OPD(
+        optic, field, wavelength, distribution=reverse, strategy=strategy
+    ).get_data(field, wavelength)
+
+    assert_allclose(forward_data.opd, be.flip(reverse_data.opd), atol=1e-9, rtol=0.0)
+    assert_allclose(forward_data.radius, reverse_data.radius, atol=1e-10, rtol=0.0)
+
+
+@pytest.mark.parametrize(
+    ("field", "expected_direction"),
+    [
+        ((0.0, 100.0), (0, 1, -1)),
+        ((0.0, -100.0), (0, -1, -1)),
+        ((100.0, 0.0), (1, 0, -1)),
+        ((-100.0, 0.0), (-1, 0, -1)),
+    ],
+)
+def test_plane_wave_is_flat_for_reverse_propagation(
+    set_test_backend: None,
+    field: tuple[float, float],
+    expected_direction: tuple[int, int, int],
+) -> None:
+    """The incident direction preserves the selected propagation hemisphere."""
+    optic = collimated_planes(index=1.5, field=field)
+    normalized_field = optic.fields.get_field_coords()[-1]
+    chief = optic.trace_generic(
+        *normalized_field,
+        Px=0.0,
+        Py=0.0,
+        wavelength=optic.primary_wavelength,
+        retain_launch=True,
+    )
+    launch = chief._launch_state
+    direction = [
+        float(be.to_numpy(component)[0]) for component in (launch.L, launch.M, launch.N)
+    ]
+    for actual, expected in zip(direction, expected_direction, strict=True):
+        if expected == 0:
+            assert abs(actual) < 1e-12
+        else:
+            assert actual * expected > 0
+    assert max_abs_wavefront(optic) < ZERO_WAVEFRONT_TOLERANCE
+
+
+@pytest.mark.parametrize(
+    ("steps", "first_radius"),
+    [([0, 1, 2, 3], be.inf), ([1, 2, 3], 20.0)],
+)
+def test_plane_wave_is_flat_for_a_forward_sequence(
+    set_test_backend: None, steps: list[int], first_radius: float
+) -> None:
+    """Launch phase is independent of whether the object step is included."""
+    optic = collimated_planes(
+        index=1.5,
+        field=(3.0, 4.0),
+        vignette=(0.4, 0.1),
+        first_radius=first_radius,
+    )
+    sequence = optic.add_sequence("forward", steps)
+
+    assert max_abs_wavefront(sequence) < ZERO_WAVEFRONT_TOLERANCE
+
+
+@pytest.mark.parametrize("strategy", ["chief_ray", "centroid", "best_fit"])
+def test_sequence_uses_its_incident_medium_for_launch_phase(
+    set_test_backend: None, strategy: str
+) -> None:
+    """A sequence may begin after a refractive transition it does not trace."""
+    air = IdealMaterial(1.0)
+    glass = IdealMaterial(1.5)
+    optic = Optic()
+    optic.surfaces.add(index=0, thickness=be.inf, material=air)
+    optic.surfaces.add(index=1, thickness=10.0, material=glass)
+    optic.surfaces.add(index=2, thickness=10.0, material=glass, is_stop=True)
+    optic.surfaces.add(index=3, material=glass)
+    optic.set_aperture("EPD", 4.0)
+    optic.fields.set_type("angle")
+    optic.fields.add(y=0.0)
+    optic.fields.add(y=5.0)
+    optic.wavelengths.add(0.55, is_primary=True)
+    sequence = optic.add_sequence("inside_glass", [2, 3])
+
+    assert max_abs_wavefront(sequence, strategy=strategy) < ZERO_WAVEFRONT_TOLERANCE
+
+
+@pytest.mark.parametrize("wavefront_strategy", ["chief_ray", "centroid", "best_fit"])
+def test_launch_phase_preserves_first_surface_phase(
+    set_test_backend: None, wavefront_strategy: str
+) -> None:
+    """Surface phase remains present when a sequence omits the object step."""
+    optic = Optic()
+    optic.surfaces.add(index=0, thickness=be.inf)
+    optic.surfaces.add(
+        index=1,
+        surface_type="paraxial",
+        f=25.0,
+        thickness=10.0,
+        is_stop=True,
+    )
+    optic.surfaces.add(index=2)
+    optic.set_aperture("EPD", 4.0)
+    optic.fields.set_type("angle")
+    optic.fields.add(y=0.0)
+    optic.wavelengths.add(0.55, is_primary=True)
+    distribution = create_distribution("line_x")
+    distribution.generate_points(7)
+    with_object = optic.add_sequence("with_object", [0, 1, 2])
+    without_object = optic.add_sequence("without_object", [1, 2])
+
+    rays_with = with_object.trace(
+        0.0, 0.0, 0.55, None, distribution, retain_launch=True
+    )
+    rays_without = without_object.trace(
+        0.0, 0.0, 0.55, None, distribution, retain_launch=True
+    )
+    surface_opd = without_object.surfaces[0].opd
+    assert float(be.to_numpy(be.max(surface_opd) - be.min(surface_opd))) > 1e-3
+    assert_allclose(rays_without.opd, rays_with.opd)
+
+    strategy = ConcreteReferenceStrategy(without_object, distribution)
+    reference = strategy._generate_chief_launch((0.0, 0.0), 0.55)
+    without_object.surfaces[0].x[0] = be.nan
+    corrected = strategy._restore_launch_phase(
+        rays_without, rays_without.opd, 0.55, reference
+    )
+    assert_allclose(corrected, rays_without.opd)
+
+    with_data = OPD(
+        with_object,
+        (0.0, 0.0),
+        0.55,
+        num_rays=6,
+        strategy=wavefront_strategy,
+        afocal=True,
+    ).get_data((0.0, 0.0), 0.55)
+    without_data = OPD(
+        without_object,
+        (0.0, 0.0),
+        0.55,
+        num_rays=6,
+        strategy=wavefront_strategy,
+        afocal=True,
+    ).get_data((0.0, 0.0), 0.55)
+    assert_allclose(without_data.opd, with_data.opd, atol=1e-10, rtol=0.0)
+    assert float(be.to_numpy(be.max(with_data.opd) - be.min(with_data.opd))) > 1.0
+
+
+def test_propagated_optical_path_is_common_to_every_ray(
+    set_test_backend: None,
+) -> None:
+    """Confirm propagation does not introduce pupil-dependent optical path."""
+    optic = collimated_planes(index=1.5, field=(0.0, 5.0), vignette=(0.0, 0.25))
+    rays = optic.trace(0.0, 1.0, 0.55, num_rays=32, distribution="line_y")
+    opd = be.to_numpy(rays.opd)
+    assert_allclose(opd, opd[0], atol=1e-12, rtol=0.0)
+
+
+@pytest.mark.parametrize("num_rays", [4, 6, 12])
+def test_flatness_is_independent_of_pupil_sampling(
+    set_test_backend: None, num_rays: int
+) -> None:
+    optic = collimated_planes(index=1.5, field=(3.0, 4.0), vignette=(0.4, 0.1))
+    assert max_abs_wavefront(optic, num_rays=num_rays) < ZERO_WAVEFRONT_TOLERANCE
+
+
+def test_object_index_scales_launch_phase_numerically(set_test_backend: None) -> None:
+    """The launch phase uses the object index at the analysis wavelength."""
+    optic = collimated_planes(index=1.5)
+    distribution = create_distribution("line_y")
+    distribution.generate_points(5)
+    strategy = ConcreteReferenceStrategy(optic, distribution)
+    reference = strategy._generate_chief_launch((0.0, 1.0), 0.55)
+    rays = optic.trace(0.0, 1.0, 0.55, None, distribution, retain_launch=True)
+    raw_opd = be.copy(rays.opd)
+    optic.object_surface.material_post.n = MagicMock(
+        side_effect=lambda wavelength: be.array(1.0 if wavelength == 0.55 else 1.5)
+    )
+
+    phase_at_055 = (
+        strategy._restore_launch_phase(rays, raw_opd, 0.55, reference) - raw_opd
+    )
+    phase_at_065 = (
+        strategy._restore_launch_phase(rays, raw_opd, 0.65, reference) - raw_opd
+    )
+
+    assert not be.all(phase_at_055 == 0)
+    assert_allclose(phase_at_065, 1.5 * phase_at_055)
+
+
+def test_retained_launch_phase_preserves_torch_gradients(
+    set_test_backend: None,
+) -> None:
+    """Copying launch coordinates keeps their autograd connection."""
+    if be.get_backend() != "torch":
+        pytest.skip("Gradient check requires the Torch backend.")
+
+    optic = collimated_planes(index=1.5)
+    distribution = create_distribution("line_x")
+    distribution.generate_points(2)
+    strategy = ConcreteReferenceStrategy(optic, distribution)
+    x = be.array([0.0, 1.0])
+    x.requires_grad_(True)
+    zeros = be.zeros(2)
+    rays = RealRays(x, zeros, zeros, be.ones(2), zeros, zeros, be.ones(2), 0.55)
+    rays._capture_launch_state()
+    reference = RealRays(0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.55)
+    reference._capture_launch_state()
+
+    phase = strategy._restore_launch_phase(rays, rays.opd, 0.55, reference)
+    be.sum(phase).backward()
+
+    assert x.grad is not None
+    assert_allclose(x.grad, be.array([1.5, 1.5]))
+
+
+def test_non_angular_and_finite_object_fields_are_untouched(
+    set_test_backend: None,
+) -> None:
+    """Only infinite-conjugate angular fields need launch-phase correction."""
+    optic = collimated_planes(index=1.5)
+    strategy = OPD(
+        optic, (0.0, 1.0), "primary", num_rays=4, strategy="chief_ray", afocal=True
+    ).strategy
+    opd = be.ones(strategy.distribution.x.shape)
+    rays = MagicMock(opd=opd)
+
+    optic.fields.set_type("object_height")
+    assert_allclose(strategy._restore_launch_phase(rays, opd, 0.55, rays), opd)
+
+    optic.fields.set_type("angle")
+    optic.surfaces.surfaces[0].geometry.cs.z = be.array(-100.0)
+    assert_allclose(strategy._restore_launch_phase(rays, opd, 0.55, rays), opd)
