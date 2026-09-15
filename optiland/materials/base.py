@@ -436,6 +436,21 @@ class BaseMaterial(ABC):
         nC = self.n(0.6562725)
         return (nD - 1) / (nF - nC)
 
+    @property
+    def display_name(self) -> str:
+        """Human-readable identity; never a serialization or lookup key."""
+        return type(self).__name__
+
+    def spectral_range(self, property_name: str = "n") -> tuple[float, float] | None:
+        """Known validity limits in micrometers, or None if unspecified.
+
+        Consumers must supply a range when none is known. This information does
+        not change each material's evaluation or extrapolation policy.
+        """
+        if property_name not in {"n", "k"}:
+            raise ValueError("Material property must be 'n' or 'k'")
+        return None
+
     def to_dict(self):
         """Convert the material to a dictionary.
 

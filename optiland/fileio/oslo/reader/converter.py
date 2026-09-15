@@ -31,6 +31,7 @@ from optiland.fileio.oslo.validation import validate_object_na
 from optiland.materials import (
     AbbeMaterial,
     BaseMaterial,
+    DataMaterial,
     IdealMaterial,
     MatchPolicy,
     Material,
@@ -431,17 +432,7 @@ class OsloToOpticConverter(BaseOpticReader):
             wavelengths = wavelengths or list(DEFAULT_WAVELENGTHS_UM)
             if len(indices) != len(wavelengths):
                 raise ValueError(f"OSLO glass {name!r} index/wavelength counts differ")
-            # Retain the existing public reader's d/F/C Abbe approximation.
-            # Exact arbitrary sampled dispersion is a separate material feature.
-            message = "OSLO direct-index dispersion uses an approximate Abbe model"
-            if self.strict:
-                raise ValueError(message)
-            warnings.warn(message, UserWarning, stacklevel=3)
-            if len(indices) >= 3 and indices[1] != indices[2]:
-                abbe = (indices[0] - 1) / (indices[1] - indices[2])
-                if abbe > 0:
-                    return AbbeMaterial(indices[0], abbe, model="buchdahl")
-            return IdealMaterial(indices[0])
+            return DataMaterial.from_samples(wavelengths, indices, name=name)
 
         return "air"
 

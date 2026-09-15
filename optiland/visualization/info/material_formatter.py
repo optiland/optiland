@@ -9,7 +9,6 @@ Kramer Harrison, 2026
 
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING
 
 from optiland import materials
@@ -56,12 +55,6 @@ class MaterialFormatter:
         if surface.interaction_model.is_reflective:
             return "Mirror"
 
-        # specialized check for air (which might not be a class)
-        if hasattr(surface, "material_post"):
-            index = getattr(surface.material_post, "index", None)
-            if index == 1:
-                return "Air"
-
         if hasattr(surface, "material_post"):
             material = surface.material_post
             # check for exact match first
@@ -80,42 +73,22 @@ class MaterialFormatter:
         if cls._default_formatter:
             return cls._default_formatter(surface)
 
+        if isinstance(getattr(surface, "material_post", None), materials.BaseMaterial):
+            return _format_builtin(surface)
+
         raise ValueError("Unknown material type")
 
 
-# --- standard formatters ---
+def _format_builtin(surface: Surface) -> str:
+    return surface.material_post.display_name
 
 
-def _format_material(surface: Surface) -> str:
-    return surface.material_post.name
-
-
-def _format_material_file(surface: Surface) -> str:
-    return os.path.basename(surface.material_post.filename)
-
-
-def _format_ideal_material(surface: Surface) -> str:
-    return str(surface.material_post.index.item())
-
-
-def _format_abbe_material(surface: Surface) -> str:
-    return (
-        f"{surface.material_post.index.item():.4f}, "
-        f"{surface.material_post.abbe.item():.2f}"
-    )
-
-
-def _format_abbe_material_e(surface: Surface) -> str:
-    return (
-        f"{surface.material_post.index.item():.4f}, "
-        f"{surface.material_post.abbe.item():.2f} (ne, Ve)"
-    )
-
-
-# --- registration ---
-
-MaterialFormatter.register(materials.Material, _format_material)
-MaterialFormatter.register(materials.MaterialFile, _format_material_file)
-MaterialFormatter.register(materials.IdealMaterial, _format_ideal_material)
-MaterialFormatter.register(materials.AbbeMaterial, _format_abbe_material)
-MaterialFormatter.register(materials.AbbeMaterialE, _format_abbe_material_e)
+for _material_type in (
+    materials.Material,
+    materials.MaterialFile,
+    materials.IdealMaterial,
+    materials.AbbeMaterial,
+    materials.AbbeMaterialE,
+    materials.DataMaterial,
+):
+    MaterialFormatter.register(_material_type, _format_builtin)

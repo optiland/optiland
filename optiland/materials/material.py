@@ -62,6 +62,11 @@ class Material(MaterialFile):
     _df = None
     _filename = str(resources.files("optiland.database").joinpath("catalog_nk.csv"))
 
+    @property
+    def display_name(self) -> str:
+        """The resolved catalog name, independent of its file adapter."""
+        return self.name
+
     def __init__(
         self,
         name: str,

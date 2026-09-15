@@ -208,6 +208,24 @@ def test_hatched_reflector_and_fixed_air(tmp_path, set_test_backend):
     assert_allclose(optic.surfaces[1].material_post.n(0.55), 1)
 
 
+@pytest.mark.parametrize(
+    "definition",
+    ["GLA CUSTOM 1.7 1.72 1.68", "GLA 1.7 1.72 1.68", "GLA MOD G1 1.7 1.72 1.68"],
+)
+def test_embedded_indices_use_definition_wavelengths(
+    tmp_path, set_test_backend, definition
+):
+    path = simple_lens(
+        tmp_path, surface="WV .6 .4 .8\n" + definition, footer="WV .6\nWW 1"
+    )
+    optic = load_oslo_file(path, strict=True)
+    material = optic.surfaces[1].material_post
+    assert_allclose(material.n(be.array([0.4, 0.6, 0.8])), [1.72, 1.7, 1.68])
+    out = tmp_path / "material.len"
+    save_oslo_file(optic, out)
+    assert_allclose(load_oslo_file(out).surfaces[1].material_post.n(0.6), 1.7)
+
+
 def test_single_direct_index_and_unknown_glass_strict(tmp_path, set_test_backend):
     optic = load_oslo_file(simple_lens(tmp_path, surface="GLA 1.65"), strict=True)
     assert_allclose(optic.surfaces[1].material_post.n(0.55), 1.65)
@@ -532,6 +550,25 @@ def test_writer_rejects_unsupported_data_before_overwriting(tmp_path, commands):
     with pytest.raises((ValueError, NotImplementedError), match="export|writer"):
         save_oslo_file(optic, output)
     assert output.read_text() == "existing file"
+
+
+def test_mixed_material_spectra_roundtrip(tmp_path, set_test_backend):
+    from optiland.materials import AbbeMaterial, DataMaterial
+
+    optic = load_oslo_file(simple_lens(tmp_path, system="WV .4 .5 .6 .7"))
+    optic.surfaces[1].material_post = DataMaterial.from_samples(
+        [0.4, 0.5, 0.6, 0.7], [1.6, 1.55, 1.5, 1.45]
+    )
+    optic.surfaces[2].material_post = AbbeMaterial(1.6, 50, model="buchdahl")
+    path = tmp_path / "mixed.len"
+    save_oslo_file(optic, path)
+    restored = load_oslo_file(path, strict=True)
+    wave = be.array([0.4, 0.5, 0.6, 0.7])
+    assert_allclose(
+        restored.surfaces[2].material_post.n(wave),
+        optic.surfaces[2].material_post.n(wave),
+        atol=1e-6,
+    )
 
 
 def test_names_fields_and_signed_infinity_roundtrip(tmp_path, set_test_backend):

@@ -7,6 +7,7 @@ import math
 import pytest
 
 from optiland.fileio import load_oslo_file, save_oslo_file
+from optiland.materials import DataMaterial
 
 
 def test_export_preserves_an_angular_reference_just_below_ninety(
@@ -38,5 +39,34 @@ def test_export_preserves_na_below_the_object_medium_index(
     assert restored.aperture.value == value
 
 
+def test_export_preserves_distinct_sampled_wavelengths(
+    lens_file, tmp_path, set_test_backend
+):
+    optic = load_oslo_file(lens_file(), strict=True)
+    wavelengths = [0.50000000000001, 0.50000000000002]
+    while optic.wavelengths:
+        optic.wavelengths.remove(0)
+    for index, wavelength in enumerate(wavelengths):
+        optic.wavelengths.add(wavelength, is_primary=index == 0)
+    optic.surfaces[1].material_post = DataMaterial.from_samples(wavelengths, [1.5, 1.500001])
+    output = tmp_path / "nearby-wavelengths.len"
+    save_oslo_file(optic, output)
+    restored = load_oslo_file(output, strict=True)
+    assert [wave.value for wave in restored.wavelengths] == wavelengths
+    assert restored.surfaces[1].material_post.definition.dispersion.wavelengths_um == tuple(wavelengths)
 
 
+def test_export_retains_small_sampled_dispersion_and_its_optical_path(
+    lens_file, tmp_path, set_test_backend
+):
+    optic = load_oslo_file(lens_file(system="WV .5 .6"), strict=True)
+    indices = [1.0000000000001, 1.0000000000002]
+    optic.surfaces[1].material_post = DataMaterial.from_samples([0.5, 0.6], indices)
+    output = tmp_path / "small-dispersion.len"
+    save_oslo_file(optic, output)
+    restored = load_oslo_file(output, strict=True)
+    material = restored.surfaces[1].material_post
+    # The index difference is small but nonzero: collapsing both samples to
+    # unity removes dispersion and their optical-path excess over vacuum.
+    for wavelength, index in zip([0.5, 0.6], indices, strict=True):
+        assert float(material.n(wavelength).item()) == index

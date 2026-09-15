@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING
 
 import optiland.backend as be
 from optiland.materials.base import BaseMaterial
-from optiland.propagation.base import BasePropagationModel
 
 if TYPE_CHECKING:
     from optiland.propagation.base import BasePropagationModel
@@ -41,6 +40,13 @@ class IdealMaterial(BaseMaterial):
         super().__init__(propagation_model)
         self.index = be.array([n])
         self.absorp = be.array([k])
+
+    @property
+    def display_name(self) -> str:
+        """Show a constant index; identify air only when extinction is zero."""
+        if self.index.item() == 1 and self.absorp.item() == 0:
+            return "Air"
+        return str(self.index.item())
 
     def _cache_state(self) -> tuple | None:
         """Track live index/extinction values, including in-place writes."""

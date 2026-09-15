@@ -88,9 +88,11 @@ UTF-8 (including BOM) and legacy Windows-1252 text are accepted.
        combinations are rejected rather than converted to a different formula.
    * - ``AIR``, ``AIF``, ``RFL``, ``RFH``, ``GLA``, ``GLF``
      - Air, reflection, named catalog glass, constant index and sampled index
-       data. Constant indices are exact. Distinct direct-index values retain
-       the public reader's approximate d/F/C Abbe conversion with a warning;
-       strict mode rejects this approximation.
+       data. Distinct saved indices use ``DataMaterial``: exact at samples,
+       linear between samples, with extrapolation rejected. Wavelengths that
+       collapse together in the active backend precision cannot be interpolated;
+       use higher precision for those samples. Two-parameter model
+       glass and historical fallback glasses use approximate Abbe dispersion.
        Strict import requires an explicit material binding. Explicit
        ``material_overrides`` bind names to verified native material definitions;
        No global material registry is changed.

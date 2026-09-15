@@ -7,6 +7,7 @@ from __future__ import annotations
 from .abbe import AbbeMaterial, AbbeMaterialE
 from .base import BaseMaterial
 from .catalog import MaterialCatalog
+from .data import DataMaterial
 from .ideal import IdealMaterial
 from .material import Material
 from .material_file import MaterialFile
@@ -31,6 +32,7 @@ __all__ = [
     "BaseMaterial",
     # From ideal.py
     "IdealMaterial",
+    "DataMaterial",
     # From material.py
     "Material",
     # From material_file.py
@@ -47,7 +49,7 @@ __all__ = [
     "glasses_selection",
     "plot_glass_map",
     "plot_nk",
-    find_closest_glass,
+    "find_closest_glass",
     # From registry.py
     "MaterialRegistry",
     # From warnings.py

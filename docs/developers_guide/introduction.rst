@@ -75,6 +75,7 @@ Here’s a quick overview of what you’ll find in the Developer’s Guide:
    nonsequential_raytracing
    surface_overview
    interaction_models
+   materials
    propagation_models
    geometry_overview
    folded_systems
