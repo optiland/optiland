@@ -2920,26 +2920,6 @@ class TestForbesValidation:
                 pytest.skip("Skipping test at u=0 for m>0.")
 
     def test_qnm_values_against_analytical_formula(self, set_test_backend):
-        n, m = 1, 2
-        x = 0.4
-        P_n_m_canonical = 1.5 - x
-        from optiland.geometries.forbes.qpoly import f_q2d, g_q2d
-
-        P_0_m = 0.5
-        f0 = f_q2d(n=0, m=m)
-        Q_0_m_canonical = P_0_m / f0
-        g0 = g_q2d(n=0, m=m)
-        f1 = f_q2d(n=1, m=m)
-        Q_n_m_canonical = (P_n_m_canonical - g0 * Q_0_m_canonical) / f1
-        coeffs_to_test = [0.0] * (n + 1)
-        coeffs_to_test[n] = 1.0
-        from optiland.geometries.forbes.qpoly import clenshaw_q2d
-
-        alphas = clenshaw_q2d(coeffs_to_test, m=m, usq=x)
-        Q_n_m_optiland = 0.5 * alphas[0]
-        assert np.allclose(Q_n_m_optiland, Q_n_m_canonical, atol=1e-9)
-
-    def test_qnm_values_against_analytical_formula(self, set_test_backend):
         """
         Validates that a single Q polynomial from the qpoly implementation matches
         a value calculated directly from the analytical formula derived from the

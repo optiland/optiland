@@ -62,7 +62,7 @@ class TestParaxialOperand:
     def test_magnification(self, set_test_backend, hubble):
         assert_allclose(operand.ParaxialOperand.magnification(hubble), 0.0)
 
-    def test_magnification(self, set_test_backend, hubble):
+    def test_total_track(self, set_test_backend, hubble):
         assert_allclose(operand.ParaxialOperand.total_track(hubble), 6365.20955)
 
 
