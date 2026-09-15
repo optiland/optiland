@@ -11,7 +11,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QEvent, QItemSelectionModel, QSize, Qt, QTimer, Signal, Slot
+from PySide6.QtCore import (
+    QEvent,
+    QItemSelectionModel,
+    QModelIndex,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
+    Slot,
+)
 from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -22,6 +31,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
     QPushButton,
+    QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
     QTableWidget,
@@ -31,6 +41,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .editor_hover_presentation import EditorHoverPresentation
 from .surface_interaction import EditorHoverTracker, SurfaceInteractionState
 
 if TYPE_CHECKING:
@@ -221,14 +232,52 @@ class _AccentFocusDelegate(QStyledItemDelegate):
 
     _ACCENT = QColor("#007ACC")
 
+    def __init__(self, editor: LensEditor) -> None:
+        super().__init__(editor.tableWidget)
+        self.editor = editor
+
+    def createEditor(
+        self, parent: QWidget, option: QStyleOptionViewItem, index: QModelIndex
+    ) -> QWidget | None:
+        widget = super().createEditor(parent, option, index)
+        if widget is not None:
+            self.editor.hover_presentation.register_editor(widget, index)
+        return widget
+
+    def destroyEditor(self, editor: QWidget, index: QModelIndex) -> None:
+        self.editor.hover_presentation.unregister_editor(editor)
+        super().destroyEditor(editor, index)
+
+    def initStyleOption(self, option: QStyleOptionViewItem, index: QModelIndex) -> None:
+        super().initStyleOption(option, index)
+        if self.editor.hover_presentation.is_editing(index):
+            # The editor is transparent over the row tint. Drawing the stored
+            # display text here would show it behind the user's current draft.
+            option.text = ""
+
     def paint(
         self,
         painter: QPainter,
         option: QStyleOptionViewItem,
-        index,
+        index: QModelIndex,
     ) -> None:
-        super().paint(painter, option, index)
-        from PySide6.QtWidgets import QStyle
+        base = QStyleOptionViewItem(option)
+        # The table-wide QSS hover rule must not compete with shared row state.
+        base.state &= ~QStyle.State_MouseOver
+        super().paint(painter, base, index)
+        tint = self.editor.hover_presentation.tint(index.row(), index.column())
+        if tint is not None:
+            painter.fillRect(option.rect.adjusted(0, 0, -1, -1), tint)
+
+        # Theme item backgrounds can mask optimization-variable brushes. Keep
+        # their color visible as an inset marker, including on a selected row.
+        background = index.data(Qt.BackgroundRole)
+        if isinstance(background, QBrush) and background.style() != Qt.NoBrush:
+            marker = option.rect.adjusted(2, 3, -2, -3)
+            marker.setWidth(3)
+            color = background.color()
+            color.setAlpha(255)
+            painter.fillRect(marker, color)
 
         if option.state & QStyle.State_HasFocus:
             painter.save()
@@ -251,6 +300,7 @@ class LensEditor(QWidget):
         self.interaction_state = interaction_state or SurfaceInteractionState(self)
 
         self._init_ui()
+        self.hover_presentation = EditorHoverPresentation(self)
         self.setup_table()
         self.load_data()
         self.connect_signals()
@@ -260,6 +310,7 @@ class LensEditor(QWidget):
         """Initializes the main UI components of the editor."""
         self.layout = QVBoxLayout(self)
         self.tableWidget = QTableWidget()
+        self.tableWidget.setObjectName("LensDataTable")
         self.tableWidget.installEventFilter(self)
         self.tableWidget.setContextMenuPolicy(Qt.CustomContextMenu)
 
@@ -268,7 +319,7 @@ class LensEditor(QWidget):
         self.tableWidget.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
 
         # Accent focus delegate (SPEC §4.1)
-        self._focus_delegate = _AccentFocusDelegate(self.tableWidget)
+        self._focus_delegate = _AccentFocusDelegate(self)
         self.tableWidget.setItemDelegate(self._focus_delegate)
 
         self.layout.addWidget(self.tableWidget)
@@ -475,6 +526,7 @@ class LensEditor(QWidget):
         self.tableWidget.blockSignals(False)
         if hasattr(self, "hover_tracker"):
             self.hover_tracker.refresh()
+        self.hover_presentation.refresh()
 
     def _insert_properties_widget(self, source_row):
         prop_row_index = source_row + 1

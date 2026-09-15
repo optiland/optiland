@@ -364,6 +364,22 @@ QTableWidget::item:hover:!selected { /* Only apply hover if not selected to avoi
 }
 
 
+/* Embedded lens-editor controls reveal the delegate's row/cell hover tint. */
+QTableWidget#LensDataTable::item:hover:!selected {
+    background-color: transparent;
+}
+QTableWidget#LensDataTable::item:hover:selected {
+    background-color: #DEE2E6;
+}
+QTableWidget#LensDataTable::item:hover:selected:focus {
+    background-color: #6C757D;
+}
+QTableWidget#LensDataTable QWidget[ldeHoverBackground="true"],
+QTableWidget#LensDataTable QLineEdit[ldeHoverBackground="true"],
+QTableWidget#LensDataTable QToolButton[ldeHoverBackground="true"] {
+    background-color: transparent;
+}
+
 /* Header sections of QTableWidget (column and row headers) */
 QHeaderView::section {
     background-color: #E9ECEF; /* --toolbar-sidebar-bg: Background of header sections */
