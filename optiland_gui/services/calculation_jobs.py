@@ -7,11 +7,17 @@ import struct
 import sys
 import uuid
 from collections import deque
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, Signal, Slot
 
 from optiland_gui.services.calculation_worker import MAX_MESSAGE_BYTES, encode_message
+from optiland_gui.services.document_changes import (
+    CHANGE_CATEGORIES,
+    OPTICAL_CATEGORIES,
+    DocumentChange,
+)
 from optiland_gui.services.job_records import (
     BackendConfig,
     DocumentToken,
@@ -24,23 +30,140 @@ if TYPE_CHECKING:
 
 
 class DocumentState(QObject):
-    """Conservative revision boundary, connected before any panel subscriptions."""
+    """Separate calculation validity from whole-document ownership.
+
+    ``token`` changes for optical inputs; ``edit_token`` changes for every
+    persisted edit, including metadata. Whole-document consumers must capture
+    ``edit_token`` alongside their detached snapshot and compare it immediately
+    before replacing the document or declaring a saved snapshot clean. Optical
+    job currency alone cannot authorize overwriting intervening comment edits.
+    """
 
     changed = Signal(object)
+    committed = Signal(object)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self.token = DocumentToken(uuid.uuid4().hex, 0)
+        self.edit_token = self.token
+        self._transaction_depth = 0
+        self._replacement_transaction = False
+        self._invalidated = False
+        self._edit_invalidated = False
+        self._categories = set()
+        self._surface_indices = set()
+        self._columns = set()
+        self._all_surfaces = False
+        self._all_columns = False
+        self._transaction_failed = False
 
     @Slot()
     def change(self) -> None:
-        self.token = DocumentToken(self.token.document_id, self.token.revision + 1)
-        self.changed.emit(self.token)
+        self.record("optical")
 
     @Slot()
     def replace(self) -> None:
-        self.token = DocumentToken(uuid.uuid4().hex, 0)
-        self.changed.emit(self.token)
+        self.record("replacement")
+
+    def record(self, category="optical", *, surface_indices=(), columns=()):
+        """Invalidate immediately, then publish a classified committed change.
+
+        Optical invalidation is never delayed until a repaint/coalescing timer.
+        Metadata and presentation leave worker result permissions unchanged.
+        """
+        if category not in CHANGE_CATEGORIES:
+            raise ValueError(f"Unknown document change category: {category}")
+        replacement = category == "replacement" or self._replacement_transaction
+        if (
+            category == "replacement"
+            and self._edit_invalidated
+            and not self._replacement_transaction
+        ):
+            raise ValueError(
+                "Declare replacement=True before a replacement transaction."
+            )
+        if category != "presentation" and not self._edit_invalidated:
+            self.edit_token = (
+                DocumentToken(uuid.uuid4().hex, 0)
+                if replacement
+                else DocumentToken(
+                    self.edit_token.document_id, self.edit_token.revision + 1
+                )
+            )
+            self._edit_invalidated = bool(self._transaction_depth)
+        if category in OPTICAL_CATEGORIES and not self._invalidated:
+            self.token = (
+                DocumentToken(self.edit_token.document_id, 0)
+                if replacement
+                else DocumentToken(self.token.document_id, self.token.revision + 1)
+            )
+            self._invalidated = bool(self._transaction_depth)
+            self.changed.emit(self.token)
+        self._categories.add(category)
+        surface_indices, columns = tuple(surface_indices), tuple(columns)
+        self._surface_indices.update(surface_indices)
+        self._columns.update(columns)
+        if category not in {"presentation", "polarization"}:
+            self._all_surfaces |= not surface_indices
+            self._all_columns |= not columns
+        if not self._transaction_depth:
+            self._publish()
+
+    @contextmanager
+    def transaction(self, *, replacement=False):
+        """Group successful notifications; callers own atomic mutation/rollback.
+
+        A failed transaction publishes no successful change. Its already revoked
+        worker permissions stay revoked. Callers must restore mutated state or
+        publish a prepared replacement atomically before leaving this boundary.
+        """
+        if (
+            self._transaction_depth
+            and replacement
+            and not self._replacement_transaction
+        ):
+            raise ValueError("A replacement must be declared on the outer transaction.")
+        outer = not self._transaction_depth
+        if outer:
+            self._replacement_transaction = replacement
+            self._transaction_failed = False
+        self._transaction_depth += 1
+        try:
+            yield
+        except Exception:
+            self._transaction_failed = True
+            if outer:
+                self._reset_pending()
+            raise
+        finally:
+            self._transaction_depth -= 1
+            if outer:
+                self._replacement_transaction = False
+                self._invalidated = False
+                self._edit_invalidated = False
+                if self._transaction_failed:
+                    self._reset_pending()
+                else:
+                    self._publish()
+
+    def _publish(self):
+        if self._categories:
+            change = DocumentChange(
+                self.token,
+                self.edit_token,
+                frozenset(self._categories),
+                frozenset() if self._all_surfaces else frozenset(self._surface_indices),
+                frozenset() if self._all_columns else frozenset(self._columns),
+            )
+            self._reset_pending()
+            self.committed.emit(change)
+
+    def _reset_pending(self):
+        self._categories.clear()
+        self._surface_indices.clear()
+        self._columns.clear()
+        self._all_surfaces = False
+        self._all_columns = False
 
 
 class CalculationJobs(QObject):

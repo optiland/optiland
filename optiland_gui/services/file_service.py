@@ -139,8 +139,7 @@ class FileService:
         )
         self._current_filepath = None
         self._connector.set_modified(False)
-        self._connector.opticLoaded.emit()
-        self._connector.opticChanged.emit()
+        self._connector.notify_change("replacement")
 
     def load(self, filepath: str) -> None:
         """Load an optical system from *filepath*.
@@ -169,7 +168,7 @@ class FileService:
                 self._connector._optic, is_specific_new_system=False
             )
             self._connector.set_modified(False)
-            self._connector.opticLoaded.emit()
+            self._connector.notify_change("replacement")
             self._toast(f"Opened \u2014 {os.path.basename(filepath)}", "info")
         except Exception as e:
             self._toast(f"Load failed: {e}", "error", sub=filepath)
@@ -211,8 +210,7 @@ class FileService:
             self._current_filepath = None
             self._connector._initialize_optic_structure(self._connector._optic)
             self._connector.set_modified(True)
-            self._connector.opticLoaded.emit()
-            self._connector.opticChanged.emit()
+            self._connector.notify_change("replacement")
         except Exception as e:
             self._toast(f"Failed to load system from sample object: {e}", "error")
             self.new_system()
@@ -234,8 +232,7 @@ class FileService:
                 self._connector._optic, is_specific_new_system=False
             )
             self._connector.set_modified(True)
-            self._connector.opticLoaded.emit()
-            self._connector.opticChanged.emit()
+            self._connector.notify_change("replacement")
         except Exception as e:
             self._toast(f"Failed to import Zemax file from {filepath}: {e}", "error")
 
@@ -256,8 +253,7 @@ class FileService:
                 self._connector._optic, is_specific_new_system=False
             )
             self._connector.set_modified(True)
-            self._connector.opticLoaded.emit()
-            self._connector.opticChanged.emit()
+            self._connector.notify_change("replacement")
         except Exception as e:
             self._toast(f"Failed to import CODE V file from {filepath}: {e}", "error")
 
