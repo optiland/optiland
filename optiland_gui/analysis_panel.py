@@ -15,12 +15,11 @@ import contextlib
 import copy
 import inspect
 import json
+import uuid
 from enum import Enum
 from typing import TYPE_CHECKING, Literal, get_args, get_origin, get_type_hints
 
 import matplotlib.pyplot as plt
-import numpy as np
-from matplotlib.axes import Axes
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
@@ -46,6 +45,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -74,6 +74,8 @@ from optiland.analysis import (
 from optiland.mtf import FFTMTF, GeometricMTF
 
 from . import gui_plot_utils
+from .services.analysis_plots import draw_analysis_plot
+from .services.job_records import BackendConfig
 
 if TYPE_CHECKING:
     from .optiland_connector import OptilandConnector
@@ -176,6 +178,9 @@ class AnalysisPanel(QWidget):
         self.current_settings_widgets = {}
         # Mapping of display name → class, built from the registry at init.
         self._analysis_class_map: dict[str, type] = {}
+        self.runner = connector._analysis_runner
+        self._page_limit = 16
+        self._result_budget = 128 * 1024 * 1024
 
     def _setup_main_layout(self):
         """Sets up the main QVBoxLayout for the panel."""
@@ -325,6 +330,12 @@ class AnalysisPanel(QWidget):
         )
         self.mpl_toolbar_in_titlebar_container.setVisible(False)
         self.plot_area_title_bar_layout.addStretch()
+        self.analysisProgress = QProgressBar()
+        self.analysisProgress.setRange(0, 0)
+        self.analysisProgress.setMaximumWidth(90)
+        self.analysisProgress.setTextVisible(False)
+        self.analysisProgress.hide()
+        self.plot_area_title_bar_layout.addWidget(self.analysisProgress)
 
         self.btnRefreshPlot = QPushButton()
         self.btnRefreshPlot.setObjectName("RefreshPlotButton")
@@ -437,6 +448,11 @@ class AnalysisPanel(QWidget):
 
     def _connect_signals(self):
         """Connects all widget signals to their corresponding slots."""
+        self.runner.state_changed.connect(self._analysis_state_changed)
+        self.runner.finished.connect(self._analysis_finished)
+        self.runner.progress.connect(self._analysis_progress)
+        self.runner.busy_changed.connect(self._update_analysis_controls)
+        self.connector.document_state.changed.connect(self.mark_results_stale)
         self.btnRun.clicked.connect(self.run_analysis_slot)
         self.btnRunAll.clicked.connect(self.run_all_analysis_slot)
         self.btnStop.clicked.connect(self.stop_analysis_slot)
@@ -720,11 +736,42 @@ class AnalysisPanel(QWidget):
         widget = self._create_widget_for_param(param_name, annotation, default_value)
 
         if widget:
+            if param_name == "num_rays":
+                family = self.analysisTypeCombo.currentText()
+                per_axis = "PSF" in family or family == "FFT MTF"
+                widget.setToolTip(
+                    "Pupil samples per axis; work grows with the square of this value."
+                    if per_axis
+                    else "Sampling count; available memory is checked before Run."
+                )
+            if (
+                isinstance(widget, (QSpinBox, QDoubleSpinBox))
+                and param_info.get("default") is None
+            ):
+                widget.setProperty("allowNone", True)
+                widget.setMinimum(0)
+                widget.setSpecialValueText("Auto")
+                widget.setValue(0)
+            if isinstance(widget, QDoubleSpinBox) and param_name == "pixel_pitch":
+                widget.setDecimals(9)
             if isinstance(widget, QCheckBox):
                 self.settings_form_layout.addRow(widget)
             else:
                 self.settings_form_layout.addRow(QLabel(label_text), widget)
             self.current_settings_widgets[param_name] = widget
+            signal = (
+                widget.valueChanged
+                if isinstance(widget, (QSpinBox, QDoubleSpinBox))
+                else widget.toggled
+                if isinstance(widget, QCheckBox)
+                else widget.currentIndexChanged
+                if isinstance(widget, QComboBox)
+                else widget.textEdited
+                if isinstance(widget, QLineEdit)
+                else None
+            )
+            if signal is not None:
+                signal.connect(self._settings_edited)
         else:
             print(
                 f"Warning: No widget created for '{param_name}' "
@@ -798,13 +845,17 @@ class AnalysisPanel(QWidget):
 
     def _set_line_edit_value(self, widget, value):
         """Sets the text of a QLineEdit, handling tuples."""
-        text = ", ".join(map(str, value)) if isinstance(value, tuple) else str(value)
+        text = (
+            ", ".join(map(str, value))
+            if isinstance(value, (tuple, list))
+            else str(value)
+        )
         widget.setText(text)
 
     def _set_combobox_value(self, widget, value, param_name):
         """Sets the value of a QComboBox, dispatching to a special handler if needed."""
         if param_name in ["fields", "wavelengths", "wavelength"]:
-            self._set_special_combobox_value(widget, value)
+            self._set_special_combobox_value(widget, value, param_name)
         elif param_name == "axis":
             widget.setCurrentIndex(0 if value == 1 else 1)
         else:
@@ -812,22 +863,41 @@ class AnalysisPanel(QWidget):
             if index != -1:
                 widget.setCurrentIndex(index)
 
-    def _set_special_combobox_value(self, widget, value):
+    def _set_special_combobox_value(self, widget, value, param_name):
         """Sets the value for a QComboBox that uses itemData."""
+        if (
+            param_name == "fields"
+            and isinstance(value, list)
+            and all(isinstance(field, (list, tuple)) for field in value)
+        ):
+            # JSON arrays preserve the selected field coordinates but not tuple types.
+            value = [tuple(field) for field in value]
         for i in range(widget.count()):
             try:
                 item_data = ast.literal_eval(widget.itemData(i) or "None")
-                if item_data == value:
-                    widget.setCurrentIndex(i)
-                    return
             except (ValueError, SyntaxError):
-                continue
+                item_data = widget.itemData(i)
+            if (
+                param_name == "wavelength"
+                and isinstance(item_data, list)
+                and len(item_data) == 1
+            ):
+                item_data = item_data[0]
+            if item_data == value:
+                widget.setCurrentIndex(i)
+                return
 
     def _set_widget_value(self, widget, value, param_name: str):
         """
         Sets the value of a widget by dispatching to the correct handler
         based on its type.
         """
+        if value is None:
+            if isinstance(widget, (QSpinBox, QDoubleSpinBox)) and widget.property(
+                "allowNone"
+            ):
+                widget.setValue(widget.minimum())
+            return
         # A dictionary mapping widget types to their value-setting functions
         handler_map = {
             QSpinBox: lambda w, v, p: w.setValue(v),
@@ -844,17 +914,6 @@ class AnalysisPanel(QWidget):
         if handler:
             handler(widget, value, param_name)
 
-    def _set_combobox_value(self, widget, value, param_name):
-        """Sets the value for a QComboBox based on parameter type."""
-        if param_name in ["fields", "wavelengths", "wavelength"]:
-            self._set_special_combobox_value(widget, value)
-        elif param_name == "axis":
-            widget.setCurrentIndex(0 if value == 1 else 1)
-        else:
-            index = widget.findText(str(value))
-            if index != -1:
-                widget.setCurrentIndex(index)
-
     @Slot(str)
     def on_analysis_type_changed(self, analysis_name: str):
         """Handles the change of the selected analysis type.
@@ -870,6 +929,10 @@ class AnalysisPanel(QWidget):
         if analysis_name not in self._analysis_class_map:
             return  # category header or unrecognised item — skip
         self._update_settings_ui(analysis_name)
+        if 0 <= self.current_plot_page_index < len(self.analysis_results_pages):
+            page = self.analysis_results_pages[self.current_plot_page_index]
+            if page["name"] == analysis_name:
+                self._populate_settings_from_page_data(page)
         if self.current_plot_page_index == -1 or not self.analysis_results_pages:
             self.plotTitleLabel.setText(analysis_name)
 
@@ -890,8 +953,8 @@ class AnalysisPanel(QWidget):
         self.btnSaveSettings.setIcon(QIcon(f":/icons/{theme_name}/save_settings.svg"))
         self.btnLoadSettings.setIcon(QIcon(f":/icons/{theme_name}/load_settings.svg"))
 
-        # This new line will refresh the plot using the new theme
-        self._refresh_current_plot_page_slot()
+        # Reinstall detached results only; changing theme never runs optics.
+        self.display_plot_page(self.current_plot_page_index, update_settings=False)
 
     def update_pagination_ui(self):
         self._clear_layout(self.vertical_page_buttons_layout)
@@ -911,6 +974,7 @@ class AnalysisPanel(QWidget):
             )
             self.vertical_page_buttons_layout.addWidget(btn_page)
         self.vertical_page_buttons_layout.addStretch()
+        self._update_analysis_controls()
 
     def _show_page_button_context_menu(self, position, button, page_index):
         """Creates and shows the right-click menu for a page button."""
@@ -928,31 +992,32 @@ class AnalysisPanel(QWidget):
             self._remove_analysis_page(page_index)
 
     def _clone_analysis_page(self, page_index):
-        """Clones an existing analysis page."""
-        if not (0 <= page_index < len(self.analysis_results_pages)):
+        """Clone configuration and share immutable completed data, never an optic."""
+        if not 0 <= page_index < len(self.analysis_results_pages):
             return
-
-        original_page_data = self.analysis_results_pages[page_index]
-        cloned_page_data = {
-            "name": original_page_data["name"],
-            "analysis_instance": copy.deepcopy(original_page_data["analysis_instance"]),
-            "plot_type": original_page_data["plot_type"],
-            "view_args": copy.deepcopy(original_page_data["view_args"]),
-            "constructor_args_used": copy.deepcopy(
-                original_page_data["constructor_args_used"]
-            ),
-            "figsize": original_page_data.get("figsize"),
+        if len(self.analysis_results_pages) >= self._page_limit:
+            self._notify_analysis_error(
+                "Close a page before adding another (limit 16)."
+            )
+            return
+        original = self.analysis_results_pages[page_index]
+        cloned = {
+            **original,
+            "page_id": uuid.uuid4().hex,
+            "constructor_args_used": copy.deepcopy(original["constructor_args_used"]),
+            "view_args": copy.deepcopy(original["view_args"]),
+            "draft_settings": copy.deepcopy(original.get("draft_settings")),
+            "state": "succeeded" if original.get("prepared") else "idle",
+            "error": "",
         }
-
-        self.analysis_results_pages.append(cloned_page_data)
-        self.update_pagination_ui()
+        self.analysis_results_pages.append(cloned)
         self.switch_plot_page(len(self.analysis_results_pages) - 1)
-        self.logArea.append("Analysis cloned successfully.")
 
     def _remove_analysis_page(self, page_index):
         """Removes an analysis page from the analysis results."""
         if 0 <= page_index < len(self.analysis_results_pages):
-            self.analysis_results_pages.pop(page_index)
+            removed = self.analysis_results_pages.pop(page_index)
+            self.runner.cancel(removed["page_id"])
 
             # If the current page was removed, switch to the nearest available page
             if self.current_plot_page_index == page_index:
@@ -975,16 +1040,9 @@ class AnalysisPanel(QWidget):
         self.resize_timer.start()
 
     def handle_resize_finished(self):
-        """
-        Called after the user has finished resizing the window.
-        Applies tight_layout to the current plot.
-        """
+        """Repaint retained plots after resizing without recalculation."""
         if self.active_mpl_canvas_widget:
-            try:
-                self.active_mpl_canvas_widget.figure.tight_layout()
-                self.active_mpl_canvas_widget.draw_idle()
-            except Exception as e:
-                print(f"Error applying tight_layout on resize: {e}")
+            self.active_mpl_canvas_widget.draw_idle()
 
     def switch_plot_page(self, page_index):
         if 0 <= page_index < len(self.analysis_results_pages):
@@ -1055,14 +1113,57 @@ class AnalysisPanel(QWidget):
         }
         for param_name, widget in self.current_settings_widgets.items():
             if param_name in page_args:
+                widget.blockSignals(True)
                 self._set_widget_value(widget, page_args[param_name], param_name)
+                widget.blockSignals(False)
+        self._restore_settings_draft(page_data.get("draft_settings") or {})
+
+    def _capture_settings_draft(self):
+        """Keep raw editor values, including incomplete text, without validation."""
+        draft = {}
+        for name, widget in self.current_settings_widgets.items():
+            if isinstance(widget, QLineEdit):
+                draft[name] = widget.text()
+            elif isinstance(widget, QComboBox):
+                draft[name] = (
+                    widget.currentText(),
+                    copy.deepcopy(widget.currentData()),
+                )
+            elif isinstance(widget, QCheckBox):
+                draft[name] = widget.isChecked()
+            elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+                draft[name] = widget.value()
+        return draft
+
+    def _restore_settings_draft(self, draft):
+        """Restore pending inputs without changing submitted/result settings."""
+        for name, value in draft.items():
+            widget = self.current_settings_widgets.get(name)
+            if widget is None:
+                continue
+            blocked = widget.blockSignals(True)
+            try:
+                if isinstance(widget, QLineEdit):
+                    widget.setText(value)
+                elif isinstance(widget, QComboBox):
+                    text, data = value
+                    index = widget.findData(data) if data is not None else -1
+                    widget.setCurrentIndex(
+                        index if index != -1 else widget.findText(text)
+                    )
+                elif isinstance(widget, QCheckBox):
+                    widget.setChecked(value)
+                elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+                    widget.setValue(value)
+            finally:
+                widget.blockSignals(blocked)
 
     # --- Load/Save Settings ---
     def _apply_loaded_settings_to_ui(self, loaded_settings):
         """Applies settings loaded from a file to the current UI widgets."""
         analysis_name = loaded_settings.get("analysis_name")
-        if not analysis_name:
-            raise ValueError("Settings file does not contain an 'analysis_name'.")
+        if analysis_name not in self._analysis_class_map:
+            raise ValueError("Settings file must name a supported analysis.")
 
         self.analysisTypeCombo.setCurrentText(analysis_name)
         self.on_analysis_type_changed(
@@ -1077,36 +1178,14 @@ class AnalysisPanel(QWidget):
         for param_name, value in all_args.items():
             if param_name in self.current_settings_widgets:
                 widget = self.current_settings_widgets[param_name]
-                self._set_widget_value(widget, value)
-
-    @Slot()
-    def _load_analysis_settings_slot(self):
-        """Loads and applies settings for an analysis from a JSON file."""
-        filepath, _ = QFileDialog.getOpenFileName(
-            self, "Load Analysis Settings", "", self.JSON_FILE_FILTER
-        )
-        if not filepath:
-            return
-
-        try:
-            with open(filepath, encoding="utf-8") as f:
-                loaded_settings = json.load(f)
-            self._apply_loaded_settings_to_ui(loaded_settings)
-            self.logArea.append(
-                f"Settings loaded from {filepath}. Click 'Apply' or 'Run' "
-                "to see results."
-            )
-        except Exception as e:
-            QMessageBox.critical(
-                self, "Load Error", f"Could not load or apply settings:\n{e}"
-            )
+                self._set_widget_value(widget, value, param_name)
+        self._settings_edited()
 
     def _create_new_plot_canvas(self, page_data):
         """Creates a new FigureCanvas and connects mouse interaction events."""
         fig = Figure(figsize=page_data.get("figsize", (7, 5)), dpi=100)
         canvas = FigureCanvas(fig)
         canvas.setFocusPolicy(Qt.FocusPolicy.ClickFocus | Qt.FocusPolicy.StrongFocus)
-        canvas.setFocus()
 
         # Connect events and store their IDs for later disconnection
         cids = [
@@ -1117,34 +1196,10 @@ class AnalysisPanel(QWidget):
         canvas._event_cids = cids
         return canvas
 
-    def _draw_plot_on_canvas(self, analysis_instance, canvas, view_args):
-        """Invokes the analysis's view method to draw the plot on the canvas."""
-        axs = analysis_instance.view(fig_to_plot_on=canvas.figure, **view_args)
-
-        # Add summary text overlay if available
-        if hasattr(analysis_instance, "get_summary_text"):
-            summary_text = analysis_instance.get_summary_text()
-            ax_to_use = None
-            if isinstance(axs, np.ndarray):
-                ax_to_use = axs.flatten()[-1]
-            elif isinstance(axs, Axes):
-                ax_to_use = axs
-
-            if ax_to_use:
-                props = dict(boxstyle="round,pad=0.4", facecolor="black", alpha=0.6)
-                ax_to_use.text(
-                    0.97,
-                    0.03,
-                    summary_text,
-                    transform=ax_to_use.transAxes,
-                    fontsize=7,
-                    verticalalignment="bottom",
-                    horizontalalignment="right",
-                    bbox=props,
-                    color="white",
-                )
-
-        canvas.figure.tight_layout(rect=[0, 0.05, 1, 1])
+    def _draw_plot_on_canvas(self, prepared, canvas, view_args):
+        """Draw completed plain data. No analysis or optical object reaches here."""
+        draw_analysis_plot(canvas.figure, prepared, self.current_theme)
+        canvas.draw_idle()
 
     def _setup_plot_toolbar(self, canvas):
         """Creates and attaches a new custom Matplotlib toolbar."""
@@ -1161,43 +1216,168 @@ class AnalysisPanel(QWidget):
         layout.addWidget(QLabel("Select or Run an Analysis"))
         self._update_settings_ui(self.analysisTypeCombo.currentText())
 
-    def display_plot_page(self, page_index):
-        """
-        Displays a specific analysis result page, orchestrating
-        UI cleanup and redrawing.
-        """
+    def display_plot_page(self, page_index, *, update_settings=True):
+        """Display a pending or completed stable page without rerunning analysis."""
         plot_layout = self._cleanup_plot_area()
-
-        if not (0 <= page_index < len(self.analysis_results_pages)):
+        if not 0 <= page_index < len(self.analysis_results_pages):
             self._display_placeholder(plot_layout)
+            self._update_analysis_controls()
             return
-
-        page_data = self.analysis_results_pages[page_index]
-        analysis_name = page_data.get("name", "Analysis")
-        analysis_instance = page_data.get("analysis_instance")
-
-        # Update UI text elements
-        self.plotTitleLabel.setText(analysis_name)
-        self.dataInfoLabel.setText(
-            page_data.get("result_summary", f"Results for {analysis_name}")
-        )
-
-        # Update settings panel to reflect this analysis
-        self._update_settings_ui(analysis_name)
-        self._populate_settings_from_page_data(page_data)
-
-        if page_data.get("plot_type") == "embedded_mpl" and analysis_instance:
-            self.active_mpl_canvas_widget = self._create_new_plot_canvas(page_data)
+        page = self.analysis_results_pages[page_index]
+        self.plotTitleLabel.setText(page["name"])
+        self._update_page_status(page)
+        if update_settings:
+            self.analysisTypeCombo.blockSignals(True)
+            self.analysisTypeCombo.setCurrentText(page["name"])
+            self.analysisTypeCombo.blockSignals(False)
+            self._update_settings_ui(page["name"])
+            self._populate_settings_from_page_data(page)
+        if page.get("prepared"):
+            self.active_mpl_canvas_widget = self._create_new_plot_canvas(page)
             self._draw_plot_on_canvas(
-                analysis_instance,
-                self.active_mpl_canvas_widget,
-                page_data.get("view_args", {}),
+                page["prepared"], self.active_mpl_canvas_widget, {}
             )
             self._setup_plot_toolbar(self.active_mpl_canvas_widget)
             plot_layout.addWidget(self.active_mpl_canvas_widget)
-            self._fade_in_canvas(self.active_mpl_canvas_widget)
+            # The toolbar exports this completed revision even while a rerun is pending.
+            self.active_mpl_toolbar_widget.setToolTip(self.dataInfoLabel.text())
         else:
-            plot_layout.addWidget(QLabel(f"Cannot embed plot for {analysis_name}"))
+            plot_layout.addWidget(QLabel("Waiting for analysis result."))
+        self._update_analysis_controls()
+
+    def _update_page_status(self, page):
+        state = page.get("state", "idle")
+        token = page.get("result_token")
+        parts = [state.capitalize()]
+        if state == "running" and page.get("stage"):
+            parts.append(page["stage"])
+        if token:
+            stale = (
+                token != self.connector.document_state.token
+                or page.get("result_backend") != BackendConfig.capture()
+            )
+            parts.append(
+                f"{'Out of date — ' if stale else ''}result revision {token.revision}"
+            )
+        if state in ("queued", "running", "cancelling") and page.get("prepared"):
+            parts.append("Showing previous completed result")
+        if page.get("error"):
+            parts.append(page["error"].splitlines()[-1])
+        if page.get("result_summary"):
+            parts.append(page["result_summary"])
+        if page.get("warnings"):
+            parts.append("Warning: " + " ".join(page["warnings"]))
+        if page.get("settings_dirty"):
+            parts.append("Settings changed — Apply to recalculate")
+        elif page.get("result_settings") and (
+            page["result_settings"]["constructor_args"] != page["constructor_args_used"]
+            or page["result_settings"]["view_args"] != page["view_args"]
+        ):
+            parts.append("Result uses previous settings")
+        self.dataInfoLabel.setText(" · ".join(parts))
+        self.dataInfoLabel.setWordWrap(True)
+        self.analysisProgress.setVisible(state in ("queued", "running", "cancelling"))
+
+    @Slot()
+    def _update_analysis_controls(self, *args):
+        busy = self.runner.busy
+        self.btnStop.setEnabled(busy)
+        self.btnRunAll.setEnabled(bool(self.analysis_results_pages) and not busy)
+        self.btnRunAll.setToolTip(
+            "Run all configured pages against one design revision"
+            if self.analysis_results_pages
+            else "Create analysis pages before Run All"
+        )
+        self.btnRun.setEnabled(len(self.analysis_results_pages) < self._page_limit)
+        selected = 0 <= self.current_plot_page_index < len(self.analysis_results_pages)
+        self.btnRefreshPlot.setEnabled(selected)
+        self.btnApplySettings.setEnabled(selected)
+
+    @Slot(str, str)
+    def _analysis_state_changed(self, page_id, state):
+        for index, page in enumerate(self.analysis_results_pages):
+            if page["page_id"] == page_id:
+                page["state"] = state
+                if index == self.current_plot_page_index:
+                    self._update_page_status(page)
+                break
+        self._update_analysis_controls()
+
+    @Slot(str, str)
+    def _analysis_progress(self, page_id, stage):
+        for index, page in enumerate(self.analysis_results_pages):
+            if page["page_id"] == page_id:
+                page["stage"] = stage
+                if index == self.current_plot_page_index:
+                    self._update_page_status(page)
+                break
+
+    @Slot(str, object)
+    def _analysis_finished(self, page_id, result):
+        page = next(
+            (p for p in self.analysis_results_pages if p["page_id"] == page_id), None
+        )
+        if page is None:
+            return
+        page["state"] = result.status
+        page["error"] = result.error if result.status == "failed" else ""
+        if result.status == "succeeded":
+            retained = {
+                id(p.get("prepared")): p.get("size_bytes", 0)
+                for p in self.analysis_results_pages
+                if p is not page
+            }
+            size = result.data["size_bytes"]
+            if sum(retained.values()) + size > self._result_budget:
+                page["state"] = "failed"
+                page["error"] = (
+                    "Analysis result budget exceeded (128 MiB); "
+                    "close completed pages and retry."
+                )
+            else:
+                page.update(
+                    prepared=result.data["plot"],
+                    size_bytes=size,
+                    result_token=result.request.document,
+                    result_backend=result.request.snapshot.backend,
+                    result_summary=result.data["summary"],
+                    warnings=result.data.get("warnings", []),
+                    result_settings=copy.deepcopy(result.request.parameters),
+                    figsize=result.data["plot"]["figsize"],
+                )
+        if page["error"]:
+            self._notify_analysis_error(page["error"].splitlines()[-1])
+        # Completion must never switch the user's current page or overwrite edits.
+        if self.analysis_results_pages.index(page) == self.current_plot_page_index:
+            self.display_plot_page(self.current_plot_page_index, update_settings=False)
+        self._update_analysis_controls()
+
+    @Slot(object)
+    def mark_results_stale(self, token):
+        """Optical revisions invalidate labels, not the retained historical plots."""
+        if 0 <= self.current_plot_page_index < len(self.analysis_results_pages):
+            self._update_page_status(
+                self.analysis_results_pages[self.current_plot_page_index]
+            )
+
+    def _notify_analysis_error(self, message):
+        self.logArea.append(message)
+        manager = getattr(self.connector, "toast_manager", None)
+        if manager:
+            manager.notify(message, "error")
+
+    @Slot()
+    def _settings_edited(self, *args):
+        if 0 <= self.current_plot_page_index < len(self.analysis_results_pages):
+            page = self.analysis_results_pages[self.current_plot_page_index]
+            if page["name"] == self.analysisTypeCombo.currentText():
+                page["settings_dirty"] = True
+                page["draft_settings"] = self._capture_settings_draft()
+                self._update_page_status(page)
+
+    def closeEvent(self, event):
+        self.runner.stop()
+        super().closeEvent(event)
 
     def _fade_in_canvas(self, canvas, duration_ms: int = 250) -> None:
         """Fade a newly-rendered canvas from transparent to fully opaque.
@@ -1225,8 +1405,6 @@ class AnalysisPanel(QWidget):
     def toggle_settings_panel_slot(self):
         is_visible = self.settings_area_widget.isVisible()
         self.settings_area_widget.setVisible(not is_visible)
-        if not is_visible:
-            self.display_plot_page(self.current_plot_page_index)
 
     def _parse_tuple_str(self, s, expected_type=float, expected_len=2):
         if not s or not isinstance(s, str):
@@ -1239,6 +1417,8 @@ class AnalysisPanel(QWidget):
 
     def _get_value_from_spinbox(self, widget):
         """Extracts the value from a QSpinBox or QDoubleSpinBox."""
+        if widget.property("allowNone") and widget.value() == widget.minimum():
+            return None
         return widget.value()
 
     def _get_value_from_checkbox(self, widget):
@@ -1340,7 +1520,7 @@ class AnalysisPanel(QWidget):
             True if the system is valid, False otherwise.
         """
         tm = getattr(self.connector, "toast_manager", None)
-        if not optic or optic.surface_group.num_surfaces < 2:
+        if not optic or optic.surfaces.num_surfaces < 2:
             if tm:
                 tm.notify(
                     "A minimal optical system (at least 2 surfaces) is required.",
@@ -1364,81 +1544,6 @@ class AnalysisPanel(QWidget):
                 )
             return False
         return True
-
-    def _run_and_package_analysis(
-        self, analysis_class, analysis_name, constructor_args, view_args
-    ):
-        """
-        Instantiates, runs, and packages the analysis results.
-
-        Args:
-            analysis_class: The class of the analysis to run.
-            analysis_name (str): The display name of the analysis.
-            constructor_args (dict): Arguments for the analysis class constructor.
-            view_args (dict): Arguments for the analysis view method.
-
-        Returns:
-            A dictionary containing the packaged page data for display,
-            or None on failure.
-        """
-        optic = self.connector.get_optic()
-        final_args = {"optic": optic, **constructor_args}
-
-        # Filter args to only those accepted by the constructor.
-        # For factory dispatch classes (e.g. FFTPSF) whose __init__ is
-        # *args/**kwargs, fall back to __new__ for the accepted-param list.
-        init_sig = inspect.signature(analysis_class.__init__)
-        init_params = init_sig.parameters
-        _variadic = frozenset(
-            {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
-        )
-        if all(
-            p.kind in _variadic for name, p in init_params.items() if name != "self"
-        ) and hasattr(analysis_class, "__new__"):
-            init_params = inspect.signature(analysis_class.__new__).parameters
-        valid_init_params = init_params
-        filtered_args = {k: v for k, v in final_args.items() if k in valid_init_params}
-
-        # Inject defaults for required args that may be absent when the
-        # settings panel has never been opened (e.g. field/wavelength for
-        # wavefront and PSF analyses).
-        _required_defaults = {"field": (0.0, 0.0), "wavelength": "primary"}
-        for _key, _default in _required_defaults.items():
-            if _key not in filtered_args and _key in valid_init_params:
-                filtered_args[_key] = _default
-
-        if (
-            analysis_name in [self.GEOMETRIC_MTF, self.FFT_MTF]
-            and "max_freq" in final_args
-            and "max_freq" not in filtered_args
-        ):
-            filtered_args["max_freq"] = final_args["max_freq"]
-
-        instance = analysis_class(**filtered_args)
-
-        # Check if the analysis can be plotted directly on a Matplotlib figure
-        can_embed = (
-            hasattr(instance, "view")
-            and "fig_to_plot_on" in inspect.signature(instance.view).parameters
-        )
-        if not can_embed:
-            instance.view(**view_args)  # Open in a separate window
-
-        page_data = {
-            "name": analysis_name,
-            "analysis_instance": instance,
-            "plot_type": "embedded_mpl" if can_embed else "external_window",
-            "view_args": view_args,
-            "constructor_args_used": constructor_args,
-        }
-
-        # Special case for sizing the plot figure for certain analyses
-        if analysis_name in ("Through-Focus Spot", "Through-Focus Spot Diagram"):
-            num_f = optic.fields.num_fields
-            num_s = final_args.get("num_steps", 5)
-            page_data["figsize"] = (max(1, num_s) * 3, max(1, num_f) * 3)
-
-        return page_data
 
     def _collect_current_settings(self):
         """
@@ -1473,76 +1578,75 @@ class AnalysisPanel(QWidget):
         return constructor_args, view_args
 
     def _execute_analysis(
-        self, analysis_class, analysis_name, constructor_args=None, view_args=None
+        self,
+        analysis_class,
+        analysis_name,
+        constructor_args=None,
+        view_args=None,
+        *,
+        page=None,
     ):
-        """
-        Main entry point for executing an analysis.
-
-        This method orchestrates the validation, settings collection, execution,
-        and error handling for running a single analysis.
-
-        Args:
-            analysis_class: The analysis class to instantiate.
-            analysis_name (str): The display name of the analysis.
-            constructor_args (dict, optional): Pre-collected args, used for cloning.
-            view_args (dict, optional): Pre-collected view args, used for cloning.
-
-        Returns:
-            A dictionary of page data, or None if the analysis fails.
-        """
+        """Validate settings and submit detached work without blocking the GUI."""
         optic = self.connector.get_optic()
         if not self._validate_system_for_analysis(optic):
             return None
-
-        # Validate UI inputs (ranges, tuples, etc)
-        valid, error_msg = self._validate_all_inputs()
-        if not valid:
-            tm = getattr(self.connector, "toast_manager", None)
-            if tm:
-                tm.notify(error_msg, "error")
-            else:
-                QMessageBox.warning(self, "Invalid Input", error_msg)
-            return None
-
-        try:
-            # If no args are provided, get them from the UI (standard run)
-            if constructor_args is None and view_args is None:
-                constructor_args, view_args = self._collect_current_settings()
-
-            return self._run_and_package_analysis(
-                analysis_class, analysis_name, constructor_args, view_args
-            )
-
-        except Exception as e:
-            msg = f"An error occurred during {analysis_name}:\n{e}"
-            tm = getattr(self.connector, "toast_manager", None)
-            if tm:
-                tm.notify(msg, "error")
-            else:
-                QMessageBox.critical(
-                    self,
-                    self.ANALYSIS_ERROR_TITLE,
-                    msg,
+        if constructor_args is None:
+            valid, message = self._validate_all_inputs()
+            if not valid:
+                self._notify_analysis_error(message)
+                return None
+            constructor_args, view_args = self._collect_current_settings()
+        new_page = page is None
+        if new_page:
+            if len(self.analysis_results_pages) >= self._page_limit:
+                self._notify_analysis_error(
+                    "Close a page before adding another (limit 16)."
                 )
-            import traceback
-
-            print(f"Analysis Panel Error: {e}\n{traceback.format_exc()}")
+                return None
+            page = {
+                "page_id": uuid.uuid4().hex,
+                "name": analysis_name,
+                "prepared": None,
+                "state": "idle",
+                "error": "",
+                "constructor_args_used": {},
+                "view_args": {},
+            }
+        try:
+            request = self.runner.run(
+                analysis_name,
+                constructor_args,
+                optic,
+                target=page["page_id"],
+                view_args=view_args or {},
+                theme=self.current_theme,
+            )
+        except Exception as exc:
+            self._notify_analysis_error(str(exc))
             return None
+        page.update(
+            constructor_args_used=copy.deepcopy(request.parameters["constructor_args"]),
+            view_args=copy.deepcopy(view_args or {}),
+            state="queued",
+            error="",
+            requested_token=request.document,
+            settings_dirty=False,
+            draft_settings=None,
+        )
+        if new_page:
+            self.analysis_results_pages.append(page)
+        self._update_analysis_controls()
+        return page
 
     @Slot()
     def _apply_settings_and_rerun_analysis_slot(self):
-        if not (0 <= self.current_plot_page_index < len(self.analysis_results_pages)):
+        if not 0 <= self.current_plot_page_index < len(self.analysis_results_pages):
             return
-        page_data = self.analysis_results_pages[self.current_plot_page_index]
-        analysis_name = page_data.get("name")
-        self.logArea.setText(f"Rerunning {analysis_name} with new settings...")
-        new_page_data = self._execute_analysis(
-            self._analysis_class_map.get(analysis_name), analysis_name
+        page = self.analysis_results_pages[self.current_plot_page_index]
+        self._execute_analysis(
+            self._analysis_class_map.get(page["name"]), page["name"], page=page
         )
-        if new_page_data:
-            self.analysis_results_pages[self.current_plot_page_index] = new_page_data
-            self.display_plot_page(self.current_plot_page_index)
-            self.logArea.append(f"{analysis_name} reran successfully.")
+        self._update_page_status(page)
 
     @Slot()
     def _refresh_current_plot_page_slot(self):
@@ -1556,24 +1660,33 @@ class AnalysisPanel(QWidget):
 
     @Slot()
     def run_analysis_slot(self):
-        analysis_name = self.analysisTypeCombo.currentText()
-        analysis_class = self._analysis_class_map.get(analysis_name)
-        if not analysis_class:
+        name = self.analysisTypeCombo.currentText()
+        if name not in self._analysis_class_map:
             return
-        self.logArea.setText(f"Running {analysis_name}...")
-        page_data = self._execute_analysis(analysis_class, analysis_name)
-        if page_data:
-            self.analysis_results_pages.append(page_data)
+        page = self._execute_analysis(self._analysis_class_map[name], name)
+        if page is not None:
             self.switch_plot_page(len(self.analysis_results_pages) - 1)
-            self.logArea.append(f"{analysis_name} run complete.")
 
     @Slot()
     def run_all_analysis_slot(self):
-        self.logArea.append("Run All: Not yet implemented.")
+        entries = [
+            {
+                "target": p["page_id"],
+                "name": p["name"],
+                "constructor_args": p["constructor_args_used"],
+                "view_args": p["view_args"],
+                "theme": self.current_theme,
+            }
+            for p in self.analysis_results_pages
+        ]
+        try:
+            self.runner.run_batch(entries, self.connector.get_optic())
+        except Exception as exc:
+            self._notify_analysis_error(str(exc))
 
     @Slot()
     def stop_analysis_slot(self):
-        self.logArea.append("Stop: Not yet implemented.")
+        self.runner.stop()
 
     @Slot()
     def _save_analysis_settings_slot(self):
@@ -1626,29 +1739,7 @@ class AnalysisPanel(QWidget):
                 with open(filepath, encoding="utf-8") as f:
                     loaded_settings = json.load(f)
 
-                analysis_name = loaded_settings.get("analysis_name")
-                self.analysisTypeCombo.setCurrentText(analysis_name)
-
-                # Apply the loaded settings to the UI widgets
-                self.on_analysis_type_changed(analysis_name)
-
-                all_args = {
-                    **loaded_settings.get("constructor_args", {}),
-                    **loaded_settings.get("view_args", {}),
-                }
-                for param_name, value in all_args.items():
-                    if param_name in self.current_settings_widgets:
-                        widget = self.current_settings_widgets[param_name]
-                        if isinstance(widget, QComboBox):
-                            index = widget.findData(str(value))
-                            if index != -1:
-                                widget.setCurrentIndex(index)
-                        elif isinstance(widget, QSpinBox | QDoubleSpinBox):
-                            widget.setValue(value)
-                        elif isinstance(widget, QCheckBox):
-                            widget.setChecked(value)
-                        elif isinstance(widget, QLineEdit):
-                            widget.setText(str(value))
+                self._apply_loaded_settings_to_ui(loaded_settings)
 
                 self.logArea.append(
                     f"Settings loaded from {filepath}. "

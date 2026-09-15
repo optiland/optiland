@@ -28,7 +28,13 @@ while header := sys.stdin.buffer.read(4):
     parameters = message["parameters"]
     send({"event": "progress", "job_id": job_id, "stage": "fixture"})
     if parameters.get("crash"):
+        if parameters.get("stderr"):
+            print(parameters["stderr"], file=sys.stderr, flush=True)
         os._exit(7)
+    if parameters.get("malformed"):
+        sys.stdout.buffer.write(struct.pack("!I", 2**32 - 1))
+        sys.stdout.buffer.flush()
+        time.sleep(30)
     time.sleep(parameters.get("delay", 0.01))
     send(
         {

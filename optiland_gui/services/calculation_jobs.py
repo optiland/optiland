@@ -110,6 +110,7 @@ class CalculationJobs(QObject):
         *,
         replace: bool = True,
         cancel_on_document_change: bool = True,
+        document_token: DocumentToken | None = None,
         context: Any = None,
     ) -> JobRequest:
         """Queue detached inputs; replace previews while keeping explicit FIFO jobs."""
@@ -125,7 +126,7 @@ class CalculationJobs(QObject):
         generation = self._generations.setdefault(target, 0)
         request = JobRequest(
             self._serial,
-            self.document.token,
+            document_token if document_token is not None else self.document.token,
             target,
             generation,
             handler,
@@ -222,7 +223,7 @@ class CalculationJobs(QObject):
             self._send(request.worker_message())
         except Exception as exc:
             self._active = None
-            self._terminal(request, "failed", error=str(exc))
+            self._terminal(request, "failed", error=str(exc), infrastructure_error=True)
             QTimer.singleShot(0, self._dispatch)
             return
         self.state_changed.emit(request, "running")
@@ -307,7 +308,13 @@ class CalculationJobs(QObject):
             QTimer.singleShot(0, self._dispatch)
 
     def _terminal(
-        self, request: JobRequest, status: str, data: Any = None, error: str = ""
+        self,
+        request: JobRequest,
+        status: str,
+        data: Any = None,
+        error: str = "",
+        *,
+        infrastructure_error: bool = False,
     ) -> None:
         self.state_changed.emit(request, status)
         self.finished.emit(
@@ -317,6 +324,7 @@ class CalculationJobs(QObject):
                 data,
                 error,
                 status != "cancelled" and self.is_current(request),
+                infrastructure_error,
             )
         )
 
@@ -359,6 +367,7 @@ class CalculationJobs(QObject):
                 request,
                 "cancelled" if self._cancelling else "failed",
                 error=self._stderr or "Calculation worker exited unexpectedly.",
+                infrastructure_error=not self._cancelling,
             )
         elif not self._closed and self._pending:
             # A failed launch must not loop forever, or leave queued controls busy.
@@ -368,6 +377,7 @@ class CalculationJobs(QObject):
                     request,
                     "failed",
                     error=self._stderr or "Could not start the calculation worker.",
+                    infrastructure_error=True,
                 )
         self._cancelling = False
         if self._closed:
