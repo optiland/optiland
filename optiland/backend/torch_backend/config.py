@@ -47,27 +47,30 @@ class _Config:
     """Internal configuration container for TorchBackend."""
 
     def __init__(self) -> None:
-        self.device: Literal["cpu", "cuda"] = "cpu"
+        self.device: Literal["cpu", "cuda", "mps"] = "cpu"
         self.precision: torch.dtype = torch.float32
         self.grad_mode: GradMode = GradMode()
 
-    def set_device(self, device: Literal["cpu", "cuda"]) -> None:
+    def set_device(self, device: Literal["cpu", "cuda", "mps"]) -> None:
         """Set the compute device.
 
         Args:
-            device: ``'cpu'`` or ``'cuda'``.
+            device: ``'cpu'``, ``'cuda'`` or ``'mps'`` (Apple GPU; float64 on
+                ``mps`` is emulated, see ``optiland.backend.torch_backend.metal``).
 
         Raises:
-            ValueError: If device is not ``'cpu'`` or ``'cuda'``, or if CUDA
-                is requested but unavailable.
+            ValueError: If device is not one of the supported names, or if the
+                requested accelerator is unavailable.
         """
-        if device not in ("cpu", "cuda"):
-            raise ValueError("Device must be 'cpu' or 'cuda'.")
+        if device not in ("cpu", "cuda", "mps"):
+            raise ValueError("Device must be 'cpu', 'cuda' or 'mps'.")
         if device == "cuda" and not torch.cuda.is_available():
             raise ValueError("CUDA is not available.")
+        if device == "mps" and not torch.backends.mps.is_available():
+            raise ValueError("MPS (Apple GPU) is not available.")
         self.device = device
 
-    def get_device(self) -> Literal["cpu", "cuda"]:
+    def get_device(self) -> Literal["cpu", "cuda", "mps"]:
         """Return the current device."""
         return self.device
 

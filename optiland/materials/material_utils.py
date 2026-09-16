@@ -162,8 +162,9 @@ def downsample_glass_map(glass_dict: dict, num_glasses_to_keep: int) -> dict:
         indices = be.arange_indices(be.size(labels))
         cluster_indices = indices[mask]
 
-        # Extract cluster points
-        cluster_points = be.array(glass_data[cluster_indices])
+        # Extract cluster points (glass_data is a NumPy array from kmeans2, so
+        # the index array must be a host array even on a GPU backend)
+        cluster_points = be.array(glass_data[be.to_numpy(cluster_indices)])
         centroid = be.array(centroids[cluster_index])
 
         # Ensure cluster_points and centroid are 2D in torch

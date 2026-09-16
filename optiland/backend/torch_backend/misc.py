@@ -117,14 +117,7 @@ class MiscMixin:
             flat = x.reshape(-1)
             mapped = [pyfunc(xi) for xi in flat]
             out = torch.stack(
-                [
-                    (
-                        m
-                        if isinstance(m, torch.Tensor)
-                        else torch.tensor(m, dtype=self._dtype(), device=self._device())
-                    )
-                    for m in mapped
-                ]
+                [(m if isinstance(m, torch.Tensor) else self.cast(m)) for m in mapped]
             )
             return out.view(x.shape)
 
@@ -152,9 +145,22 @@ class MiscMixin:
         Returns:
             tuple[Tensor, Tensor]: Bin counts and bin edges.
         """
+        if self._is_metal(x):
+            # No histogram kernel on the GPU: decode, bin on the CPU in
+            # float64, and re-encode (counted as cpu_fallback:histogram).
+            from optiland.backend.torch_backend.metal.tensor import cpu_fallback
+
+            return cpu_fallback(self._histogram_cpu, (x, bins), {}, label="histogram")
         if isinstance(bins, int):
             return torch.histogram(x.float(), bins=bins)
         return torch.histogram(x.float(), bins=bins.float())
+
+    @staticmethod
+    def _histogram_cpu(x: Tensor, bins: Any) -> tuple[Tensor, Tensor]:
+        x = x.detach().to(torch.float64)
+        if isinstance(bins, int):
+            return torch.histogram(x, bins=bins)
+        return torch.histogram(x, bins=bins.detach().to(torch.float64))
 
     def histogram2d(
         self,
@@ -180,6 +186,28 @@ class MiscMixin:
         if not isinstance(bins, list | tuple) or len(bins) != 2:
             raise ValueError("`bins` must be a list or tuple of two edge tensors.")
 
+        if self._is_metal(x) or self._is_metal(y):
+            # Decode, bin on the CPU in float64 with the same code, re-encode
+            # (counted as cpu_fallback:histogram2d).
+            from optiland.backend.torch_backend.metal.tensor import cpu_fallback
+
+            return cpu_fallback(
+                self._histogram2d_impl,
+                (
+                    self.cast(x),
+                    self.cast(y),
+                    tuple(self.cast(b) for b in bins),
+                    weights,
+                ),
+                {},
+                label="histogram2d",
+            )
+        return self._histogram2d_impl(x, y, bins, weights)
+
+    @staticmethod
+    def _histogram2d_impl(
+        x: Tensor, y: Tensor, bins: Any, weights: Tensor | None
+    ) -> tuple[Tensor, Tensor, Tensor]:
         x_edges, y_edges = bins[0], bins[1]
         nx = x_edges.numel() - 1
         ny = y_edges.numel() - 1

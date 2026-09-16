@@ -6,6 +6,7 @@ their existing storage; CUDA tensors retain native Torch operations.
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -152,9 +153,33 @@ class _ConicCPU(torch.autograd.Function):
         )
 
 
+def _can_fuse_metal(values: tuple, radius: Any, conic: Any) -> bool:
+    """True when the rays are emulated-float64 Metal tensors with scalar radius/conic.
+
+    The fused Metal kernel (``metal/conic.py``) evaluates the shared
+    ``_conic_candidates`` arithmetic in one launch instead of ~40 elementwise
+    launches, with the same masks and the same implicit-derivative backward.
+    """
+    if os.environ.get("OPTILAND_METAL_FUSED_CONIC", "1") != "1":
+        return False
+    try:
+        from optiland.backend.torch_backend.metal.conic import can_fuse_metal
+    except ImportError:  # pragma: no cover
+        return False
+    return can_fuse_metal(values, radius, conic)
+
+
 def _epsilon(value: Tensor) -> float:
-    """Use the native arithmetic result's floating dtype."""
-    return torch.finfo(value.dtype).eps
+    """Machine epsilon of ``value``'s *actual* arithmetic.
+
+    ``optiland.utils.machine_eps`` consults an emulated dtype's own precision
+    (``MetalFloat64.machine_eps``: 2^-48 for df64, 2^-53 for sf64) before
+    falling back to ``torch.finfo(value.dtype).eps``, so guards derived from
+    it stay above round-off on the Apple GPU.
+    """
+    from optiland.utils import machine_eps
+
+    return machine_eps(value)
 
 
 class ConicMixin:
@@ -181,6 +206,12 @@ class ConicMixin:
         values = (x, y, z, L, M, N)
         if can_fuse_cpu(values, radius, conic):
             return _ConicCPU.apply(contains, *values, radius, conic)[0]
+        if _can_fuse_metal(values, radius, conic):
+            from optiland.backend.torch_backend.metal.conic import (
+                conic_intersection_metal,
+            )
+
+            return conic_intersection_metal(*values, radius, conic, contains)
         # Native where pairs scalar constants with existing tensors. No host
         # scalar tensor construction or device copy is needed for each guard.
         roots = _conic_candidates(

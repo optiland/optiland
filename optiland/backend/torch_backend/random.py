@@ -17,7 +17,13 @@ if TYPE_CHECKING:
 
 
 class RandomMixin:
-    """Random-number generation operations."""
+    """Random-number generation operations.
+
+    With emulated float64 on ``mps`` (``MetalFloat64``) samples are drawn on
+    the CPU in real float64 with the torch generator (so seeds reproduce the
+    CPU float64 stream exactly) and then encoded onto the GPU; ``default_rng``
+    therefore returns a CPU generator in that configuration.
+    """
 
     # ------------------------------------------------------------------
     # Random number generation
@@ -30,11 +36,17 @@ class RandomMixin:
             seed: Optional seed.
 
         Returns:
-            Generator: PyTorch Generator.
+            Generator: PyTorch Generator (on the CPU when float64 is emulated
+                on ``mps``, since the samples are drawn there).
         """
         if seed is None:
             seed = torch.initial_seed()
-        return torch.Generator(device=self._device()).manual_seed(seed)
+        device = "cpu" if self._emulated() else self._device()
+        return torch.Generator(device=device).manual_seed(seed)
+
+    def _encode(self, samples: Tensor, requires_grad: bool = False) -> Tensor:
+        """Move host float64 samples onto the GPU as a MetalFloat64."""
+        return self._factories().tensor(samples, requires_grad=requires_grad)
 
     def random_uniform(
         self,
@@ -56,6 +68,11 @@ class RandomMixin:
         """
         size = size or 1
         gen_args = {"generator": generator} if generator else {}
+        if self._emulated():
+            host = torch.empty(size, dtype=torch.float64).uniform_(
+                low, high, **gen_args
+            )
+            return self._encode(host)
         return torch.empty(size, device=self._device(), dtype=self._dtype()).uniform_(
             low, high, **gen_args
         )
@@ -71,6 +88,10 @@ class RandomMixin:
         """
         if not size:
             size = (1,)
+        if self._emulated():
+            return self._encode(
+                torch.rand(size, dtype=torch.float64), requires_grad=self._grad()
+            )
         return torch.rand(
             size,
             device=self._device(),
@@ -98,6 +119,9 @@ class RandomMixin:
         """
         size = size or (1,)
         gen_args = {"generator": generator} if generator else {}
+        if self._emulated():
+            host = torch.randn(size, dtype=torch.float64, **gen_args) * scale + loc
+            return self._encode(host)
         return (
             torch.randn(size, device=self._device(), dtype=self._dtype(), **gen_args)
             * scale
@@ -130,6 +154,9 @@ class RandomMixin:
             dimension=dim, scramble=scramble, seed=seed
         )
         samples = sobol_engine.draw(num_samples_pow2)
+        if self._emulated():
+            # Drawn on the CPU (float32, exact in float64); encode onto the GPU.
+            return self._encode(samples[:num_samples])
         return samples[:num_samples].to(device=self._device(), dtype=self._dtype())
 
     def erfinv(self, x: Any) -> Tensor:

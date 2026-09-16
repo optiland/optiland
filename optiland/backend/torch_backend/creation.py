@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import torch
 
+from optiland.backend.torch_backend import metal
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -37,6 +39,34 @@ class CreationMixin:
     def _grad(self) -> bool:
         """Return whether gradients are enabled."""
         return self._config.grad_mode.requires_grad
+
+    def _emulated(self) -> bool:
+        """Return True when float64 on ``mps`` is emulated (``MetalFloat64``).
+
+        Torch rejects float64 on the Apple GPU, so with ``device='mps'`` and
+        ``precision='float64'`` every creation path builds
+        ``optiland.backend.torch_backend.metal.MetalFloat64`` tensors through
+        ``metal.factories`` instead of asking torch for float64 on ``mps``.
+        """
+        return (
+            self._config.get_device() == "mps"
+            and self._config.get_precision() == torch.float64
+            and metal.is_enabled()
+        )
+
+    @staticmethod
+    def _factories() -> Any:
+        """The ``metal.factories`` module (imported lazily: it imports torch MPS)."""
+        from optiland.backend.torch_backend.metal import factories
+
+        return factories
+
+    @staticmethod
+    def _is_metal(x: Any) -> bool:
+        """Return True for a ``MetalFloat64`` tensor."""
+        from optiland.backend.torch_backend.metal.tensor import is_metal
+
+        return is_metal(x)
 
     _NP_TO_TORCH: dict[Any, torch.dtype] = {
         np.float32: torch.float32,
@@ -80,16 +110,30 @@ class CreationMixin:
         if isinstance(x, torch.Tensor):
             return x
 
+        emulated = self._emulated()
         if isinstance(x, list | tuple) and len(x) > 0:
             # Check if any element is a Tensor
             if any(isinstance(v, torch.Tensor) for v in x):
-                # Ensure all are tensors and stack them to preserve gradients
-                tensors = [
-                    v
-                    if isinstance(v, torch.Tensor)
-                    else torch.tensor(v, device=self._device(), dtype=self._dtype())
-                    for v in x
-                ]
+                # Ensure all are tensors and stack them to preserve gradients.
+                # When emulated, plain floating tensors are promoted to
+                # MetalFloat64 first (torch.stack cannot mix the two kinds);
+                # MetalFloat64 elements keep their autograd history.
+                if emulated:
+                    factories = self._factories()
+                    tensors = [
+                        v
+                        if isinstance(v, torch.Tensor)
+                        and (self._is_metal(v) or not v.is_floating_point())
+                        else factories.as_tensor(v)
+                        for v in x
+                    ]
+                else:
+                    tensors = [
+                        v
+                        if isinstance(v, torch.Tensor)
+                        else torch.tensor(v, device=self._device(), dtype=self._dtype())
+                        for v in x
+                    ]
                 # Normalize 0-d (scalar) tensors to 1-d to ensure consistent
                 # shapes before stacking (e.g. mix of [] and [1] tensors)
                 if len(set(t.shape for t in tensors)) > 1:
@@ -106,6 +150,8 @@ class CreationMixin:
         if isinstance(x, np.ndarray) and x.dtype == np.bool_:
             return torch.tensor(x, device=self._device(), dtype=torch.bool)
 
+        if emulated:
+            return self._factories().tensor(x, requires_grad=self._grad())
         return torch.tensor(
             x,
             device=self._device(),
@@ -123,10 +169,13 @@ class CreationMixin:
         Returns:
             Tensor: Zero tensor.
         """
+        dtype = self._resolve_dtype(dtype)
+        if self._emulated() and dtype == torch.float64:
+            return self._factories().zeros(shape, requires_grad=self._grad())
         return torch.zeros(
             shape,
             device=self._device(),
-            dtype=self._resolve_dtype(dtype),
+            dtype=dtype,
             requires_grad=self._grad(),
         )
 
@@ -140,10 +189,13 @@ class CreationMixin:
         Returns:
             Tensor: Ones tensor.
         """
+        dtype = self._resolve_dtype(dtype)
+        if self._emulated() and dtype == torch.float64:
+            return self._factories().ones(shape, requires_grad=self._grad())
         return torch.ones(
             shape,
             device=self._device(),
-            dtype=self._resolve_dtype(dtype),
+            dtype=dtype,
             requires_grad=self._grad(),
         )
 
@@ -164,11 +216,14 @@ class CreationMixin:
                 shape = (int(shape),)
             except Exception:
                 shape = (shape,)
+        dtype = self._resolve_dtype(dtype)
+        if self._emulated() and dtype == torch.float64:
+            return self._factories().full(shape, val, requires_grad=self._grad())
         return torch.full(
             shape,
             val,
             device=self._device(),
-            dtype=self._resolve_dtype(dtype),
+            dtype=dtype,
             requires_grad=self._grad(),
         )
 
@@ -183,6 +238,11 @@ class CreationMixin:
         Returns:
             Tensor: Evenly spaced samples.
         """
+        if self._emulated():
+            # Evaluated by NumPy in float64 on the host (exact endpoints).
+            return self._factories().linspace(
+                start, stop, num, requires_grad=self._grad()
+            )
         return torch.linspace(
             start,
             stop,
@@ -225,6 +285,10 @@ class CreationMixin:
         if isinstance(step, torch.Tensor):
             step = step.item()
 
+        if self._emulated():
+            return self._factories().arange(
+                start, end, step, requires_grad=self._grad()
+            )
         return torch.arange(
             start,
             end,
@@ -243,6 +307,10 @@ class CreationMixin:
         Returns:
             Tensor: Zero tensor.
         """
+        if self._emulated():
+            return self._factories().zeros(
+                self.array(x).shape, requires_grad=self._grad()
+            )
         return torch.zeros_like(
             self.array(x),
             device=self._device(),
@@ -259,6 +327,10 @@ class CreationMixin:
         Returns:
             Tensor: Ones tensor.
         """
+        if self._emulated():
+            return self._factories().ones(
+                self.array(x).shape, requires_grad=self._grad()
+            )
         return torch.ones_like(
             self.array(x),
             device=self._device(),
@@ -283,8 +355,17 @@ class CreationMixin:
         """
         x_t = self.array(x)
         if isinstance(fill_value, torch.Tensor):
+            if self._emulated():
+                # ``.to(mps, float64)`` on a plain tensor is rejected by torch;
+                # ``cast`` promotes it (exactly) to a MetalFloat64 instead.
+                ones = self._factories().ones(x_t.shape)
+                return ones * self.cast(fill_value)
             ones = torch.ones_like(x_t, device=self._device(), dtype=self._dtype())
             return ones * fill_value.to(device=self._device(), dtype=self._dtype())
+        if self._emulated():
+            return self._factories().full(
+                x_t.shape, fill_value, requires_grad=self._grad()
+            )
         return torch.full_like(
             x_t,
             fill_value,
@@ -302,6 +383,8 @@ class CreationMixin:
         Returns:
             Tensor: Uninitialized tensor.
         """
+        if self._emulated():
+            return self._factories().empty(shape)
         return torch.empty(
             shape,
             device=self._device(),
@@ -317,6 +400,8 @@ class CreationMixin:
         Returns:
             Tensor: Uninitialized tensor.
         """
+        if self._emulated():
+            return self._factories().empty(self.array(x).shape)
         return torch.empty_like(
             self.array(x),
             device=self._device(),
@@ -332,6 +417,8 @@ class CreationMixin:
         Returns:
             Tensor: Identity matrix.
         """
+        if self._emulated():
+            return self._factories().eye(n)
         return torch.eye(n, device=self._device(), dtype=self._dtype())
 
     def asarray(self, x: Any, **kwargs: Any) -> Tensor:
@@ -362,6 +449,20 @@ class CreationMixin:
             dtype = _NP_TO_TORCH[dtype]
         elif hasattr(dtype, "type") and dtype.type in _NP_TO_TORCH:
             dtype = _NP_TO_TORCH[dtype.type]
+        if self._device() == "mps" and metal.is_enabled():
+            # Any float64 request on the Apple GPU is emulated, also under
+            # float32 precision (a typed float64 operand kept by a material,
+            # ``asarray(x, dtype=None)`` of a MetalFloat64): torch itself
+            # cannot build float64 on mps.
+            if dtype is None:
+                # Infer like torch.as_tensor would; float64 data (NumPy's
+                # default and any MetalFloat64) becomes / stays MetalFloat64.
+                if isinstance(x, torch.Tensor):
+                    dtype = x.dtype
+                else:
+                    dtype = torch.as_tensor(x).dtype
+            if dtype == torch.float64:
+                return self._factories().as_tensor(x)
         return torch.as_tensor(x, device=self._device(), dtype=dtype)
 
     def load(self, filename: str) -> Tensor:

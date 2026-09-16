@@ -17,7 +17,27 @@ if TYPE_CHECKING:
 
 
 class InterpolationMixin:
-    """Interpolation, polynomial, and signal-processing operations."""
+    """Interpolation, polynomial, and signal-processing operations.
+
+    With emulated float64 on ``mps`` (``MetalFloat64``), ``polyfit``,
+    ``grid_sample`` and ``fftconvolve`` run on CPU float64 through the Metal
+    nucleus' ``cpu_fallback`` (decode, compute with the same torch code on the
+    CPU, re-encode); each call is counted under ``cpu_fallback:<name>`` in
+    ``be.metal_stats()`` and raises under ``OPTILAND_METAL_STRICT=1``. The
+    operands are moved with differentiable copies (``cpu_fallback_autograd``),
+    so gradients flow through a fallback. ``interp`` and ``polyval`` stay on the
+    dispatch path (``argsort`` / ``clamp`` / ``searchsorted`` / indexing /
+    elementwise arithmetic, all registered for ``MetalFloat64``), so material
+    index lookups from tabulated data keep their gradients and a ray trace has
+    no CPU fallback; small tables and scalar wavelengths run exactly on the
+    host under dual residency.
+    """
+
+    def _cpu_fallback(self, label: str, fn: Any, *args: Any, **kwargs: Any) -> Any:
+        """Run ``fn`` on CPU float64 copies of the arguments and re-encode."""
+        from optiland.backend.torch_backend.metal.tensor import cpu_fallback_autograd
+
+        return cpu_fallback_autograd(fn, args, kwargs, label=label)
 
     # ------------------------------------------------------------------
     # Interpolation
@@ -32,17 +52,47 @@ class InterpolationMixin:
             fp: y-coordinates of the data points.
 
         Returns:
-            Tensor: Interpolated values.
+            Tensor: Interpolated values (``numpy.interp`` semantics: ``x``
+            outside ``[min(xp), max(xp)]`` takes the end value; ``xp`` need not
+            be sorted).
+
+        Raises:
+            ValueError: If ``xp`` is empty or ``xp`` and ``fp`` differ in length.
         """
-        x = torch.as_tensor(x, dtype=self._dtype(), device=self._device())
-        xp = torch.as_tensor(xp, dtype=self._dtype(), device=self._device())
-        fp = torch.as_tensor(fp, dtype=self._dtype(), device=self._device())
+        if self._emulated():
+            return self._interp_kernel(self.cast(x), self.cast(xp), self.cast(fp))
+        return self._interp_impl(x, xp, fp, self._dtype(), self._device())
+
+    @classmethod
+    def _interp_impl(cls, x: Any, xp: Any, fp: Any, dtype: Any, device: Any) -> Tensor:
+        x = torch.as_tensor(x, dtype=dtype, device=device)
+        xp = torch.as_tensor(xp, dtype=dtype, device=device)
+        fp = torch.as_tensor(fp, dtype=dtype, device=device)
+        return cls._interp_kernel(x, xp, fp)
+
+    @staticmethod
+    def _interp_kernel(x: Tensor, xp: Tensor, fp: Tensor) -> Tensor:
+        """``numpy.interp`` on tensors of one kind (plain or ``MetalFloat64``).
+
+        Every step is an aten op with a registered ``MetalFloat64`` handler
+        (sort keys, gathers and the elementwise arithmetic on the emulated
+        values), so the result differentiates w.r.t. ``x``, ``xp`` and ``fp``.
+        """
+        if xp.dim() != 1 or fp.dim() != 1:
+            raise ValueError("xp and fp must be 1-D sequences")
+        if xp.numel() == 0:
+            raise ValueError("array of sample points is empty")
+        if xp.numel() != fp.numel():
+            raise ValueError("fp and xp are not of the same length")
+        if xp.numel() == 1:
+            # a single knot: numpy returns fp[0] everywhere (NaN x stays NaN)
+            return fp[0] + 0.0 * x
         sorted_indices = torch.argsort(xp)
         xp = xp[sorted_indices]
         fp = fp[sorted_indices]
-        x_clipped = torch.clip(x, xp[0], xp[-1])
+        x_clipped = torch.clamp(x, xp[0], xp[-1])
         indices = torch.searchsorted(xp, x_clipped, right=True)
-        indices = torch.clamp(indices, 1, len(xp) - 1)
+        indices = torch.clamp(indices, 1, xp.numel() - 1)
         x0 = xp[indices - 1]
         x1 = xp[indices]
         y0 = fp[indices - 1]
@@ -97,6 +147,18 @@ class InterpolationMixin:
         Returns:
             Tensor: Output tensor of shape (N, C, H_out, W_out).
         """
+        if self._is_metal(input) or self._is_metal(grid):
+            # No grid-sampler kernel on the GPU: sample on CPU float64 and
+            # re-encode (counted as cpu_fallback:grid_sample; no autograd).
+            return self._cpu_fallback(
+                "grid_sample",
+                F.grid_sample,
+                self.cast(input),
+                self.cast(grid),
+                mode=mode,
+                padding_mode=padding_mode,
+                align_corners=align_corners,
+            )
         return F.grid_sample(
             input,
             grid,
@@ -120,6 +182,14 @@ class InterpolationMixin:
         Returns:
             Tensor: Polynomial coefficients, highest power first.
         """
+        if self._emulated():
+            return self._cpu_fallback(
+                "polyfit", self._polyfit_impl, self.cast(x), self.cast(y), degree
+            )
+        return self._polyfit_impl(x, y, degree)
+
+    @staticmethod
+    def _polyfit_impl(x: Tensor, y: Tensor, degree: int) -> Tensor:
         X = torch.stack([x**i for i in range(degree, -1, -1)], dim=1)
         result = torch.linalg.lstsq(X, y.unsqueeze(1))
         coeffs = result.solution
@@ -160,7 +230,14 @@ class InterpolationMixin:
         """
         in1 = self.array(in1)
         in2 = self.array(in2)
+        if self._emulated():
+            return self._cpu_fallback(
+                "fftconvolve", self._fftconvolve_impl, in1, in2, mode
+            )
+        return self._fftconvolve_impl(in1, in2, mode)
 
+    @staticmethod
+    def _fftconvolve_impl(in1: Tensor, in2: Tensor, mode: str) -> Tensor:
         ndim = in1.ndim
         if in2.ndim != ndim:
             raise ValueError("Inputs must have the same dimensionality.")

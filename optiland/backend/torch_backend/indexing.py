@@ -34,6 +34,13 @@ class IndexingMixin:
         Returns:
             Tensor: Cast tensor.
         """
+        if self._emulated():
+            factories = self._factories()
+            if not isinstance(x, torch.Tensor):
+                return factories.tensor(x)
+            # A MetalFloat64 is returned as is (autograd history intact); plain
+            # tensors of any dtype/device are promoted exactly.
+            return factories.as_tensor(x)
         if not isinstance(x, torch.Tensor):
             return torch.tensor(x, device=self._device(), dtype=self._dtype())
         return x.to(device=self._device(), dtype=self._dtype())
@@ -133,7 +140,7 @@ class IndexingMixin:
         if not isinstance(x, torch.Tensor):
             # Parity with the NumPy backend, where be.ravel falls through
             # to np.ravel and accepts plain scalars.
-            x = torch.as_tensor(x)
+            x = self.cast(x) if self._emulated() else torch.as_tensor(x)
         return x.reshape(-1)
 
     # ------------------------------------------------------------------
@@ -175,7 +182,7 @@ class IndexingMixin:
         Returns:
             Tensor: At least 1-D tensor.
         """
-        t = torch.as_tensor(x, dtype=self._dtype(), device=self._device())
+        t = self.cast(x)
         return t.unsqueeze(0) if t.ndim == 0 else t
 
     def atleast_2d(self, x: Any) -> Tensor:
@@ -187,7 +194,7 @@ class IndexingMixin:
         Returns:
             Tensor: At least 2-D tensor.
         """
-        t = torch.as_tensor(x, dtype=self._dtype(), device=self._device())
+        t = self.cast(x)
         if t.ndim == 0:
             return t.unsqueeze(0).unsqueeze(0)
         if t.ndim == 1:
