@@ -808,6 +808,7 @@ class TestMaterialFile:
         material = materials.MaterialFile(filename)
         assert material.to_dict() == {
             "filename": filename,
+            "bounds": "clamp",
             "type": materials.MaterialFile.__name__,
             "propagation_model": {"class": "HomogeneousPropagation"},
         }
@@ -884,6 +885,7 @@ class TestMaterial:
         mat_dict = material.to_dict()
         assert mat_dict == {
             "type": "Material",
+            "bounds": "clamp",
             "filename": material.filename,
             "name": "SF11",
             "reference": None,

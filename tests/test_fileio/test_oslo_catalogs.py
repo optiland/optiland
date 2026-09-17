@@ -6,7 +6,7 @@ import pytest
 
 from optiland.fileio import load_oslo_file
 from optiland.fileio.oslo.reader.converter import OsloToOpticConverter
-from optiland.materials import IdealMaterial, MatchPolicy, Material
+from optiland.materials import IdealMaterial, MatchPolicy, Material, DataMaterial
 from optiland.optic import Optic
 
 
@@ -20,6 +20,20 @@ def catalog_lens(tmp_path, glass="GLA SAMPLE_A"):
     return path
 
 
+def test_explicit_material_definition_retains_dispersion_and_is_isolated(
+    tmp_path, set_test_backend
+):
+    material = DataMaterial.from_samples([0.4, 0.6, 0.8], [1.62, 1.60, 1.58], name="synthetic")
+    original = material.to_dict()
+    path = catalog_lens(tmp_path)
+    optic = load_oslo_file(path, strict=True, material_overrides={"sample_a": material})
+    actual = optic.surfaces[1].material_post
+    assert actual.n(0.5).item() == pytest.approx(1.61)
+    assert actual.n(0.7).item() == pytest.approx(1.59)
+    assert actual is not material
+    assert material.to_dict() == original
+    with pytest.raises(ValueError, match="could not be resolved"):
+        load_oslo_file(path, strict=True)
 
 
 def test_explicit_definition_does_not_replace_direct_index_data(tmp_path):

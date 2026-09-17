@@ -21,6 +21,7 @@ import numpy as np
 
 import optiland.backend as be
 from optiland.materials.base import BaseMaterial
+from optiland.materials.buchdahl import buchdahl_coordinate, evaluate_buchdahl
 
 
 class AbbeModel(ABC):
@@ -130,22 +131,13 @@ class BuchdahlModel(AbbeModel):
         pass
 
     def predict_n(self, wavelength: float | be.ndarray) -> float | be.ndarray:
-        wavelength = be.array(wavelength)
         self.v1, self.v2, self.v3 = self._calculate_buchdahl_coefficients()
-
-        # Calculate Buchdahl coordinate omega
-        # omega = (lambda - lambda_d) / (1 + alpha * (lambda - lambda_d))
-        d_lambda = wavelength - self.WAVE_REF
-        omega = d_lambda / (1 + self.ALPHA * d_lambda)
-
-        # Buchdahl polynomial: n = nd + v1*w + v2*w^2 + v3*w^3
-        n_pred = (
-            BaseMaterial._as_backend_array(self.index)
-            + self.v1 * omega
-            + self.v2 * (omega**2)
-            + self.v3 * (omega**3)
+        omega = buchdahl_coordinate(wavelength, self.WAVE_REF, self.ALPHA)
+        n_pred = evaluate_buchdahl(
+            BaseMaterial._as_backend_array(self.index),
+            (self.v1, self.v2, self.v3),
+            omega,
         )
-
         return be.atleast_1d(n_pred)
 
     def predict_k(self, wavelength: float | be.ndarray) -> float | be.ndarray:
@@ -264,6 +256,21 @@ class _AbbeMaterialParameters:
     """Expose model-owned parameters identically through both public wrappers."""
 
     model: AbbeModel
+
+    @property
+    def display_name(self) -> str:
+        """Show the reference index and Abbe number with their line convention."""
+        label = f"{self.index.item():.4f}, {self.abbe.item():.2f}"
+        return label + (" (ne, Ve)" if isinstance(self, AbbeMaterialE) else "")
+
+    def spectral_range(self, property_name: str = "n") -> tuple[float, float] | None:
+        """The polynomial fit's known range; Buchdahl has no declared limits."""
+        super().spectral_range(property_name)
+        return (
+            (0.38, 0.75)
+            if property_name == "n" and isinstance(self.model, AbbePolynomialModel)
+            else None
+        )
 
     @property
     def index(self):

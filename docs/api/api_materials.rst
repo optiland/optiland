@@ -138,6 +138,7 @@ lookup when an input or tracked parameter requires a fresh gradient graph.
    materials.base
    materials.abbe
    materials.ideal
+   materials.data
    materials.material_file
    materials.material
    materials.material_spec

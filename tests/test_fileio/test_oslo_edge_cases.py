@@ -115,6 +115,7 @@ def test_unsupported_prescriptions_warn_or_reject(lens_file, command, message):
     "command,message",
     [
         ("GLA 0", "positive refractive indices"),
+        ("GLA 1.5 1.6", "index/wavelength counts differ"),
         ("GSP -1", "positive spacing"),
         ("GOR 1", "positive spacing"),
         ("ASP ASR 1\nAS257 .001", "limit 256"),
@@ -362,6 +363,15 @@ def test_quoted_name_and_note_preserve_trailing_quote(lens_file, name):
     restored = OsloDataParser(path, strict=True).parse()
     assert restored.name == name
     assert restored.notes["SNO1"] == name
+
+
+def test_quoted_direct_glass_name(lens_file, set_test_backend):
+    optic = load_oslo_file(
+        lens_file(surface='GLA "test glass" 1.6 1.62 1.58'), strict=True
+    )
+    material = optic.surfaces[1].material_post
+    assert material.name == "test glass"
+    assert_allclose(material.n(0.48613), 1.62)
 
 
 @pytest.mark.parametrize(

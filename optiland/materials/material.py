@@ -14,12 +14,16 @@ from __future__ import annotations
 
 import warnings
 from importlib import resources
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
 from optiland.materials.material_file import MaterialFile
 from optiland.materials.material_spec import MatchPolicy
 from optiland.materials.registry import MaterialRegistry
+
+if TYPE_CHECKING:
+    from optiland.materials.spectral import BoundsPolicy
 
 
 class Material(MaterialFile):
@@ -52,6 +56,8 @@ class Material(MaterialFile):
             ``"warn"`` (default) emits ``OptilandMaterialWarning`` on fuzzy
             match; ``"best"`` silently takes the best match; ``"strict"``
             raises ``ValueError`` on any non-exact match.  Keyword-only.
+        bounds: Tabulated n/k bounds policy passed to ``MaterialFile``.
+            Defaults to ``"clamp"``; ``"raise"`` rejects out-of-range queries.
 
     Attributes:
         name (str): The name of the material.
@@ -61,6 +67,11 @@ class Material(MaterialFile):
 
     _df = None
     _filename = str(resources.files("optiland.database").joinpath("catalog_nk.csv"))
+
+    @property
+    def display_name(self) -> str:
+        """The resolved catalog name, independent of its file adapter."""
+        return self.name
 
     def __init__(
         self,
@@ -73,6 +84,7 @@ class Material(MaterialFile):
         *,
         catalog: str | None = None,
         match_policy: MatchPolicy = MatchPolicy.WARN,
+        bounds: BoundsPolicy = "clamp",
     ) -> None:
         self.name = name
         self.reference = reference
@@ -95,7 +107,7 @@ class Material(MaterialFile):
         self.robust = match_policy != MatchPolicy.STRICT
 
         file, self.material_data = self._retrieve_file()
-        super().__init__(file, propagation_model=propagation_model)
+        super().__init__(file, propagation_model=propagation_model, bounds=bounds)
 
     def _cache_state(self) -> tuple | None:
         """Track the resolved file's optical state; labels do not affect n/k."""
@@ -340,6 +352,7 @@ class Material(MaterialFile):
             data.get("max_wavelength", None),
             catalog=data.get("catalog", None),
             match_policy=match_policy,
+            bounds=data.get("bounds", "clamp"),
         )
 
     def __repr__(self) -> str:

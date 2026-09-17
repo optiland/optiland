@@ -10,13 +10,18 @@ from __future__ import annotations
 
 import contextlib
 import os
-from io import StringIO
 
-import numpy as np
 import yaml
 
 import optiland.backend as be
 from optiland.materials.base import BaseMaterial
+from optiland.materials.dispersion import evaluate_formula
+from optiland.materials.rii import decode_formula, decode_table
+from optiland.materials.spectral import (
+    BoundsPolicy,
+    interpolate_linear,
+    validate_bounds,
+)
 
 
 class MaterialFile(BaseMaterial):
@@ -34,6 +39,9 @@ class MaterialFile(BaseMaterial):
         propagation_model (BasePropagationModel, optional): The propagation
             model to use. Defaults to None, which creates a
             HomogeneousPropagation model.
+        bounds: Out-of-range policy for tabulated n/k. ``"clamp"`` (default)
+            preserves endpoint values; ``"raise"`` rejects queries outside
+            each table. This option does not change analytic formula evaluation.
 
     Attributes:
         filename (str): The filename of the material file.
@@ -48,8 +56,11 @@ class MaterialFile(BaseMaterial):
 
     """
 
-    def __init__(self, filename, propagation_model=None):
+    def __init__(
+        self, filename, propagation_model=None, *, bounds: BoundsPolicy = "clamp"
+    ):
         super().__init__(propagation_model)
+        self._bounds = validate_bounds(bounds)
         self.filename = filename
         self._k_warning_printed = False
         self.coefficients = []
@@ -59,6 +70,7 @@ class MaterialFile(BaseMaterial):
         self._n_formula = None
         self._n_wavelength = None
         self._n = None
+        self._formula_wavelength_range = None
         self._t0 = None
         self.reference_data = None
 
@@ -79,6 +91,11 @@ class MaterialFile(BaseMaterial):
         data = self._read_file()
         self._parse_file(data)
 
+    @property
+    def bounds(self) -> BoundsPolicy:
+        """The read-only out-of-range policy for tabulated n and k."""
+        return self._bounds
+
     def _cache_state(self) -> tuple | None:
         """Track the live optical arrays used by file and catalog materials."""
         if not isinstance(self._n_formula, str):
@@ -96,6 +113,7 @@ class MaterialFile(BaseMaterial):
         return self._state_key(
             (
                 self._n_formula,
+                self.bounds,
                 self.coefficients,
                 self.thermdispcoef,
                 self._t0,
@@ -272,191 +290,66 @@ class MaterialFile(BaseMaterial):
                 return be.zeros_like(wavelength)
             return 0.0
 
-        return be.interp(
+        return interpolate_linear(
             wavelength,
             self._as_backend_array(self._k_wavelength),
             self._as_backend_array(self._k),
+            bounds=self.bounds,
         )
 
     def _formula_1(self, w):
-        """Calculate the refractive index using dispersion formula 1 from
-        refractiveindex.info (Sellmeier formula).
-
-        Args:
-            w (float or be.ndarray): The wavelength(s) in microns.
-
-        Returns:
-            float or be.ndarray: The refractive index(s) of the material.
-
-        """
-        c = self._as_backend_array(self.coefficients)
-        try:
-            n = 1 + c[0]
-            for k in range(1, len(c), 2):
-                n = n + c[k] * w**2 / (w**2 - c[k + 1] ** 2)
-        except IndexError as err:
-            raise ValueError("Invalid coefficients for dispersion formula 1.") from err
-        return be.sqrt(n)
+        """Delegate formula 1 to the shared dispersion evaluator."""
+        return evaluate_formula(
+            "formula 1", self._as_backend_array(self.coefficients), w
+        )
 
     def _formula_2(self, w):
-        """Calculate the refractive index using dispersion formula 2 from
-        refractiveindex.info (Sellmeier-2 formula).
-
-        Args:
-            w (float or be.ndarray): The wavelength(s) in microns.
-
-        Returns:
-            float or be.ndarray: The refractive index(s) of the material.
-
-        """
-        c = self._as_backend_array(self.coefficients)
-        try:
-            n = 1 + c[0]
-            for k in range(1, len(c), 2):
-                n = n + c[k] * w**2 / (w**2 - c[k + 1])
-        except IndexError as err:
-            raise ValueError("Invalid coefficients for dispersion formula 2.") from err
-        return be.sqrt(n)
+        """Delegate formula 2 to the shared dispersion evaluator."""
+        return evaluate_formula(
+            "formula 2", self._as_backend_array(self.coefficients), w
+        )
 
     def _formula_3(self, w):
-        """Calculate the refractive index using dispersion formula 3 from
-        refractiveindex.info (Polynomial formula).
-
-        Args:
-            w (float or be.ndarray): The wavelength(s) in microns.
-
-        Returns:
-            float or be.ndarray: The refractive index(s) of the material.
-
-        """
-        c = self._as_backend_array(self.coefficients)
-        try:
-            n = c[0]
-            for k in range(1, len(c), 2):
-                n = n + c[k] * w ** c[k + 1]
-            return be.sqrt(n)
-        except IndexError as err:
-            raise ValueError("Invalid coefficients for dispersion formula 3.") from err
+        """Delegate formula 3 to the shared dispersion evaluator."""
+        return evaluate_formula(
+            "formula 3", self._as_backend_array(self.coefficients), w
+        )
 
     def _formula_4(self, w):
-        """Calculate the refractive index using dispersion formula 4 from
-        refractiveindex.info (RefractiveIndex.INFO formula).
-
-        Args:
-            w (float or be.ndarray): The wavelength(s) in microns.
-
-        Returns:
-            float or be.ndarray: The refractive index(s) of the material.
-
-        """
-        c = self._as_backend_array(self.coefficients)
-        try:
-            n = (
-                c[0]
-                + c[1] * w ** c[2] / (w**2 - c[3] ** c[4])
-                + c[5] * w ** c[6] / (w**2 - c[7] ** c[8])
-            )
-            for k in range(9, len(c), 2):
-                n = n + c[k] * w ** c[k + 1]
-            return be.sqrt(n)
-        except IndexError as err:
-            raise ValueError("Invalid coefficients for dispersion formula 4.") from err
+        """Delegate formula 4 to the shared dispersion evaluator."""
+        return evaluate_formula(
+            "formula 4", self._as_backend_array(self.coefficients), w
+        )
 
     def _formula_5(self, w):
-        """Calculate the refractive index using dispersion formula 5 from
-        refractiveindex.info (Cauchy formula).
-
-        Args:
-            w (float or be.ndarray): The wavelength(s) in microns.
-
-        Returns:
-            float or be.ndarray: The refractive index(s) of the material.
-
-        """
-        c = self._as_backend_array(self.coefficients)
-        try:
-            n = c[0]
-            for k in range(1, len(c), 2):
-                n = n + c[k] * w ** c[k + 1]
-            return n
-        except IndexError as err:
-            raise ValueError("Invalid coefficients for dispersion formula 5.") from err
+        """Delegate formula 5 to the shared dispersion evaluator."""
+        return evaluate_formula(
+            "formula 5", self._as_backend_array(self.coefficients), w
+        )
 
     def _formula_6(self, w):
-        """Calculate the refractive index using dispersion formula 6 from
-        refractiveindex.info (Gases formula).
-
-        Args:
-            w (float or be.ndarray): The wavelength(s) in microns.
-
-        Returns:
-            float or be.ndarray: The refractive index(s) of the material.
-
-        """
-        c = self._as_backend_array(self.coefficients)
-        try:
-            n = 1 + c[0]
-            for k in range(1, len(c), 2):
-                n = n + c[k] / (c[k + 1] - w**-2)
-            return n
-        except IndexError as err:
-            raise ValueError("Invalid coefficients for dispersion formula 6.") from err
+        """Delegate formula 6 to the shared dispersion evaluator."""
+        return evaluate_formula(
+            "formula 6", self._as_backend_array(self.coefficients), w
+        )
 
     def _formula_7(self, w):
-        """Calculate the refractive index using dispersion formula 7 from
-        refractiveindex.info (Herzberger formula).
-
-        Args:
-            w (float or be.ndarray): The wavelength(s) in microns.
-
-        Returns:
-            float or be.ndarray: The refractive index(s) of the material.
-
-        """
-        c = self._as_backend_array(self.coefficients)
-        try:
-            n = c[0] + c[1] / (w**2 - 0.028) + c[2] * (1 / (w**2 - 0.028)) ** 2
-            for k in range(3, len(c)):
-                n = n + c[k] * w ** (2 * (k - 2))
-            return n
-        except IndexError as err:
-            raise ValueError("Invalid coefficients for dispersion formula 7.") from err
+        """Delegate formula 7 to the shared dispersion evaluator."""
+        return evaluate_formula(
+            "formula 7", self._as_backend_array(self.coefficients), w
+        )
 
     def _formula_8(self, w):
-        """Calculate the refractive index using dispersion formula 8 from
-        refractiveindex.info (Retro formula).
-
-        Args:
-            w (float or be.ndarray): The wavelength(s) in microns.
-
-        Returns:
-            float or be.ndarray: The refractive index(s) of the material.
-
-        """
-        c = self._as_backend_array(self.coefficients)
-        if len(c) != 4:
-            raise ValueError("Invalid coefficients for dispersion formula 8.")
-
-        b = c[0] + c[1] * w**2 / (w**2 - c[2]) + c[3] * w**2
-        return be.sqrt((1 + 2 * b) / (1 - b))
+        """Delegate formula 8 to the shared dispersion evaluator."""
+        return evaluate_formula(
+            "formula 8", self._as_backend_array(self.coefficients), w
+        )
 
     def _formula_9(self, w):
-        """Calculate the refractive index using dispersion formula 9 from
-        refractiveindex.info (Exotic formula).
-
-        Args:
-            w (float or be.ndarray): The wavelength(s) in microns.
-
-        Returns:
-            float or be.ndarray: The refractive index(s) of the material.
-
-        """
-        c = self._as_backend_array(self.coefficients)
-        if len(c) != 6:
-            raise ValueError("Invalid coefficients for dispersion formula 9.")
-
-        n = c[0] + c[1] / (w**2 - c[2]) + c[3] * (w - c[4]) / ((w - c[4]) ** 2 + c[5])
-        return be.sqrt(n)
+        """Delegate formula 9 to the shared dispersion evaluator."""
+        return evaluate_formula(
+            "formula 9", self._as_backend_array(self.coefficients), w
+        )
 
     def _tabulated_n(self, w):
         """Calculate the refractive index using tabulated data.
@@ -468,14 +361,15 @@ class MaterialFile(BaseMaterial):
             float or be.ndarray: Interpolated refractive index(s).
         """
         try:
-            return be.interp(
+            return interpolate_linear(
                 w,
                 self._as_backend_array(self._n_wavelength),
                 self._as_backend_array(self._n),
+                bounds=self.bounds,
             )
         except ValueError as err:  # Typically if _n_wavelength or _n is None or empty
             raise ValueError(
-                "No tabular refractive index data found or data is invalid."
+                f"No tabular refractive index data found or data is invalid: {err}"
             ) from err
 
     def _read_file(self) -> dict:
@@ -521,31 +415,23 @@ class MaterialFile(BaseMaterial):
 
     def _parse_formula_data(self, sub_data: dict, sub_data_type: str) -> None:
         """Parse formula-based material data."""
-        coeff_values = [float(k) for k in sub_data.get("coefficients", "").split()]
+        definition = decode_formula({**sub_data, "type": sub_data_type})
         # Build a 2D column array directly from Python values so the result is
         # always a graph-leaf (avoids a non-leaf view from reshape on a 1-D tensor).
-        self.coefficients = be.array([[c] for c in coeff_values])
+        self.coefficients = be.array([[c] for c in definition.coefficients])
+        self._formula_wavelength_range = definition.wavelength_range_um
         self._set_formula_type(sub_data_type)
 
     def _parse_tabulated_data(self, sub_data: dict, sub_data_type: str) -> None:
         """Parse tabulated material data."""
-        data_file = StringIO(sub_data.get("data", ""))
-        numpy_arr = np.loadtxt(data_file)
-        arr = be.asarray(numpy_arr)
-
-        # Ensure at least 2D shape for consistent indexing
-        if arr.ndim == 1:
-            arr = be.reshape(arr, (1, -1) if arr.shape[0] > 0 else (0, 0))
-
-        if sub_data_type == "tabulated n":
-            self._n_wavelength, self._n = arr[:, 0], arr[:, 1]
+        index, extinction = decode_table({**sub_data, "type": sub_data_type})
+        if index is not None:
+            self._n_wavelength = be.asarray(index.wavelengths_um)
+            self._n = be.asarray(index.indices)
             self._set_formula_type(sub_data_type)
-        elif sub_data_type == "tabulated k":
-            self._k_wavelength, self._k = arr[:, 0], arr[:, 1]
-        elif sub_data_type == "tabulated nk":
-            self._n_wavelength = self._k_wavelength = arr[:, 0]
-            self._n, self._k = arr[:, 1], arr[:, 2]
-            self._set_formula_type(sub_data_type)
+        if extinction is not None:
+            self._k_wavelength = be.asarray(extinction.wavelengths_um)
+            self._k = be.asarray(extinction.values)
 
     def _parse_thermal_dispersion(self, data: dict) -> None:
         """Parse thermal dispersion and reference temperature data."""
@@ -564,6 +450,19 @@ class MaterialFile(BaseMaterial):
         with contextlib.suppress(KeyError):
             self.reference_data = data["REFERENCE"]
 
+    @property
+    def display_name(self) -> str:
+        """Show the source filename without resolving a catalog identity."""
+        return os.path.basename(self.filename)
+
+    def spectral_range(self, property_name: str = "n") -> tuple[float, float] | None:
+        """Report table support or the formula's declared wavelength range."""
+        super().spectral_range(property_name)
+        waves = self._n_wavelength if property_name == "n" else self._k_wavelength
+        if waves is not None and len(waves):
+            return float(waves[0]), float(waves[-1])
+        return self._formula_wavelength_range if property_name == "n" else None
+
     def to_dict(self):
         """Returns the material data as a dictionary.
 
@@ -575,6 +474,7 @@ class MaterialFile(BaseMaterial):
         material_dict.update(
             {
                 "filename": self.filename,
+                "bounds": self.bounds,
             },
         )
 
@@ -594,4 +494,4 @@ class MaterialFile(BaseMaterial):
         if "filename" not in data:
             raise ValueError("Material file data missing filename.")
 
-        return cls(data["filename"])
+        return cls(data["filename"], bounds=data.get("bounds", "clamp"))

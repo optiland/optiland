@@ -18,12 +18,43 @@ def configuration_lens(tmp_path, footer="", surface="", second="PK THM 1 0"):
         + surface
         + "; NXT; TH -4; "
         + second
-        + "; NXT; WV .4 .55 .8; GLA CONFIG 1.62; "
+        + "; NXT; WV .4 .55 .8; GLA CONFIG 1.64 1.62 1.60; "
         "WV .55; TH 2; NXT; AIR; END 4\n" + footer
     )
     return path
 
 
+def test_configuration_overrides_precede_pickups_and_dispersion(
+    tmp_path, set_test_backend
+):
+    path = configuration_lens(
+        tmp_path,
+        "CFG NEW\nTH 1 2 7\nWV1 2 .45\nTH 1 3 9\nWV1 3 .75\nEND\n"
+        "CFWT 1 2\nCFWT 2 .5\nCFAC 2 NO\nCFAC 3 YES\n",
+    )
+    data = OsloDataParser(path, strict=True).parse()
+    assert list(data.configurations) == [1, 2, 3]
+    assert data.configurations[1].weight == 2
+    assert data.configurations[2].weight == 0.5
+    assert data.configurations[2].active is False
+    assert data.to_dict()["configurations"][3]["active"] is True
+    optics = [load_oslo_file(path, strict=True, configuration=i) for i in (1, 2, 3)]
+    for optic, thickness, wavelength in zip(
+        optics, (4, 7, 9), (0.55, 0.45, 0.75), strict=True
+    ):
+        assert optic.surfaces[1].thickness == thickness
+        assert optic.surfaces[2].thickness == -thickness
+        assert optic.surfaces[2].geometry.cs.z.item() == thickness
+        assert optic.surfaces[3].geometry.cs.z.item() == 0
+        assert optic.primary_wavelength == wavelength
+    indices = [
+        optic.surfaces[3].material_post.n(optic.primary_wavelength).item()
+        for optic in optics
+    ]
+    assert indices[1] > indices[0] > indices[2]
+    optics[1].surfaces[1].thickness = 99
+    assert optics[0].surfaces[1].thickness == 4
+    assert data.surfaces[1]["TH"] == 4
 
 
 def test_configuration_repositions_a_folded_leg(tmp_path, set_test_backend):

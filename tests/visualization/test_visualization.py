@@ -51,16 +51,16 @@ class InvalidGeometry(BaseGeometry):
         pass
 
 
-class InvalidMaterial(BaseMaterial):
+class DisplayTestMaterial(BaseMaterial):
     def __init__(self):
         super().__init__()
-        self.index = -42
+        self.index = 1.5
 
     def _calculate_n(self, wavelength):
-        return -42
+        return self.index
 
     def _calculate_k(self, wavelength):
-        return -42
+        return 0.0
 
 
 class TestBaseViewer:
@@ -511,12 +511,12 @@ class TestLensInfoViewer:
         assert "Conic" in captured.out
         assert "Semi-aperture" in captured.out
 
-    def test_view_invalid_material(self, set_test_backend):
+    def test_view_unregistered_material(self, capsys, set_test_backend):
         lens = ReverseTelephoto()
-        lens.surfaces[2].material_post = InvalidMaterial()
+        lens.surfaces[2].material_post = DisplayTestMaterial()
         viewer = LensInfoViewer(lens)
-        with pytest.raises(ValueError):
-            viewer.view()
+        viewer.view()
+        assert "DisplayTestMaterial" in capsys.readouterr().out
 
     def test_view_abbe_material(self, set_test_backend):
         lens = ReverseTelephoto()

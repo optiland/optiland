@@ -12,7 +12,11 @@ import math
 from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
-from optiland.fileio.common import FIELD_CLASS_TO_TYPE
+from optiland.fileio.common import (
+    FIELD_CLASS_TO_TYPE,
+    reject_unsupported_propagation,
+    validate_material_propagation,
+)
 from optiland.fileio.oslo.constants import (
     DEFAULT_WAVELENGTHS_UM,
     OBJECT_INFINITY_THRESHOLD,
@@ -22,9 +26,9 @@ from optiland.fileio.oslo.model import OsloDataModel
 from optiland.fileio.oslo.surfaces import get_handler_for_optiland_type
 from optiland.fileio.oslo.validation import validate_object_na
 from optiland.interactions import RefractiveReflectiveModel, ThinLensInteractionModel
-from optiland.materials import AbbeMaterial, IdealMaterial, Material
+from optiland.materials import AbbeMaterial, DataMaterial, IdealMaterial, Material
+from optiland.materials.definition import IndexTable
 from optiland.physical_apertures import RadialAperture
-from optiland.propagation import HomogeneousPropagation
 
 if TYPE_CHECKING:
     from optiland.optic import Optic
@@ -47,6 +51,7 @@ class OpticToOsloEncoder:
         Returns:
             The populated OsloDataModel.
         """
+        validate_material_propagation(self.optic)
         self.data_model = OsloDataModel()
         self.data_model.name = self.optic.name or "LENS"
         self.data_model.num_surfaces = len(self.optic.surfaces) - 1  # Excluding object
@@ -234,7 +239,13 @@ class OpticToOsloEncoder:
             material_to_encode = (
                 "mirror" if interaction.is_reflective else surface.material_post
             )
-            if isinstance(material_to_encode, AbbeMaterial):
+            if isinstance(material_to_encode, DataMaterial) and isinstance(
+                material_to_encode.definition.dispersion, IndexTable
+            ):
+                surf_data["glass_wavelengths"] = (
+                    material_to_encode.definition.dispersion.wavelengths_um
+                )
+            elif isinstance(material_to_encode, AbbeMaterial):
                 surf_data["glass_wavelengths"] = self.data_model.wavelengths.get(
                     "values"
                 ) or list(DEFAULT_WAVELENGTHS_UM)
@@ -286,19 +297,33 @@ class OpticToOsloEncoder:
 
         if type(material) not in {
             Material,
+            DataMaterial,
             IdealMaterial,
             AbbeMaterial,
         }:
             raise NotImplementedError(
                 "OSLO writer cannot export this material model; use native JSON"
             )
-        if type(material.propagation_model) is not HomogeneousPropagation:
-            raise NotImplementedError(
-                "OSLO writer cannot export custom propagation; use native JSON"
-            )
+        reject_unsupported_propagation(material)
 
         if isinstance(material, Material):
             return f"  GLA {material.name}"
+
+        if isinstance(material, DataMaterial):
+            definition = material.definition
+            if (
+                not isinstance(definition.dispersion, IndexTable)
+                or definition.extinction is not None
+                or material.bounds != "raise"
+            ):
+                raise NotImplementedError(
+                    "OSLO writer supports only sampled n data without extinction "
+                    "and with bounds='raise'; "
+                    "use native JSON"
+                )
+            if any(n <= 0 for n in definition.dispersion.indices):
+                raise ValueError("OSLO glass indices must be positive")
+            return "  GLA " + " ".join(str(n) for n in definition.dispersion.indices)
 
         if isinstance(material, IdealMaterial):
             if float(material.absorp.item()) != 0:

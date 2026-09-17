@@ -13,7 +13,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
+from optiland.materials.base import BaseMaterial
 from optiland.materials.ideal import IdealMaterial
+from optiland.propagation.homogeneous import HomogeneousPropagation
 
 if TYPE_CHECKING:
     from optiland.optic import Optic
@@ -52,6 +54,29 @@ def reject_unsupported_ideal_absorption(material: Any) -> None:
         raise NotImplementedError(
             "This writer cannot preserve ideal-material absorption; use native JSON"
         )
+
+
+def reject_unsupported_propagation(material: Any) -> None:
+    """Reject propagation these homogeneous-only writers cannot represent.
+
+    A subclass can change the physics, so inheriting HomogeneousPropagation
+    is insufficient. Legacy string specifications have no propagation object.
+    This does not establish support for an unknown material's optical law.
+    """
+    if (
+        isinstance(material, BaseMaterial)
+        and type(material.propagation_model) is not HomogeneousPropagation
+    ):
+        raise NotImplementedError(
+            "This writer cannot preserve custom propagation; use native JSON"
+        )
+
+
+def validate_material_propagation(optic: Optic) -> None:
+    """Check both sides before any air, catalog, model-glass or mirror shortcut."""
+    for surface in optic.surfaces:
+        reject_unsupported_propagation(surface.material_pre)
+        reject_unsupported_propagation(surface.material_post)
 
 
 def field_type_string(optic: Optic) -> str:

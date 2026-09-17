@@ -194,8 +194,10 @@ def test_plot_nk(mock_subplots, set_test_backend):
         "category_name_full": "Test Glass",
         "reference": "TEST",
     }
+    mat.spectral_range.return_value = (0.4, 0.7)
+    mat.display_name = "Test Glass"
     mat.n.return_value = np.array([1.5] * 10)
     mat.k.return_value = np.array([0.0] * 10)
 
-    material_utils.plot_nk(mat, wavelength_range=(0.4, 0.7))
+    material_utils.plot_nk(mat, wavelength_range=(0.4, 0.7), n_sample=10)
     assert mock_ax.plot.call_count >= 1
