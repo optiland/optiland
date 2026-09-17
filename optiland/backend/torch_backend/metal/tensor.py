@@ -1283,6 +1283,17 @@ def count_host(name: str) -> None:
     _STATS[f"host:{name}"] += 1
 
 
+def count_event(key: str, n: int = 1) -> None:
+    """Add ``n`` to the counter ``key`` verbatim (no namespace prefix).
+
+    The fused trace driver (``metal/trace.py``) uses this for its
+    ``fused_trace:*`` and ``fused_trace_skip:*`` counters, whose key set is
+    closed by :class:`~...trace_adapters.FusedTraceSkip`; launches keep going
+    through :func:`count_gpu` so ``gpu:*`` stays the launch namespace.
+    """
+    _STATS[key] += n
+
+
 # ---------------------------------------------------------------------------
 # Nucleus handlers (identity / conversion); everything else lives in ops_*.py
 # ---------------------------------------------------------------------------
