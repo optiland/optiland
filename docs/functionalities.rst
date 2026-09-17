@@ -38,6 +38,9 @@ Analysis Tools
   Decompose wavefronts into Zernike polynomials, compute RMS/peak error, and visualize wavefront error maps, with support for both focal (spherical reference) and afocal (planar reference) systems.
 - **PSF and MTF Computation**:
   Evaluate image quality and spatial frequency response in imaging systems.
+- **Scalar Physical-Optics Propagation**:
+  Create sampled Gaussian fields and propagate their complex amplitude with a
+  NumPy/PyTorch angular spectrum implementation.
 - **BSDF and Scattering Models**:
   Simulate surface scattering using measured or analytical BSDF models.
 

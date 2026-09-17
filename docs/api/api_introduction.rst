@@ -38,6 +38,7 @@ The following sections provide detailed information about the various modules an
    api_optimization
    api_paraxial
    api_phase
+   api_physical_optics
    api_physical_apertures
    api_rays
    api_raytrace
