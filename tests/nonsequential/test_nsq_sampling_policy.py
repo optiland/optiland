@@ -344,6 +344,7 @@ class TestBoundedSplitting:
 
 class TestTorchBackendSplitDepthGuard:
     def test_nonzero_split_depth_warns(self):
+        pytest.importorskip("torch")
         be.set_backend("torch")
         try:
             scene = _lens_scene()
@@ -359,6 +360,7 @@ class TestTorchBackendSplitDepthGuard:
             be.set_backend("numpy")
 
     def test_zero_split_depth_no_warning(self):
+        pytest.importorskip("torch")
         be.set_backend("torch")
         try:
             scene = _lens_scene()  # default sampling_policy: split_depth=0
@@ -373,6 +375,7 @@ class TestTorchBackendSplitDepthGuard:
         """The fallback (importance-biased single-branch) must still produce
         a sane, energy-bounded result, not silently corrupt the trace.
         """
+        pytest.importorskip("torch")
         be.set_backend("torch")
         try:
             scene = _lens_scene()

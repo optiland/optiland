@@ -41,10 +41,9 @@ from .test_folded_paraxial_hardening import (
 from .utils import assert_allclose
 
 BACKEND_PRECISION = [
-    ("numpy", "float64"),
-    ("numpy", "float32"),
-    ("torch", "float64"),
-    ("torch", "float32"),
+    (backend, precision)
+    for backend in be.list_available_backends()
+    for precision in ("float64", "float32")
 ]
 
 

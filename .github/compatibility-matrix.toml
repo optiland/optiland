@@ -1,0 +1,72 @@
+# Reviewed 2026-09-14. Update stable pins monthly and after major dependency
+# releases. Each row is one full-suite job; this is not a Cartesian product.
+# See docs/development/weekly-compatibility.md for updates and reproduction.
+[settings]
+runner = "ubuntu-latest"
+max_parallel = 3
+timeout_minutes = 75
+artifact_retention_days = 30
+
+[[rows]]
+id = "locked-py311"
+purpose = "Control using the committed lock with CPU Torch"
+python = "3.11"
+source = "project-lock"
+torch = "cpu"
+
+[[rows]]
+id = "current-py311"
+purpose = "Newer dependencies on the oldest supported Python (NumPy 2.5 needs 3.12+)"
+python = "3.11"
+source = "pinned"
+torch = "cpu"
+packages = { numpy = "2.4.6", numba = "0.67.0", llvmlite = "0.49.0", scipy = "1.17.1", torch = "2.14.0" }
+
+[[rows]]
+id = "current-py312"
+purpose = "Reviewed current scientific stack on Python 3.12"
+python = "3.12"
+source = "pinned"
+torch = "cpu"
+packages = { numpy = "2.5.3", numba = "0.67.0", llvmlite = "0.49.0", scipy = "1.18.1", torch = "2.14.0" }
+
+[[rows]]
+id = "current-py313"
+purpose = "Reviewed current scientific stack on Python 3.13"
+python = "3.13"
+source = "pinned"
+torch = "cpu"
+packages = { numpy = "2.5.3", numba = "0.67.0", llvmlite = "0.49.0", scipy = "1.18.1", torch = "2.14.0" }
+
+[[rows]]
+id = "current-py314"
+purpose = "Reviewed current scientific stack on the newest supported Python"
+python = "3.14"
+source = "pinned"
+torch = "cpu"
+packages = { numpy = "2.5.3", numba = "0.67.0", llvmlite = "0.49.0", scipy = "1.18.1", torch = "2.14.0" }
+
+[[rows]]
+id = "numpy24-boundary"
+purpose = "NumPy 2.4 scalar-conversion boundary with the preceding Numba family"
+python = "3.14"
+source = "pinned"
+torch = "cpu"
+# Numba and llvmlite must advance together. Keep this boundary deliberately.
+packages = { numpy = "2.4.6", numba = "0.66.0", llvmlite = "0.48.0", scipy = "1.18.1", torch = "2.13.0" }
+
+[[rows]]
+id = "previous-torch-py314"
+purpose = "Previous Torch with the same primary non-Torch pins as current-py314"
+python = "3.14"
+source = "pinned"
+torch = "cpu"
+packages = { numpy = "2.5.3", numba = "0.67.0", llvmlite = "0.49.0", scipy = "1.18.1", torch = "2.13.0" }
+
+[[rows]]
+id = "without-torch-py314"
+purpose = "Optional Torch genuinely absent; run the full NumPy/core/GUI suite"
+python = "3.14"
+source = "pinned"
+torch = "absent"
+packages = { numpy = "2.5.3", numba = "0.67.0", llvmlite = "0.49.0", scipy = "1.18.1" }

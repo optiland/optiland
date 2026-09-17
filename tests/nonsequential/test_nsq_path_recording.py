@@ -304,6 +304,7 @@ class TestRecordPathsContract:
 
 class TestTorchBackendRecordsHitsAndDeaths:
     def test_torch_backend_records_hits_and_deaths(self):
+        pytest.importorskip("torch")
         be.set_backend("torch")
         try:
             scene = _lens_scene()
@@ -320,6 +321,7 @@ class TestTorchBackendRecordsHitsAndDeaths:
             be.set_backend("numpy")
 
     def test_torch_backend_int_subset(self):
+        pytest.importorskip("torch")
         be.set_backend("torch")
         try:
             scene = _lens_scene()

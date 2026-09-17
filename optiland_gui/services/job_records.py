@@ -188,6 +188,7 @@ class JobResult:
     data: Any = None
     error: str = ""
     current: bool = False
+    infrastructure_error: bool = False
 
 
 class CalculationCancelled(Exception):

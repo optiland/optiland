@@ -9,6 +9,7 @@ import json
 import os
 import tempfile
 
+import numpy as np
 import pytest
 
 import optiland.backend as be
@@ -63,16 +64,9 @@ def test_load_legacy_optiland_file_with_field_type():
     os.remove(filepath)
 
 
-def test_save_load_optiland_file_with_tensor(set_test_backend):
-    try:
-        import torch
-
-        tensor_val = torch.tensor(1.23)
-        has_torch = True
-    except ImportError:
-        has_torch = False
-        tensor_val = 1.23
-
+@pytest.mark.parametrize("value_type", ["numpy", "torch"])
+def test_save_load_optiland_file_with_array(set_test_backend, value_type):
+    scalar = np.array if value_type == "numpy" else pytest.importorskip("torch").tensor
     lens = HeliarLens()
     lens.surfaces.add(
         index=2,
@@ -81,29 +75,9 @@ def test_save_load_optiland_file_with_tensor(set_test_backend):
         conic=-1.0,
         coefficients=[1.23, 1.23],
     )
-
-    if has_torch:
-        lens.surfaces[1].thickness = torch.tensor(1.23)
-        lens.surfaces[1].geometry.radius = torch.tensor(1.23)
-        lens.surfaces[2].geometry.coefficients = [
-            torch.tensor(1.23),
-            torch.tensor(1.23),
-        ]
-    else:
-
-        class MockTensor:
-            def __init__(self, val):
-                self.val = val
-
-            def tolist(self):
-                return self.val if isinstance(self.val, list) else [self.val]
-
-            def item(self):
-                return self.val
-
-        lens.surfaces[1].thickness = MockTensor(1.23)
-        lens.surfaces[1].geometry.radius = MockTensor(1.23)
-        lens.surfaces[2].geometry.coefficients = [MockTensor(1.23), MockTensor(1.23)]
+    lens.surfaces[1].thickness = scalar(1.23)
+    lens.surfaces[1].geometry.radius = scalar(1.23)
+    lens.surfaces[2].geometry.coefficients = [scalar(1.23), scalar(1.23)]
 
     with tempfile.NamedTemporaryFile(delete=False, mode="w", suffix=".json") as tmp:
         save_optiland_file(lens, tmp.name)

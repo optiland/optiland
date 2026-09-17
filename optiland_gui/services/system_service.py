@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
+
 import optiland.aperture  # noqa: F401 — ensures all subclasses are registered
+import optiland.backend as be
 from optiland.aperture import BaseSystemAperture
 from optiland.rays import PolarizationState
 
@@ -110,17 +113,23 @@ class SystemService:
         if optic is None:
             return
         if mode == "ignore":
-            optic.updater.set_polarization("ignore")
+            state = "ignore"
         elif mode == "unpolarized":
             state = PolarizationState(is_polarized=False)
-            optic.updater.set_polarization(state)
         elif mode == "polarized":
             if None in (Ex, Ey, phase_x_deg, phase_y_deg):
                 raise ValueError(
                     "All polarization fields are required when mode is 'polarized'."
                 )
-            phase_x = math.radians(phase_x_deg)
-            phase_y = math.radians(phase_y_deg)
+            if not all(
+                math.isfinite(value) for value in (Ex, Ey, phase_x_deg, phase_y_deg)
+            ):
+                raise ValueError("Polarization values must be finite.")
+            if Ex == 0 and Ey == 0:
+                raise ValueError("Polarized light requires a nonzero field amplitude.")
+            # Reduce GUI degree inputs before casting to the backend precision.
+            phase_x = math.radians(phase_x_deg % 360)
+            phase_y = math.radians(phase_y_deg % 360)
             state = PolarizationState(
                 is_polarized=True,
                 Ex=Ex,
@@ -128,10 +137,47 @@ class SystemService:
                 phase_x=phase_x,
                 phase_y=phase_y,
             )
-            optic.updater.set_polarization(state)
         else:
             raise ValueError(f"Unknown polarization mode: {mode}")
-        self._connector.opticChanged.emit()
+        if self._same_polarization(optic.polarization, state):
+            return
+        old_state = optic.to_dict()
+        optic.updater.set_polarization(state)
+        self._connector._undo_redo_manager.add_state(old_state)
+        self._connector.set_modified(True)
+        # This setter changes no surface property or derived geometry. Traces
+        # are invalidated, while the lens table can retain all existing cells.
+        self._connector.notify_change("polarization")
+
+    @staticmethod
+    def _same_polarization(first, second) -> bool:
+        if isinstance(first, str) or isinstance(second, str):
+            return (
+                isinstance(first, str) and isinstance(second, str) and first == second
+            )
+        if not isinstance(first, PolarizationState) or not isinstance(
+            second, PolarizationState
+        ):
+            return False
+        if first.is_polarized != second.is_polarized:
+            return False
+        if not first.is_polarized:
+            return True
+        values = []
+        tolerance = 1e-12
+        for state in (first, second):
+            components = [
+                np.asarray(be.to_numpy(value))
+                for value in (state.Ex, state.Ey, state.phase_x, state.phase_y)
+            ]
+            tolerance = max(
+                tolerance, *(4 * np.finfo(value.dtype).eps for value in components)
+            )
+            values.append([float(value) for value in components])
+        difference = np.subtract(values[0], values[1])
+        # A float32 full turn can lie just to either side of the 0/2π boundary.
+        difference[2:] = [math.remainder(value, math.tau) for value in difference[2:]]
+        return bool(np.all(np.abs(difference) <= tolerance))
 
     def get_field_types(self) -> list[tuple[str, str]]:
         """Return all four supported field types.

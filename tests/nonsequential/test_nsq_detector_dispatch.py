@@ -9,6 +9,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+import optiland.backend as be
 from optiland.coordinate_system import CoordinateSystem
 from optiland.nonsequential import (
     CollimatedSourceConfig,
@@ -60,23 +61,13 @@ def test_intersect_detectors_not_duplicated_per_backend():
     assert "_intersect_detectors" not in TorchBackend.__dict__
 
 
-def test_shared_dispatch_used_by_both_backends():
+def test_shared_dispatch_used_by_both_backends(set_test_backend):
     from optiland.nonsequential.detectors import dispatch
 
+    backend_class = NumpyBackend if be.get_backend() == "numpy" else TorchBackend
     scene = _collimated_scene({"splat": "hard"})
-    result_np = scene.trace(num_rays=2000, seed=0, backend=NumpyBackend(seed=0))
-    assert result_np.detectors["D"].total_flux_float > 0.9
-
-    import optiland.backend as be
-
-    be.set_backend("torch")
-    try:
-        scene_t = _collimated_scene({"splat": "hard"})
-        result_t = scene_t.trace(num_rays=2000, seed=0, backend=TorchBackend(seed=0))
-        assert result_t.detectors["D"].total_flux_float > 0.9
-    finally:
-        be.set_backend("numpy")
-
+    result = scene.trace(num_rays=2000, seed=0, backend=backend_class(seed=0))
+    assert result.detectors["D"].total_flux_float > 0.9
     assert hasattr(dispatch, "intersect_detectors")
 
 

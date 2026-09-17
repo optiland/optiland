@@ -51,6 +51,8 @@ class RayGenerator:
         Px: ScalarOrArray,
         Py: ScalarOrArray,
         wavelength: ScalarOrArray,
+        *,
+        retain_launch: bool = False,
     ) -> RealRays:
         """Generates rays for tracing based on the given parameters.
 
@@ -60,6 +62,8 @@ class RayGenerator:
             Px: x-coordinate of the pupil point.
             Py: y-coordinate of the pupil point.
             wavelength: Wavelength of the rays.
+            retain_launch: Whether to retain the generated ray state for an
+                analysis. Defaults to False.
 
         Returns:
             RealRays object containing the generated rays.
@@ -95,5 +99,8 @@ class RayGenerator:
             rays = RealRays(
                 x0, y0, z0, L, M, N, intensity=intensity, wavelength=wavelength
             )
-            return rays
-        return PolarizedRays(x0, y0, z0, L, M, N, intensity, wavelength)
+        else:
+            rays = PolarizedRays(x0, y0, z0, L, M, N, intensity, wavelength)
+        if retain_launch:
+            rays._capture_launch_state()
+        return rays

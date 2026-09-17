@@ -11,7 +11,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QEvent, QItemSelectionModel, QSize, Qt, QTimer, Signal, Slot
+from PySide6.QtCore import (
+    QEvent,
+    QItemSelectionModel,
+    QModelIndex,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
+    Slot,
+)
 from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -22,6 +31,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
     QPushButton,
+    QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
     QTableWidget,
@@ -31,6 +41,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .editor_hover_presentation import EditorHoverPresentation
 from .surface_interaction import EditorHoverTracker, SurfaceInteractionState
 
 if TYPE_CHECKING:
@@ -116,6 +127,19 @@ class SurfacePropertiesWidget(QWidget):
             params_to_set[name] = widget.text()
         self.connector.set_surface_geometry_params(self.row, params_to_set)
 
+    def refresh_values(self):
+        """Refresh derived values without discarding a focused parameter draft."""
+        params = self.connector.get_surface_geometry_params(self.row)
+        for name, widget in self.input_widgets.items():
+            if widget.hasFocus() or name not in params:
+                continue
+            value = params[name]
+            if isinstance(value, (list, tuple)) or hasattr(value, "tolist"):
+                values = value.tolist() if hasattr(value, "tolist") else value
+                widget.setText(str(values))
+            else:
+                widget.setText(f"{value:.6f}")
+
 
 class SurfaceTypeWidget(QWidget):
     """A custom widget for the 'Type' column, allowing text edit and dropdown."""
@@ -199,6 +223,15 @@ class SurfaceTypeWidget(QWidget):
         else:
             self._var_badge.setVisible(False)
 
+    def refresh_type_info(self):
+        """Update the stop/type label while retaining the existing controls."""
+        info = self.connector.get_surface_type_info(self.row)
+        if not self.type_edit.hasFocus():
+            self.type_edit.setText(info["display_text"])
+        self.props_button.setVisible(
+            bool(self.connector.get_surface_geometry_params(self.row))
+        )
+
     def type_selected(self, new_type):
         self.type_edit.setText(new_type.title())
         self.surfaceTypeChanged.emit(new_type)
@@ -221,14 +254,52 @@ class _AccentFocusDelegate(QStyledItemDelegate):
 
     _ACCENT = QColor("#007ACC")
 
+    def __init__(self, editor: LensEditor) -> None:
+        super().__init__(editor.tableWidget)
+        self.editor = editor
+
+    def createEditor(
+        self, parent: QWidget, option: QStyleOptionViewItem, index: QModelIndex
+    ) -> QWidget | None:
+        widget = super().createEditor(parent, option, index)
+        if widget is not None:
+            self.editor.hover_presentation.register_editor(widget, index)
+        return widget
+
+    def destroyEditor(self, editor: QWidget, index: QModelIndex) -> None:
+        self.editor.hover_presentation.unregister_editor(editor)
+        super().destroyEditor(editor, index)
+
+    def initStyleOption(self, option: QStyleOptionViewItem, index: QModelIndex) -> None:
+        super().initStyleOption(option, index)
+        if self.editor.hover_presentation.is_editing(index):
+            # The editor is transparent over the row tint. Drawing the stored
+            # display text here would show it behind the user's current draft.
+            option.text = ""
+
     def paint(
         self,
         painter: QPainter,
         option: QStyleOptionViewItem,
-        index,
+        index: QModelIndex,
     ) -> None:
-        super().paint(painter, option, index)
-        from PySide6.QtWidgets import QStyle
+        base = QStyleOptionViewItem(option)
+        # The table-wide QSS hover rule must not compete with shared row state.
+        base.state &= ~QStyle.State_MouseOver
+        super().paint(painter, base, index)
+        tint = self.editor.hover_presentation.tint(index.row(), index.column())
+        if tint is not None:
+            painter.fillRect(option.rect.adjusted(0, 0, -1, -1), tint)
+
+        # Theme item backgrounds can mask optimization-variable brushes. Keep
+        # their color visible as an inset marker, including on a selected row.
+        background = index.data(Qt.BackgroundRole)
+        if isinstance(background, QBrush) and background.style() != Qt.NoBrush:
+            marker = option.rect.adjusted(2, 3, -2, -3)
+            marker.setWidth(3)
+            color = background.color()
+            color.setAlpha(255)
+            painter.fillRect(marker, color)
 
         if option.state & QStyle.State_HasFocus:
             painter.save()
@@ -251,6 +322,7 @@ class LensEditor(QWidget):
         self.interaction_state = interaction_state or SurfaceInteractionState(self)
 
         self._init_ui()
+        self.hover_presentation = EditorHoverPresentation(self)
         self.setup_table()
         self.load_data()
         self.connect_signals()
@@ -260,6 +332,7 @@ class LensEditor(QWidget):
         """Initializes the main UI components of the editor."""
         self.layout = QVBoxLayout(self)
         self.tableWidget = QTableWidget()
+        self.tableWidget.setObjectName("LensDataTable")
         self.tableWidget.installEventFilter(self)
         self.tableWidget.setContextMenuPolicy(Qt.CustomContextMenu)
 
@@ -268,7 +341,7 @@ class LensEditor(QWidget):
         self.tableWidget.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
 
         # Accent focus delegate (SPEC §4.1)
-        self._focus_delegate = _AccentFocusDelegate(self.tableWidget)
+        self._focus_delegate = _AccentFocusDelegate(self)
         self.tableWidget.setItemDelegate(self._focus_delegate)
 
         self.layout.addWidget(self.tableWidget)
@@ -293,11 +366,10 @@ class LensEditor(QWidget):
         self.tableWidget.customContextMenuRequested.connect(self.show_context_menu)
         self.tableWidget.itemSelectionChanged.connect(self.update_headers_on_selection)
         self.tableWidget.itemSelectionChanged.connect(self._update_surface_selection)
-        self.connector.opticLoaded.connect(self.full_refresh_from_optic)
-        self.connector.opticChanged.connect(self.full_refresh_from_optic)
         self.connector.optimizationVariablesChanged.connect(
             self.full_refresh_from_optic
         )
+        self.connector.document_state.committed.connect(self._on_document_change)
 
     def setup_table(self):
         self.tableWidget.blockSignals(True)
@@ -378,6 +450,93 @@ class LensEditor(QWidget):
         self.load_data()
         self.update_headers_on_selection()
 
+    def _on_document_change(self, change):
+        """Keep local data updates from replacing active editors or selection."""
+        if change.categories <= {"polarization", "presentation"}:
+            if "presentation" in change.categories:
+                self.tableWidget.viewport().update()
+            return
+        if change.structural:
+            self._refresh_structure()
+            return
+        table = self.tableWidget
+        current = table.currentIndex()
+        editing = table.state() == QAbstractItemView.State.EditingState
+        rows = change.surface_indices or range(self.connector.get_surface_count())
+        columns = change.columns or range(table.columnCount())
+        previous = table.blockSignals(True)
+        try:
+            for surface_index in rows:
+                row = self.map_surface_index_to_ui_row(surface_index)
+                if self.connector.COL_TYPE in columns:
+                    widget = table.cellWidget(row, self.connector.COL_TYPE)
+                    if isinstance(widget, SurfaceTypeWidget):
+                        widget.refresh_type_info()
+                if surface_index == self.open_prop_source_row:
+                    widget = table.cellWidget(row + 1, 0)
+                    if isinstance(widget, SurfacePropertiesWidget):
+                        widget.refresh_values()
+                for column in columns:
+                    if editing and current.row() == row and current.column() == column:
+                        continue
+                    item = table.item(row, column)
+                    if item is not None:
+                        value = self.connector.get_surface_data(surface_index, column)
+                        text = str(value) if value is not None else ""
+                        if item.text() != text:
+                            item.setText(text)
+        finally:
+            table.blockSignals(previous)
+        self.update_headers_on_selection()
+
+    def _refresh_structure(self):
+        """Restore structural UI state by surface identity, never shifted row IDs."""
+        table = self.tableWidget
+        old_surfaces = self._displayed_surfaces
+        selected_ids = {
+            id(old_surfaces[index])
+            for row in table.selectionModel().selectedRows()
+            if 0
+            <= (index := self.map_ui_row_to_surface_index(row.row()))
+            < len(old_surfaces)
+        }
+        current_index = self.map_ui_row_to_surface_index(table.currentRow())
+        current_id = (
+            id(old_surfaces[current_index])
+            if 0 <= current_index < len(old_surfaces)
+            else None
+        )
+        current_column = table.currentColumn()
+        property_id = (
+            id(old_surfaces[self.open_prop_source_row])
+            if 0 <= self.open_prop_source_row < len(old_surfaces)
+            else None
+        )
+        horizontal = table.horizontalScrollBar().value()
+        vertical = table.verticalScrollBar().value()
+        new_surfaces = tuple(self.connector.get_optic().surfaces)
+        self.open_prop_source_row = next(
+            (
+                index
+                for index, surface in enumerate(new_surfaces)
+                if id(surface) == property_id
+            ),
+            -1,
+        )
+        self.full_refresh_from_optic()
+        table.clearSelection()
+        for index, surface in enumerate(new_surfaces):
+            row = self.map_surface_index_to_ui_row(index)
+            if id(surface) in selected_ids:
+                table.selectionModel().select(
+                    table.model().index(row, 0),
+                    QItemSelectionModel.Select | QItemSelectionModel.Rows,
+                )
+            if id(surface) == current_id:
+                table.setCurrentCell(row, current_column, QItemSelectionModel.NoUpdate)
+        table.horizontalScrollBar().setValue(horizontal)
+        table.verticalScrollBar().setValue(vertical)
+
     def _process_table_cell(self, row, col_idx, header):
         """Creates and configures the appropriate widget or item for a
         single table cell."""
@@ -454,6 +613,7 @@ class LensEditor(QWidget):
     def load_data(self):
         self.interaction_state.sync_document(self.connector.get_optic())
         self.tableWidget.blockSignals(True)
+        self._displayed_surfaces = tuple(self.connector.get_optic().surfaces)
         self.tableWidget.setRowCount(0)
         num_surfaces = self.connector.get_surface_count()
         self.tableWidget.setRowCount(num_surfaces)
@@ -475,6 +635,7 @@ class LensEditor(QWidget):
         self.tableWidget.blockSignals(False)
         if hasattr(self, "hover_tracker"):
             self.hover_tracker.refresh()
+        self.hover_presentation.refresh()
 
     def _insert_properties_widget(self, source_row):
         prop_row_index = source_row + 1
@@ -562,9 +723,6 @@ class LensEditor(QWidget):
             if ui_row == -1:
                 return
             surface_index_to_remove = self.map_ui_row_to_surface_index(ui_row)
-
-        if self.open_prop_source_row == surface_index_to_remove:
-            self.open_prop_source_row = -1  # Close properties if its owner is removed
 
         self.connector.remove_surface(surface_index_to_remove)
 

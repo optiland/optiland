@@ -785,6 +785,8 @@ class Optic:
         num_rays: int | None = 100,
         distribution: DistributionType | BaseDistribution | None = "hexapolar",
         record: bool = True,
+        *,
+        retain_launch: bool = False,
     ) -> RealRays:
         """Trace a distribution of rays through the optical system.
 
@@ -804,6 +806,8 @@ class Optic:
                 False roughly halves peak memory and is recommended for very
                 large GPU traces where only the returned rays are needed.
                 Defaults to True.
+            retain_launch: Whether to retain the generated ray state for an
+                analysis. Defaults to False.
 
         Returns:
             RealRays: A `RealRays` object containing the traced rays.
@@ -816,7 +820,13 @@ class Optic:
 
         """
         return self.ray_tracer.trace(
-            Hx, Hy, wavelength, num_rays, distribution, record=record
+            Hx,
+            Hy,
+            wavelength,
+            num_rays,
+            distribution,
+            record=record,
+            retain_launch=retain_launch,
         )
 
     def trace_generic(
@@ -826,6 +836,8 @@ class Optic:
         Px: ScalarOrArray,
         Py: ScalarOrArray,
         wavelength: float,
+        *,
+        retain_launch: bool = False,
     ):
         """Trace generic rays through the optical system.
 
@@ -835,12 +847,16 @@ class Optic:
             Px: The normalized x pupil coordinate(s).
             Py: The normalized y pupil coordinate(s).
             wavelength (float): The wavelength of the rays in microns.
+            retain_launch: Whether to retain the generated ray state for an
+                analysis. Defaults to False.
 
         Returns:
             RealRays: A `RealRays` object containing the traced rays.
 
         """
-        return self.ray_tracer.trace_generic(Hx, Hy, Px, Py, wavelength)
+        return self.ray_tracer.trace_generic(
+            Hx, Hy, Px, Py, wavelength, retain_launch=retain_launch
+        )
 
     def plot_surface_sag(
         self,

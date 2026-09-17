@@ -60,43 +60,41 @@ def setup_problem(
     return problem, lens
 
 
-@pytest.fixture(scope="module", autouse=True)
+def test_init_raises_error_if_backend_not_torch():
+    """
+    Ensures that initializing a Torch optimizer without the 'torch'
+    backend raises a RuntimeError.
+    """
+    original_backend = be.get_backend()
+    try:
+        be.set_backend("numpy")
+        problem, _ = setup_problem()
+        with pytest.raises(RuntimeError, match="requires the 'torch' backend"):
+            TorchAdamOptimizer(problem)
+    finally:
+        be.set_backend(original_backend)
+
+
+@pytest.fixture(scope="module")
 def set_torch_backend():
     """
-    Fixture to ensure the torch backend is set for all tests in this file.
+    Configure Torch for the tests that require the optional backend.
     It will set the backend to torch before the tests run and revert to the
     original backend after all tests in the module are completed.
     """
+    pytest.importorskip("torch")
     original_backend = be.get_backend()
     be.set_backend("torch")
     yield
     be.set_backend(original_backend)
 
 
+@pytest.mark.usefixtures("set_torch_backend")
 class TestTorchBaseOptimizerSetup:
     """
     Tests focused on the setup and edge cases of the TorchBaseOptimizer,
     which are independent of the specific optimizer algorithm used.
     """
-
-    def test_init_raises_error_if_backend_not_torch(self):
-        """
-        Ensures that initializing a Torch optimizer without the 'torch'
-        backend raises a RuntimeError.
-        """
-        # This test temporarily switches the backend and must restore it
-        # to not affect other tests, as the module-scoped fixture will
-        # not run between tests.
-        original_backend = be.get_backend()
-        try:
-            be.set_backend("numpy")
-            # We need to re-run setup_problem under the numpy backend
-            problem, _ = setup_problem()
-            with pytest.raises(RuntimeError, match="requires the 'torch' backend"):
-                TorchAdamOptimizer(problem)
-        finally:
-            # Restore the backend for subsequent tests
-            be.set_backend(original_backend)
 
     def test_init_enables_gradient_tracking_with_warning(self):
         """
@@ -126,6 +124,7 @@ class TestTorchBaseOptimizerSetup:
 
 
 @pytest.mark.parametrize("optimizer_class", [TorchAdamOptimizer, TorchSGDOptimizer])
+@pytest.mark.usefixtures("set_torch_backend")
 class TestTorchOptimizers:
     """
     A parametrized test suite for all concrete Torch optimizer implementations.
@@ -223,6 +222,7 @@ class TestTorchOptimizers:
             assert "Loss" not in captured.out
 
 
+@pytest.mark.usefixtures("set_torch_backend")
 @pytest.mark.parametrize("optimizer_class", [TorchAdamOptimizer, TorchSGDOptimizer])
 def test_optimizer_enforces_total_track_limit(optimizer_class):
     """
@@ -249,6 +249,7 @@ def test_optimizer_enforces_total_track_limit(optimizer_class):
     assert float(be.to_numpy(lens.total_track)) < initial_track - 1.0
 
 
+@pytest.mark.usefixtures("set_torch_backend")
 class TestTorchOptimizerScaledSpace:
     """
     Tests that verify the Torch optimizers work in scaled parameter space,
