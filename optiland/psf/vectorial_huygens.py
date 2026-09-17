@@ -97,6 +97,7 @@ class VectorialHuygensPSF(ScalarHuygensPSF):
                     pupil_opd,
                     wavelength_mm,
                     Rp,
+                    data.reference_center,
                 )
                 psf = component_psf if psf is None else psf + component_psf
 
@@ -163,6 +164,7 @@ class VectorialHuygensPSF(ScalarHuygensPSF):
                     pupil_opd_ideal,
                     self.wavelengths[0].value * 1e-3,
                     data.radius,
+                    data.reference_center,
                 )
                 norm = norm + component_norm[0, 0]
 
