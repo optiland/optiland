@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING
 from . import gui_plot_utils
 from .analysis_panel import CustomMatplotlibToolbar
 from .layout_highlighting import LayoutHighlightController
+from .layout_highlighting_3d import LayoutHighlightController3D
 from .layout_presenter import present_2d, present_3d, present_sag
 from .widgets.layout_job_view import LayoutJobView
 
@@ -704,6 +705,9 @@ class VTKViewer(QWidget):
         self.connector = connector
         self.current_theme = "dark"
         self._has_scene = False
+        self.interaction_state = None
+        self.highlight_controller = None
+        self._highlight_context = None
         if not VTK_AVAILABLE:
             self.layout = QVBoxLayout(self)
             self.layout.addWidget(QLabel("VTK is not available."))
@@ -725,6 +729,28 @@ class VTKViewer(QWidget):
 
     def _layout_parameters(self):
         return {}
+
+    def set_interaction_state(self, state):
+        if self.highlight_controller is not None:
+            self.interaction_state.changed.disconnect(
+                self.highlight_controller.schedule
+            )
+            self.highlight_controller.clear()
+            self.highlight_controller.deleteLater()
+        self.interaction_state = state
+        self.highlight_controller = LayoutHighlightController3D(self, state)
+        if self._highlight_context is not None:
+            self.install_3d_highlights(self._scene_actor_specs, self._highlight_context)
+
+    def clear_3d_highlights(self):
+        if self.highlight_controller is not None:
+            self.highlight_controller.clear()
+
+    def install_3d_highlights(self, actors, context):
+        self._highlight_context = context
+        if self.highlight_controller is not None:
+            self.interaction_state.sync_document(self.connector.get_optic())
+            self.highlight_controller.install(actors, context["surface_identities"])
 
     def showEvent(self, event):
         super().showEvent(event)

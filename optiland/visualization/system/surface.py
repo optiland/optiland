@@ -221,17 +221,25 @@ class Surface3D(Surface2D):
                 the surface geometry.
 
         """
-        has_symmetric_aperture = (
-            type(self.surf.aperture) is RadialAperture
-            or self.surf.aperture is None  # "no aperture" is symmetric
-        )
-        is_symmetric = self.surf.geometry.is_symmetric
-        if is_symmetric and has_symmetric_aperture:
+        if self.supports_revolution:
             actor = self._get_symmetric_surface()
         else:
             actor = self._get_asymmetric_surface()
         actor = self._configure_material(actor, theme=theme)
         return actor
+
+    @property
+    def supports_revolution(self):
+        """Whether an uninterrupted circular contour represents this aperture.
+
+        Annular clipping creates discontinuous contours; a clipped grid retains
+        the central opening without introducing NaN vertices into VTK.
+        """
+        aperture = self.surf.aperture
+        circular = aperture is None or (
+            type(aperture) is RadialAperture and aperture.r_min == 0
+        )
+        return self.surf.geometry.is_symmetric and circular
 
     def _get_symmetric_surface(self):
         """Generates a symmetric surface actor by computing the sag, revolving

@@ -69,6 +69,8 @@ class PanelManager:
         self.surface_interaction.sync_document(self.connector.get_optic())
         self.viewer_panel = ViewerPanel(self.connector)
         self.viewer_panel.viewer2D.set_interaction_state(self.surface_interaction)
+        if self.viewer_panel.viewer3D is not None:
+            self.viewer_panel.viewer3D.set_interaction_state(self.surface_interaction)
         self.viewer_dock = self._create_dock(
             self.viewer_panel, "ViewerDock", "System Viewer"
         )

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import numpy as np
+import pytest
 from matplotlib.patches import Polygon
 from PySide6.QtWidgets import QMainWindow, QVBoxLayout, QWidget
 
@@ -80,8 +81,9 @@ def test_reject_mismatched_scene_identity_and_nonfinite_reference(
     viewer.close()
 
 
-def test_panel_manager_connects_actual_editor_and_2d_viewer_to_one_state(
-    qapp, highlighting_connector, monkeypatch
+@pytest.mark.parametrize("with_3d", [False, True])
+def test_panel_manager_connects_actual_editor_and_views_to_one_state(
+    qapp, highlighting_connector, monkeypatch, with_3d
 ):
     from optiland_gui import panel_manager
     from tests.gui.test_calculation_jobs import wait_for
@@ -95,6 +97,7 @@ def test_panel_manager_connects_actual_editor_and_2d_viewer_to_one_state(
         def __init__(self, connector):
             super().__init__()
             self.viewer2D = MatplotlibViewer(connector)
+            self.viewer3D = MagicMock() if with_3d else None
             QVBoxLayout(self).addWidget(self.viewer2D)
 
     for name in (
@@ -118,6 +121,10 @@ def test_panel_manager_connects_actual_editor_and_2d_viewer_to_one_state(
     state = manager.surface_interaction
     assert manager.lens_editor.interaction_state is state
     assert manager.viewer_panel.viewer2D.interaction_state is state
+    if with_3d:
+        manager.viewer_panel.viewer3D.set_interaction_state.assert_called_once_with(
+            state
+        )
     changed = MagicMock()
     connector.opticChanged.connect(changed)
     manager.lens_editor.tableWidget.selectRow(1)
