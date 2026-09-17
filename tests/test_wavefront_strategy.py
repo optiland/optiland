@@ -21,7 +21,7 @@ from optiland.wavefront.strategy import (
 )
 from optiland.wavefront.wavefront_data import WavefrontData
 
-from .utils import assert_allclose
+from .utils import assert_allclose, xfail_if_emulated_df64
 
 
 @pytest.fixture
@@ -778,7 +778,11 @@ def test_flatness_is_independent_of_pupil_sampling(
     set_test_backend: None, num_rays: int
 ) -> None:
     optic = collimated_planes(index=1.5, field=(3.0, 4.0), vignette=(0.4, 0.1))
-    assert max_abs_wavefront(optic, num_rays=num_rays) < ZERO_WAVEFRONT_TOLERANCE
+    with xfail_if_emulated_df64(
+        "df64 (48-bit significand) rounds OPD at ~1e-13 mm, i.e. ~2e-10 waves at "
+        "0.55 um; sf64 and every other backend keep the 1e-10 flatness bound"
+    ):
+        assert max_abs_wavefront(optic, num_rays=num_rays) < ZERO_WAVEFRONT_TOLERANCE
 
 
 def test_object_index_scales_launch_phase_numerically(set_test_backend: None) -> None:

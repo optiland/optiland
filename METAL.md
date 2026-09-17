@@ -47,6 +47,22 @@ GPU (e.g. to compose with other GPU work) or as the base for fused per-surface k
 where the real speed-up lies (see `metal/conic.py` for the pattern). For throughput today, use
 `optiland.parallel` with CPU workers.
 
+Measured saturation on the M1 Max (`scripts/metal_saturation.py`, 1e5-ray Cooke traces,
+`NOTES/08-parallel-saturation.md` in the project root):
+
+| pool | throughput | saturates at |
+|---|---|---|
+| NumPy workers | 20 traces/s per worker, 99 traces/s with 8 | 8 workers (the performance cores); 10 adds 2%, 12+ loses |
+| torch CPU float64 workers (1 thread each) | 20 traces/s per worker, 71 traces/s with 8 | 8 workers |
+| GPU (`mps`, df64) processes | 2.4 traces/s per process, 8.2 traces/s with 6 | ~6 processes; each also occupies a CPU core for dispatch |
+
+A single kernel launch costs ~56 µs regardless of size and is GPU-bound only above ~1e6
+elements, which is why per-op dispatch cannot keep the 32 GPU cores busy. The
+design-independent ways to change that are (1) fusing the recorded aten op stream into one
+generated kernel per elementwise chain, (2) a trace-interpreter kernel that takes the surface
+list as a buffer, and (3) batching many designs into one launch; all three reuse this
+library's kernels, encoders and launcher.
+
 ## How it works
 
 * `optiland/backend/torch_backend/metal/kernels/` — Metal Shading Language sources: double-single
@@ -83,4 +99,5 @@ where the real speed-up lies (see `metal/conic.py` for the pattern). For through
 * `OPTILAND_TEST_MPS=1 pytest tests` adds a `torch-mps` parametrization to every backend test;
   `scripts/metal_suite.py` runs it one file per process and summarizes failures.
 * `scripts/metal_oracle_e2e.py` compares traces and analyses against NumPy; `scripts/metal_benchmark.py`
-  times workloads across numpy / torch-cpu / mps-f32 / mps-df64 / mps-sf64 with correctness checks.
+  times workloads across numpy / torch-cpu / mps-f32 / mps-df64 / mps-sf64 with correctness checks;
+  `scripts/metal_saturation.py` measures throughput versus the number of CPU or GPU worker processes.
