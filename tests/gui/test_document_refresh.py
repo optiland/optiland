@@ -108,7 +108,7 @@ def test_structural_update_preserves_selected_surface_and_expanded_owner(
         connector.add_surface(index=1)
         assert connector.get_optic().surfaces[2] is surfaces[1]
         assert connector.get_optic().surfaces[3] is surfaces[2]
-        assert editor.open_prop_source_row == 2
+        assert editor.open_prop_source_rows == {2}
         assert editor.tableWidget.currentRow() == 4
         assert editor.tableWidget.selectionModel().selectedRows()[0].row() == 4
         assert editor.interaction_state.selected_surfaces == (surfaces[2],)
@@ -201,7 +201,7 @@ def test_removing_expanded_surface_retains_the_selected_surviving_surface(
         editor.toggle_properties_widget(1)
         editor.tableWidget.setCurrentCell(3, connector.COL_RADIUS)
         editor.remove_surface_handler(1)
-        assert editor.open_prop_source_row == -1
+        assert editor.open_prop_source_rows == set()
         assert connector.get_optic().surfaces[1] is surviving
         assert editor.tableWidget.currentRow() == 1
         assert editor.tableWidget.selectionModel().selectedRows()[0].row() == 1

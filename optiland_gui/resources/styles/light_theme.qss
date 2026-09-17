@@ -248,6 +248,28 @@ QLabel {
 }
 
 /* QPushButton - General push buttons (e.g., "Add Surface", "Apply") */
+/* Keep the properties close control visible without relying on native chrome. */
+QToolButton#CloseSurfacePropertiesButton {
+    background-color: #F8F9FA;
+    color: #212529;
+    border: 1px solid #6C757D;
+    border-radius: 3px;
+    padding: 0;
+    margin: 0;
+}
+
+QToolButton#CloseSurfacePropertiesButton:hover {
+    background-color: #E9ECEF;
+}
+
+QToolButton#CloseSurfacePropertiesButton:pressed {
+    background-color: #DEE2E6;
+}
+
+QToolButton#CloseSurfacePropertiesButton:focus {
+    border: 2px solid #212529;
+}
+
 QPushButton {
     color: #F8F9FA;       /* --accent-text-on-dark: Text color (light on a darker button) */
     background-color: #6C757D; /* --accent-primary: Button background */

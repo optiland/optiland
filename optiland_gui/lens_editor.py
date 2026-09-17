@@ -24,6 +24,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QFormLayout,
     QHBoxLayout,
     QHeaderView,
@@ -33,9 +34,11 @@ from PySide6.QtWidgets import (
     QPushButton,
     QStyle,
     QStyledItemDelegate,
+    QStyleOptionTabWidgetFrame,
     QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -48,17 +51,42 @@ if TYPE_CHECKING:
     from .optiland_connector import OptilandConnector
 
 
+class _SurfacePropertiesTabs(QTabWidget):
+    """Align the close control with the tab tops and outer pane border."""
+
+    def event(self, event):
+        handled = super().event(event)
+        if event.type() in (
+            QEvent.Resize,
+            QEvent.Show,
+            QEvent.LayoutRequest,
+            QEvent.StyleChange,
+            QEvent.FontChange,
+        ):
+            button = self.cornerWidget(Qt.TopRightCorner)
+            if button is not None:
+                option = QStyleOptionTabWidgetFrame()
+                self.initStyleOption(option)
+                pane = self.style().subElementRect(
+                    QStyle.SE_TabWidgetTabPane, option, self
+                )
+                button.move(
+                    pane.right() + 1 - button.width(), self.tabBar().geometry().top()
+                )
+        return handled
+
+
 class SurfacePropertiesWidget(QWidget):
     """A widget to display and edit specific parameters of a surface geometry."""
+
+    closeRequested = Signal()
 
     def __init__(self, row, connector, parent=None):
         super().__init__(parent)
         self.row = row
         self.connector = connector
         self.setObjectName("SurfacePropertiesWidget")
-        self.setMinimumWidth(750)
-        self.setMinimumHeight(100)
-        self.setMaximumHeight(200)
+        self.setMinimumWidth(420)
 
         self.input_widgets = {}
         self._populate_properties_form()
@@ -81,7 +109,23 @@ class SurfacePropertiesWidget(QWidget):
 
     def _populate_properties_form(self):
         """Creates and populates the form layout with surface parameter widgets."""
-        main_layout = QVBoxLayout(self)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(6, 3, 6, 3)
+        self.tabs = _SurfacePropertiesTabs()
+        outer_layout.addWidget(self.tabs)
+        self.close_button = QToolButton(self.tabs)
+        self.close_button.setObjectName("CloseSurfacePropertiesButton")
+        self.close_button.setText("\u00d7")
+        self.close_button.setFixedSize(24, 24)
+        self.close_button.setFocusPolicy(Qt.StrongFocus)
+        label = f"Close surface properties (surface {self.row})"
+        self.close_button.setToolTip(label)
+        self.close_button.setAccessibleName(label)
+        self.close_button.clicked.connect(self.closeRequested.emit)
+        self.tabs.setCornerWidget(self.close_button, Qt.TopRightCorner)
+        shape = QWidget()
+        self.tabs.addTab(shape, "Shape")
+        main_layout = QVBoxLayout(shape)
         main_layout.setContentsMargins(15, 8, 15, 8)
         columns_layout = QHBoxLayout()
         columns_layout.setSpacing(20)
@@ -171,9 +215,7 @@ class SurfaceTypeWidget(QWidget):
         self.props_button.clicked.connect(self.propertiesIconClicked.emit)
         self.layout.addWidget(self.props_button)
 
-        # hide the button if there are no properties to show
-        if not current_type_info.get("has_extra_params", False):
-            self.props_button.hide()
+        # Every row exposes the properties panel, including its empty state.
 
         self.type_edit = QLineEdit(current_type_info["display_text"])
         self.type_edit.setObjectName("SurfaceTypeLineEdit")
@@ -228,9 +270,7 @@ class SurfaceTypeWidget(QWidget):
         info = self.connector.get_surface_type_info(self.row)
         if not self.type_edit.hasFocus():
             self.type_edit.setText(info["display_text"])
-        self.props_button.setVisible(
-            bool(self.connector.get_surface_geometry_params(self.row))
-        )
+        self.props_button.setVisible(True)
 
     def type_selected(self, new_type):
         self.type_edit.setText(new_type.title())
@@ -318,7 +358,7 @@ class LensEditor(QWidget):
         super().__init__(parent)
         self.connector = connector
         self.setWindowTitle("Lens Editor")
-        self.open_prop_source_row = -1
+        self.open_prop_source_rows: set[int] = set()
         self.interaction_state = interaction_state or SurfaceInteractionState(self)
 
         self._init_ui()
@@ -426,9 +466,17 @@ class LensEditor(QWidget):
         )
 
     def map_ui_row_to_surface_index(self, ui_row):
-        if self.open_prop_source_row != -1 and ui_row > self.open_prop_source_row:
-            return ui_row - 1
-        return ui_row
+        return ui_row - sum(
+            ui_row > surface_index + offset
+            for offset, surface_index in enumerate(sorted(self.open_prop_source_rows))
+        )
+
+    def is_properties_row(self, ui_row):
+        owner = self.map_ui_row_to_surface_index(ui_row)
+        return (
+            owner in self.open_prop_source_rows
+            and ui_row == self.map_surface_index_to_ui_row(owner) + 1
+        )
 
     def _update_surface_selection(self):
         indices = (
@@ -438,12 +486,9 @@ class LensEditor(QWidget):
         self.interaction_state.set_selected_indices(indices)
 
     def map_surface_index_to_ui_row(self, surface_index):
-        if (
-            self.open_prop_source_row != -1
-            and surface_index > self.open_prop_source_row
-        ):
-            return surface_index + 1
-        return surface_index
+        return surface_index + sum(
+            owner < surface_index for owner in self.open_prop_source_rows
+        )
 
     @Slot()
     def full_refresh_from_optic(self):
@@ -472,7 +517,7 @@ class LensEditor(QWidget):
                     widget = table.cellWidget(row, self.connector.COL_TYPE)
                     if isinstance(widget, SurfaceTypeWidget):
                         widget.refresh_type_info()
-                if surface_index == self.open_prop_source_row:
+                if surface_index in self.open_prop_source_rows:
                     widget = table.cellWidget(row + 1, 0)
                     if isinstance(widget, SurfacePropertiesWidget):
                         widget.refresh_values()
@@ -507,22 +552,9 @@ class LensEditor(QWidget):
             else None
         )
         current_column = table.currentColumn()
-        property_id = (
-            id(old_surfaces[self.open_prop_source_row])
-            if 0 <= self.open_prop_source_row < len(old_surfaces)
-            else None
-        )
         horizontal = table.horizontalScrollBar().value()
         vertical = table.verticalScrollBar().value()
         new_surfaces = tuple(self.connector.get_optic().surfaces)
-        self.open_prop_source_row = next(
-            (
-                index
-                for index, surface in enumerate(new_surfaces)
-                if id(surface) == property_id
-            ),
-            -1,
-        )
         self.full_refresh_from_optic()
         table.clearSelection()
         for index, surface in enumerate(new_surfaces):
@@ -611,9 +643,24 @@ class LensEditor(QWidget):
 
     @Slot()
     def load_data(self):
+        previous_surfaces = getattr(self, "_displayed_surfaces", ())
+        settings = {}
+        for owner in self.open_prop_source_rows:
+            panel = self.tableWidget.cellWidget(
+                self.map_surface_index_to_ui_row(owner) + 1, 0
+            )
+            if owner < len(previous_surfaces) and isinstance(
+                panel, SurfacePropertiesWidget
+            ):
+                settings[id(previous_surfaces[owner])] = panel.tabs.currentIndex()
         self.interaction_state.sync_document(self.connector.get_optic())
         self.tableWidget.blockSignals(True)
         self._displayed_surfaces = tuple(self.connector.get_optic().surfaces)
+        self.open_prop_source_rows = {
+            index
+            for index, surface in enumerate(self._displayed_surfaces)
+            if id(surface) in settings
+        }
         self.tableWidget.setRowCount(0)
         num_surfaces = self.connector.get_surface_count()
         self.tableWidget.setRowCount(num_surfaces)
@@ -621,8 +668,12 @@ class LensEditor(QWidget):
         for r in range(num_surfaces):
             self._process_table_row(r)
 
-        if self.open_prop_source_row != -1 and self.open_prop_source_row < num_surfaces:
-            self._insert_properties_widget(self.open_prop_source_row)
+        for owner in sorted(self.open_prop_source_rows):
+            self._insert_properties_widget(owner)
+            panel = self.tableWidget.cellWidget(
+                self.map_surface_index_to_ui_row(owner) + 1, 0
+            )
+            panel.tabs.setCurrentIndex(settings[id(self._displayed_surfaces[owner])])
 
         for surface in self.interaction_state.selected_surfaces:
             index = self.interaction_state.index_of(surface)
@@ -638,13 +689,22 @@ class LensEditor(QWidget):
         self.hover_presentation.refresh()
 
     def _insert_properties_widget(self, source_row):
-        prop_row_index = source_row + 1
+        prop_row_index = self.map_surface_index_to_ui_row(source_row) + 1
         self.tableWidget.insertRow(prop_row_index)
         self.tableWidget.setVerticalHeaderItem(prop_row_index, QTableWidgetItem(""))
         prop_widget = SurfacePropertiesWidget(source_row, self.connector)
+        prop_widget.closeRequested.connect(
+            lambda: self.close_properties_widget(source_row)
+        )
         self.tableWidget.setCellWidget(prop_row_index, 0, prop_widget)
         self.tableWidget.setSpan(prop_row_index, 0, 1, self.tableWidget.columnCount())
-        default_props_height = 150
+        default_props_height = prop_widget.sizeHint().height()
+        self.tableWidget.verticalHeader().setMaximumSectionSize(
+            max(
+                default_props_height,
+                self.tableWidget.verticalHeader().maximumSectionSize(),
+            )
+        )
         self.tableWidget.setRowHeight(prop_row_index, default_props_height)
         self.tableWidget.verticalHeader().setSectionResizeMode(
             prop_row_index, QHeaderView.ResizeMode.Fixed
@@ -726,55 +786,89 @@ class LensEditor(QWidget):
 
         self.connector.remove_surface(surface_index_to_remove)
 
+    def close_properties_widget(self, source_row):
+        """Dismiss only this panel, leaving the other controls and drafts intact."""
+        if source_row not in self.open_prop_source_rows:
+            return
+        table = self.tableWidget
+        row = self.map_surface_index_to_ui_row(source_row) + 1
+        panel = table.cellWidget(row, 0)
+        focus = QApplication.focusWidget()
+        focused = focus is panel or (focus is not None and panel.isAncestorOf(focus))
+        previous = table.blockSignals(True)
+        try:
+            self.open_prop_source_rows.remove(source_row)
+            table.removeRow(row)
+            self._restore_property_spans()
+            if focused:
+                table.setCurrentCell(
+                    self.map_surface_index_to_ui_row(source_row),
+                    self.connector.COL_TYPE,
+                    QItemSelectionModel.NoUpdate,
+                )
+                table.setFocus(Qt.OtherFocusReason)
+        finally:
+            table.blockSignals(previous)
+        self._properties_changed()
+
+    def _restore_property_spans(self):
+        self.tableWidget.clearSpans()
+        for owner in self.open_prop_source_rows:
+            row = self.map_surface_index_to_ui_row(owner) + 1
+            self.tableWidget.setSpan(row, 0, 1, self.tableWidget.columnCount())
+
+    def _properties_changed(self):
+        self._update_surface_selection()
+        self.update_headers_on_selection()
+        self.hover_tracker.refresh()
+        self.hover_presentation.refresh()
+
+    def _scroll_to_properties(self, source_row, scroll_position=None):
+        """Keep the viewport anchored, revealing only the clipped part of a panel."""
+        table = self.tableWidget
+        horizontal = table.horizontalScrollBar()
+        vertical = table.verticalScrollBar()
+        if scroll_position is None:
+            scroll_position = horizontal.value(), vertical.value()
+        # Inserting a row changes the scroll range and can introduce a scrollbar.
+        # Measure only after Qt has installed that geometry, without processing
+        # unrelated events or letting scrollTo move horizontally to the span.
+        table.doItemsLayout()
+        horizontal.setValue(scroll_position[0])
+        vertical.setValue(scroll_position[1])
+        row = self.map_surface_index_to_ui_row(source_row) + 1
+        top = table.rowViewportPosition(row)
+        height = table.rowHeight(row)
+        available = table.viewport().height()
+        if height > available or top < 0:
+            # A panel taller than the viewport cannot fit; keep its tabs/close
+            # control accessible and allow normal scrolling through the rest.
+            adjustment = top
+        else:
+            adjustment = max(0, top + height - available)
+        vertical.setValue(vertical.value() + adjustment)
+
     @Slot()
     def toggle_properties_widget(self, source_row):
-        # Check if we're closing the currently open properties
-        if self.open_prop_source_row == source_row:
-            # Restore interactive resize mode for the rows that were fixed
-            if self.open_prop_source_row >= 0:
-                # Get the row indices to restore
-                row_above = self.open_prop_source_row
-                row_below = (
-                    self.open_prop_source_row + 2
-                )  # +2 because +1 is the properties row
-
-                # Check if these rows exist before changing their mode
-                if row_above >= 0 and row_above < self.tableWidget.rowCount():
-                    self.tableWidget.verticalHeader().setSectionResizeMode(
-                        row_above, QHeaderView.ResizeMode.Interactive
-                    )
-
-                if row_below < self.tableWidget.rowCount():
-                    self.tableWidget.verticalHeader().setSectionResizeMode(
-                        row_below, QHeaderView.ResizeMode.Interactive
-                    )
-
-            # close properties widget
-            self.open_prop_source_row = -1
-        else:
-            # open properties widget
-            self.open_prop_source_row = source_row
-
-        # Refresh the table
-        self.load_data()
-
-        # If opening properties, set the rows around it to fixed mode
-        if self.open_prop_source_row >= 0:
-            # The row above is the surface row itself
-            row_above = self.open_prop_source_row
-            # The row below is after the properties row
-            row_below = self.open_prop_source_row + 2
-
-            # Set the resize mode to Fixed for these rows
-            if row_above >= 0 and row_above < self.tableWidget.rowCount():
-                self.tableWidget.verticalHeader().setSectionResizeMode(
-                    row_above, QHeaderView.ResizeMode.Fixed
-                )
-
-            if row_below < self.tableWidget.rowCount():
-                self.tableWidget.verticalHeader().setSectionResizeMode(
-                    row_below, QHeaderView.ResizeMode.Fixed
-                )
+        if not 0 <= source_row < len(self._displayed_surfaces):
+            return
+        if source_row in self.open_prop_source_rows:
+            self.close_properties_widget(source_row)
+            return
+        table = self.tableWidget
+        scroll_position = (
+            table.horizontalScrollBar().value(),
+            table.verticalScrollBar().value(),
+        )
+        previous = table.blockSignals(True)
+        try:
+            self.open_prop_source_rows.add(source_row)
+            self._insert_properties_widget(source_row)
+            self._restore_property_spans()
+        finally:
+            table.blockSignals(previous)
+        self._properties_changed()
+        self._scroll_to_properties(source_row, scroll_position)
 
     @Slot("QPoint")
     def show_context_menu(self, pos):
@@ -782,9 +876,7 @@ class LensEditor(QWidget):
         if ui_row < 0:
             return
 
-        is_prop_widget_row = (
-            self.open_prop_source_row != -1 and ui_row == self.open_prop_source_row + 1
-        )
+        is_prop_widget_row = self.is_properties_row(ui_row)
 
         surface_index = self.map_ui_row_to_surface_index(ui_row)
 
@@ -799,7 +891,9 @@ class LensEditor(QWidget):
                 lambda: self.remove_surface_handler(surface_index)
             )
             menu.addSeparator()
-            props_action = menu.addAction("Surface Properties")
+            props_action = menu.addAction("Toggle Surface Properties")
+            props_action.setCheckable(True)
+            props_action.setChecked(surface_index in self.open_prop_source_rows)
             props_action.triggered.connect(
                 lambda: self.toggle_properties_widget(surface_index)
             )
@@ -820,7 +914,6 @@ class LensEditor(QWidget):
                 if surface_index == 0:
                     add_above.setEnabled(False)
                 remove_action.setEnabled(False)
-                props_action.setEnabled(False)
                 make_stop_action.setEnabled(False)
 
             menu.addSeparator()

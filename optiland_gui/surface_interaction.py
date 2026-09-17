@@ -163,9 +163,6 @@ class EditorHoverTracker(QObject):
             state.set_hover()
             return
         surface_index = self.editor.map_ui_row_to_surface_index(row)
-        if (
-            self.editor.open_prop_source_row >= 0
-            and row == self.editor.open_prop_source_row + 1
-        ):
+        if self.editor.is_properties_row(row):
             column = None
         state.set_hover(surface_index, column)
