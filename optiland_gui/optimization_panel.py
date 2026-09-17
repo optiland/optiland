@@ -670,6 +670,9 @@ class OptimizationPanel(QWidget):
         self.setWindowTitle("Optimization")
 
         self._iteration_count = 0
+        self._candidate_windows = []
+        self._preview = None
+        self.current_theme = "dark"
 
         self._init_ui()
         self._connect_signals()
@@ -707,8 +710,11 @@ class OptimizationPanel(QWidget):
         self.btnRun = QPushButton("▶  Run")
         self.btnStop = QPushButton("■  Stop")
         self.btnStop.setEnabled(False)
+        self.btnCandidate = QPushButton("Open Candidate Separately")
+        self.btnCandidate.setEnabled(False)
         run_layout.addWidget(self.btnRun)
         run_layout.addWidget(self.btnStop)
+        run_layout.addWidget(self.btnCandidate)
         top_layout.addLayout(run_layout)
 
         splitter.addWidget(top_widget)
@@ -721,6 +727,7 @@ class OptimizationPanel(QWidget):
         log_layout.addWidget(QLabel("Results / Log:"))
         self.txtLog = QTextEdit()
         self.txtLog.setReadOnly(True)
+        self.txtLog.document().setMaximumBlockCount(1000)
         self.txtLog.setMinimumHeight(80)
         log_layout.addWidget(self.txtLog)
         splitter.addWidget(log_widget)
@@ -859,7 +866,7 @@ class OptimizationPanel(QWidget):
         self.spnFrequency = QSpinBox()
         self.spnFrequency.setRange(1, 1000)
         self.spnFrequency.setValue(10)
-        self.spnFrequency.setSuffix(" iters")
+        self.spnFrequency.setSuffix(" evals")
         layout.addWidget(self.spnFrequency)
         layout.addStretch()
 
@@ -958,6 +965,13 @@ class OptimizationPanel(QWidget):
 
         self.btnRun.clicked.connect(self._on_run)
         self.btnStop.clicked.connect(self._on_stop)
+        service = self.connector._optimization_service
+        service.progressChanged.connect(self._on_optimization_progress)
+        service.completed.connect(self._on_optimization_finished)
+        service.failed.connect(self._on_optimization_error)
+        service.stateChanged.connect(self._on_optimization_state)
+        service.candidateAvailable.connect(self.btnCandidate.setEnabled)
+        self.btnCandidate.clicked.connect(self._open_candidate)
 
         # Connector signal → open add-variable dialog pre-filled
         self.connector.requestAddOptimizationVariable.connect(
@@ -1160,6 +1174,11 @@ class OptimizationPanel(QWidget):
     def _on_run(self) -> None:
         if self.connector.is_optimization_running():
             return
+        if self.connector.get_optic() is None:
+            self._on_optimization_error(
+                "Open an optical system before running optimization."
+            )
+            return
 
         self.txtLog.clear()
         self._iteration_count = 0
@@ -1201,48 +1220,108 @@ class OptimizationPanel(QWidget):
                 return
 
         optimizer_kwargs = self._collect_optimizer_kwargs()
-        freq = self.spnFrequency.value()
-        live_viz = self.chkLiveViz.isChecked()
-        live_vars = self.chkLiveVars.isChecked()
+        self.connector._optimization_service.preview_options = {
+            "enabled": self.chkLiveViz.isChecked(),
+            "frequency": self.spnFrequency.value(),
+        }
+        self._preview_context = {
+            "document_id": self.connector.document_state.token.document_id,
+            "surface_identities": tuple(self.connector.get_optic().surfaces),
+        }
+        self.connector.run_optimization(cls, optimizer_kwargs)
 
-        def on_progress(n: int) -> None:
-            self._iteration_count = n
-            if n % freq == 0:
-                if live_viz:
-                    self.connector.opticChanged.emit()
-                if live_vars:
-                    self._refresh_variables_current_values()
+    @Slot(dict)
+    def _on_optimization_progress(self, details: dict) -> None:
+        self._iteration_count = details.get("evaluations", 0)
+        text = details["stage"]
+        if "merit" in details:
+            text += (
+                f" — evaluations {details['evaluations']}, latest merit "
+                f"{details['merit']:.6g}, {details['elapsed']:.1f} s"
+            )
+        self.btnStop.setToolTip(text)
+        self.txtLog.append(text)
+        if self.chkLiveVars.isChecked() and details.get("definitions_current", True):
+            self.tblVariables.setHorizontalHeaderItem(
+                2, QTableWidgetItem("Candidate Value")
+            )
+            for row, value in enumerate(details.get("variables", [])):
+                if row < self.tblVariables.rowCount():
+                    self.tblVariables.setItem(row, 2, QTableWidgetItem(f"{value:.4f}"))
+        if "preview" in details:
+            if self._preview is None:
+                from .optimization_preview import OptimizationPreview
 
-        def on_finished(summary: str) -> None:
-            self.txtLog.append(summary)
-            self.btnRun.setEnabled(True)
+                self._preview = OptimizationPreview(self)
+            self._preview.current_theme = self.current_theme
+            self._preview.install(details["preview"], self._preview_context)
+            self._preview.show()
+        if "preview_error" in details:
+            self.txtLog.append(
+                f"Candidate preview unavailable: {details['preview_error']}"
+            )
+
+    @Slot(str)
+    def _on_optimization_finished(self, summary: str) -> None:
+        self.txtLog.append(summary)
+        if self.connector.is_optimization_running():
+            return
+        self.btnRun.setEnabled(True)
+        self.btnStop.setEnabled(False)
+        self.btnStop.setText("■  Stop")
+        self.tblVariables.setHorizontalHeaderItem(2, QTableWidgetItem("Current Value"))
+        self._refresh_variables_table()
+
+    @Slot(str)
+    def _on_optimization_error(self, message: str) -> None:
+        self._on_optimization_finished(f"Optimization failed: {message}")
+
+    @Slot(str)
+    def _on_optimization_state(self, state: str) -> None:
+        if state == "cancelling":
+            self.btnStop.setText("Cancelling…")
             self.btnStop.setEnabled(False)
-            self.connector.opticChanged.emit()
-            self._refresh_variables_table()
-            tm = getattr(self.connector, "toast_manager", None)
-            if tm is not None:
-                first_line = (
-                    summary.splitlines()[0] if summary else "Optimization complete"
-                )
-                tm.notify(first_line, "success")
 
-        def on_error(message: str) -> None:
-            self.txtLog.append(f"Error: {message}")
-            self.btnRun.setEnabled(True)
-            self.btnStop.setEnabled(False)
-            tm = getattr(self.connector, "toast_manager", None)
-            if tm is not None:
-                tm.notify(f"Optimization failed: {message}", "error")
+    @Slot()
+    def _open_candidate(self) -> None:
+        from .main_window import MainWindow
+        from .services.job_records import BackendConfig
 
-        self.connector.run_optimization(
-            cls, optimizer_kwargs, on_progress, on_finished, on_error
-        )
+        service = self.connector._optimization_service
+        if service._candidate is None:
+            return
+        if service._candidate["candidate"].backend != BackendConfig.capture():
+            self.txtLog.append(
+                "Switch back to the calculation backend before opening this candidate."
+            )
+            return
+        try:
+            candidate = service._candidate["candidate"].restore()
+            window = MainWindow()
+        except Exception as exc:
+            self.txtLog.append(f"Could not open candidate: {exc}")
+            return
+        service.take_candidate()
+        window.connector._optic = candidate
+        candidate.name = (candidate.name or "System") + " — Optimization candidate"
+        window.connector.set_modified(True)
+        window.connector.opticLoaded.emit()
+        window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        identity = id(window)
+        window.destroyed.connect(lambda: self._forget_candidate_window(identity))
+        self._candidate_windows.append(window)
+        window.show()
+
+    def _forget_candidate_window(self, identity: int) -> None:
+        self._candidate_windows = [
+            window for window in self._candidate_windows if id(window) != identity
+        ]
 
     @Slot()
     def _on_stop(self) -> None:
         self.connector.stop_optimization()
         self.txtLog.append(
-            f"Stop requested. Iterations so far: {self._iteration_count}"
+            f"Stop requested. Evaluations so far: {self._iteration_count}"
         )
 
     # ------------------------------------------------------------------
@@ -1255,3 +1334,6 @@ class OptimizationPanel(QWidget):
         Args:
             theme_name: ``"dark"`` or ``"light"``.
         """
+        self.current_theme = theme_name
+        if self._preview is not None:
+            self._preview.update_theme(theme_name)

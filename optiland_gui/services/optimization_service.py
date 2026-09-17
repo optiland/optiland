@@ -1,97 +1,39 @@
 """Full OptimizationService for the Optiland GUI.
 
 Manages variable/operand lists, builds ``OptimizationProblem`` objects, and
-runs the optimizer in a ``QThread`` so the main thread stays responsive.
+runs the optimizer in the shared isolated calculation process.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import pickle
+from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QObject, QThread, Signal, Slot
+from PySide6.QtCore import QObject, Signal, Slot
+
+from .job_records import JobRequest, JobResult, OpticSnapshot
+
+if TYPE_CHECKING:
+    from optiland.optic import Optic
 
 logger = logging.getLogger(__name__)
 
 
-class _OptimizationWorker(QObject):
-    """Runs ``optimizer.optimize()`` on a background ``QThread``.
-
-    Signals:
-        finished (str): Summary string emitted when optimisation completes.
-        error (str): Error message emitted if ``optimize()`` raises.
-        progress (int): Iteration counter emitted via the callback (where
-            the optimizer supports one).
-    """
-
-    finished = Signal(str)
-    error = Signal(str)
-    progress = Signal(int)
-
-    def __init__(self, optimizer: object, kwargs: dict) -> None:
-        super().__init__()
-        self._optimizer = optimizer
-        self._kwargs = kwargs
-        self._iteration_count = 0
-        self._cancelled = False
-
-    def request_cancel(self) -> None:
-        """Signal that the run should be aborted at the next callback."""
-        self._cancelled = True
-
-    def _make_callback(self):
-        """Return a callback function that forwards progress signals."""
-
-        def callback(*args, **kwargs):  # noqa: ANN002, ANN003
-            if self._cancelled:
-                return True  # Truthy return stops some scipy optimisers
-            self._iteration_count += 1
-            self.progress.emit(self._iteration_count)
-
-        return callback
-
-    @Slot()
-    def run(self) -> None:
-        """Execute the optimiser.  Called by QThread.started."""
-        import inspect
-
-        try:
-            initial_merit = float(self._optimizer.problem.rss())
-        except Exception:
-            initial_merit = float("nan")
-
-        try:
-            run_kwargs = dict(self._kwargs)
-            sig = inspect.signature(self._optimizer.optimize)
-            if "callback" in sig.parameters:
-                run_kwargs.setdefault("callback", self._make_callback())
-
-            self._optimizer.optimize(**run_kwargs)
-
-            try:
-                final_merit = float(self._optimizer.problem.rss())
-            except Exception:
-                final_merit = float("nan")
-
-            summary = (
-                f"Optimization complete.\n"
-                f"Iterations: {self._iteration_count}\n"
-                f"Initial merit: {initial_merit:.6f}\n"
-                f"Final merit:   {final_merit:.6f}"
-            )
-            self.finished.emit(summary)
-        except Exception as exc:
-            logger.exception("Optimization worker error")
-            self.error.emit(str(exc))
-
-
-class OptimizationService:
-    """Manages optimization variables, operands, and threaded execution.
+class OptimizationService(QObject):
+    """Manages definitions and accepts owned candidates on the GUI thread.
 
     Args:
         connector: The :class:`~optiland_gui.optiland_connector.OptilandConnector`
             instance that owns this service.
     """
+
+    progressChanged = Signal(dict)
+    completed = Signal(str)
+    failed = Signal(str)
+    stateChanged = Signal(str)
+    candidateAvailable = Signal(bool)
 
     # ------------------------------------------------------------------
     # Catalog constants
@@ -238,11 +180,19 @@ class OptimizationService:
     # ------------------------------------------------------------------
 
     def __init__(self, connector: object) -> None:
+        super().__init__(connector if isinstance(connector, QObject) else None)
         self._connector = connector
         self._variables: list[dict] = []
         self._operands: list[dict] = []
-        self._thread: QThread | None = None
-        self._worker: _OptimizationWorker | None = None
+        self._request = None
+        self._stopping = False
+        self._candidate = None
+        self._callbacks = (None, None, None)
+        self.preview_options = {"enabled": False, "frequency": 10}
+        jobs = connector.calculation_jobs
+        jobs.progress.connect(self._on_progress)
+        jobs.finished.connect(self._on_finished)
+        jobs.state_changed.connect(self._on_state_changed)
         self._init_operand_metadata()
         self._init_optimizer_metadata()
 
@@ -464,14 +414,12 @@ class OptimizationService:
         try:
             from optiland.optimization.variable.variable import Variable as _Var
 
-            extra: dict = {}
-            if var_dict.get("coeff_number") is not None:
-                extra["coeff_number"] = var_dict["coeff_number"]
+            from .optimization_jobs import variable_arguments
+
             v = _Var(
                 optic,
                 var_dict["type"],
-                surface_number=var_dict["surface_number"],
-                **extra,
+                **variable_arguments(optic, var_dict),
             )
             return float(v.variable.get_value())
         except Exception:
@@ -807,13 +755,13 @@ class OptimizationService:
         return None
 
     # ------------------------------------------------------------------
-    # Threaded execution
+    # Owned process execution
     # ------------------------------------------------------------------
 
     @property
     def is_running(self) -> bool:
         """``True`` while an optimisation run is in progress."""
-        return self._thread is not None and self._thread.isRunning()
+        return self._request is not None
 
     def run(
         self,
@@ -823,7 +771,7 @@ class OptimizationService:
         on_finished: object | None = None,
         on_error: object | None = None,
     ) -> None:
-        """Capture undo state, build problem, then start the optimizer thread.
+        """Queue a frozen candidate; callbacks are invoked by GUI-owned slots.
 
         Args:
             optimizer_cls: Optimizer class (e.g., ``LeastSquares``).
@@ -835,48 +783,152 @@ class OptimizationService:
         if self.is_running:
             return
 
+        self._callbacks = (on_progress, on_finished, on_error)
         optic = self._connector._optic
         if optic is None:
+            self._emit_error("Open an optical system before running optimization.")
             return
 
-        # Capture undo checkpoint before modifying optic
-        self._connector._undo_redo_manager.add_state(
-            self._connector._capture_optic_state()
-        )
-
+        self._stopping = False
+        self._candidate = None
+        self.candidateAvailable.emit(False)
         try:
-            problem = self.build_problem(optic)
-            optimizer = optimizer_cls(problem)
+            if "<locals>" in optimizer_cls.__qualname__:
+                raise ValueError(
+                    "Optimizer classes must be importable by the calculation process."
+                )
+            snapshot = OpticSnapshot.capture(optic)
+            self._request = self._connector.calculation_jobs.submit(
+                "optimization",
+                "optiland_gui.services.optimization_jobs:optimize",
+                snapshot,
+                {
+                    "variables": self._variables,
+                    "operands": self._operands,
+                    "operand_metadata": self.OPERAND_METADATA,
+                    "optimizer": (
+                        f"{optimizer_cls.__module__}:{optimizer_cls.__qualname__}"
+                    ),
+                    "optimizer_kwargs": optimizer_kwargs,
+                    "preview": self.preview_options,
+                },
+                cancel_on_document_change=False,
+                context={"edit_token": self._connector.document_state.edit_token},
+            )
+            self.stateChanged.emit("queued")
         except Exception as exc:
-            if on_error:
-                on_error(f"Failed to build optimisation problem: {exc}")
-            return
-
-        self._thread = QThread()
-        self._worker = _OptimizationWorker(optimizer, optimizer_kwargs)
-        self._worker.moveToThread(self._thread)
-
-        self._thread.started.connect(self._worker.run)
-        self._worker.finished.connect(self._thread.quit)
-        self._worker.error.connect(self._thread.quit)
-        self._thread.finished.connect(self._thread.deleteLater)
-        self._thread.finished.connect(self._on_thread_finished)
-
-        if on_progress is not None:
-            self._worker.progress.connect(on_progress)
-        if on_finished is not None:
-            self._worker.finished.connect(on_finished)
-        if on_error is not None:
-            self._worker.error.connect(on_error)
-
-        self._thread.start()
+            self._emit_error(str(exc))
 
     def stop(self) -> None:
         """Request cancellation of an in-progress run."""
-        if self._worker is not None:
-            self._worker.request_cancel()
+        if self._request is not None:
+            self._stopping = True
+            self.stateChanged.emit("cancelling")
+            self._connector.calculation_jobs.cancel_target("optimization")
 
-    @Slot()
-    def _on_thread_finished(self) -> None:
-        """Handle thread completion by clearing the reference."""
-        self._thread = None
+    @Slot(object, str)
+    def _on_state_changed(self, request: JobRequest, state: str) -> None:
+        if self._request is not None and request.job_id == self._request.job_id:
+            self.stateChanged.emit(state)
+
+    @Slot(object, dict)
+    def _on_progress(self, request: JobRequest, message: dict) -> None:
+        if (
+            self._stopping
+            or self._request is None
+            or request.job_id != self._request.job_id
+        ):
+            return
+        details = message.get("details") or {}
+        self.progressChanged.emit(
+            {
+                "stage": message["stage"],
+                **details,
+                "definitions_current": self._definitions_match(request),
+            }
+        )
+        callback = self._callbacks[0]
+        if callback is not None and "callbacks" in details:
+            callback(details["callbacks"])
+
+    def _emit_error(self, message: str) -> None:
+        callback = self._callbacks[2]
+        self._callbacks = (None, None, None)
+        self._request = None
+        self.failed.emit(message)
+        if callback is not None:
+            callback(message)
+
+    @Slot(object)
+    def _on_finished(self, result: JobResult) -> None:
+        if self._request is None or result.request.job_id != self._request.job_id:
+            return
+        # Keep ownership through document/candidate notifications. A listener
+        # must not start another run before this run's callbacks are detached.
+        request = self._request
+        if result.status == "failed" and not self._stopping:
+            self._emit_error(result.error)
+            return
+        if result.status == "cancelled" or self._stopping:
+            summary = "Optimization cancelled. The document was not changed."
+        else:
+            data = result.data
+            current = (
+                self._connector.calculation_jobs.is_current(request)
+                and request.context["edit_token"]
+                == self._connector.document_state.edit_token
+                and self._definitions_match(request)
+            )
+            if current and data["converged"]:
+                try:
+                    candidate = data["candidate"].restore()
+                except Exception as exc:
+                    self._emit_error(
+                        f"Could not restore the optimized candidate: {exc}"
+                    )
+                    return
+                self._commit(candidate, pickle.loads(request.snapshot.data))
+                outcome = "Optimization converged and was applied."
+            else:
+                self._candidate = data
+                self.candidateAvailable.emit(True)
+                outcome = (
+                    "Document or optimization definitions changed; "
+                    "candidate retained for separate review."
+                    if not current
+                    else "Optimization stopped without convergence; "
+                    "candidate retained for review."
+                )
+            iterations = data["iterations"]
+            if iterations is None:
+                iterations = "not reported"
+            summary = (
+                f"{outcome}\nInitial merit: {data['initial_merit']:.6f}\n"
+                f"Final merit: {data['final_merit']:.6f}\n"
+                f"Evaluations: {data['evaluations']}; iterations: {iterations}\n"
+                f"Elapsed: {data['elapsed']:.2f} s\n{data['message']}"
+            )
+        callback = self._callbacks[1]
+        self._callbacks = (None, None, None)
+        self._request = None
+        self.completed.emit(summary)
+        if callback is not None:
+            callback(summary)
+
+    def _commit(self, candidate: Optic, previous: dict) -> None:
+        self._connector._optic = candidate
+        self._connector._undo_redo_manager.add_state(previous)
+        self._connector.set_modified(True)
+        self._connector.notify_change("replacement")
+
+    def _definitions_match(self, request: JobRequest) -> bool:
+        return (
+            self._variables == request.parameters["variables"]
+            and self._operands == request.parameters["operands"]
+        )
+
+    def take_candidate(self) -> dict | None:
+        """Detach the retained candidate for an explicit separate-document review."""
+        candidate, self._candidate = self._candidate, None
+        self.candidateAvailable.emit(False)
+        return candidate
