@@ -24,6 +24,16 @@ omits line and column attributes by default, so reformatting, comment edits
 and docstring edits do not flap; any change to an expression does.
 Non-callable constants are hashed from ``repr(value)``.
 
+A harness that *wraps* a mirrored function to count calls replaces the live
+class attribute without changing the physics -- every census of plan 1.3 / 8.3
+wraps ``SurfaceGroup.trace``, and one gate test wraps ``Surface.trace`` too.
+``check_all()`` therefore follows ``__wrapped__`` and closure cells from the
+live attribute to the function it wraps (:func:`live_digests`) and accepts the
+row when the wrapped original still matches.  A replacement that does not hold
+the original -- round 0's ``exec``-compiled divergence injections, an upstream
+edit of the source file -- still drifts, and so does an upstream edit *under* a
+wrapper.
+
 CLI::
 
     python -m optiland.backend.torch_backend.metal.trace_mirror --check
@@ -54,6 +64,7 @@ __all__ = [
     "Fingerprint",
     "STRUCTURAL_IDENTITIES",
     "check_all",
+    "live_digests",
     "source_digest",
     "table_hash",
 ]
@@ -112,19 +123,106 @@ def _strip_docstring(tree: ast.AST) -> ast.AST:
     return tree
 
 
-def source_digest(qualname: str) -> str:
-    """Digest the live source (or value) of ``qualname``.
-
-    Callables and classes are hashed from their AST with docstrings stripped;
-    anything else (a module-level constant) from ``repr(value)``.
-    """
-    obj = _resolve(qualname)
+def _digest_object(obj) -> str:
+    """Digest one live object; see :func:`source_digest` for the rules."""
     if inspect.isroutine(obj) or inspect.isclass(obj):
         src = textwrap.dedent(inspect.getsource(obj))
         payload = "ast:" + ast.dump(_strip_docstring(ast.parse(src)))
     else:
         payload = "const:" + repr(obj)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def source_digest(qualname: str) -> str:
+    """Digest the live source (or value) of ``qualname``.
+
+    Callables and classes are hashed from their AST with docstrings stripped;
+    anything else (a module-level constant) from ``repr(value)``.  This is the
+    *live attribute*, wrapper and all; :func:`check_all` uses
+    :func:`live_digests`, because an instrumentation wrapper is not drift.
+    """
+    return _digest_object(_resolve(qualname))
+
+
+#: How far :func:`live_digests` follows a wrapper towards the function it wraps.
+_MAX_WRAPPER_DEPTH = 4
+
+
+def _delegates(obj, path: str) -> list:
+    """The routines ``obj`` may be a transparent wrapper around.
+
+    Three ways a wrapper can hold the function it wraps, all followed here:
+    ``functools.wraps`` records it in ``__wrapped__``; a wrapper built inside a
+    function (every census in this plan) keeps it in a closure cell; a wrapper
+    built at module level reads it from a module global, which is followed only
+    when the global is the very function the row names (``__qualname__`` equals
+    ``path``), so following a global can never wander off into the module.
+
+    Wrapping a mirrored function for instrumentation -- which is what the
+    censuses of plan 1.3 / 8.3 do to ``SurfaceGroup.trace`` and ``Surface.trace``
+    -- is therefore not reported as drift, at any nesting depth.
+
+    The relaxation is deliberate and bounded: a wrapper that *holds* the
+    mirrored original is accepted without proof that it *calls* it unchanged.
+    What the table exists to catch is an upstream merge editing a mirrored
+    source (note 10), which moves the original's own digest and is still
+    caught through the wrapper; the alternative -- refusing every wrapped
+    attribute -- turns the fused path off in every harness that counts traces.
+    """
+    inner: list = []
+    wrapped = getattr(obj, "__wrapped__", None)
+    if inspect.isroutine(wrapped):
+        inner.append(wrapped)
+    func = obj.__func__ if inspect.ismethod(obj) else obj
+    for cell in getattr(func, "__closure__", None) or ():
+        try:
+            value = cell.cell_contents
+        except ValueError:  # an empty cell of a closure still being built
+            continue
+        if inspect.isroutine(value) and value is not obj:
+            inner.append(value)
+    code = getattr(func, "__code__", None)
+    module_globals = getattr(func, "__globals__", None)
+    if code is not None and module_globals:
+        for name in code.co_names:
+            value = module_globals.get(name)
+            if (
+                inspect.isroutine(value)
+                and value is not obj
+                and getattr(value, "__qualname__", None) == path
+            ):
+                inner.append(value)
+    return inner
+
+
+def live_digests(qualname: str):
+    """Yield ``(digest, error)`` for the live object and what it wraps.
+
+    The live attribute comes first, so an unwrapped function still costs
+    exactly one ``getsource`` + ``ast.parse`` + sha256: the caller stops at the
+    first match.  Exactly one of ``digest`` / ``error`` is set per entry; an
+    entry whose source cannot be retrieved (an ``exec``-compiled replacement,
+    ``OSError``) reports the error and the walk continues.
+    """
+    obj = _resolve(qualname)
+    path = qualname.partition(":")[2]
+    # ``alive`` holds a reference to every object walked so that ``seen`` (keyed
+    # by ``id``) cannot be fooled by an id reused after a candidate is freed.
+    alive, seen, queue = [obj], {id(obj)}, [(obj, 0)]
+    while queue:
+        item, depth = queue.pop(0)
+        try:
+            yield _digest_object(item), None
+        except Exception as exc:  # noqa: BLE001 - reported to the caller
+            yield None, f"{type(exc).__name__}: {exc}"
+        if depth >= _MAX_WRAPPER_DEPTH:
+            continue
+        for candidate in _delegates(item, path):
+            if id(candidate) in seen:
+                continue
+            seen.add(id(candidate))
+            alive.append(candidate)
+            queue.append((candidate, depth + 1))
 
 
 # --------------------------------------------------------------------------
@@ -249,9 +347,9 @@ _ROWS: tuple[tuple[str, str, str, str | None, str, str], ...] = (
         "optiland.surfaces.surface_group:SurfaceGroup.trace",
         "trace_body",
         MIRRORED,
-        "de921b60a87099078a861c044416b307d0342fbde2f31ab47394c1d0e1adc73f",
-        "I0 baseline: MSL mirrored from this source",
-        "096ccfc8",
+        "5d0af3c85c9933e6399393dcffdc2f945eeef6ccbb61e3b0d10d00c49b375e60",
+        "WP4 hook (plan 3.4): mirrored loop unchanged, only the branch above it",
+        "2f9f2912",
     ),
     (
         "optiland.surfaces.standard_surface:_TracingCoordinator.trace",
@@ -903,21 +1001,39 @@ def check_all() -> list[str]:
     for fp in FINGERPRINTS:
         if fp.klass != MIRRORED:
             continue
+        digests: list[str] = []
+        errors: list[str] = []
+        matched = False
         try:
-            live = source_digest(fp.qualname)
+            for digest, error in live_digests(fp.qualname):
+                if error is not None:
+                    errors.append(error)
+                    continue
+                digests.append(digest)
+                if digest == fp.sha256:
+                    matched = True
+                    break
         except Exception as exc:  # noqa: BLE001 - a rename is drift, not a crash
             problems.append(
                 f"{fp.qualname}: cannot be resolved ({type(exc).__name__}: {exc}); "
                 f"MSL {fp.msl_function} in kernels/trace.metal is unverified"
             )
             continue
-        if live != fp.sha256:
+        if matched:
+            continue
+        if not digests:
+            why = "; ".join(errors) or "no source"
             problems.append(
-                f"Python `{fp.qualname}` changed; re-verify MSL `{fp.msl_function}` in "
-                "kernels/trace.metal, then run `python -m "
-                "optiland.backend.torch_backend.metal.trace_mirror --update --verified "
-                f'"{fp.qualname}=<why it is still mirrored>"`'
+                f"{fp.qualname}: cannot be resolved ({why}); "
+                f"MSL {fp.msl_function} in kernels/trace.metal is unverified"
             )
+            continue
+        problems.append(
+            f"Python `{fp.qualname}` changed; re-verify MSL `{fp.msl_function}` in "
+            "kernels/trace.metal, then run `python -m "
+            "optiland.backend.torch_backend.metal.trace_mirror --update --verified "
+            f'"{fp.qualname}=<why it is still mirrored>"`'
+        )
     for identity in STRUCTURAL_IDENTITIES:
         try:
             ok = bool(identity())
@@ -957,17 +1073,63 @@ def _fork_sha() -> str:
     return out.stdout.strip() or "unknown"
 
 
+#: ``ruff``'s line-length gate (``pyproject.toml``), which every rendered line
+#: of the table has to fit: E501 in this file blocks the commit (plan 10.1).
+_LINE_LENGTH = 88
+
+
+def _escape(value: str) -> str:
+    """``value`` as the body of a double-quoted Python string literal."""
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _literal_lines(value: str, indent: str, suffix: str) -> list[str]:
+    """``value`` as adjacent string literals, every line within the gate.
+
+    A ``--verified`` note is free text a human writes (plan 0.2.8), so it can be
+    any length; Python concatenates adjacent literals, so the note round-trips
+    exactly while each rendered line stays inside ``_LINE_LENGTH``.  Splitting is
+    on the raw string and each piece is escaped afterwards, so a split can never
+    land inside an escape sequence.  A value with no space in it is left on one
+    line: there is nothing to split, and ruff exempts a single-word line from
+    E501 (which is what the over-long qualnames in the table already rely on).
+    """
+    if " " not in value:
+        # No split point -- and ruff exempts a line that is a single long word
+        # from E501, which is what every over-long qualname in the table uses.
+        return [f'{indent}"{_escape(value)}"{suffix}']
+    budget = _LINE_LENGTH - len(indent) - 2 - len(suffix)  # quotes + comma
+    pieces: list[str] = []
+    current = ""
+    for index, word in enumerate(value.split(" ")):
+        piece = word if index == 0 else " " + word
+        if current and len(_escape(current + piece)) > budget:
+            pieces.append(current)
+            current = ""
+        while len(_escape(piece)) > budget:  # one word wider than a whole line
+            head = piece[:budget]
+            while len(_escape(head)) > budget:
+                head = head[:-1]
+            pieces.append(head)
+            piece = piece[len(head) :]
+        current += piece
+    pieces.append(current)
+    lines = [f'{indent}"{_escape(piece)}"' for piece in pieces]
+    lines[-1] += suffix
+    return lines
+
+
 def _render_table(rows) -> str:
     lines = ["_ROWS: tuple[tuple[str, str, str, str | None, str, str], ...] = ("]
     for qualname, msl, klass, sha, note, sha_src in rows:
         sha_lit = "None" if sha is None else f'"{sha}"'
         lines.append("    (")
-        lines.append(f'        "{qualname}",')
-        lines.append(f'        "{msl}",')
+        lines.extend(_literal_lines(qualname, "        ", ","))
+        lines.extend(_literal_lines(msl, "        ", ","))
         lines.append(f"        {klass},")
         lines.append(f"        {sha_lit},")
-        lines.append(f'        "{note}",')
-        lines.append(f'        "{sha_src}",')
+        lines.extend(_literal_lines(note, "        ", ","))
+        lines.extend(_literal_lines(sha_src, "        ", ","))
         lines.append("    ),")
     lines.append(")")
     return "\n".join(lines)

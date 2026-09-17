@@ -11,6 +11,7 @@ Kramer Harrison, 2024
 from __future__ import annotations
 
 import copy
+import os
 from contextlib import suppress
 from copy import deepcopy
 from functools import cached_property
@@ -503,8 +504,9 @@ class SurfaceGroup:
 
         """
         self.reset()
-        for surface in self.surfaces[skip:]:
-            surface.trace(rays, record=record)
+        if not _fused_metal_trace(self, rays, skip, record):
+            for surface in self.surfaces[skip:]:
+                surface.trace(rays, record=record)
         return rays
 
     def add(
@@ -871,3 +873,16 @@ class SurfaceGroup:
             )
         self._update_surface_links()
         self.reset()
+
+
+def _fused_metal_trace(group, rays, skip, record) -> bool:
+    """Fused Metal trace hook: True when the kernel handled the trace (fork-local)."""
+    if type(getattr(rays, "x", None)).__name__ != "MetalFloat64":
+        return False  # NumPy / torch-CPU / mps-float32: no env lookup, no import
+    if os.environ.get("OPTILAND_METAL_FUSED_TRACE", "1") == "0":
+        return False
+    try:
+        from optiland.backend.torch_backend.metal.trace import fused_trace
+    except ImportError:  # pragma: no cover - torch without Metal, or no torch
+        return False
+    return fused_trace(group, rays, skip, record)

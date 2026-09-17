@@ -63,6 +63,104 @@ generated kernel per elementwise chain, (2) a trace-interpreter kernel that take
 list as a buffer, and (3) batching many designs into one launch; all three reuse this
 library's kernels, encoders and launcher.
 
+## Fused trace-interpreter kernel
+
+`kernels/trace.metal` walks the whole surface list per ray thread in **one** launch, instead of
+the ~40 small tensor ops per surface the per-op path dispatches. It is additive: a 17-line hook
+in `SurfaceGroup.trace` chooses between the kernel and the unchanged upstream loop, and every
+bundle the kernel does not support falls back to that loop transparently.
+
+### Switches
+
+| variable | values | effect |
+|---|---|---|
+| `OPTILAND_METAL_FUSED_TRACE` | `1` (default), `0`, `require` | `0` turns the hook off entirely (the package stays inert); `require` raises `MetalFallbackError` when a *candidate* bundle is refused for a *feature* reason, on the late fallback, on mirror drift and when the kernel is unavailable |
+| `OPTILAND_METAL_TRACE_DIAG` | `0` (default), `1` | keep the per-surface status and iteration planes of the last trace and count `fused_trace:diag:<bit>` |
+| `OPTILAND_METAL_FUSED_TRACE_MAX_STEPS` | int, default `2**26` | weighted surface-steps per command buffer (the chunking budget) |
+| `OPTILAND_METAL_FUSED_TRACE_MIN_RAYS` | int, default `0` | refuse bundles below this size with `min_rays` |
+| `OPTILAND_METAL_FUSED_TRACE_MEMORY_FRACTION` | float, default `0.25` | share of `torch.mps.recommended_max_memory()` one trace may allocate |
+| `OPTILAND_METAL_FUSED_TRACE_DRIFT` | `refuse` (default), `warn` | developer escape hatch while re-mirroring a changed Python function; never set it in a measurement run |
+| `OPTILAND_TEST_MPS_GRAD` | `1` (default), `0` | test-suite only: run the `torch-mps` parametrization with autograd off, which is what makes a bundle eligible |
+| `OPTILAND_TEST_MPS_STATS_FILE` | path | test-suite only: append one JSON line per test with the candidate census and the `metal_stats()` delta |
+
+**`require` is structural-safe.** A *candidate* is a bundle that passes every structural check:
+`type(group) is SurfaceGroup`, `type(rays) is RealRays`, `rays.x` a GPU-resident `MetalFloat64`
+with `numel > 256`, `skip == 0`, autograd off, uniform shapes. Chief rays, 6-ring bundles,
+`ParaxialRays`, `PolarizedRays` and grad-on traces are *not* candidates, so they pass through
+`require` untouched and only ever count their reason.
+
+**Rollback.** Set `OPTILAND_METAL_FUSED_TRACE=0` (read per trace, so it works at runtime), or
+revert the hook commit; nothing else in the package is on the per-op path.
+
+### What the kernel takes (v1)
+
+Geometries `Plane`, `StandardGeometry` (finite and infinite radius), `EvenAsphere`,
+`OddAsphere`; apertures none, `RadialAperture`, `OffsetRadialAperture`, `RectangularAperture`,
+`EllipticalAperture`; `RefractiveReflectiveModel` (refraction and reflection, no coating, no
+BSDF); `HomogeneousPropagation` with absorption; one flat `CoordinateSystem` per surface with
+any tilt/decenter; `ObjectSurface` at index 0; `RealRays` only; one wavelength per bundle; both
+`df64` and `sf64`. That covers all 29 shipped sample systems end to end.
+
+Everything else is refused with a counted reason and runs on the per-op path: Zernike /
+Chebyshev / Forbes / toroidal / biconic / grid-sag / NURBS / polynomial geometries, gratings,
+thin-lens and diffractive interaction models, coatings, BSDFs, polarization, polygon and file
+apertures, nested `reference_cs` chains, GRIN propagation, non-finite indices, mixed-wavelength
+bundles, autograd, `skip != 0`, `SequencedSurfaceGroup` (its loop is not hooked at all) and
+bundles that would exceed the memory budget.
+
+### Counters and the census
+
+`be.metal_stats()` gains, beside the existing `gpu:*` launch counts:
+
+* `gpu:fused_trace` — one per dispatched slab;
+* `fused_trace:candidates`, `:traces`, `:designs`, `:surface_steps`, `:chunks`,
+  `:late_fallback`, `:readback`, `:unvisited`, `:tier1_canary_mismatch`;
+* `fused_trace_skip:<reason>` — one per refusal, over the closed `FusedTraceSkip` key set.
+
+Two identities are checked per test and per system by a census that does **not** import the
+gate -- `tests/conftest.py::_is_fuse_candidate`, which the suite and the oracle both wrap
+`SurfaceGroup.trace` with -- so a silently-disabled gate fails a test instead of hiding:
+
+```
+census_candidates == fused_trace:candidates
+fused_trace:candidates == fused_trace:traces
+                        + sum(fused_trace_skip:<feature reason>)
+                        + fused_trace:late_fallback
+```
+
+### Autograd
+
+The fused path is for forward traces only. With `be.grad_mode` enabled, or with any
+participating tensor requiring grad, the gate refuses with `requires_grad` and the per-op Metal
+path runs, so gradients keep flowing exactly as before. Suite sweeps that want the kernel
+exercised set `OPTILAND_TEST_MPS_GRAD=0`.
+
+### Mirror fingerprints and drift
+
+Every Python function the MSL reproduces ("mirror, never improve": the kernel repeats the
+Python expression's association and operand order, so agreement is raw-component equality)
+is fingerprinted in `metal/trace_mirror.py` by an AST hash that ignores docstrings and
+formatting. `fused_trace` calls `trace_mirror.check_all()` once per process; any mismatch emits
+one `FusedTraceDriftWarning` naming the qualnames and then refuses every candidate with
+`mirror_drift` until the row is re-verified:
+
+```
+python -m optiland.backend.torch_backend.metal.trace_mirror --check
+python -m optiland.backend.torch_backend.metal.trace_mirror --update --verified \
+    "<qualname>=<why the MSL still mirrors it>"
+```
+
+A second class of rows, `CONTRACT`, is not hashed; those are host-consumed helpers whose
+*values* named adapter tests compare.
+
+### Batch API
+
+The same kernel carries a design axis: `optiland.raytrace.batch_trace.trace_batch` traces
+B designs x N rays in one launch and returns a result whose `install(optic, b)` writes one
+design's recorded rows back onto an optic; `optiland.tolerancing.batched` builds Monte-Carlo
+and sensitivity runs on it for the operands in `BATCHABLE_OPERANDS`, falling back to the
+existing per-design loop for anything else.
+
 ## How it works
 
 * `optiland/backend/torch_backend/metal/kernels/` — Metal Shading Language sources: double-single
@@ -96,6 +194,9 @@ library's kernels, encoders and launcher.
 
 * `tests/metal/` — kernel accuracy vs mpmath, softfloat bit-exactness, dispatch-layer contracts,
   fused conic kernel, host path, end-to-end oracle.
+* `tests/metal/test_trace_*.py` — the fused trace-interpreter kernel: layout contract, mirror
+  fingerprints, per-function units, adapters, writeback, eligibility gate and hook, conformance
+  against the per-op path, batch API and finite differences.
 * `OPTILAND_TEST_MPS=1 pytest tests` adds a `torch-mps` parametrization to every backend test;
   `scripts/metal_suite.py` runs it one file per process and summarizes failures.
 * `scripts/metal_oracle_e2e.py` compares traces and analyses against NumPy; `scripts/metal_benchmark.py`
