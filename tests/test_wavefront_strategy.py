@@ -234,6 +234,13 @@ class TestChiefRayStrategy:
         assert wavefront_data.intensity.shape == (num_points,)
         assert isinstance(wavefront_data.radius, float)
         assert wavefront_data.radius > 0
+        assert wavefront_data.reference_center is not None
+        distances = be.sqrt(
+            (wavefront_data.pupil_x - wavefront_data.reference_center[0]) ** 2
+            + (wavefront_data.pupil_y - wavefront_data.reference_center[1]) ** 2
+            + (wavefront_data.pupil_z - wavefront_data.reference_center[2]) ** 2
+        )
+        assert_allclose(distances[wavefront_data.intensity > 0], wavefront_data.radius)
 
     def test_masks_non_finite_ray_samples(self, set_test_backend):
         """Test that invalid rays cannot contaminate downstream wavefront data."""
@@ -409,6 +416,7 @@ class TestCentroidReferenceSphereStrategy:
         assert_allclose(be.mean(wavefront_data.opd), 0.0)
         assert isinstance(wavefront_data.radius, float)
         assert wavefront_data.radius > 0
+        assert wavefront_data.reference_center is not None
 
 
 def test_create_strategy(optic, distribution, set_test_backend):

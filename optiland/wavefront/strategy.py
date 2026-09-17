@@ -272,6 +272,9 @@ class ChiefRayStrategy(ReferenceStrategy):
             opd=opd_wv,
             intensity=intensity,
             radius=geometry.radius,
+            reference_center=(
+                geometry.center if isinstance(geometry, SphericalReference) else None
+            ),
             **kwargs,
         )
 
@@ -429,6 +432,9 @@ class CentroidStrategy(ReferenceStrategy):
             opd=opd_waves,
             intensity=rays.i,
             radius=geometry.radius,
+            reference_center=(
+                geometry.center if isinstance(geometry, SphericalReference) else None
+            ),
             **kwargs,
         )
 

@@ -23,7 +23,9 @@ class WavefrontData(Generic[BEArrayT]):
         pupil_z (be.ndarray): z-coordinates of ray intersections at exit pupil.
         opd (be.ndarray): Optical path difference data, normalized to waves.
         intensity (be.ndarray): Ray intensities at the exit pupil.
-        radius (be.ndarray): Radius of curvature of the exit pupil reference sphere.
+        radius (float): Radius of curvature of the exit pupil reference sphere.
+        reference_center (tuple[float, float, float] | None): Global coordinates of
+            the exit-pupil reference sphere center. ``None`` for planar references.
         E_exits (list[be.ndarray] | None): A list of 3D electric field vectors at
             the exit pupil, representing incoherent polarization states.
     """
@@ -36,3 +38,4 @@ class WavefrontData(Generic[BEArrayT]):
     radius: float
     prt_matrix: BEArrayT | None = None
     E_exits: list[BEArrayT] | None = None
+    reference_center: tuple[float, float, float] | None = None
