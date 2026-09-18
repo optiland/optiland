@@ -63,9 +63,15 @@ class AABB:
         Returns:
             Boolean mask of rays that intersect the AABB, shape (N,).
         """
-        inv_d = np.where(
-            np.abs(directions) > 1e-15, 1.0 / directions, np.sign(directions) * 1e15
-        )
+        # A zero direction component gives a genuine IEEE-754 signed
+        # infinity from a true division (1.0/0.0 = +inf, 1.0/-0.0 = -inf),
+        # so the slab test needs no tunable "near-zero" threshold and no
+        # large-constant substitute for the reciprocal
+        # rather than a large-constant substitute. The division-by-zero warning
+        # is expected and suppressed; NaN cannot arise here since the
+        # numerator is always the nonzero constant 1.0.
+        with np.errstate(divide="ignore"):
+            inv_d = 1.0 / directions
         t_min = (self.min_corner - origins) * inv_d
         t_max = (self.max_corner - origins) * inv_d
         t_enter = np.minimum(t_min, t_max).max(axis=1)
@@ -102,13 +108,28 @@ class ComponentGeometry(ABC):
 
     @abstractmethod
     def ray_intersect(
-        self, origins: np.ndarray, directions: np.ndarray
+        self, origins: np.ndarray, directions: np.ndarray, eps: float | None = None
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Find ray intersections with this geometry in local coordinates.
 
         Args:
             origins: Ray origins in local frame, shape (N, 3) [mm].
             directions: Ray directions in local frame, shape (N, 3), unit vectors.
+            eps: Minimum accepted ray parameter (the self-intersection
+                accept threshold), same backend/dtype as ``origins``, or
+                ``None``. The caller (``BaseComponent.intersect``) computes
+                this once from the ray's *global*-frame position magnitude
+                and passes it down, because a component's local frame can be
+                vertex-relative and therefore small (e.g. a lens edge's own
+                extent is a few mm) even when the ray has travelled a long
+                optical path -- ``k * ulp(local coordinate)`` would then be
+                far tighter than the actual rounding error carried in the
+                ray's tracked position, and reintroduces the self-hit
+                instability this threshold exists to remove. ``None`` (a
+                direct, non-``BaseComponent`` call, as the geometry unit
+                tests use) falls back to ``k * ulp`` of this call's own
+                ``origins`` magnitude -- see
+                ``optiland.nonsequential._tol.accept_t_min``.
 
         Returns:
             A tuple (t, normals, hit_mask, n_geom) where:

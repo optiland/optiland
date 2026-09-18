@@ -13,6 +13,7 @@ import numpy as np
 
 import optiland.backend as be
 from optiland.backend.utils import to_numpy
+from optiland.nonsequential import _tol
 from optiland.nonsequential.components.base import BaseComponent
 from optiland.nonsequential.components.coating_support import (
     reject_polarized_coating,
@@ -148,7 +149,7 @@ class ReflectiveComponent(BaseComponent):
         raw_dot = (dirs * normals).sum(axis=1, keepdims=True)
         reflected = dirs - 2.0 * raw_dot * normals
         norms_r = (reflected * reflected).sum(axis=1, keepdims=True) ** 0.5
-        reflected = reflected / (norms_r + 1e-30)
+        reflected = reflected / (norms_r + _tol.tiny_for(norms_r))
         hit_col = hit_mask[:, None]
         new_dirs = be.where(hit_col, reflected, dirs)
 

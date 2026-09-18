@@ -10,6 +10,7 @@ from __future__ import annotations
 import numpy as np
 
 import optiland.backend as be
+from optiland.nonsequential import _tol
 from optiland.nonsequential._utils import as_float, as_param
 from optiland.nonsequential.components.geometry.base import AABB, AnalyticGeometry
 
@@ -39,7 +40,7 @@ class SphereGeometry(AnalyticGeometry):
         )
 
     def ray_intersect(
-        self, origins: np.ndarray, directions: np.ndarray
+        self, origins: np.ndarray, directions: np.ndarray, eps: float | None = None
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Intersect rays with the sphere.
 
@@ -70,8 +71,11 @@ class SphereGeometry(AnalyticGeometry):
         # Clamp the radicand to a small positive epsilon (not 0). sqrt has an
         # infinite derivative at 0; combined with be.where this produces a
         # 0 * inf = NaN in the backward pass even though the forward is masked.
+        disc_floor = _tol.radicand_floor(be.ones_like(discriminant))
         sqrt_disc = be.where(
-            disc_ok, be.maximum(discriminant, 1e-12) ** 0.5, be.zeros_like(discriminant)
+            disc_ok,
+            be.maximum(discriminant, disc_floor) ** 0.5,
+            be.zeros_like(discriminant),
         )
 
         inf_arr = be.ones_like(discriminant) * be.inf
@@ -79,7 +83,8 @@ class SphereGeometry(AnalyticGeometry):
         t2 = be.where(disc_ok, (-b + sqrt_disc) / 2.0, inf_arr)
 
         # Choose nearest positive t
-        eps = 1e-9
+        if eps is None:
+            eps = _tol.accept_t_min(be.abs(origins).max())
         use_t1 = disc_ok & (t1 > eps)
         use_t2 = disc_ok & (~use_t1) & (t2 > eps)
         t = be.where(use_t1, t1, be.where(use_t2, t2, inf_arr))

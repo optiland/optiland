@@ -13,8 +13,14 @@ from __future__ import annotations
 import numpy as np
 
 import optiland.backend as be
+from optiland.nonsequential import _tol
 from optiland.nonsequential._utils import as_float, as_param
 from optiland.nonsequential.components.geometry.base import AABB, AnalyticGeometry
+
+# Degenerate-quadratic multiple (k = 8):
+# |a| <= k * ulp(max(|b|, |c|)) is treated as "a is not usefully nonzero",
+# not a bare 1e-14.
+_DEGENERACY_K = 8
 
 
 class CylindricalFrustumGeometry(AnalyticGeometry):
@@ -53,7 +59,7 @@ class CylindricalFrustumGeometry(AnalyticGeometry):
         self.z_back = as_param(z_back)
 
     def ray_intersect(
-        self, origins: np.ndarray, directions: np.ndarray
+        self, origins: np.ndarray, directions: np.ndarray, eps: float | None = None
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Intersect rays with the frustum lateral surface.
 
@@ -83,7 +89,13 @@ class CylindricalFrustumGeometry(AnalyticGeometry):
         dx, dy, dz = directions[:, 0], directions[:, 1], directions[:, 2]
 
         h = self.z_back - self.z_front  # axial height [mm]
-        if abs(h) < 1e-15:
+        # Construction-time check, evaluated once (not per ray): is this
+        # frustum's axial extent itself indistinguishable from zero? Detached
+        # float64 (z_front/z_back are geometry parameters, not ray data), k
+        # ulps of the extent's own magnitude with a 1 mm floor.
+        h_val = as_float(h)
+        h_scale = max(abs(as_float(self.z_front)), abs(as_float(self.z_back)), 1.0)
+        if abs(h_val) < _DEGENERACY_K * np.spacing(h_scale):
             # Degenerate frustum (zero height) -- no lateral surface to hit
             N = origins.shape[0]
             return (
@@ -106,14 +118,33 @@ class CylindricalFrustumGeometry(AnalyticGeometry):
         disc_safe = be.maximum(disc, 0.0)
         sqrt_disc = be.sqrt(disc_safe)
 
-        eps = 1e-9
+        if eps is None:
+            eps = _tol.accept_t_min(be.abs(origins).max())
         inf_val = be.ones_like(a) * be.inf
 
-        # Linear fallback when |a| is very small (ray nearly parallel to axis)
-        a_small = be.abs(a) < 1e-14
-        t_lin = be.where(be.abs(b) > 1e-14, -c / (b + 1e-30), inf_val)
+        # Linear fallback when |a| is very small (ray nearly parallel to
+        # axis): a degenerate quadratic, k ulps of the other coefficients'
+        # scale rather than a bare 1e-14. b_small uses the same scale so the
+        # two thresholds agree.
+        coeff_scale = be.maximum(be.abs(b), be.abs(c))
+        degeneracy_floor = _DEGENERACY_K * _tol.ulp(coeff_scale)
+        a_small = be.abs(a) < degeneracy_floor
+        b_small = be.abs(b) < degeneracy_floor
 
-        inv2a = be.where(a_small, 0.0, 1.0 / (2.0 * a + 1e-30))
+        # Guarded reciprocals: mask the INPUT into a well-conditioned value
+        # before dividing, rather than add an epsilon to the denominator
+        # (see optiland.nonsequential._tol.tiny_for). The additive-epsilon form
+        # this replaced, "1.0 / (2.0 * a + 1e-30)", is the exact NaN source
+        # measured on this geometry in float32: its
+        # backward pass forms eps**2 = 1e-60, which underflows to zero in
+        # float32, turning a `where`'s discarded zero-cotangent branch into
+        # 0 * inf = NaN. Masking the input to 1.0 needs no epsilon at all --
+        # the discarded branch evaluates a perfectly ordinary reciprocal.
+        b_safe = be.where(b_small, be.ones_like(b), b)
+        t_lin = be.where(b_small, inf_val, -c / b_safe)
+
+        a_safe = be.where(a_small, be.ones_like(a), a)
+        inv2a = be.where(a_small, 0.0, 1.0 / (2.0 * a_safe))
         t1 = (-b - sqrt_disc) * inv2a
         t2 = (-b + sqrt_disc) * inv2a
 
@@ -147,7 +178,7 @@ class CylindricalFrustumGeometry(AnalyticGeometry):
         nx = hx
         ny = hy
         nz = -rz_hit * slope * be.ones_like(hx)
-        n_len = be.sqrt(nx * nx + ny * ny + nz * nz + 1e-30)
+        n_len = be.sqrt(nx * nx + ny * ny + nz * nz + _tol.tiny_for(nx))
         n_geom = be.stack([nx / n_len, ny / n_len, nz / n_len], axis=1)
 
         # Flip to face incoming ray

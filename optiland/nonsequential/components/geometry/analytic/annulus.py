@@ -14,8 +14,12 @@ from __future__ import annotations
 import numpy as np
 
 import optiland.backend as be
+from optiland.nonsequential import _tol
 from optiland.nonsequential._utils import as_float, as_param
 from optiland.nonsequential.components.geometry.base import AABB, AnalyticGeometry
+
+# Near-parallel-ray rejection multiple (k = 8): k * ulp(1), not a bare 1e-12.
+_PARALLEL_K = 8
 
 
 class AnnularPlaneGeometry(AnalyticGeometry):
@@ -49,7 +53,7 @@ class AnnularPlaneGeometry(AnalyticGeometry):
         self.z_offset = as_param(z_offset)
 
     def ray_intersect(
-        self, origins: np.ndarray, directions: np.ndarray
+        self, origins: np.ndarray, directions: np.ndarray, eps: float | None = None
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Intersect rays with the annular plane.
 
@@ -70,12 +74,15 @@ class AnnularPlaneGeometry(AnalyticGeometry):
         oz = origins[:, 2]
         dz = directions[:, 2]
 
-        eps = 1e-9
         inf_arr = be.ones(N) * be.inf
-        # Avoid division by zero for rays parallel to the plane
+        # Near-parallel-to-plane rejection: k ulps of 1 (a direction cosine
+        # is O(1)), not a bare 1e-12/1e-9. The denominator guard is the
+        # square root of the working dtype's smallest normal, not a bare
+        # 1e-30.
+        dz_min = _PARALLEL_K * _tol.ulp(be.ones_like(dz))
         t = be.where(
-            be.abs(dz) > eps,
-            (self.z_offset - oz) / (dz + 1e-30),
+            be.abs(dz) > dz_min,
+            (self.z_offset - oz) / (dz + _tol.tiny_for(dz)),
             inf_arr,
         )
 
@@ -84,8 +91,13 @@ class AnnularPlaneGeometry(AnalyticGeometry):
         hy = origins[:, 1] + t * directions[:, 1]
         r2 = hx * hx + hy * hy
 
+        # Self-intersection accept threshold, k ulps of the coordinate
+        # magnitude -- see BaseComponent.intersect.
+        if eps is None:
+            eps = _tol.accept_t_min(be.abs(origins).max())
+        t_min = eps
         hit_mask = (
-            (t > eps) & (r2 >= self.inner_radius**2) & (r2 <= self.outer_radius**2)
+            (t > t_min) & (r2 >= self.inner_radius**2) & (r2 <= self.outer_radius**2)
         )
 
         t_out = be.where(hit_mask, t, inf_arr)

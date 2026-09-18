@@ -11,8 +11,12 @@ from __future__ import annotations
 import numpy as np
 
 import optiland.backend as be
+from optiland.nonsequential import _tol
 from optiland.nonsequential._utils import as_float, as_param
 from optiland.nonsequential.components.geometry.base import AABB, AnalyticGeometry
+
+# See annulus.py's _PARALLEL_K: k ulps of 1, not a bare 1e-12.
+_PARALLEL_K = 8
 
 
 class PlaneGeometry(AnalyticGeometry):
@@ -22,13 +26,14 @@ class PlaneGeometry(AnalyticGeometry):
     """
 
     def ray_intersect(
-        self, origins: np.ndarray, directions: np.ndarray
+        self, origins: np.ndarray, directions: np.ndarray, eps: float | None = None
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Intersect rays with the infinite plane z=0.
 
         Args:
             origins: Ray origins in local frame, shape (N, 3).
             directions: Ray directions in local frame, shape (N, 3).
+            eps: See :meth:`ComponentGeometry.ray_intersect`.
 
         Returns:
             (t, normals, hit_mask, n_geom). n_geom is the fixed local +z
@@ -39,10 +44,13 @@ class PlaneGeometry(AnalyticGeometry):
         oz = origins[:, 2]
 
         # t = -oz / dz  (plane z=0)
-        valid = be.abs(dz) > 1e-12
+        dz_min = _PARALLEL_K * _tol.ulp(be.ones_like(dz))
+        valid = be.abs(dz) > dz_min
         safe_dz = be.where(valid, dz, be.ones_like(dz))
         t = be.where(valid, -oz / safe_dz, be.ones_like(oz) * be.inf)
-        hit_mask = valid & (t > 1e-9)
+        if eps is None:
+            eps = _tol.accept_t_min(be.abs(origins).max())
+        hit_mask = valid & (t > eps)
         t = be.where(hit_mask, t, be.ones_like(t) * be.inf)
 
         # n_geom: fixed +z, independent of ray direction.
@@ -105,13 +113,14 @@ class FinitePlaneGeometry(AnalyticGeometry):
         )
 
     def ray_intersect(
-        self, origins: np.ndarray, directions: np.ndarray
+        self, origins: np.ndarray, directions: np.ndarray, eps: float | None = None
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Intersect rays with the finite plane.
 
         Args:
             origins: Ray origins in local frame, shape (N, 3).
             directions: Ray directions in local frame, shape (N, 3).
+            eps: See :meth:`ComponentGeometry.ray_intersect`.
 
         Returns:
             (t, normals, hit_mask, n_geom). n_geom is the fixed local +z
@@ -122,11 +131,14 @@ class FinitePlaneGeometry(AnalyticGeometry):
         oz = origins[:, 2]
 
         inf_arr = be.ones_like(oz) * be.inf
-        plane_valid = be.abs(dz) > 1e-12
+        dz_min = _PARALLEL_K * _tol.ulp(be.ones_like(dz))
+        plane_valid = be.abs(dz) > dz_min
         t = be.where(
             plane_valid, -oz / be.where(plane_valid, dz, be.ones_like(dz)), inf_arr
         )
-        t = be.where(plane_valid & (t > 1e-9), t, inf_arr)
+        if eps is None:
+            eps = _tol.accept_t_min(be.abs(origins).max())
+        t = be.where(plane_valid & (t > eps), t, inf_arr)
 
         # Hit position in local frame
         safe_t = be.where(be.isfinite(t), t, be.zeros_like(t))

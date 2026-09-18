@@ -13,6 +13,7 @@ import numpy as np
 
 import optiland.backend as be
 from optiland.backend.utils import to_numpy
+from optiland.nonsequential import _tol
 from optiland.nonsequential.bsdf.base import BaseBSDF
 from optiland.nonsequential.rng import EventSlot
 
@@ -195,9 +196,14 @@ class HarveyShackBSDF(BaseBSDF):
         # reference vector is zero. Guard the normalisation: a NaN here
         # propagates into the returned weights for every ray.
         d_ref_norm = (d_ref * d_ref).sum(axis=1, keepdims=True) ** 0.5
-        valid = d_ref_norm[:, 0] > 1e-12
+        # Zero-length-vector rejection: k ulps of 1 (a direction is O(1)),
+        # not a bare 1e-12. This
+        # module always runs on host float64 (to_numpy above), so the floor
+        # is the float64 one regardless of the active backend precision.
+        norm_floor = 8 * _tol.ulp(np.ones_like(d_ref_norm))
+        valid = d_ref_norm[:, 0] > norm_floor[:, 0]
         d_ref = np.divide(
-            d_ref, d_ref_norm, out=np.zeros_like(d_ref), where=d_ref_norm > 1e-12
+            d_ref, d_ref_norm, out=np.zeros_like(d_ref), where=d_ref_norm > norm_floor
         )
 
         from optiland.nonsequential.bsdf.lambertian import (  # noqa: PLC0415
@@ -238,8 +244,9 @@ class HarveyShackBSDF(BaseBSDF):
         scattered = np.where(reachable[:, None], scattered, d_ref)
 
         norms = (scattered * scattered).sum(axis=1, keepdims=True) ** 0.5
+        norms_floor = 8 * _tol.ulp(np.ones_like(norms))
         scattered = np.divide(
-            scattered, norms, out=np.zeros_like(scattered), where=norms > 1e-12
+            scattered, norms, out=np.zeros_like(scattered), where=norms > norms_floor
         )
 
         # Full flux: the lobe redistributes energy rather than removing it.

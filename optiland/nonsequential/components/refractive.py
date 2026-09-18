@@ -14,6 +14,7 @@ import numpy as np
 
 import optiland.backend as be
 from optiland.backend.utils import to_numpy
+from optiland.nonsequential import _tol
 from optiland.nonsequential.components.base import BaseComponent
 from optiland.nonsequential.components.coating_support import (
     reject_polarized_coating,
@@ -216,24 +217,29 @@ class RefractiveComponent(BaseComponent):
         k1 = be.where(entering_back, k_front, k_back)
         k2 = be.where(entering_back, k_back, k_front)
 
-        # Fresnel reflectance (unpolarized, attached)
-        n_ratio = n1 / (n2 + 1e-30)
+        # Fresnel reflectance (unpolarized, attached). Denominator guards are
+        # sqrt(smallest normal) of the working dtype, not a bare 1e-30 --
+        # backward pass (see optiland.nonsequential._tol.tiny_for).
+        n_ratio = n1 / (n2 + _tol.tiny_for(n2))
         sin2_t = n_ratio**2 * (1.0 - cos_theta_i**2)
         tir = sin2_t > 1.0
         # Epsilon-clamp the radicand (not 0): sqrt's infinite derivative at 0
         # combined with be.where yields a 0 * inf = NaN gradient at the TIR
-        # boundary. Forward value changes by <= 1e-6.
+        # boundary. Calibrated float64 budget, scaled for lower precision;
+        # see optiland.nonsequential._tol.radicand_floor.
         cos_theta_t = be.where(
             tir,
             be.zeros_like(sin2_t),
-            be.maximum(1.0 - sin2_t, 1e-12) ** 0.5,
+            be.maximum(1.0 - sin2_t, _tol.radicand_floor(be.ones_like(sin2_t))) ** 0.5,
         )
 
+        rs_denom = n1 * cos_theta_i + n2 * cos_theta_t
         rs = (n1 * cos_theta_i - n2 * cos_theta_t) / (
-            n1 * cos_theta_i + n2 * cos_theta_t + 1e-30
+            rs_denom + _tol.tiny_for(rs_denom)
         )
+        rp_denom = n2 * cos_theta_i + n1 * cos_theta_t
         rp = (n2 * cos_theta_i - n1 * cos_theta_t) / (
-            n2 * cos_theta_i + n1 * cos_theta_t + 1e-30
+            rp_denom + _tol.tiny_for(rp_denom)
         )
         R_fresnel = be.where(tir, be.ones_like(rs), 0.5 * (rs**2 + rp**2))
 
@@ -289,8 +295,8 @@ class RefractiveComponent(BaseComponent):
             # deterministic T weight rather than a separate absorption draw.
             # For TIR rays weight stays 1.0 (full reflection is deterministic).
             p_det = be.array(p_np)  # detached copy used as denominator
-            weight_reflect = R_used / (p_det + 1e-30)
-            weight_transmit = T_used / (1.0 - p_det + 1e-30)
+            weight_reflect = R_used / (p_det + _tol.tiny_for(p_det))
+            weight_transmit = T_used / (1.0 - p_det + _tol.tiny_for(p_det))
             weight = be.where(do_reflect, weight_reflect, weight_transmit)
             # TIR: weight is exactly 1
             weight = be.where(tir, be.ones_like(weight), weight)
@@ -302,7 +308,7 @@ class RefractiveComponent(BaseComponent):
         raw_dot = (dirs * normals).sum(axis=1, keepdims=True)
         reflected = dirs - 2.0 * raw_dot * normals
         norms_r = (reflected * reflected).sum(axis=1, keepdims=True) ** 0.5
-        reflected = reflected / (norms_r + 1e-30)
+        reflected = reflected / (norms_r + _tol.tiny_for(norms_r))
 
         # Compute refracted direction (Snell's law, vector form)
         n_facing = be.where(raw_dot < 0, normals, -normals)
@@ -313,7 +319,7 @@ class RefractiveComponent(BaseComponent):
             n_ratio_col * dirs + (n_ratio_col * cos_i_pos - cos_t_col) * n_facing
         )
         norms_t = (refracted * refracted).sum(axis=1, keepdims=True) ** 0.5
-        refracted = refracted / (norms_t + 1e-30)
+        refracted = refracted / (norms_t + _tol.tiny_for(norms_t))
 
         # Select direction based on branch decision
         do_reflect_col = do_reflect[:, None]

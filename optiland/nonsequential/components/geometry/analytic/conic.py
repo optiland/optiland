@@ -24,12 +24,9 @@ import math
 import numpy as np
 
 import optiland.backend as be
+from optiland.nonsequential import _tol
 from optiland.nonsequential._utils import as_float, as_param
 from optiland.nonsequential.components.geometry.base import AABB, AnalyticGeometry
-
-# Denominators below this magnitude are treated as degenerate rather than
-# divided by, and the affected root is discarded.
-_TINY = 1e-30
 
 
 class ConicGeometry(AnalyticGeometry):
@@ -94,8 +91,11 @@ class ConicGeometry(AnalyticGeometry):
         under_root = 1.0 - (1.0 + K) * c**2 * r2
         # Clamp to a small positive epsilon (not 0): sqrt has an infinite
         # derivative at 0, which would poison gradients for rays at the conic
-        # edge. The forward value changes by <= 1e-6 (sqrt(1e-12)).
-        safe_root = be.maximum(under_root, 1e-12)
+        # edge. _tol.radicand_floor keeps the calibrated float64 budget
+        # (forward value changes by <= 1e-6) exactly, and scales it up at
+        # lower precision -- see optiland.nonsequential._tol.radicand_floor.
+        floor = _tol.radicand_floor(be.ones_like(under_root))
+        safe_root = be.maximum(under_root, floor)
         return c * r2 / (1.0 + safe_root**0.5)
 
     def _normal_local(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
@@ -113,8 +113,10 @@ class ConicGeometry(AnalyticGeometry):
         r2 = x**2 + y**2
         c = self._curvature()
         K = self.conic
-        # Epsilon-clamped (not 0) so the sqrt derivative stays finite at the edge.
-        under_root = be.maximum(1.0 - (1.0 + K) * c**2 * r2, 1e-12)
+        # Epsilon-clamped (not 0) so the sqrt derivative stays finite at the
+        # edge -- see _sag's radicand_floor comment above.
+        floor = _tol.radicand_floor(be.ones_like(x))
+        under_root = be.maximum(1.0 - (1.0 + K) * c**2 * r2, floor)
         sqrt_term = under_root**0.5
 
         # For a conic, dz/dr = c * r / sqrt(1 - (1+K) c^2 r^2), so
@@ -161,7 +163,7 @@ class ConicGeometry(AnalyticGeometry):
         return valid, px, py
 
     def ray_intersect(
-        self, origins: np.ndarray, directions: np.ndarray
+        self, origins: np.ndarray, directions: np.ndarray, eps: float | None = None
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Intersect rays with the conic surface.
 
@@ -202,8 +204,9 @@ class ConicGeometry(AnalyticGeometry):
         # Clamp the radicand to a small positive epsilon (not 0): sqrt has an
         # infinite derivative at 0, which combined with be.where yields a
         # 0 * inf = NaN in the backward pass even though the forward is masked.
+        disc_floor = _tol.radicand_floor(be.ones_like(disc))
         sqrt_disc = be.where(
-            disc_ok, be.maximum(disc, 1e-12) ** 0.5, be.zeros_like(disc)
+            disc_ok, be.maximum(disc, disc_floor) ** 0.5, be.zeros_like(disc)
         )
 
         # Numerically stable roots (Numerical Recipes' "citardauque" form): the
@@ -214,12 +217,19 @@ class ConicGeometry(AnalyticGeometry):
         q = -0.5 * (b + sign_b * sqrt_disc)
         # Guard both denominators in place: masking a division by ~0 after the
         # fact still leaves an inf in the graph, which backpropagates as NaN.
-        a_ok = be.abs(a) > _TINY
-        q_ok = be.abs(q) > _TINY
+        # The threshold is sqrt(smallest normal) of the working dtype
+        # (optiland.nonsequential._tol.tiny_for), not a bare 1e-30: a
+        # denominator below that line already makes 1/x within reach of
+        # overflow, and its square (formed by the backward pass of a bare
+        # reciprocal) would underflow to exactly zero in float32.
+        tiny = _tol.tiny_for(a)
+        a_ok = be.abs(a) > tiny
+        q_ok = be.abs(q) > tiny
         t1 = q / be.where(a_ok, a, be.ones_like(a))
         t2 = c_0 / be.where(q_ok, q, be.ones_like(q))
 
-        eps = 1e-9
+        if eps is None:
+            eps = _tol.accept_t_min(be.abs(origins).max())
         args = (origins, directions, eps)
         valid1, px1, py1 = self._root_valid(t1, disc_ok & a_ok, *args)
         valid2, px2, py2 = self._root_valid(t2, disc_ok & q_ok, *args)
@@ -239,7 +249,7 @@ class ConicGeometry(AnalyticGeometry):
         py = be.where(pick1, py1, be.where(pick2, py2, be.zeros_like(py1)))
         n_raw = self._normal_local(px, py)
         n_len = (n_raw * n_raw).sum(axis=1, keepdims=True) ** 0.5
-        n_geom = n_raw / (n_len + 1e-30)
+        n_geom = n_raw / (n_len + _tol.tiny_for(n_len))
 
         # Flip to face incoming ray
         dot = (directions * n_geom).sum(axis=1, keepdims=True)
@@ -265,7 +275,12 @@ class ConicGeometry(AnalyticGeometry):
         c = as_float(self._curvature())
         K = as_float(self.conic)
         r2 = r * r
-        under_root = max(1.0 - (1.0 + K) * c * c * r2, 1e-12)
+        # Detached-float bookkeeping (never differentiated): the same
+        # radicand-clamp value as _sag/_normal_local, evaluated at float64
+        # directly (unscaled) since as_float() always returns a plain Python
+        # float here regardless of the active backend precision.
+        floor = 1e-12
+        under_root = max(1.0 - (1.0 + K) * c * c * r2, floor)
         sag_edge = c * r2 / (1.0 + np.sqrt(under_root))
         z_max = max(0.0, sag_edge)
         z_min = min(0.0, sag_edge)
