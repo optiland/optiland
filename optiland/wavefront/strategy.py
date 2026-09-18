@@ -113,7 +113,14 @@ class ReferenceStrategy(ABC):
             reference_rays: Rays whose launch state defines zero relative phase.
 
         Returns:
-            ndarray: The OPD array with tilt correction applied.
+            The OPD array with tilt correction applied. For infinite-conjugate
+            angular fields, invalid sampled launch/OPD lanes return NaN after
+            masked arithmetic. Nonangular and finite-object inputs pass through
+            unchanged.
+
+        Raises:
+            ValueError: If required launch state is missing, or shared reference
+                launch components or the launch refractive index are nonfinite.
         """
         if not isinstance(self.optic.fields.field_definition, AngleField):
             return opd
@@ -121,23 +128,12 @@ class ReferenceStrategy(ABC):
         if not self.optic.object_surface.is_infinite:
             return opd
 
-        launch = rays._launch_state
-        reference = reference_rays._launch_state
-        if launch is None or reference is None:
-            raise ValueError("Wavefront analysis requires retained ray launch state.")
-
-        x_ref = reference.x[0]
-        y_ref = reference.y[0]
-        z_ref = reference.z[0]
-        n_object = self._launch_refractive_index(wavelength)
-        incident_phase = n_object * (
-            launch.L * (launch.x - x_ref)
-            + launch.M * (launch.y - y_ref)
-            + launch.N * (launch.z - z_ref)
+        restored, valid = self._restore_launch_phase_safely(
+            rays, opd, wavelength, reference_rays, be.isfinite(opd)
         )
-        return opd + incident_phase
+        return be.where(valid, restored, be.nan)
 
-    def _launch_refractive_index(self, wavelength: float) -> BEArrayT:
+    def _launch_refractive_index(self, wavelength: float) -> float | BEArrayT:
         """Return the index of the medium from launch to the first traced step."""
         definition_optic = getattr(self.optic, "base_optic", self.optic)
         if definition_optic is self.optic:
@@ -149,6 +145,85 @@ class ReferenceStrategy(ABC):
             else:
                 material = first_step.material_pre
         return material.n(wavelength)
+
+    def _restore_launch_phase_safely(
+        self,
+        rays: RealRays,
+        opd: BEArrayT,
+        wavelength: float,
+        reference_rays: RealRays,
+        valid: BEArrayT,
+    ) -> tuple[BEArrayT, BEArrayT]:
+        """Restore launch phase without evaluating invalid ray operands.
+
+        The returned validity mask only removes samples from the supplied mask.
+        Masking protects discarded nonfinite-input lanes only when evaluated
+        arithmetic and derivatives are representable. Overflow in evaluated
+        finite-input samples can still contaminate gradients, even if those
+        samples are subsequently discarded.
+
+        Args:
+            rays: Traced rays whose retained launch state supplies phase data.
+            opd: Current optical path values.
+            wavelength: Analysis wavelength.
+            reference_rays: Chief launch defining zero relative phase.
+            valid: Existing per-ray numerical-validity mask.
+
+        Returns:
+            The safely restored optical path and updated validity mask.
+
+        Raises:
+            ValueError: If required launch state is missing, or shared reference
+                launch components or the launch refractive index are nonfinite.
+        """
+        valid = valid & be.isfinite(opd)
+        if not isinstance(self.optic.fields.field_definition, AngleField):
+            return be.where(valid, opd, 0.0), valid
+        if not self.optic.object_surface.is_infinite:
+            return be.where(valid, opd, 0.0), valid
+
+        launch = rays._launch_state
+        reference = reference_rays._launch_state
+        if launch is None or reference is None:
+            raise ValueError("Wavefront analysis requires retained ray launch state.")
+
+        n_object = self._launch_refractive_index(wavelength)
+        if not all(
+            be.all(be.isfinite(getattr(reference, name)))
+            for name in ("x", "y", "z", "L", "M", "N")
+        ):
+            raise ValueError(
+                "Reference launch positions and directions must be finite."
+            )
+        if not be.all(be.isfinite(n_object)):
+            raise ValueError("Launch refractive index must be finite.")
+        valid = (
+            valid
+            & be.isfinite(launch.x)
+            & be.isfinite(launch.y)
+            & be.isfinite(launch.z)
+            & be.isfinite(launch.L)
+            & be.isfinite(launch.M)
+            & be.isfinite(launch.N)
+        )
+
+        safe_opd = be.where(valid, opd, 0.0)
+        safe_x = be.where(valid, launch.x, 0.0)
+        safe_y = be.where(valid, launch.y, 0.0)
+        safe_z = be.where(valid, launch.z, 0.0)
+        safe_l = be.where(valid, launch.L, 0.0)
+        safe_m = be.where(valid, launch.M, 0.0)
+        safe_n = be.where(valid, launch.N, 0.0)
+        # Keep validated shared operands intact for normal dtype promotion and
+        # differentiation; scalar where could materialize a Python index array.
+        incident_phase = n_object * (
+            safe_l * (safe_x - reference.x[0])
+            + safe_m * (safe_y - reference.y[0])
+            + safe_n * (safe_z - reference.z[0])
+        )
+        restored = safe_opd + incident_phase
+        valid = valid & be.isfinite(restored)
+        return be.where(valid, restored, 0.0), valid
 
     def _generate_chief_launch(
         self, field: tuple[float, float], wavelength: float
@@ -175,6 +250,75 @@ class ReferenceStrategy(ABC):
         """Calculate OPD from image to exit pupil sphere (Legacy helper)."""
         ref = SphericalReference((xc, yc, zc), R)
         return ref.path_length(rays, 1.0)
+
+    def _reference_projection(
+        self,
+        rays: RealRays,
+        geometry: ReferenceGeometry,
+        intensity: BEArrayT,
+    ) -> tuple[BEArrayT, BEArrayT, BEArrayT, BEArrayT, BEArrayT]:
+        """Apply a reference correction and project numerically valid rays.
+
+        Discarded exact-parallel/nonfinite-input lanes are masked before
+        projection. Gradient safety requires representable evaluated arithmetic
+        and derivatives, including inside the geometry. Overflow in discarded
+        finite-input samples can still poison shared-index gradients.
+
+        Args:
+            rays: Rays at the image surface.
+            geometry: Reference geometry used for the reverse intersection.
+            intensity: Output intensity associated with each ray.
+
+        Returns:
+            The safe path-corrected OPD, three safe pupil coordinates, and the
+            numerical-validity mask. Arrays retain the input shape and order.
+        """
+        if not be.all(be.isfinite(self.n_image)) or not be.all(self.n_image != 0):
+            raise ValueError("Image-space refractive index must be finite and nonzero.")
+        path = geometry.path_length(rays, self.n_image)
+        valid = (
+            be.isfinite(path)
+            & be.isfinite(rays.x)
+            & be.isfinite(rays.y)
+            & be.isfinite(rays.z)
+            & be.isfinite(rays.L)
+            & be.isfinite(rays.M)
+            & be.isfinite(rays.N)
+            & be.isfinite(rays.opd)
+            & be.isfinite(intensity)
+        )
+
+        safe_path = be.where(valid, path, 0.0)
+        safe_input_opd = be.where(valid, rays.opd, 0.0)
+        corrected_opd = safe_input_opd - safe_path
+        # Keep the validated divisor itself: scalar where would turn a Python
+        # float into a backend array and could change dtype promotion.
+        distance = safe_path / self.n_image
+
+        valid = valid & be.isfinite(corrected_opd) & be.isfinite(distance)
+        corrected_opd = be.where(valid, corrected_opd, 0.0)
+        distance = be.where(valid, distance, 0.0)
+
+        safe_x = be.where(valid, rays.x, 0.0)
+        safe_y = be.where(valid, rays.y, 0.0)
+        safe_z = be.where(valid, rays.z, 0.0)
+        safe_l = be.where(valid, rays.L, 0.0)
+        safe_m = be.where(valid, rays.M, 0.0)
+        safe_n = be.where(valid, rays.N, 0.0)
+        pupil_x = safe_x - distance * safe_l
+        pupil_y = safe_y - distance * safe_m
+        pupil_z = safe_z - distance * safe_n
+
+        valid = (
+            valid & be.isfinite(pupil_x) & be.isfinite(pupil_y) & be.isfinite(pupil_z)
+        )
+        return (
+            be.where(valid, corrected_opd, 0.0),
+            be.where(valid, pupil_x, 0.0),
+            be.where(valid, pupil_y, 0.0),
+            be.where(valid, pupil_z, 0.0),
+            valid,
+        )
 
 
 class ChiefRayStrategy(ReferenceStrategy):
@@ -210,51 +354,70 @@ class ChiefRayStrategy(ReferenceStrategy):
         self._chief_ray = self.optic.trace_generic(
             *field, Px=0.0, Py=0.0, wavelength=wavelength, retain_launch=True
         )
-        geometry = self._create_reference_geometry(self._chief_ray)
+        try:
+            geometry = self._create_reference_geometry(self._chief_ray)
 
-        # 2. Calculate reference OPD from the chief ray
-        opd_img_ref = geometry.path_length(self._chief_ray, self.n_image)
-        opd_ref = self._chief_ray.opd - opd_img_ref
+            # 2. Calculate reference OPD from the chief ray
+            opd_ref, _, _, _, chief_valid = self._reference_projection(
+                self._chief_ray,
+                geometry,
+                self._chief_ray.i,
+            )
+            if not be.all(chief_valid):
+                raise ValueError("Invalid chief ray reference intersection or OPD.")
+        except Exception:
+            self._chief_ray._launch_state = None
+            raise
 
         # 3. Trace the full grid of rays for the field
-        rays = self.optic.trace(
-            *field,
-            wavelength,
-            None,
-            self.distribution,
-            retain_launch=True,
-        )
-        intensity = self.optic.surfaces.intensity[-1, :]
+        rays = None
+        try:
+            rays = self.optic.trace(
+                *field,
+                wavelength,
+                None,
+                self.distribution,
+                retain_launch=True,
+            )
+            intensity = self.optic.surfaces.intensity[-1, :]
 
-        # 4. Compute OPD for all rays
-        opd_img = geometry.path_length(rays, self.n_image)
-        opd = rays.opd - opd_img
-
-        opd = self._restore_launch_phase(rays, opd, wavelength, self._chief_ray)
-        rays._launch_state = None
-        self._chief_ray._launch_state = None
+            # 4. Compute OPD for all rays, then restore launch phase
+            opd, pupil_x, pupil_y, pupil_z, valid_mask = self._reference_projection(
+                rays,
+                geometry,
+                intensity,
+            )
+            opd, valid_mask = self._restore_launch_phase_safely(
+                rays,
+                opd,
+                wavelength,
+                self._chief_ray,
+                valid_mask,
+            )
+        finally:
+            if rays is not None:
+                rays._launch_state = None
+            self._chief_ray._launch_state = None
 
         # 5. Normalize OPD and calculate pupil coordinates
-        opd_wv = (opd_ref - opd) / (wavelength * 1e-3)
-        t = opd_img / self.n_image
-        pupil_x = rays.x - t * rays.L
-        pupil_y = rays.y - t * rays.M
-        pupil_z = rays.z - t * rays.N
+        valid_mask = valid_mask & be.isfinite(opd)
+        opd = be.where(valid_mask, opd, 0.0)
+        normalizer = wavelength * 1e-3
+        if not be.all(be.isfinite(normalizer)) or not be.all(normalizer != 0):
+            raise ValueError("Wavefront wavelength scale must be finite and nonzero.")
+        safe_reference_opd = be.where(valid_mask, opd_ref, 0.0)
+        opd_wv = (safe_reference_opd - opd) / normalizer
+        valid_mask = valid_mask & be.isfinite(opd_wv)
 
-        valid_mask = (
-            be.isfinite(opd_wv)
-            & be.isfinite(pupil_x)
-            & be.isfinite(pupil_y)
-            & be.isfinite(pupil_z)
-            & be.isfinite(intensity)
-        )
         if not be.any(valid_mask):
-            raise ValueError("No valid ray samples found for chief-ray wavefront.")
-        opd_wv = be.where(valid_mask, opd_wv, be.zeros_like(opd_wv))
-        pupil_x = be.where(valid_mask, pupil_x, be.zeros_like(pupil_x))
-        pupil_y = be.where(valid_mask, pupil_y, be.zeros_like(pupil_y))
-        pupil_z = be.where(valid_mask, pupil_z, be.zeros_like(pupil_z))
-        intensity = be.where(valid_mask, intensity, be.zeros_like(intensity))
+            raise ValueError("No numerically valid chief-ray wavefront samples.")
+        # Chief referencing does not require illuminated bundle samples.
+        # Numerical validity and illumination remain separate policies.
+        opd_wv = be.where(valid_mask, opd_wv, 0.0)
+        pupil_x = be.where(valid_mask, pupil_x, 0.0)
+        pupil_y = be.where(valid_mask, pupil_y, 0.0)
+        pupil_z = be.where(valid_mask, pupil_z, 0.0)
+        intensity = be.where(valid_mask, intensity, 0.0)
 
         # 6. Handle polarization data if available
         kwargs = {}
@@ -377,43 +540,74 @@ class CentroidStrategy(ReferenceStrategy):
         """
         # 1. Trace ray bundle to image surface
         reference_ray = self._generate_chief_launch(field, wavelength)
-        rays = self.optic.trace(
-            *field,
-            wavelength,
-            None,
-            self.distribution,
-            retain_launch=True,
-        )
+        rays = None
+        try:
+            rays = self.optic.trace(
+                *field,
+                wavelength,
+                None,
+                self.distribution,
+                retain_launch=True,
+            )
 
-        # 2. Restore the relative incident phase in object space
-        rays.opd = self._restore_launch_phase(rays, rays.opd, wavelength, reference_ray)
-        rays._launch_state = None
-        reference_ray._launch_state = None
+            # 2. Restore the relative incident phase in object space
+            launch_valid = be.isfinite(rays.opd)
+            rays.opd, launch_valid = self._restore_launch_phase_safely(
+                rays,
+                rays.opd,
+                wavelength,
+                reference_ray,
+                launch_valid,
+            )
+            # Keep rejected lanes in place while excluding them from fitting.
+            rays.opd = be.where(launch_valid, rays.opd, be.nan)
+        finally:
+            if rays is not None:
+                rays._launch_state = None
+            reference_ray._launch_state = None
 
         # 3. Determine reference geometry
         geometry = self._create_reference_geometry(rays)
 
         # 4. Compute OPD from image surface to reference geometry
-        opd_img = geometry.path_length(rays, self.n_image)
-        opd = rays.opd - opd_img
+        opd, pupil_x, pupil_y, pupil_z, valid_mask = self._reference_projection(
+            rays,
+            geometry,
+            rays.i,
+        )
 
         # 5. Remove piston by subtracting mean OPD
-        valid_mask = rays.i > 0
-        if be.any(valid_mask):
-            mean_opd = be.mean(opd[valid_mask])
-        else:
+        if not be.any(valid_mask):
+            raise ValueError("No numerically valid ray samples for OPD calculation.")
+        active = valid_mask & (rays.i > 0)
+        if not be.any(active):
             raise ValueError(
-                "No valid rays with non-zero intensity for OPD calculation."
+                "No numerically valid positive-intensity rays for OPD calculation."
             )
-        opd_waves = (mean_opd - opd) / (wavelength * 1e-3)  # wavelength: µm to mm
+        mean_opd = be.mean(opd[active])
+        if not be.all(be.isfinite(mean_opd)):
+            raise ValueError("Reference-wavefront piston is not finite.")
 
-        # 6. Compute pupil coordinates (intersection with reference sphere/plane)
-        t = opd_img / self.n_image
-        pupil_x = rays.x - t * rays.L
-        pupil_y = rays.y - t * rays.M
-        pupil_z = rays.z - t * rays.N
+        normalizer = wavelength * 1e-3
+        if not be.all(be.isfinite(normalizer)) or not be.all(normalizer != 0):
+            raise ValueError("Wavefront wavelength scale must be finite and nonzero.")
+        safe_mean_opd = be.where(valid_mask, mean_opd, 0.0)
+        safe_opd = be.where(valid_mask, opd, 0.0)
+        opd_waves = (safe_mean_opd - safe_opd) / normalizer
+        valid_mask = valid_mask & be.isfinite(opd_waves)
+        active = valid_mask & (rays.i > 0)
+        if not be.any(active):
+            raise ValueError(
+                "No numerically valid positive-intensity wavefront outputs."
+            )
 
-        # 7. Handle polarization data if available
+        opd_waves = be.where(valid_mask, opd_waves, 0.0)
+        pupil_x = be.where(valid_mask, pupil_x, 0.0)
+        pupil_y = be.where(valid_mask, pupil_y, 0.0)
+        pupil_z = be.where(valid_mask, pupil_z, 0.0)
+        intensity = be.where(valid_mask, rays.i, 0.0)
+
+        # 6. Handle polarization data if available
         kwargs = {}
         prt_matrix = getattr(rays, "p", None)
         exit_fields = getattr(rays, "get_exit_fields", None)
@@ -427,7 +621,7 @@ class CentroidStrategy(ReferenceStrategy):
             pupil_y=pupil_y,
             pupil_z=pupil_z,
             opd=opd_waves,
-            intensity=rays.i,
+            intensity=intensity,
             radius=geometry.radius,
             **kwargs,
         )
@@ -441,6 +635,9 @@ class CentroidStrategy(ReferenceStrategy):
         Returns:
             Tuple[np.ndarray, np.ndarray]: (points, valid_mask)
         """
+        if not be.all(be.isfinite(self.n_image)) or not be.all(self.n_image != 0):
+            raise ValueError("Image-space refractive index must be finite and nonzero.")
+
         valid = (
             be.isfinite(rays.x)
             & be.isfinite(rays.y)
@@ -449,6 +646,7 @@ class CentroidStrategy(ReferenceStrategy):
             & be.isfinite(rays.M)
             & be.isfinite(rays.N)
             & be.isfinite(rays.opd)
+            & be.isfinite(rays.i)
             & (rays.i != 0)
         )
         if not be.any(valid):
@@ -572,8 +770,11 @@ class CentroidStrategy(ReferenceStrategy):
         directions = be.stack((L, M, N), axis=1)
         mean_direction = be.sum(directions * weights[:, None], axis=0) / be.sum(weights)
         norm = be.linalg.norm(mean_direction)
-        if norm > 0:
-            mean_direction = mean_direction / norm
+        if not be.all(be.isfinite(norm)) or norm == 0:
+            raise ValueError(
+                "Planar reference mean direction must be finite and nonzero."
+            )
+        mean_direction = mean_direction / norm
 
         return PlanarReference(
             (centroid[0].item(), centroid[1].item(), centroid[2].item()),
