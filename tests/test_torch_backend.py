@@ -90,3 +90,67 @@ def test_grad_mode_temporary_enable():
         assert _torch_instance.grad_mode.requires_grad is True
 
     assert _torch_instance.grad_mode.requires_grad is initial_state
+
+
+# ---------------------------------------------------------------------------
+# mps (Apple GPU)
+# ---------------------------------------------------------------------------
+
+
+def test_set_and_get_device_mps():
+    if torch.backends.mps.is_available():
+        _torch_instance.set_precision("float32")
+        _torch_instance.set_device("mps")
+        assert _torch_instance.get_device() == "mps"
+    else:
+        with pytest.raises(ValueError, match="MPS"):
+            _torch_instance.set_device("mps")
+
+
+def test_set_device_invalid_message_names_all_three():
+    with pytest.raises(ValueError, match="cpu.*cuda.*mps"):
+        _torch_instance.set_device("tpu")
+
+
+class TestMpsRefusesFloat64:
+    """Metal has no double type, so torch's mps backend cannot hold a float64
+    tensor. The configuration says so at the point the combination is asked
+    for, in either order, rather than failing at the first allocation.
+
+    These use a fresh ``_Config`` with ``mps.is_available`` patched, so they
+    run on a machine without Apple GPU hardware.
+    """
+
+    @staticmethod
+    def _config(monkeypatch, *, available=True):
+        from optiland.backend.torch_backend.config import _Config
+
+        monkeypatch.setattr(torch.backends.mps, "is_available", lambda: available)
+        return _Config()
+
+    def test_device_then_precision(self, monkeypatch):
+        cfg = self._config(monkeypatch)
+        cfg.set_device("mps")
+        assert cfg.get_device() == "mps"
+        with pytest.raises(ValueError, match="float64"):
+            cfg.set_precision("float64")
+        assert cfg.get_device() == "mps"
+
+    def test_precision_then_device(self, monkeypatch):
+        cfg = self._config(monkeypatch)
+        cfg.set_precision("float64")
+        with pytest.raises(ValueError, match="float64"):
+            cfg.set_device("mps")
+        assert cfg.get_device() == "cpu"
+
+    def test_float32_on_mps_is_accepted(self, monkeypatch):
+        cfg = self._config(monkeypatch)
+        cfg.set_device("mps")
+        cfg.set_precision("float32")
+        assert cfg.get_device() == "mps"
+        assert cfg.get_precision() == torch.float32
+
+    def test_unavailable_hardware_is_refused_by_name(self, monkeypatch):
+        cfg = self._config(monkeypatch, available=False)
+        with pytest.raises(ValueError, match="MPS"):
+            cfg.set_device("mps")

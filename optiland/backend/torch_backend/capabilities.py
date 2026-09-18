@@ -86,7 +86,7 @@ class CapabilitiesMixin:
         """Set the compute device.
 
         Args:
-            device: ``'cpu'`` or ``'cuda'``.
+            device: ``'cpu'``, ``'cuda'``, or ``'mps'`` (Apple GPU).
         """
         self._config.set_device(device)  # type: ignore[arg-type]
 
