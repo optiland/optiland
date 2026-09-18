@@ -274,6 +274,18 @@ def _serialize_component(name: str, compound: Any) -> dict:
     from optiland.nonsequential.components.lens import Lens  # noqa: PLC0415
     from optiland.nonsequential.components.mirror import Mirror  # noqa: PLC0415
 
+    # Dispatch before reading the attributes. Only the three compounds below
+    # carry ``_cs`` and ``_config``; anything else -- including the anonymous
+    # single-surface wrapper ``NSQScene.add_component`` builds around a raw
+    # component -- raised AttributeError here, where this function documents
+    # TypeError.
+    if not isinstance(compound, Lens | Mirror | Doublet):
+        raise TypeError(
+            f"Cannot serialize component '{name}' of type "
+            f"'{type(compound).__name__}'. Only Lens, Mirror, and Doublet are "
+            "supported for round-trip serialization."
+        )
+
     cs = compound._cs
     config = compound._config
 
@@ -340,12 +352,6 @@ def _serialize_component(name: str, compound: Any) -> dict:
                 "conic3": _to_float(config.conic3),
             },
         }
-
-    raise TypeError(
-        f"Cannot serialize component '{name}' of type "
-        f"'{type(compound).__name__}'. Only Lens, Mirror, and Doublet are "
-        "supported for round-trip serialization."
-    )
 
 
 def _deserialize_component(d: dict, scene: NSQScene) -> None:

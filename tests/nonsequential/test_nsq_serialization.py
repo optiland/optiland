@@ -369,3 +369,65 @@ class TestSceneToDictFromDict:
         assert len(loaded.component_registry.compounds) == 0
         assert "S1" in loaded.source_registry
         assert "D1" in loaded.detector_registry
+
+
+class TestUnsupportedComponentRaisesTypeError:
+    """A component the serializer cannot handle must raise what it documents.
+
+    ``_serialize_component`` and ``scene_to_dict`` both document ``TypeError``
+    for an unsupported component. The attribute reads that fetch ``_cs`` and
+    ``_config`` used to run before the dispatch, so the anonymous wrapper
+    ``NSQScene.add_component`` builds around a raw component raised
+    ``AttributeError: '_SingleSurface' object has no attribute '_cs'``
+    instead.
+    """
+
+    @staticmethod
+    def _raw_component_scene() -> NSQScene:
+        from optiland.nonsequential import VACUUM, NSQMaterial, RefractiveComponent
+        from optiland.nonsequential.components.geometry.analytic.plane import (
+            PlaneGeometry,
+        )
+
+        scene = NSQScene()
+        scene.add_source(
+            "S1",
+            CoordinateSystem(z=-5.0),
+            CollimatedSourceConfig(
+                spectrum=Spectrum.monochromatic(0.55),
+                total_flux=1.0,
+                aperture_radius=1.0,
+            ),
+        )
+        scene.add_component(
+            "I",
+            RefractiveComponent(
+                cs=CoordinateSystem(z=0.0),
+                geometry=PlaneGeometry(),
+                material_front=VACUUM,
+                material_back=NSQMaterial.from_glass("N-BK7"),
+                name="I",
+            ),
+        )
+        scene.add_detector(
+            "D1",
+            CoordinateSystem(z=15.0),
+            IrradianceDetectorConfig(width=10.0, height=10.0),
+        )
+        return scene
+
+    def test_scene_to_dict_raises_type_error(self):
+        scene = self._raw_component_scene()
+        with pytest.raises(TypeError, match="Cannot serialize component 'I'"):
+            scene_to_dict(scene)
+
+    def test_to_json_raises_type_error(self, tmp_path):
+        scene = self._raw_component_scene()
+        with pytest.raises(TypeError, match="Cannot serialize component 'I'"):
+            scene.to_json(tmp_path / "scene.json")
+
+    def test_message_names_the_offending_type(self):
+        scene = self._raw_component_scene()
+        with pytest.raises(TypeError) as excinfo:
+            scene_to_dict(scene)
+        assert "Only Lens, Mirror, and Doublet are supported" in str(excinfo.value)
