@@ -32,7 +32,21 @@ Usage (from the project root)::
         [--systems all|CookeTriplet,HubbleTelescope,...] [--modes df64,sf64] \
         [--rings 16] [--tol 1e-11] [--tol-rel 2.3e-13] [--no-cpu-floor] \
         [--no-analyses] [--grad] [--json NOTES/oracle-e2e.json] \
-        [--md NOTES/06-oracle-report.md] [--from-json NOTES/oracle-e2e.json]
+        [--md NOTES/06-oracle-report.md] [--from-json NOTES/oracle-e2e.json] \
+        [--fused auto|off|require|both] [--tier-a] [--mtf-rays 38] [--diag] \
+        [--strict]
+
+The fused trace (plan 8.1).  ``--fused both`` runs each system twice in one
+process -- once with the hook off, which is reference R1, then once on the
+kernel (under ``require``, so an unexpected refusal raises; a system in
+:data:`KNOWN_INELIGIBLE` runs under ``1`` and must instead produce zero
+launches and the predicted refusal count) -- and reports a ``fused vs per-op``
+column under the tolerance rule of plan 7.1: raw-component equality wherever
+the traced bundles were larger than 1024 rays (tier A), the
+``64 * eps * scale`` bound below that (tier B).  Every run carries an
+independent census of candidate bundles that the two identities of plan 1.3
+are checked against, plus a prediction of the kernel launch count from
+``_slab_plan``; a violation fails the run.
 
 The exit status is non-zero when any system fails the criterion, when NaN
 patterns disagree, or when an emulated run raised.
@@ -71,6 +85,50 @@ MTF_POINTS = 32  # frequency samples and histogram bins
 MTF_REPORT_INDEX = (4, 8, 16)  # frequencies quoted in the markdown table
 DISTORTION_POINTS = 16
 SPOT_RINGS = 16
+
+#: Analysis sampling actually used; ``--tier-a`` and the four per-knob options
+#: overwrite it (plan 8.1).  ``run_system`` reads this dict, never the
+#: constants above, so a CLI override reaches every phase.
+SAMPLING: dict[str, int] = {
+    "rayfan_points": RAYFAN_POINTS,
+    "opd_rings": OPD_RINGS,
+    "mtf_rays": MTF_RAYS,
+    "spot_rings": SPOT_RINGS,
+}
+
+#: ``--tier-a``: the sampling plan 8.1 names, meant to push every compared
+#: bundle above :data:`TIER_A_MIN_RAYS`.  Whether a phase reaches it is
+#: **measured**, not assumed, and one of them does not: ``GeometricMTF``'s
+#: uniform grid is clipped to the unit disc, so ``--mtf-rays 33`` traces 797
+#: rays, not 1089, and the MTF phase stays tier B.  Measured grid sizes:
+#: 33 -> 797, 36 -> 952, 37 -> 1009, 38 -> 1060, so ``--mtf-rays 38`` is the
+#: smallest uniform grid above the tier-A floor.  The plan's value is kept
+#: here; a run that needs the MTF phase at tier A passes ``--mtf-rays 38``.
+TIER_A_SAMPLING: dict[str, int] = {
+    "rayfan_points": 1025,
+    "opd_rings": 19,
+    "mtf_rays": 33,
+    "spot_rings": 19,
+}
+
+#: Tier A needs ``N > 1024`` (plan 7.1).
+TIER_A_MIN_RAYS = 1024
+
+#: Systems whose fields sweep an x field too: tilted or decentred systems are
+#: not rotationally symmetric, so (0.7, 0) is a different trace (plan 8.1).
+X_FIELD_SYSTEMS: frozenset[str] = frozenset({"TiltedTriplet", "TiltedFoldMirror"})
+
+#: Systems traced but not analysed: Optiland's paraxial, MTF and distortion
+#: analyses assume an axial image plane, which a 45-degree fold does not have.
+TRACE_ONLY_SYSTEMS: frozenset[str] = frozenset({"TiltedFoldMirror"})
+
+#: Systems the gate must refuse, and the ``FusedTraceSkip`` reason it must use
+#: (plan 8.1).  ``scripts/trace_fixtures.KNOWN_INELIGIBLE`` is merged in, so a
+#: WP5 entry added there shows up here without a second list.
+KNOWN_INELIGIBLE: dict[str, str] = {
+    "ZernikeSinglet": "geometry_type",
+    "PolynomialSinglet": "geometry_type",
+}
 
 # ---------------------------------------------------------------------------
 # Systems
@@ -145,6 +203,18 @@ def _polynomial_singlet() -> Any:
     return lens
 
 
+def _fixture(name: str) -> Any:
+    """Build one of ``scripts/trace_fixtures.py``'s systems.
+
+    Some fixtures return ``(optic, ray_builder)``; the oracle generates its own
+    rays through ``optic.trace``, so only the optic is taken.
+    """
+    import trace_fixtures
+
+    built = getattr(trace_fixtures, name)()
+    return built[0] if isinstance(built, tuple) else built
+
+
 SYSTEMS: dict[str, Any] = {
     "CookeTriplet": lambda: _sample("optiland.samples.objectives", "CookeTriplet"),
     "ReverseTelephoto": lambda: _sample(
@@ -156,6 +226,14 @@ SYSTEMS: dict[str, Any] = {
     "AsphericSinglet": lambda: _sample("optiland.samples.simple", "AsphericSinglet"),
     "ZernikeSinglet": _zernike_singlet,
     "PolynomialSinglet": _polynomial_singlet,
+    # Fused-trace coverage (plan 8.1): tilts and decentres, a reflective fold,
+    # the deepest sample (44 surfaces, chunking), a rectangular aperture and
+    # the odd-power asphere.
+    "TiltedTriplet": lambda: _fixture("tilted_triplet"),
+    "TiltedFoldMirror": lambda: _fixture("tilted_fold_mirror"),
+    "UVProjectionLens": lambda: _fixture("uv_projection"),
+    "RectApertureSinglet": lambda: _fixture("rect_aperture"),
+    "OddAsphereSinglet": lambda: _fixture("odd_asphere_singlet"),
 }
 SYSTEM_NOTES = {
     "AsphericSinglet": "even asphere (optiland.samples.simple); +5 deg field and "
@@ -164,6 +242,20 @@ SYSTEM_NOTES = {
     "ZernikeSinglet": "built in the script (no Zernike sample in optiland.samples)",
     "PolynomialSinglet": "built in the script (no polynomial sample in "
     "optiland.samples)",
+    "TiltedTriplet": "scripts/trace_fixtures.tilted_triplet(): the Cooke "
+    "triplet with surfaces 3 and 4 tilted (rx, ry, rz) and decentred; the "
+    "(0.7, 0) field is added because the system is no longer rotationally "
+    "symmetric",
+    "TiltedFoldMirror": "scripts/trace_fixtures.tilted_fold_mirror(): a "
+    "45-degree fold behind an absorbing slab; traces only, the analyses "
+    "assume an axial image plane",
+    "UVProjectionLens": "optiland.samples.UVProjectionLens through "
+    "scripts/trace_fixtures.uv_projection(): 44 surfaces, the chunking path",
+    "RectApertureSinglet": "scripts/trace_fixtures.rect_aperture(): a "
+    "rectangular aperture on the stop, so rays are clipped in x, in y and in "
+    "both",
+    "OddAsphereSinglet": "scripts/trace_fixtures.odd_asphere_singlet(): the "
+    "odd-power asphere (Newton iteration with odd exponents)",
 }
 
 # Findings that explain every non-trivial number in the report. They were
@@ -239,6 +331,18 @@ REPORT_NOTES: tuple[str, ...] = (
 )
 
 
+def fields_for(name: str) -> tuple[tuple[float, float], ...]:
+    """The normalized fields swept for ``name`` (plan 8.1)."""
+    if name in X_FIELD_SYSTEMS:
+        return (*FIELDS, (0.7, 0.0))
+    return FIELDS
+
+
+def analyses_for(name: str, analyses: bool) -> bool:
+    """Whether the analyses run for ``name`` (see :data:`TRACE_ONLY_SYSTEMS`)."""
+    return analyses and name not in TRACE_ONLY_SYSTEMS
+
+
 def build(name: str) -> Any:
     """Instantiate ``name`` on the current backend and normalize its sweep.
 
@@ -308,36 +412,187 @@ def _np(x: Any) -> np.ndarray:
     return np.asarray(be.to_numpy(x), dtype=np.float64)
 
 
-def run_system(name: str, rings: int, analyses: bool) -> dict[str, Any]:
+def _raw(value: Any) -> list[np.ndarray]:
+    """Host copies of ``value``'s raw components, never decoded (plan 7.1).
+
+    A ``MetalFloat64`` yields its df64 ``hi``/``lo`` float32 words or its sf64
+    int64 bit patterns; anything else yields one float64 array.  Tier A
+    compares these, not the decoded values, so a difference that lives only in
+    the low word cannot hide.
+    """
+    comps = getattr(value, "components", None)
+    if comps is None:
+        return [np.asarray(be.to_numpy(value), dtype=np.float64)]
+    return [np.asarray(c.detach().cpu().numpy()) for c in comps]
+
+
+def _host_threshold() -> int:
+    """The dual-residency threshold, read from the environment like the gate."""
+    return int(os.environ.get("OPTILAND_METAL_HOST_THRESHOLD", "256"))
+
+
+def _fused_traces() -> int:
+    """The driver's ``fused_trace:traces`` counter right now."""
+    return _stats().get("fused_trace:traces", 0)
+
+
+def _candidate_rays(group: Any, rays: Any, skip: int) -> int | None:
+    """``rays.x.numel()`` when this call is a fused-trace candidate, else None.
+
+    The structural checks of plan 1.3, evaluated without importing the gate, so
+    this census stays an independent predictor of ``fused_trace:candidates``
+    (plan 8.1, 8.3) rather than the gate agreeing with itself.
+    """
+    from optiland.rays import RealRays
+    from optiland.surfaces.surface_group import SurfaceGroup
+
+    if type(group) is not SurfaceGroup or type(rays) is not RealRays or skip != 0:
+        return None
+    x = getattr(rays, "x", None)
+    if type(x).__name__ != "MetalFloat64" or be.grad_mode.requires_grad:
+        return None
+    n = int(x.numel())
+    return n if n > _host_threshold() else None
+
+
+def _predict_launches(group: Any, n: int) -> int:
+    """Kernel launches one fused trace of ``n`` rays through ``group`` needs.
+
+    ``weighted_steps`` is recomputed here from the surface list (plan 3.5:
+    ``1 + max_iter`` on a Newton row, 1 otherwise) and handed to the driver's
+    own ``_slab_plan``, which plan 8.1 names as the predictor of
+    ``gpu:fused_trace``.
+    """
+    from optiland.backend.torch_backend.metal import library, trace
+
+    weighted = 0
+    for surface in list(group.surfaces)[1:]:
+        geometry = surface.geometry
+        if type(geometry).__name__ in ("EvenAsphere", "OddAsphere"):
+            weighted += 1 + int(geometry.max_iter)
+        else:
+            weighted += 1
+    plan = trace._slab_plan(1, n, weighted, trace._max_steps(), library.DEFAULT_CHUNK)
+    return len(plan)
+
+
+class Census:
+    """Independent per-phase census of fused-trace candidates (plan 8.1).
+
+    Wraps ``SurfaceGroup.trace`` for the duration of one ``run_system`` call.
+    ``candidates`` counts the bundles that pass the structural checks,
+    ``launches`` accumulates the predicted kernel launches of the calls that
+    actually fused, and ``n_min`` / ``n_max`` record the bundle sizes the phase
+    traced, which is what the tier-A label is derived from.
+    """
+
+    def __init__(self) -> None:
+        self.phase = "trace"
+        self.candidates: Counter = Counter()
+        self.launches: Counter = Counter()
+        self.n_min: dict[str, int] = {}
+        self.n_max: dict[str, int] = {}
+        self._original: Any = None
+        self._group: Any = None
+
+    def __enter__(self) -> Census:  # noqa: PYI034 - concrete, never subclassed
+        from optiland.surfaces.surface_group import SurfaceGroup
+
+        self._group = SurfaceGroup
+        original = SurfaceGroup.trace
+        self._original = original
+        census = self
+
+        # The wrapper must hold the original function in a closure cell of its
+        # own: that is what ``trace_mirror._delegates`` walks, so wrapping
+        # ``SurfaceGroup.trace`` for the census is not read as mirror drift
+        # (which would refuse every candidate for the rest of the process).
+        def _traced(group, rays, skip=0, record=True):  # noqa: ANN001
+            return census._call(original, group, rays, skip, record)
+
+        SurfaceGroup.trace = _traced
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._group.trace = self._original
+
+    def _call(
+        self, original: Any, group: Any, rays: Any, skip: int, record: bool
+    ) -> Any:
+        n = _candidate_rays(group, rays, skip)
+        if n is None:
+            return original(group, rays, skip=skip, record=record)
+        phase = self.phase
+        self.candidates[phase] += 1
+        self.n_min[phase] = min(self.n_min.get(phase, n), n)
+        self.n_max[phase] = max(self.n_max.get(phase, n), n)
+        before = _fused_traces()
+        out = original(group, rays, skip=skip, record=record)
+        if _fused_traces() > before:
+            self.launches[phase] += _predict_launches(group, n)
+        return out
+
+    def report(self) -> dict[str, Any]:
+        """The census as JSON: per-phase candidates, launches and bundle sizes."""
+        return {
+            "candidates": dict(self.candidates),
+            "predicted_launches": dict(self.launches),
+            "n_min": dict(self.n_min),
+            "n_max": dict(self.n_max),
+            "total_candidates": sum(self.candidates.values()),
+        }
+
+
+def run_system(
+    name: str,
+    rings: int,
+    analyses: bool,
+    census: Census | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
     """Trace and analyze ``name`` on the current backend; return NumPy arrays.
 
     Returns a dict with one entry per phase (``trace``, ``spot``, ``rayfan``,
     ``opd``, ``mtf``, ``paraxial``, ``distortion``), each mapping quantity
     names to float64 arrays, plus ``phase_stats`` (Metal counter deltas per
-    phase, empty on non-Metal backends) and ``phase_seconds``.
+    phase, empty on non-Metal backends) and ``phase_seconds``.  With ``raw``
+    the recorded surfaces are kept as raw components too (``trace_raw``), which
+    is what a tier-A comparison needs.
     """
     from optiland.analysis import Distortion, RayFan, SpotDiagram
     from optiland.mtf import GeometricMTF
     from optiland.wavefront import OPD
 
     optic = build(name)
+    fields = fields_for(name)
+    analyses = analyses_for(name, analyses)
     wavelengths = [w.value for w in optic.wavelengths.wavelengths][:3]
     out: dict[str, Any] = {
         "phase_stats": {},
         "phase_seconds": {},
         "wavelengths_um": wavelengths,
+        "fields": [list(f) for f in fields],
+        "sampling": dict(SAMPLING),
+        "rings": rings,
     }
     before = _stats()
     t0 = time.time()
 
     # -- traces ----------------------------------------------------------
+    if census is not None:
+        census.phase = "trace"
     trace: dict[str, Any] = {}
-    for hx, hy in FIELDS:
+    trace_raw: dict[str, Any] = {}
+    for hx, hy in fields:
         for wl in wavelengths:
             optic.trace(Hx=hx, Hy=hy, wavelength=wl, num_rays=rings)
             sg = optic.surfaces
             key = f"H({hx:g},{hy:g})/w{wl:g}"
             trace[key] = {q: _np(getattr(sg, _ATTR[q])) for q in QUANTITIES}
+            if raw:
+                trace_raw[key] = {q: _raw(getattr(sg, _ATTR[q])) for q in QUANTITIES}
+    if raw:
+        out["trace_raw"] = trace_raw
     positions = _np(optic.surfaces.positions)
     heights = [
         np.nanmax(np.abs(np.concatenate([f["x"].ravel(), f["y"].ravel()])))
@@ -355,8 +610,13 @@ def run_system(name: str, rings: int, analyses: bool) -> dict[str, Any]:
         return out
 
     # -- spot diagram ----------------------------------------------------
+    if census is not None:
+        census.phase = "spot"
     spot = SpotDiagram(
-        optic, fields=list(FIELDS), wavelengths="all", num_rings=SPOT_RINGS
+        optic,
+        fields=list(fields),
+        wavelengths="all",
+        num_rings=SAMPLING["spot_rings"],
     )
     out["spot"] = {
         "rms_spot_radius": np.array(
@@ -375,8 +635,13 @@ def run_system(name: str, rings: int, analyses: bool) -> dict[str, Any]:
     before, t0 = now, time.time()
 
     # -- ray fan ---------------------------------------------------------
+    if census is not None:
+        census.phase = "rayfan"
     fan = RayFan(
-        optic, fields=list(FIELDS), wavelengths="all", num_points=RAYFAN_POINTS
+        optic,
+        fields=list(fields),
+        wavelengths="all",
+        num_points=SAMPLING["rayfan_points"],
     )
     ex, ey = [], []
     for f in fan.fields:
@@ -389,9 +654,16 @@ def run_system(name: str, rings: int, analyses: bool) -> dict[str, Any]:
     before, t0 = now, time.time()
 
     # -- OPD -------------------------------------------------------------
+    if census is not None:
+        census.phase = "opd"
     rms, maps = [], []
-    for field in FIELDS:
-        opd = OPD(optic, field=field, wavelength="primary", num_rays=OPD_RINGS)
+    for field in fields:
+        opd = OPD(
+            optic,
+            field=field,
+            wavelength="primary",
+            num_rays=SAMPLING["opd_rings"],
+        )
         rms.append(float(_np(opd.rms())))
         maps.append(_np(opd.get_data(opd.fields[0], opd.wavelengths[0]).opd))
     out["opd"] = {"rms_waves": np.array(rms), "map_waves": np.array(maps)}
@@ -401,11 +673,13 @@ def run_system(name: str, rings: int, analyses: bool) -> dict[str, Any]:
     before, t0 = now, time.time()
 
     # -- geometric MTF ---------------------------------------------------
+    if census is not None:
+        census.phase = "mtf"
     mtf = GeometricMTF(
         optic,
-        fields=list(FIELDS),
+        fields=list(fields),
         wavelength="primary",
-        num_rays=MTF_RAYS,
+        num_rays=SAMPLING["mtf_rays"],
         num_points=MTF_POINTS,
     )
     out["mtf"] = {
@@ -418,6 +692,8 @@ def run_system(name: str, rings: int, analyses: bool) -> dict[str, Any]:
     before, t0 = now, time.time()
 
     # -- paraxial --------------------------------------------------------
+    if census is not None:
+        census.phase = "paraxial"
     out["paraxial"] = {
         k: np.array(float(_np(getattr(optic.paraxial, k)()))) for k in PARAXIAL
     }
@@ -427,6 +703,8 @@ def run_system(name: str, rings: int, analyses: bool) -> dict[str, Any]:
     before, t0 = now, time.time()
 
     # -- distortion ------------------------------------------------------
+    if census is not None:
+        census.phase = "distortion"
     dist = Distortion(optic, wavelengths="all", num_points=DISTORTION_POINTS)
     pct = np.array([_np(d) for d in dist.data])
     # Optiland samples Hy = linspace(1e-10, 1, n); the innermost points divide
@@ -476,9 +754,19 @@ def run_torch_cpu(
 
 
 def run_mps(
-    name: str, rings: int, analyses: bool, mode: str, grad: bool = False
-) -> dict[str, Any]:
-    """Emulated run on torch / mps / float64 in representation ``mode``."""
+    name: str,
+    rings: int,
+    analyses: bool,
+    mode: str,
+    grad: bool = False,
+    fused: str | None = None,
+) -> tuple[dict[str, Any], Census]:
+    """Emulated run on torch / mps / float64 in representation ``mode``.
+
+    ``fused`` is the value ``OPTILAND_METAL_FUSED_TRACE`` is set to for the
+    duration of the run (plan 8.1); the hook reads it per trace.  The returned
+    :class:`Census` is the independent predictor of the driver's counters.
+    """
     be.set_backend("torch")
     be.set_device("mps")
     be.set_precision("float64")
@@ -486,7 +774,19 @@ def run_mps(
     be.set_metal_mode(mode)
     be.metal_reset_stats()
     _instrument_counters()
-    return run_system(name, rings, analyses)
+    previous = os.environ.get("OPTILAND_METAL_FUSED_TRACE")
+    if fused is not None:
+        os.environ["OPTILAND_METAL_FUSED_TRACE"] = fused
+    try:
+        with Census() as census:
+            out = run_system(name, rings, analyses, census=census, raw=True)
+    finally:
+        if fused is not None:
+            if previous is None:
+                os.environ.pop("OPTILAND_METAL_FUSED_TRACE", None)
+            else:
+                os.environ["OPTILAND_METAL_FUSED_TRACE"] = previous
+    return out, census
 
 
 # ---------------------------------------------------------------------------
@@ -588,6 +888,304 @@ def compare(ref: dict[str, Any], got: dict[str, Any]) -> dict[str, Any]:
     return rep
 
 
+#: The six structural refusal reasons (plan 1.3), restated here rather than
+#: imported so that this census stays independent of the gate.  Every other
+#: reason is a feature reason and belongs in identity 2; an unknown reason is
+#: therefore counted as a feature reason and makes the identity fail loudly.
+STRUCTURAL_REASONS: frozenset[str] = frozenset(
+    {
+        "group_type",
+        "rays_type",
+        "rays_shape",
+        "host_resident",
+        "requires_grad",
+        "skip",
+    }
+)
+
+
+def _tier(n: int) -> str:
+    """The comparison tier a bundle of ``n`` rays supports (plan 7.1)."""
+    if n > TIER_A_MIN_RAYS:
+        return "A"
+    if n > _host_threshold():
+        return "B"
+    return "host"
+
+
+def _feature_skips(stats: dict[str, int]) -> int:
+    """Refusals of candidate bundles for a feature the kernel lacks."""
+    return sum(
+        v
+        for k, v in stats.items()
+        if k.startswith("fused_trace_skip:")
+        and k.removeprefix("fused_trace_skip:") not in STRUCTURAL_REASONS
+    )
+
+
+def census_identities(
+    census: Census, phase_stats: dict[str, dict[str, int]], switch: str
+) -> dict[str, Any]:
+    """Plan 1.3's identities and the launch prediction, per phase.
+
+    With the hook off (``switch == "0"``) the identities are vacuous -- the
+    hook returns before the gate, so not one ``fused_trace*`` counter may
+    exist -- and that absence is what is checked instead.
+    """
+    problems: list[str] = []
+    per_phase: dict[str, Any] = {}
+    phases = set(phase_stats) | set(census.candidates)
+    for phase in sorted(phases):
+        st = phase_stats.get(phase, {})
+        counted = census.candidates.get(phase, 0)
+        candidates = st.get("fused_trace:candidates", 0)
+        traces = st.get("fused_trace:traces", 0)
+        late = st.get("fused_trace:late_fallback", 0)
+        feature = _feature_skips(st)
+        launches = st.get("gpu:fused_trace", 0)
+        predicted = census.launches.get(phase, 0)
+        if switch == "0":
+            present = sorted(k for k in st if k.startswith("fused_trace"))
+            if present:
+                problems.append(f"{phase}: hook off but {present} were counted")
+        else:
+            if counted != candidates:
+                problems.append(
+                    f"{phase}: census {counted} != fused_trace:candidates {candidates}"
+                )
+            if candidates != traces + feature + late:
+                problems.append(
+                    f"{phase}: candidates {candidates} != traces {traces} + "
+                    f"feature skips {feature} + late_fallback {late}"
+                )
+            if launches != predicted:
+                problems.append(
+                    f"{phase}: gpu:fused_trace {launches} != predicted "
+                    f"_slab_plan launches {predicted}"
+                )
+        per_phase[phase] = {
+            "census_candidates": counted,
+            "candidates": candidates,
+            "traces": traces,
+            "feature_skips": feature,
+            "late_fallback": late,
+            "launches": launches,
+            "predicted_launches": predicted,
+            "n_min": census.n_min.get(phase, 0),
+            "n_max": census.n_max.get(phase, 0),
+            "tier": _tier(census.n_max.get(phase, 0)),
+        }
+    return {"problems": problems, "per_phase": per_phase}
+
+
+def ineligible_check(
+    name: str,
+    reason: str,
+    census: Census,
+    totals: dict[str, int],
+    n_fields: int,
+    n_wavelengths: int,
+) -> list[str]:
+    """What a ``KNOWN_INELIGIBLE`` system must produce (plan 8.1).
+
+    Zero launches, every candidate refused with the predicted reason, and --
+    the exactly predicted number the plan names -- one candidate per field and
+    wavelength in the trace phase.
+    """
+    problems: list[str] = []
+    launches = totals.get("gpu:fused_trace", 0)
+    if launches != 0:
+        problems.append(f"{name}: gpu:fused_trace {launches} != 0")
+    refused = totals.get(f"fused_trace_skip:{reason}", 0)
+    counted = sum(census.candidates.values())
+    if refused != counted:
+        problems.append(
+            f"{name}: fused_trace_skip:{reason} {refused} != {counted} "
+            "candidate bundles"
+        )
+    expected = n_fields * n_wavelengths
+    got = census.candidates.get("trace", 0)
+    if got != expected:
+        problems.append(
+            f"{name}: {got} candidate bundles in the trace phase, expected "
+            f"{expected} ({n_fields} fields x {n_wavelengths} wavelengths)"
+        )
+    return problems
+
+
+def plan_runs(fused: str, name: str) -> list[tuple[str, str]]:
+    """The ``(label, OPTILAND_METAL_FUSED_TRACE)`` runs for one system (plan 8.1).
+
+    ``both`` runs the per-op path first -- that run is R1, the reference the
+    fused one is compared against -- and then the fused path, under ``require``
+    unless the system is known to be refused, where ``require`` would raise by
+    design and ``1`` plus the predicted refusal histogram is the assertion.
+    """
+    fused_switch = "1" if name in KNOWN_INELIGIBLE else "require"
+    return {
+        "off": [("perop", "0")],
+        "auto": [("fused", "1")],
+        "require": [("fused", fused_switch)],
+        "both": [("perop", "0"), ("fused", fused_switch)],
+    }[fused]
+
+
+def _quantity_scale(
+    phase: str,
+    name: str,
+    rec: dict[str, Any],
+    scale_mm: float,
+    wavelength_um: float,
+    context: dict[str, Any] | None = None,
+) -> float:
+    """The scale the tier-B bound of plan 7.1 uses for one quantity.
+
+    Positions and optical path lengths are compared against the system's path
+    scale, direction cosines and intensities against 1, OPD in waves against
+    the path scale expressed in waves (plan 7.1: "opd the same with the OPL
+    scale").  The geometric MTF carries the position difference through
+    ``|mean exp(2*pi*i*f*x)|``, whose derivative in ``x`` is ``2*pi*f``, so its
+    scale is the path scale times ``2*pi*f_max`` -- a derived amplification,
+    not a widened tolerance.  Everything else is compared against its own
+    magnitude, floored at 1.
+    """
+    if phase == "trace":
+        return scale_mm if name in (*POSITION, "opd") else 1.0
+    if phase == "opd":
+        return scale_mm / (wavelength_um * 1e-3)
+    if phase in ("spot", "rayfan"):
+        return scale_mm
+    if phase == "mtf" and name == "mtf" and context is not None:
+        freq = np.asarray(context.get("freq_cyc_per_mm", [0.0]), dtype=np.float64)
+        return 2 * np.pi * float(np.max(np.abs(freq))) * scale_mm
+    return max(1.0, rec["magnitude"])
+
+
+def compare_fused(
+    perop: dict[str, Any],
+    fused: dict[str, Any],
+    mode: str,
+    census: Census,
+    scale: float,
+) -> dict[str, Any]:
+    """The ``fused vs per-op`` column (plan 8.1) under the rule of plan 7.1.
+
+    Tier A -- a phase whose bundles were larger than
+    :data:`TIER_A_MIN_RAYS` -- is exact: raw-component equality on every
+    recorded surface for the trace phase (the df64 hi/lo words or the sf64 bit
+    patterns, never the decoded value), and an identical analysis result
+    elsewhere, since identical inputs run through identical per-op reductions.
+    Tier B is the bound ``64 * MACHINE_EPS[mode] * scale`` per quantity.
+
+    What fails the run: the trace phase at any tier, and any tier-A phase.  A
+    tier-B *analysis* phase is reported with its numbers and its bound but does
+    not fail the run on its own -- the same policy the vs-NumPy criterion has
+    always had, where the analyses are reported and the traces are gated.
+    """
+    eps = MACHINE_EPS[mode]
+    wavelength = (perop.get("wavelengths_um") or [0.55])[0]
+    phases: dict[str, Any] = {}
+
+    n = census.n_max.get("trace", 0)
+    tier = _tier(n)
+    assert tier != "A" or n > TIER_A_MIN_RAYS, (
+        f"phase trace labelled tier A with N = {n} <= {TIER_A_MIN_RAYS}"
+    )
+    mismatches: list[str] = []
+    for key, rows in perop.get("trace_raw", {}).items():
+        got_rows = fused.get("trace_raw", {}).get(key, {})
+        for q, comps in rows.items():
+            got = got_rows.get(q, [])
+            same = len(got) == len(comps) and all(
+                np.array_equal(a, b, equal_nan=True)
+                for a, b in zip(comps, got, strict=True)
+            )
+            if not same:
+                mismatches.append(f"{key}/{q}")
+    decoded: dict[str, Any] = {}
+    n_diff = 0
+    for key, rows in perop["trace"].items():
+        for q in QUANTITIES:
+            got = fused["trace"][key][q]
+            rec = compare_arrays(rows[q], got, zero_mask=(q == "i"))
+            both = ~(np.isnan(rows[q]) | np.isnan(got))
+            n_diff += int(np.count_nonzero(rows[q][both] != got[both]))
+            decoded[q] = _merge(decoded[q], rec) if q in decoded else rec
+    for q, rec in decoded.items():
+        rec["scale"] = _quantity_scale("trace", q, rec, scale, wavelength)
+        rec["bound"] = 64 * eps * rec["scale"]
+        rec["within_bound"] = rec["max_abs"] <= rec["bound"]
+    nan_agree = all(v["nan_agree"] for v in decoded.values())
+    within = all(v["within_bound"] for v in decoded.values())
+    worst = max(v["max_abs"] for v in decoded.values())
+    phases["trace"] = {
+        "tier": tier,
+        "n": n,
+        "raw_equal": not mismatches,
+        "raw_mismatches": mismatches[:20],
+        "n_raw_mismatches": len(mismatches),
+        "n_differing_elements": n_diff,
+        "max_abs": worst,
+        "bound": max(v["bound"] for v in decoded.values()),
+        "within_bound": within,
+        "nan_agree": nan_agree,
+        "gated": True,
+        "passed": bool(
+            (not mismatches and nan_agree) if tier == "A" else (within and nan_agree)
+        ),
+        "quantities": decoded,
+    }
+
+    for phase in PHASES[1:]:
+        if phase not in perop or phase not in fused:
+            continue
+        n = census.n_max.get(phase, 0)
+        tier = _tier(n)
+        assert tier != "A" or n > TIER_A_MIN_RAYS, (
+            f"phase {phase} labelled tier A with N = {n} <= {TIER_A_MIN_RAYS}"
+        )
+        recs = {}
+        for k in perop[phase]:
+            rec = compare_arrays(perop[phase][k], fused[phase][k])
+            rec["scale"] = _quantity_scale(
+                phase, k, rec, scale, wavelength, perop[phase]
+            )
+            rec["bound"] = 64 * eps * rec["scale"]
+            rec["within_bound"] = rec["max_abs"] <= rec["bound"]
+            recs[k] = rec
+        worst = max((v["max_abs"] for v in recs.values()), default=0.0)
+        nan_agree = all(v["nan_agree"] for v in recs.values())
+        within = all(v["within_bound"] for v in recs.values())
+        exact = worst == 0.0
+        phases[phase] = {
+            "tier": tier,
+            "n": n,
+            "max_abs": worst,
+            "bound": max((v["bound"] for v in recs.values()), default=0.0),
+            "within_bound": within,
+            "exact": exact,
+            "nan_agree": nan_agree,
+            "gated": tier == "A",
+            "passed": bool((exact and nan_agree) if tier == "A" else True),
+            "advisory": None
+            if tier == "A"
+            else ("within the tier-B bound" if within else "ABOVE the tier-B bound"),
+            "quantities": recs,
+        }
+
+    return {
+        "phases": phases,
+        "passed": all(v["passed"] for v in phases.values()),
+        "tier_a_phases": sorted(k for k, v in phases.items() if v["tier"] == "A"),
+        "advisories": {
+            k: v["advisory"]
+            for k, v in phases.items()
+            if v.get("advisory") and not v.get("within_bound", True)
+        },
+        "max_abs": max(v["max_abs"] for v in phases.values()),
+    }
+
+
 def summarize_stats(phase_stats: dict[str, dict[str, int]]) -> dict[str, Any]:
     """Totals and per-phase GPU / host / fallback counts."""
     total: Counter[str] = Counter()
@@ -632,10 +1230,15 @@ def _e(v: float) -> str:
 
 
 def format_console(
-    name: str, mode: str, rep: dict[str, Any], floor: dict[str, Any] | None, st: Any
+    name: str,
+    mode: str,
+    rep: dict[str, Any],
+    floor: dict[str, Any] | None,
+    st: Any,
+    label: str = "",
 ) -> str:
     """Human-readable block for one system and mode."""
-    lines = [f"== {name} ({mode}) =="]
+    lines = [f"== {name} ({mode}{', ' + label if label else ''}) =="]
     lines.append(
         "  trace: max |delta| vs numpy float64 over all surfaces, fields, "
         "wavelengths" + ("   [torch-cpu float64 floor]" if floor else "")
@@ -688,6 +1291,21 @@ def format_console(
     return "\n".join(lines)
 
 
+def _fused_cell(record: dict[str, Any]) -> str:
+    """The ``fused vs per-op`` cell of the trace table."""
+    fvp = record.get("fused_vs_perop")
+    if not fvp:
+        return "n/a"
+    trace = fvp["phases"]["trace"]
+    if trace["tier"] == "A":
+        return (
+            "tier A: raw components equal"
+            if trace["raw_equal"]
+            else f"tier A: **{len(trace['raw_mismatches'])} raw mismatch(es)**"
+        )
+    return f"tier {trace['tier']}: {_e(trace['max_abs'])} (bound {_e(trace['bound'])})"
+
+
 def write_markdown(path: str, doc: dict[str, Any]) -> None:
     """Write the NOTES report (tables per mode, fallback list, method)."""
     modes = doc["modes"]
@@ -696,12 +1314,17 @@ def write_markdown(path: str, doc: dict[str, Any]) -> None:
     L: list[str] = []
     L.append("# 06 — End-to-end oracle report: NumPy float64 vs Metal df64 / sf64")
     L.append("")
+    prov = doc.get("provenance", {})
     L.append(
         f"Generated {doc['generated']} by `Optiland-Metal/scripts/metal_oracle_e2e.py`"
         f" (rings={doc['rings']}, fields {list(FIELDS)}, 3 wavelengths per system,"
         f" host threshold {doc['host_threshold']}, autograd"
-        f" {'enabled' if doc['grad'] else 'disabled'}, torch {doc['torch']},"
-        f" {doc['device']}). Raw numbers: `NOTES/oracle-e2e.json`."
+        f" {'enabled' if doc['grad'] else 'disabled'}, fused"
+        f" {doc.get('fused', 'auto')}, sampling {doc.get('sampling', {})},"
+        f" torch {doc['torch']}, {doc['device']}). Commit"
+        f" `{prov.get('commit', '')}`, mirror table"
+        f" `{prov.get('mirror_table_hash', '')[:16]}`."
+        " Raw numbers: `NOTES/oracle-e2e.json`."
     )
     L.append("")
     L.append("## 1. Summary")
@@ -750,10 +1373,10 @@ def write_markdown(path: str, doc: dict[str, Any]) -> None:
         L.append("")
         L.append(
             "| system | x | y | z | L | M | N | opd | i | pos. rel. to scale | "
-            "torch-cpu floor (pos.) | vs torch-cpu (pos.) | NaN / vignetting "
-            "(n) | pass |"
+            "torch-cpu floor (pos.) | vs torch-cpu (pos.) | fused vs per-op | "
+            "NaN / vignetting (n) | pass |"
         )
-        L.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+        L.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
         for n in names:
             r = res[n].get(mode)
             if not r:
@@ -772,6 +1395,7 @@ def write_markdown(path: str, doc: dict[str, Any]) -> None:
                 f"({v['max_position_delta_rel'] / MACHINE_EPS[mode]:.1f} eps)"
                 f" | {_e(fl['max_position_delta']) if fl else 'n/a'}"
                 f" | {_e(cpu['max_position_delta']) if cpu else 'n/a'}"
+                f" | {_fused_cell(r)}"
                 f" | {'agree' if v['nan_agree'] else 'DISAGREE'}"
                 f" ({v['trace']['i']['n_nan']} NaN, {v['trace']['i']['n_zero']} zero-i)"
                 f" | {'PASS' if r['passed'] else 'FAIL'} |"
@@ -892,7 +1516,80 @@ def write_markdown(path: str, doc: dict[str, Any]) -> None:
                 f"{counts} |"
             )
     L.append("")
-    L.append("## 6. Notes")
+    L.append("## 6. Fused trace vs the per-op path")
+    L.append("")
+    if doc.get("fused", "auto") != "both":
+        L.append(
+            f"This run used `--fused {doc.get('fused', 'auto')}`, so there is no "
+            "in-process per-op reference to compare against; `--fused both` "
+            "runs the per-op path (R1) and the kernel in one process."
+        )
+    else:
+        L.append(
+            "Tier A is raw-component equality (plan 7.1): the df64 hi/lo words "
+            "or the sf64 bit patterns of every recorded surface, never the "
+            "decoded value. A phase is labelled tier A only when the bundles it "
+            "traced were larger than "
+            f"{TIER_A_MIN_RAYS} rays; the sizes are measured by the census, not "
+            "assumed from the sampling knobs."
+        )
+        L.append("")
+        L.append(
+            "| system | mode | phase | tier | N | result | census "
+            "(candidates/traces) | launches (got/predicted) |"
+        )
+        L.append("|---|---|---|---|---|---|---|---|")
+        for n in names:
+            for mode in modes:
+                r = res[n].get(mode, {})
+                fvp = r.get("fused_vs_perop")
+                if not fvp:
+                    continue
+                ident = r.get("runs", {}).get("fused", {}).get("identities", {})
+                per_phase = ident.get("per_phase", {})
+                for phase, v in fvp["phases"].items():
+                    cen = per_phase.get(phase, {})
+                    if v["tier"] == "A" and "raw_equal" in v:
+                        result = "raw equal" if v["raw_equal"] else "**RAW DIFFER**"
+                    elif v["tier"] == "A":
+                        result = (
+                            "identical"
+                            if v["max_abs"] == 0
+                            else f"**{_e(v['max_abs'])}**"
+                        )
+                    else:
+                        result = f"{_e(v['max_abs'])} <= {_e(v['bound'])}"
+                    L.append(
+                        f"| {n} | {mode} | {phase} | {v['tier']} | {v['n']} | "
+                        f"{result} | {cen.get('census_candidates', 0)}/"
+                        f"{cen.get('traces', 0)} | {cen.get('launches', 0)}/"
+                        f"{cen.get('predicted_launches', 0)} |"
+                    )
+        L.append("")
+        ineligible = doc.get("known_ineligible", {})
+        if ineligible:
+            L.append(
+                "Systems the gate must refuse, and what was measured "
+                "(`gpu:fused_trace` must be 0 and every candidate bundle must "
+                "carry the predicted reason):"
+            )
+            for n, reason in ineligible.items():
+                for mode in modes:
+                    rec = res.get(n, {}).get(mode, {}).get("runs", {}).get("fused", {})
+                    bad = rec.get("ineligible", {}).get("problems", [])
+                    counters = rec.get("fused_counters", {})
+                    L.append(
+                        f"- {n} ({mode}): expected `{reason}`, counters "
+                        f"{counters} -> {'OK' if not bad else 'FAIL ' + str(bad)}"
+                    )
+        problems = doc.get("census_problems", [])
+        L.append("")
+        L.append(
+            f"Census and eligibility problems: {len(problems)}"
+            + ("" if not problems else " -- " + "; ".join(problems[:10]))
+        )
+    L.append("")
+    L.append("## 7. Notes")
     L.append("")
     for line in list(REPORT_NOTES) + list(doc.get("notes", [])):
         L.append(f"- {line}")
@@ -903,6 +1600,39 @@ def write_markdown(path: str, doc: dict[str, Any]) -> None:
             L.append(f"- {n}: {SYSTEM_NOTES[n]}")
     with open(path, "w") as fh:
         fh.write("\n".join(L) + "\n")
+
+
+def provenance(n_per_phase: dict[str, Any]) -> dict[str, Any]:
+    """``{commit, mirror_table_hash, N_per_phase}`` (plan 8.1).
+
+    The mirror table hash pins which Python sources the kernel was verified
+    against (plan 3.7); ``N_per_phase`` is the measured largest bundle each
+    phase traced, which is what the tier labels are derived from.
+    """
+    import subprocess
+
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.strip()
+    except OSError:  # pragma: no cover - git missing
+        commit = ""
+    try:
+        from optiland.backend.torch_backend.metal import trace_mirror
+
+        table = trace_mirror.table_hash()
+    except Exception:  # noqa: BLE001 - provenance is reported, never fatal
+        table = ""
+    return {
+        "commit": commit,
+        "mirror_table_hash": table,
+        "N_per_phase": n_per_phase,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -937,6 +1667,34 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="run torch (cpu and mps) with autograd enabled (implicit NR correction)",
     )
+    ap.add_argument(
+        "--fused",
+        choices=("auto", "off", "require", "both"),
+        default="auto",
+        help="fused trace: 'off' runs the per-op path, 'require' refuses to "
+        "fall back for an eligible system, 'both' runs the per-op path (R1) "
+        "and then the fused one in the same process and compares them",
+    )
+    ap.add_argument(
+        "--tier-a",
+        action="store_true",
+        help=f"analysis sampling large enough for tier A ({TIER_A_SAMPLING})",
+    )
+    ap.add_argument("--rayfan-points", type=int, default=None)
+    ap.add_argument("--opd-rings", type=int, default=None)
+    ap.add_argument("--mtf-rays", type=int, default=None)
+    ap.add_argument("--spot-rings", type=int, default=None)
+    ap.add_argument(
+        "--diag",
+        action="store_true",
+        help="OPTILAND_METAL_TRACE_DIAG=1: the kernel writes its status and "
+        "iteration planes and the status histogram is printed",
+    )
+    ap.add_argument(
+        "--strict",
+        action="store_true",
+        help="OPTILAND_METAL_STRICT=1: any CPU fallback raises (plan 1.4)",
+    )
     ap.add_argument("--json", default=None, help="write the full report here")
     ap.add_argument("--md", default=None, help="write the markdown report here")
     ap.add_argument(
@@ -957,6 +1715,21 @@ def main(argv: list[str] | None = None) -> int:
         if m not in MACHINE_EPS:
             ap.error(f"unknown mode {m}")
 
+    if args.tier_a:
+        SAMPLING.update(TIER_A_SAMPLING)
+    for key, value in (
+        ("rayfan_points", args.rayfan_points),
+        ("opd_rings", args.opd_rings),
+        ("mtf_rays", args.mtf_rays),
+        ("spot_rings", args.spot_rings),
+    ):
+        if value is not None:
+            SAMPLING[key] = value
+    if args.diag:
+        os.environ["OPTILAND_METAL_TRACE_DIAG"] = "1"
+    if args.strict:
+        os.environ["OPTILAND_METAL_STRICT"] = "1"
+
     names = list(SYSTEMS) if args.systems == "all" else args.systems.split(",")
     unknown = [n for n in names if n not in SYSTEMS]
     if unknown:
@@ -966,6 +1739,8 @@ def main(argv: list[str] | None = None) -> int:
 
     results: dict[str, Any] = {}
     ok = True
+    problems: list[str] = []
+    n_per_phase: dict[str, Any] = {}
     for name in names:
         t0 = time.time()
         ref = run_numpy(name, args.rings, not args.no_analyses)
@@ -974,6 +1749,7 @@ def main(argv: list[str] | None = None) -> int:
             "seconds_numpy": t1 - t0,
             "wavelengths_um": ref["wavelengths_um"],
             "scale_mm": ref["scale"],
+            "fields": ref["fields"],
         }
         cpu = None
         if not args.no_cpu_floor:
@@ -989,56 +1765,205 @@ def main(argv: list[str] | None = None) -> int:
             tol_rel = (
                 args.tol_rel if args.tol_rel is not None else 64 * MACHINE_EPS[mode]
             )
-            t2 = time.time()
-            try:
-                got = run_mps(name, args.rings, not args.no_analyses, mode, args.grad)
-            except Exception:  # noqa: BLE001 - reported, then continue
-                print(f"== {name} ({mode}) == FAILED\n{traceback.format_exc()}")
-                entry[mode] = {"error": traceback.format_exc()}
-                ok = False
+            runs = plan_runs(args.fused, name)
+            got_by_label: dict[str, Any] = {}
+            census_by_label: dict[str, Census] = {}
+            records: dict[str, Any] = {}
+            failed = False
+            for label, switch in runs:
+                t2 = time.time()
+                try:
+                    got, census = run_mps(
+                        name,
+                        args.rings,
+                        not args.no_analyses,
+                        mode,
+                        args.grad,
+                        fused=switch,
+                    )
+                except Exception:  # noqa: BLE001 - reported, then continue
+                    print(
+                        f"== {name} ({mode}, {label}) == FAILED\n"
+                        f"{traceback.format_exc()}"
+                    )
+                    entry[mode] = {"error": traceback.format_exc(), "run": label}
+                    ok, failed = False, True
+                    be.set_backend("numpy")
+                    break
+                t3 = time.time()
+                got_by_label[label], census_by_label[label] = got, census
+                rep = compare(ref, got)
+                st = summarize_stats(got["phase_stats"])
+                totals: Counter[str] = Counter()
+                for phase_st in got["phase_stats"].values():
+                    totals.update(phase_st)
+                ident = census_identities(census, got["phase_stats"], switch)
+                passed = (
+                    rep["max_position_delta"] < args.tol
+                    or rep["max_position_delta_rel"] < tol_rel
+                ) and rep["nan_agree"]
+                record: dict[str, Any] = {
+                    "switch": switch,
+                    "vs_numpy": rep,
+                    "stats": st,
+                    "census": census.report(),
+                    "identities": ident,
+                    "fused_counters": {
+                        k: v
+                        for k, v in sorted(totals.items())
+                        if k.startswith(("fused_trace", "gpu:fused_trace"))
+                    },
+                    "seconds_mps": t3 - t2,
+                    "phase_seconds": got["phase_seconds"],
+                    "passed": bool(passed and not ident["problems"]),
+                }
+                if cpu is not None:
+                    vc = compare(cpu, got)
+                    vc.pop("trace_fields")
+                    vc.pop("values")
+                    record["vs_torch_cpu"] = vc
+                if ident["problems"]:
+                    problems += [
+                        f"{name}/{mode}/{label}: {m}" for m in ident["problems"]
+                    ]
+                if label == "fused" and name in KNOWN_INELIGIBLE:
+                    reason = KNOWN_INELIGIBLE[name]
+                    bad = ineligible_check(
+                        name,
+                        reason,
+                        census,
+                        dict(totals),
+                        len(ref["fields"]),
+                        len(ref["wavelengths_um"]),
+                    )
+                    record["ineligible"] = {"reason": reason, "problems": bad}
+                    problems += [f"{mode}: {m}" for m in bad]
+                    if bad:
+                        record["passed"] = False
+                if args.strict:
+                    fb = {
+                        k: v for k, v in totals.items() if k.startswith("cpu_fallback:")
+                    }
+                    record["cpu_fallbacks_under_strict"] = fb
+                    if fb:
+                        problems.append(f"{name}/{mode}/{label}: cpu_fallback {fb}")
+                        record["passed"] = False
+                if args.diag:
+                    record["status_histogram"] = {
+                        k.removeprefix("fused_trace:diag:"): v
+                        for k, v in sorted(totals.items())
+                        if k.startswith("fused_trace:diag:")
+                    }
+                records[label] = record
+                n_per_phase.setdefault(name, {})[mode + "/" + label] = {
+                    phase: census.n_max.get(phase, 0) for phase in census.n_max
+                }
+                print(
+                    format_console(
+                        name,
+                        mode,
+                        rep,
+                        entry.get("torch_cpu_vs_numpy"),
+                        st,
+                        label,
+                    )
+                )
+                if "vs_torch_cpu" in record:
+                    print(
+                        f"  vs torch-cpu float64: position "
+                        f"{_e(record['vs_torch_cpu']['max_position_delta'])}"
+                        f" mm (rel "
+                        f"{_e(record['vs_torch_cpu']['max_position_delta_rel'])})"
+                    )
+                print(
+                    "  census: "
+                    + ", ".join(
+                        f"{phase} {v['census_candidates']}/{v['candidates']} cand, "
+                        f"{v['traces']} traces, {v['launches']}/"
+                        f"{v['predicted_launches']} launches, N<={v['n_max']}"
+                        f" (tier {v['tier']})"
+                        for phase, v in ident["per_phase"].items()
+                        if v["census_candidates"] or v["candidates"]
+                    )
+                    or "no candidate bundle"
+                )
+                if ident["problems"]:
+                    for m in ident["problems"]:
+                        print(f"  ** CENSUS: {m}")
+                if record.get("ineligible", {}).get("problems"):
+                    for m in record["ineligible"]["problems"]:
+                        print(f"  ** INELIGIBLE: {m}")
+                if args.diag and record.get("status_histogram"):
+                    print(f"  status histogram: {record['status_histogram']}")
+                print(f"  wall: numpy {t1 - t0:.2f} s, mps {t3 - t2:.2f} s")
+                if not record["passed"]:
+                    ok = False
+                    print(
+                        f"  ** FAIL: position delta "
+                        f"{rep['max_position_delta']:.3e} mm >= {args.tol:g} and "
+                        f"relative {rep['max_position_delta_rel']:.3e} >= "
+                        f"{tol_rel:g}, a NaN mismatch, or a census violation"
+                    )
+                else:
+                    clause = (
+                        "abs"
+                        if rep["max_position_delta"] < args.tol
+                        else "scale-relative"
+                    )
+                    print(f"  PASS ({clause} criterion)")
                 be.set_backend("numpy")
+            if failed:
                 continue
-            t3 = time.time()
-            rep = compare(ref, got)
-            st = summarize_stats(got["phase_stats"])
-            r: dict[str, Any] = {
-                "vs_numpy": rep,
-                "stats": st,
-                "seconds_mps": t3 - t2,
-                "phase_seconds": got["phase_seconds"],
-            }
-            if cpu is not None:
-                vc = compare(cpu, got)
-                vc.pop("trace_fields")
-                vc.pop("values")
-                r["vs_torch_cpu"] = vc
-            passed = (
-                rep["max_position_delta"] < args.tol
-                or rep["max_position_delta_rel"] < tol_rel
-            ) and rep["nan_agree"]
-            r["passed"] = passed
-            entry[mode] = r
-            print(format_console(name, mode, rep, entry.get("torch_cpu_vs_numpy"), st))
-            if "vs_torch_cpu" in r:
+            primary = "perop" if "perop" in records else "fused"
+            merged = dict(records[primary])
+            merged["runs"] = records
+            if "perop" in got_by_label and "fused" in got_by_label:
+                fvp = compare_fused(
+                    got_by_label["perop"],
+                    got_by_label["fused"],
+                    mode,
+                    census_by_label["fused"],
+                    ref["scale"],
+                )
+                merged["fused_vs_perop"] = fvp
+                merged["passed"] = bool(
+                    merged["passed"] and records["fused"]["passed"] and fvp["passed"]
+                )
                 print(
-                    f"  vs torch-cpu float64: position {_e(vc['max_position_delta'])}"
-                    f" mm (rel {_e(vc['max_position_delta_rel'])})"
+                    "  fused vs per-op: "
+                    + ", ".join(
+                        f"{phase} tier {v['tier']} N={v['n']} "
+                        + (
+                            f"raw {'equal' if v['raw_equal'] else 'DIFFER'}"
+                            if "raw_equal" in v
+                            else f"max {_e(v['max_abs'])}"
+                        )
+                        for phase, v in fvp["phases"].items()
+                    )
                 )
-            print(f"  wall: numpy {t1 - t0:.2f} s, mps {t3 - t2:.2f} s")
-            if passed:
-                clause = (
-                    "abs" if rep["max_position_delta"] < args.tol else "scale-relative"
-                )
-                print(f"  PASS ({clause} criterion)")
-            else:
-                ok = False
-                print(
-                    f"  ** FAIL: position delta {rep['max_position_delta']:.3e} mm "
-                    f">= {args.tol:g} and relative "
-                    f"{rep['max_position_delta_rel']:.3e} >= {tol_rel:g}, "
-                    "or NaN mismatch"
-                )
-            be.set_backend("numpy")
+                for phase, note in fvp["advisories"].items():
+                    v = fvp["phases"][phase]
+                    print(
+                        f"  advisory: {phase} (tier {v['tier']}, N={v['n']}) is "
+                        f"{note}: max {_e(v['max_abs'])} vs {_e(v['bound'])}; "
+                        "the analyses are reported, the traces are gated"
+                    )
+                if not fvp["passed"]:
+                    ok = False
+                    bad_phases = [
+                        f"{phase} (max {_e(v['max_abs'])}, bound {_e(v['bound'])}"
+                        + (
+                            f", raw mismatches {v['raw_mismatches'][:4]}"
+                            if v.get("raw_mismatches")
+                            else ""
+                        )
+                        + ")"
+                        for phase, v in fvp["phases"].items()
+                        if not v["passed"]
+                    ]
+                    print(f"  ** FAIL fused vs per-op: {'; '.join(bad_phases)}")
+                    problems.append(f"{name}/{mode}: fused vs per-op {bad_phases}")
+            entry[mode] = merged
 
     print()
     worst: dict[str, float] = {}
@@ -1050,6 +1975,10 @@ def main(argv: list[str] | None = None) -> int:
         ]
         worst[mode] = max(vals) if vals else float("nan")
         print(f"Overall max position delta ({mode}): {worst[mode]:.3e} mm")
+    if problems:
+        print(f"{len(problems)} census / eligibility problem(s):")
+        for message in problems:
+            print(f"  ** {message}")
     print("PASS" if ok else "FAIL")
 
     from optiland.backend.torch_backend.metal import tensor as _t
@@ -1063,11 +1992,19 @@ def main(argv: list[str] | None = None) -> int:
         "systems": names,
         "rings": args.rings,
         "grad": args.grad,
+        "fused": args.fused,
+        "tier_a": args.tier_a,
+        "sampling": dict(SAMPLING),
         "fields": list(FIELDS),
+        "fields_per_system": {n: [list(f) for f in fields_for(n)] for n in names},
+        "trace_only_systems": sorted(TRACE_ONLY_SYSTEMS & set(names)),
+        "known_ineligible": {n: r for n, r in KNOWN_INELIGIBLE.items() if n in names},
         "tol": args.tol,
         "tol_rel": {m: 64 * MACHINE_EPS[m] for m in modes},
         "worst_position_error_mm": worst,
         "passed": ok,
+        "census_problems": problems,
+        "provenance": provenance(n_per_phase),
         "results": results,
         "notes": [],
     }
