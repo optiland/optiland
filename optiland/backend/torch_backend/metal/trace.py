@@ -79,6 +79,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 __all__ = [
     "DEFAULT_MAX_STEPS",
     "ENTRY",
+    "ENTRY_SPHERICAL",
+    "entry_name",
     "FusedTraceDriftWarning",
     "FusedTraceUnavailableWarning",
     "LaunchResult",
@@ -126,6 +128,19 @@ ENTRY: dict[str, str] = {
     "df64": "trace_surfaces_df64",
     "sf64": "trace_surfaces_sf64",
 }
+
+#: The spherical-only twin of each entry point: the same body instantiated
+#: without the Newton branch.  Selected when ``records.has_newton`` is False.
+ENTRY_SPHERICAL: dict[str, str] = {
+    "df64": "trace_surfaces_df64_spherical",
+    "sf64": "trace_surfaces_sf64_spherical",
+}
+
+
+def entry_name(mode: str, has_newton: bool) -> str:
+    """The kernel entry point the driver dispatches for ``mode``."""
+    return (ENTRY if has_newton else ENTRY_SPHERICAL)[mode]
+
 
 #: Weighted surface-steps per command buffer (design 4.4, day-1 Q6: ~2 ms of
 #: GPU time on this machine, three orders under the measured safe duration).
@@ -313,16 +328,18 @@ def _warm_up(lib: Any, mode: str) -> None:
         weighted_steps=0,
     )
     launch = _encode_components(np.zeros(trace_layout.Q_PLANES), mode)
-    _launch_slabs(
-        lib,
-        records,
-        launch,
-        launch_stride=0,
-        N=1,
-        write_final=False,
-        mode=mode,
-        count=False,
-    )
+    for has_newton in (False, True):
+        records.has_newton = has_newton
+        _launch_slabs(
+            lib,
+            records,
+            launch,
+            launch_stride=0,
+            N=1,
+            write_final=False,
+            mode=mode,
+            count=False,
+        )
 
 
 @dataclass
@@ -577,7 +594,7 @@ def _launch_slabs(
     )
 
     plan = _slab_plan(B, N, int(records.weighted_steps), _max_steps(), DEFAULT_CHUNK)
-    entry = getattr(lib, ENTRY[mode])
+    entry = getattr(lib, entry_name(mode, bool(records.has_newton)))
     group = _group_size()
     for design_base, b_extent, ray_base, n_extent in plan:
         dims = _dims_tensor(

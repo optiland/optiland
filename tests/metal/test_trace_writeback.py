@@ -856,17 +856,20 @@ def test_no_wrapper_passed_to_kernel(mps_backend, monkeypatch, mode):
     real = trace._launch_slabs
 
     def spy(lib, recs, launch, **kw):
-        entry = getattr(lib, trace.ENTRY[kw["mode"]])
-
-        def capture(*args, **kwargs):
-            seen.extend(args)
-            return entry(*args, **kwargs)
-
         class Proxy:
             pass
 
         proxy = Proxy()
-        setattr(proxy, trace.ENTRY[kw["mode"]], capture)
+        # Both twins (the full body and the spherical-only instantiation the
+        # driver selects when no surface is Newton-solved) capture their args.
+        for name in (trace.ENTRY[kw["mode"]], trace.ENTRY_SPHERICAL[kw["mode"]]):
+            entry = getattr(lib, name)
+
+            def capture(*args, entry=entry, **kwargs):
+                seen.extend(args)
+                return entry(*args, **kwargs)
+
+            setattr(proxy, name, capture)
         return real(proxy, recs, launch, **kw)
 
     monkeypatch.setattr(trace, "_launch_slabs", spy)

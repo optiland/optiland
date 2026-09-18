@@ -627,7 +627,7 @@ inline R sag_of(int geom, R x, R y, rspan<R> P, ulong row, rspan<R> C, ulong cba
 //  `PLANE` gives nz = +1 (plane.py:103-105) while every StandardGeometry-derived
 //  normal gives nz < 0 (standard.py:213-215); the per-ray alignment in
 //  `interact` makes both work, and the conformance test checks the raw sign.
-template <typename R>
+template <typename R, bool kNewton = true>
 inline void normal_of(int geom, R x, R y, rspan<R> P, ulong row, rspan<R> C,
                       ulong cbase, int ncoef, int flags, thread R &nx, thread R &ny,
                       thread R &nz) {
@@ -644,7 +644,7 @@ inline void normal_of(int geom, R x, R y, rspan<R> P, ulong row, rspan<R> C,
     R denom = (flags & OT_FL_R_ON_RIGHT) ? (root * rad) : (rad * root);
     R dfdx = x / denom;
     R dfdy = y / denom;
-    if (geom == OT_GEOM_EVEN) {
+    if (kNewton && geom == OT_GEOM_EVEN) {
         // even_asphere.py:128-130: `dfdx + 2 * (i + 1) * x * Ci * r2**i`,
         // left-associated, the integer and the coefficient both on the right.
         for (int i = 0; i < ncoef; ++i) {
@@ -654,7 +654,7 @@ inline void normal_of(int geom, R x, R y, rspan<R> P, ulong row, rspan<R> C,
             dfdx = dfdx + ((x * m) * ci) * p;
             dfdy = dfdy + ((y * m) * ci) * p;
         }
-    } else if (geom == OT_GEOM_ODD) {
+    } else if (kNewton && geom == OT_GEOM_ODD) {
         // odd_asphere.py:121-131: `r**(i-1)` is +-inf at r = 0 for i = 0, so
         // each term is scrubbed where it is not finite, exactly as
         // `x_term[~be.isfinite(x_term)] = 0` does -- which is what makes the
@@ -855,7 +855,7 @@ inline R newton_distance(R x, R y, R z, R L, R M, R Nd, rspan<R> P, ulong row,
 //: The distance step of design 4.5: the SI_GEOM switch, then the MISS bit.
 //  Rows s >= 1 carry only the five surface codes; GEOM_OBJECT never reaches
 //  the distance step.
-template <typename R>
+template <typename R, bool kNewton = true>
 inline R surface_distance(int geom, R x, R y, R z, R L, R M, R Nd, rspan<R> P,
                           ulong row, rspan<R> C, ulong cbase, int flags, int apcode,
                           int ncoef, int max_iter, R eps, R nfloor,
@@ -868,9 +868,13 @@ inline R surface_distance(int geom, R x, R y, R z, R L, R M, R Nd, rspan<R> P,
         t = std_inf_distance<R>(z, Nd, nfloor, st);
     } else if (geom == OT_GEOM_CONIC) {
         t = select_distance<R>(x, y, z, L, M, Nd, P, row, eps, flags, apcode);
-    } else {
+    } else if (kNewton) {
         t = newton_distance<R>(x, y, z, L, M, Nd, P, row, C, cbase, geom, ncoef,
                                max_iter, flags, apcode, eps, nfloor, st, it);
+    } else {
+        // Spherical-only instantiation (driver: records.has_newton is False,
+        // so no EVEN/ODD row can reach this branch); a miss is the safe answer.
+        t = O::nan();
     }
     if (O::is_nan(t)) {
         st |= OT_ST_MISS;
@@ -905,7 +909,7 @@ inline R surface_distance(int geom, R x, R y, R z, R L, R M, R Nd, rspan<R> P,
 // back by `globalize` (it only touches x, y, L, M / y, z, M, N), so the final
 // planes carry the last surface's local pre-interaction direction.  A trace
 // with no surface row leaves them at the launch direction.
-template <typename R>
+template <typename R, bool kNewton>
 inline void trace_body(rspan<R> launch,
                        const device int* surf_int,
                        rspan<R> surf_real,
@@ -1017,7 +1021,7 @@ inline void trace_body(rspan<R> launch,
 
         // ---- distance (_aperture_aware_distance -> geometry.distance)
         const R t =
-            surface_distance<R>(geom, r.x, r.y, r.z, r.L, r.M, r.N, surf_real, prow,
+            surface_distance<R, kNewton>(geom, r.x, r.y, r.z, r.L, r.M, r.N, surf_real, prow,
                                 coef, cbase, flags, apcode, ncoef, max_iter, eps,
                                 nfloor, st, it);
 
@@ -1049,7 +1053,7 @@ inline void trace_body(rspan<R> launch,
         // ---- interact (refractive_reflective_model.py:41-49): the normal is
         // taken at the LOCAL intersection point, then refract or reflect.
         R nx, ny, nz;
-        normal_of<R>(geom, r.x, r.y, surf_real, prow, coef, cbase, ncoef, flags, nx, ny,
+        normal_of<R, kNewton>(geom, r.x, r.y, surf_real, prow, coef, cbase, ncoef, flags, nx, ny,
                      nz);
         L0 = r.L;
         M0 = r.M;
@@ -1120,6 +1124,14 @@ inline void trace_body(rspan<R> launch,
 // Entry points (design 4.3; binding order = trace_layout.BUFFER_ORDER).
 // ---------------------------------------------------------------------------
 
+// Occupancy: the attribute caps the compiler's register budget so that a full
+// 1024-thread (df64) / 512-thread (sf64) threadgroup fits, which raised the
+// measured throughput of the df64 loop by 1.45x at 1e6 rays (2026-09-18; the
+// dispatch group size itself made no difference).  The `_spherical` twins
+// instantiate the body without the Newton branch, which the driver selects
+// when no surface is Newton-solved (records.has_newton is False): a few
+// percent more, and no arithmetic changes in either twin.
+[[max_total_threads_per_threadgroup(1024)]]
 kernel void trace_surfaces_df64(
     const device float* launch_hi [[buffer(0)]],  const device float* launch_lo [[buffer(1)]],
     const device int*   surf_int  [[buffer(2)]],
@@ -1138,11 +1150,35 @@ kernel void trace_surfaces_df64(
     rspan<df64> consts = {consts_hi, consts_lo};
     wspan<df64> snap = {snap_hi, snap_lo};
     wspan<df64> fin = {fin_hi, fin_lo};
-    trace_body<df64>(launch, surf_int, surf_real, coef, dims, consts, snap, fin,
+    trace_body<df64, true>(launch, surf_int, surf_real, coef, dims, consts, snap, fin,
+                     status, iters, g);
+}
+
+[[max_total_threads_per_threadgroup(1024)]]
+kernel void trace_surfaces_df64_spherical(
+    const device float* launch_hi [[buffer(0)]],  const device float* launch_lo [[buffer(1)]],
+    const device int*   surf_int  [[buffer(2)]],
+    const device float* surf_hi   [[buffer(3)]],  const device float* surf_lo   [[buffer(4)]],
+    const device float* coef_hi   [[buffer(5)]],  const device float* coef_lo   [[buffer(6)]],
+    const device int*   dims      [[buffer(7)]],
+    const device float* consts_hi [[buffer(8)]],  const device float* consts_lo [[buffer(9)]],
+    device float* snap_hi [[buffer(10)]], device float* snap_lo [[buffer(11)]],
+    device float* fin_hi  [[buffer(12)]], device float* fin_lo  [[buffer(13)]],
+    device uchar* status  [[buffer(14)]], device uchar* iters   [[buffer(15)]],
+    uint2 g [[thread_position_in_grid]])
+{
+    rspan<df64> launch = {launch_hi, launch_lo};
+    rspan<df64> surf_real = {surf_hi, surf_lo};
+    rspan<df64> coef = {coef_hi, coef_lo};
+    rspan<df64> consts = {consts_hi, consts_lo};
+    wspan<df64> snap = {snap_hi, snap_lo};
+    wspan<df64> fin = {fin_hi, fin_lo};
+    trace_body<df64, false>(launch, surf_int, surf_real, coef, dims, consts, snap, fin,
                      status, iters, g);
 }
 
 #ifdef OPTILAND_SF64_CORE_H
+[[max_total_threads_per_threadgroup(512)]]
 kernel void trace_surfaces_sf64(
     const device long* launch   [[buffer(0)]],
     const device int*  surf_int [[buffer(1)]],
@@ -1162,7 +1198,31 @@ kernel void trace_surfaces_sf64(
     rspan<sf64> consts_s = {consts};
     wspan<sf64> snap_s = {snap};
     wspan<sf64> fin_s = {fin};
-    trace_body<sf64>(launch_s, surf_int, surf_real, coef_s, dims, consts_s, snap_s,
+    trace_body<sf64, true>(launch_s, surf_int, surf_real, coef_s, dims, consts_s, snap_s,
+                     fin_s, status, iters, g);
+}
+
+[[max_total_threads_per_threadgroup(512)]]
+kernel void trace_surfaces_sf64_spherical(
+    const device long* launch   [[buffer(0)]],
+    const device int*  surf_int [[buffer(1)]],
+    const device long* surf     [[buffer(2)]],
+    const device long* coef     [[buffer(3)]],
+    const device int*  dims     [[buffer(4)]],
+    const device long* consts   [[buffer(5)]],
+    device long*  snap   [[buffer(6)]],
+    device long*  fin    [[buffer(7)]],
+    device uchar* status [[buffer(8)]],
+    device uchar* iters  [[buffer(9)]],
+    uint2 g [[thread_position_in_grid]])
+{
+    rspan<sf64> launch_s = {launch};
+    rspan<sf64> surf_real = {surf};
+    rspan<sf64> coef_s = {coef};
+    rspan<sf64> consts_s = {consts};
+    wspan<sf64> snap_s = {snap};
+    wspan<sf64> fin_s = {fin};
+    trace_body<sf64, false>(launch_s, surf_int, surf_real, coef_s, dims, consts_s, snap_s,
                      fin_s, status, iters, g);
 }
 #endif  // OPTILAND_SF64_CORE_H

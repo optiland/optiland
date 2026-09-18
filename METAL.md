@@ -38,17 +38,21 @@ passed, 2 pre-existing/ordering failures).
 
 ## Performance, honestly
 
-**With the fused trace-interpreter kernel (2026-09-18, M1 Max, Cooke triplet, medians):** the
-surface loop (`SurfaceGroup.trace`) runs at 18.9 ms for 1e5 rays and 67.9 ms for 1e6 (NumPy on
-one core: 21.7 and 243 ms; the per-op GPU path: 91 and 136 ms). End to end, `optic.trace` is
-74 ms at 1e5 rays and 193 ms at 1e6 (NumPy 44 and 446 ms): ray generation and the analyses
-around the kernel still run on the per-op path and cost a fixed ~50 ms per trace, so NumPy
-wins below ~1e5 rays per trace and the GPU wins above. Batched designs through
+**With the fused trace-interpreter kernel (2026-09-18, M1 Max, Cooke triplet, medians, after
+the five levers):** the surface loop (`SurfaceGroup.trace`) runs in 17 ms for 1e5 rays and 45 ms
+for 1e6 (NumPy on one core: 22 and 236 ms; the per-op GPU path: 104 and 135 ms); the reverse
+telephoto and the aspheric singlet gain 6.1x and 5.6x over NumPy at 1e6 rays. End to end,
+`optic.trace` is 72 ms at 1e5 rays and 177 ms at 1e6 (NumPy 44 and 457 ms): ray generation and
+the analyses around the kernel still run on the per-op path and cost a fixed ~45 ms per trace,
+so NumPy wins below ~2e5 rays per trace and the GPU wins above. Batched designs through
 `optiland.raytrace.batch_trace.trace_batch` (post-stop variables, shared launch): 1000 designs
-x 1000 rays in 0.41 s, 100 x 100,000 in 0.60 s, 10,000 x 100 in 2.9 s, against 0.86 / 1.08 /
-3.65 s steady state for eight NumPy worker processes (plus ~5 s pool start-up) and 2.9 / 4.3 /
-22.8 s for one core. Every number carries a correctness record against NumPy. Full tables,
-targets and the measured remaining levers: `NOTES/09-fused-trace-report.md` in the project root.
+x 1000 rays in 0.36 s, 100 x 100,000 in 0.37 s, 10,000 x 100 in 2.7 s, against 0.75 / 0.85 /
+3.64 s steady state for eight NumPy worker processes (plus ~5 s pool start-up) and 2.9 / 4.3 /
+22.8 s for one core. Every number carries a correctness record against NumPy. The kernel's
+occupancy is set by `[[max_total_threads_per_threadgroup]]` on its entry points and a
+spherical-only twin serves systems without Newton-solved surfaces; the dispatch layer runs
+host-resident scalar ops through a fast path (11 us per op). Full tables, targets and the
+measured remaining levers: `NOTES/09-fused-trace-report.md` in the project root.
 
 The paragraph below describes the per-op path, which every unsupported feature still uses.
 

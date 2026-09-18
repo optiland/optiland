@@ -299,6 +299,18 @@ class MetalFloat64(torch.Tensor):
     def __torch_dispatch__(
         cls, func: Any, types: Any, args: Any = (), kwargs: Any = None
     ) -> Any:
+        if not kwargs and HOST_THRESHOLD > 0:
+            # Host fast path: a pure functional op whose operands are all
+            # host-resident (or plain CPU / Python scalars) runs on the host
+            # tensors directly, skipping the write preparation, complex,
+            # eligibility and aliasing machinery that cannot apply to it.
+            fast = _FAST_HOST_OK.get(func)
+            if fast is None:
+                fast = _FAST_HOST_OK[func] = _fast_host_ok(func)
+            if fast:
+                result = _run_on_host_fast(func, args)
+                if result is not _NOT_FAST:
+                    return result
         kwargs = kwargs or {}
         leaves = _flatten(args) + (_flatten(kwargs) if kwargs else [])
         absorbing = _prepare_writes(func, args, kwargs, leaves)
@@ -729,6 +741,109 @@ def _host_eligible(func: Any, leaves: list[Any]) -> bool:
         if not (isinstance(target, MetalFloat64) and target._host is not None):
             return False
     return True
+
+
+_NOT_FAST = object()
+_FAST_HOST_OK: dict[Any, bool] = {}
+_FAST_HOST_DENY: frozenset[Any] = frozenset(
+    {
+        aten._to_copy.default,
+        aten.to.dtype,
+        aten.to.device,
+        aten.to.dtype_layout,
+        aten.to.other,
+        aten.detach.default,
+        aten.alias.default,
+        aten.lift_fresh.default,
+        aten.lift_fresh_copy.default,
+        aten.zeros_like.default,
+        aten.ones_like.default,
+        aten.empty_like.default,
+        aten.full_like.default,
+        aten.rand_like.default,
+        aten.randn_like.default,
+        aten.new_zeros.default,
+        aten.new_ones.default,
+        aten.new_empty.default,
+        aten.new_full.default,
+        aten.new_empty_strided.default,
+        aten.scalar_tensor.default,
+        aten.copy.default,
+    }
+)
+
+
+def _fast_host_ok(func: Any) -> bool:
+    """Whether ``func`` may take the host fast path (decided once per op).
+
+    Pure functional ops only: nothing mutated, nothing aliased, none of the
+    factories / conversions whose device and dtype rules the general path
+    implements, and nothing the host path excludes outright.
+    """
+    if func in _HOST_EXCLUDED or func in _FAST_HOST_DENY:
+        return False
+    if _is_mutating(func) or _returns_alias(func):
+        return False
+    return getattr(func, "_schema", None) is not None
+
+
+def _wrap_fast(o: Any, mode: str) -> Any:
+    if isinstance(o, torch.Tensor):
+        if isinstance(o, MetalFloat64):
+            return o
+        if o.dtype == torch.float64:
+            return wrap_host(o, mode)
+        if o.dtype.is_complex:
+            return o  # complex results live on the CPU (complex_on_cpu policy)
+        if o.dtype.is_floating_point:
+            return o.to(MPS0)
+        return o
+    if isinstance(o, (tuple, list)):
+        return type(o)(_wrap_fast(x, mode) for x in o)
+    return o
+
+
+def _run_on_host_fast(func: Any, args: Any) -> Any:
+    """``func`` on the plain host tensors of host-resident operands.
+
+    Returns ``_NOT_FAST`` when an operand is not host-resident (GPU-resident
+    or lazily expanded emulated tensors, tensors on the device, complex
+    tensors, nested tensor lists), in which case the general path decides.
+    The result is wrapped exactly as ``_run_on_host`` wraps it.
+    """
+    mode = None
+    h: list[Any] = []
+    for a in args:
+        if isinstance(a, MetalFloat64):
+            host = a._host
+            if (
+                host is None
+                or getattr(a, "_host_lazy", False)
+                or host.numel() > HOST_THRESHOLD
+            ):
+                return _NOT_FAST
+            if mode is None:
+                mode = a._mode
+            h.append(host)
+        elif isinstance(a, torch.Tensor):
+            if a.device.type != "cpu" or a.is_complex():
+                return _NOT_FAST
+            h.append(a)
+        elif isinstance(a, (list, tuple)):
+            for x in a:
+                if isinstance(x, torch.Tensor):
+                    return _NOT_FAST
+            h.append(a)
+        elif isinstance(a, complex):
+            # Complex is never emulated: the general path keeps it on the CPU.
+            return _NOT_FAST
+        else:
+            h.append(a)
+    if mode is None:
+        return _NOT_FAST
+    out = func(*h)
+    _STATS["host:" + _op_name(func)] += 1
+    return _wrap_fast(out, mode)
 
 
 def _run_on_host(
