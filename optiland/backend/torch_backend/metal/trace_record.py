@@ -670,7 +670,7 @@ def compile_records(
     snap_rows[:, 0] = rows[0]
 
     has_newton = False
-    ctx: dict[str, Any] = {"mode": mode, "w0": w0, "group": group}
+    ctx: dict[str, Any] = {"mode": mode, "w0": w0, "group": group, "materials": {}}
     for index, surface in enumerate(surfaces[1:], start=1):
         ctx["surface"] = surface
         ctx["index"] = index
@@ -748,26 +748,33 @@ def _fill_pose(cs: Any, row_int: np.ndarray, row_real: np.ndarray) -> None:
     ``if self.rx:`` truth tests of ``CoordinateSystem`` are mirrored exactly, so
     an exact-zero rotation skips its rotation in the kernel too.
     """
-    row_real[L.SR_TX] = float(cs.x)
-    row_real[L.SR_TY] = float(cs.y)
-    row_real[L.SR_TZ] = float(cs.z)
-    row_real[L.SR_NTX] = float(-cs.x)
-    row_real[L.SR_NTY] = float(-cs.y)
-    row_real[L.SR_NTZ] = float(-cs.z)
+    from optiland.backend.torch_backend.metal.trace_adapters import host_plain
 
-    row_real[L.SR_CNRZ] = float(be.cos(-cs.rz))
-    row_real[L.SR_SNRZ] = float(be.sin(-cs.rz))
-    row_real[L.SR_CNRY] = float(be.cos(-cs.ry))
-    row_real[L.SR_SNRY] = float(be.sin(-cs.ry))
-    row_real[L.SR_CNRX] = float(be.cos(-cs.rx))
-    row_real[L.SR_SNRX] = float(be.sin(-cs.rx))
+    # Host-resident emulated scalars are read as their plain CPU float64
+    # tensors: the ops below are then the very ops the dispatch layer's host
+    # path would run, at a fraction of the per-op cost (bit-identical).
+    x, y, z = host_plain(cs.x), host_plain(cs.y), host_plain(cs.z)
+    rx, ry, rz = host_plain(cs.rx), host_plain(cs.ry), host_plain(cs.rz)
+    row_real[L.SR_TX] = float(x)
+    row_real[L.SR_TY] = float(y)
+    row_real[L.SR_TZ] = float(z)
+    row_real[L.SR_NTX] = float(-x)
+    row_real[L.SR_NTY] = float(-y)
+    row_real[L.SR_NTZ] = float(-z)
 
-    row_real[L.SR_CRX] = float(be.cos(cs.rx))
-    row_real[L.SR_SRX] = float(be.sin(cs.rx))
-    row_real[L.SR_CRY] = float(be.cos(cs.ry))
-    row_real[L.SR_SRY] = float(be.sin(cs.ry))
-    row_real[L.SR_CRZ] = float(be.cos(cs.rz))
-    row_real[L.SR_SRZ] = float(be.sin(cs.rz))
+    row_real[L.SR_CNRZ] = float(be.cos(-rz))
+    row_real[L.SR_SNRZ] = float(be.sin(-rz))
+    row_real[L.SR_CNRY] = float(be.cos(-ry))
+    row_real[L.SR_SNRY] = float(be.sin(-ry))
+    row_real[L.SR_CNRX] = float(be.cos(-rx))
+    row_real[L.SR_SNRX] = float(be.sin(-rx))
+
+    row_real[L.SR_CRX] = float(be.cos(rx))
+    row_real[L.SR_SRX] = float(be.sin(rx))
+    row_real[L.SR_CRY] = float(be.cos(ry))
+    row_real[L.SR_SRY] = float(be.sin(ry))
+    row_real[L.SR_CRZ] = float(be.cos(rz))
+    row_real[L.SR_SRZ] = float(be.sin(rz))
 
     flags = 0
     if cs.rx:

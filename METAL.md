@@ -38,6 +38,21 @@ passed, 2 pre-existing/ordering failures).
 
 ## Performance, honestly
 
+**With the fused trace-interpreter kernel (2026-09-18, M1 Max, Cooke triplet, medians):** the
+surface loop (`SurfaceGroup.trace`) runs at 18.9 ms for 1e5 rays and 67.9 ms for 1e6 (NumPy on
+one core: 21.7 and 243 ms; the per-op GPU path: 91 and 136 ms). End to end, `optic.trace` is
+74 ms at 1e5 rays and 193 ms at 1e6 (NumPy 44 and 446 ms): ray generation and the analyses
+around the kernel still run on the per-op path and cost a fixed ~50 ms per trace, so NumPy
+wins below ~1e5 rays per trace and the GPU wins above. Batched designs through
+`optiland.raytrace.batch_trace.trace_batch` (post-stop variables, shared launch): 1000 designs
+x 1000 rays in 0.41 s, 100 x 100,000 in 0.60 s, 10,000 x 100 in 2.9 s, against 0.86 / 1.08 /
+3.65 s steady state for eight NumPy worker processes (plus ~5 s pool start-up) and 2.9 / 4.3 /
+22.8 s for one core. Every number carries a correctness record against NumPy. Full tables,
+targets and the measured remaining levers: `NOTES/09-fused-trace-report.md` in the project root.
+
+The paragraph below describes the per-op path, which every unsupported feature still uses.
+
+
 The emulation is validated for correctness first. Speed is bounded by per-operation dispatch,
 not by the kernels: a sequential Optiland trace is thousands of small tensor ops, and each costs
 ~40 µs of Python/torch dispatch on top of the launch. Measured on an M1 Max (Cooke triplet,

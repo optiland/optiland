@@ -228,12 +228,30 @@ def _is_scalar_like(value: Any) -> bool:
     return shape == (1,)
 
 
+def host_plain(value: Any) -> Any:
+    """The plain CPU float64 tensor behind a host-resident emulated scalar.
+
+    A ``MetalFloat64`` that lives on the host runs every op through two
+    dispatch layers (about 25 us each) and rebuilds a wrapper for the result;
+    the value of ``be.cos(x)`` on it is ``torch.cos(x._host)`` bit for bit,
+    because that is the op the host path executes. The record compiler
+    therefore evaluates its scalar slots on the plain tensor. Anything else
+    (Python numbers, NumPy scalars, GPU-resident emulated tensors, plain
+    tensors) is returned unchanged.
+    """
+    if type(value).__name__ != "MetalFloat64":
+        return value
+    host = getattr(value, "_host", None)
+    return value if host is None else host
+
+
 def _as_float(value: Any) -> float:
     """``float(value)`` for a scalar, a 0-d array or a 1-element array.
 
     The material properties come back shaped like the 1-element wavelength that
     was handed to them, which NumPy 2 refuses to convert with ``float()``.
     """
+    value = host_plain(value)
     ndim = getattr(value, "ndim", 0)
     if ndim:
         value = value.reshape(-1)[0]
@@ -321,10 +339,12 @@ def _fill_conic_scalars(obj, row_int, row_real) -> None:
     keeps it on the left, a Python/NumPy number swaps it to the right because
     the reflected dunder launches the mirrored kernel variant.
     """
-    row_real[L.SR_R] = _as_float(obj.radius)
-    row_real[L.SR_K] = _as_float(obj.k)
-    row_real[L.SR_K1] = _as_float(1 + obj.k)
-    row_real[L.SR_R2] = _as_float(obj.radius**2)
+    radius = host_plain(obj.radius)
+    k = host_plain(obj.k)
+    row_real[L.SR_R] = _as_float(radius)
+    row_real[L.SR_K] = _as_float(k)
+    row_real[L.SR_K1] = _as_float(1 + k)
+    row_real[L.SR_R2] = _as_float(radius**2)
     if not is_backend_scalar(obj.k):
         row_int[L.SI_FLAGS] |= L.FL_K1_ON_RIGHT
     if not is_backend_scalar(obj.radius):
@@ -442,12 +462,8 @@ def _fill_interaction(obj, row_int, row_real, row_coef, ctx) -> None:
     if obj.is_reflective:
         row_int[L.SI_FLAGS] |= L.FL_REFLECTIVE
 
-    wavelength = be.array([ctx["w0"]])
-    material_pre = obj.material_pre
-    material_post = obj.material_post
-    n_pre = material_pre.n(wavelength)
-    n_post = material_post.n(wavelength)
-    k_pre = material_pre.k(wavelength)
+    n_pre, k_pre = _material_scalars(obj.material_pre, ctx)
+    n_post, _ = _material_scalars(obj.material_post, ctx)
 
     row_real[L.SR_NPRE] = _as_float(n_pre)
     row_real[L.SR_NPOST] = _as_float(n_post)
@@ -458,6 +474,43 @@ def _fill_interaction(obj, row_int, row_real, row_coef, ctx) -> None:
     row_real[L.SR_ALPHA] = _as_float(alpha)
     if _as_float(k_pre) > 0:
         row_int[L.SI_FLAGS] |= L.FL_ABSORBING
+
+
+def _material_scalars(material: Any, ctx: dict) -> tuple[Any, Any]:
+    """``(n, k)`` of ``material`` at ``ctx["w0"]`` as plain 1-element tensors.
+
+    Evaluated exactly as the per-op path does for a uniform wavelength
+    (``material.n`` on a 1-element ``be.array``, ``_uniform_representative``),
+    then memoized in ``ctx["materials"]`` under the material's identity for
+    the lifetime of the compile context (one ``compile_records`` call, or one
+    ``trace_batch`` call). Optiland's own APIs change a surface's material by
+    replacing the object (``OpticUpdater.set_index`` / ``set_material``, which
+    every ``Variable`` and tolerancing perturbation goes through), so a new
+    design that changes a glass never hits a stale entry; the batch API's
+    tier-1 canary recompiles designs through a fresh context and would expose
+    one if it ever did. A batch therefore evaluates each glass once instead of
+    twice per row per design, and skips the material cache's own per-call
+    state fingerprint. The plain host tensors keep the arithmetic in
+    ``_fill_interaction`` bit-identical to the emulated host path while
+    skipping its dispatch cost.
+    """
+    # ``_fill_row`` hands adapters a shallow copy of the context, so the memo
+    # dict must be created by the context's owner (``compile_records``,
+    # ``_compile_designs``) to persist across rows; a missing one is local.
+    memo = ctx.get("materials")
+    if memo is None:
+        memo = {}
+    key = (id(material), ctx["w0"])
+    hit = memo.get(key)
+    if hit is not None and hit[0] is material:
+        return hit[1], hit[2]
+    wavelength = memo.get(("wavelength", ctx["w0"]))
+    if wavelength is None:
+        wavelength = memo[("wavelength", ctx["w0"])] = be.array([ctx["w0"]])
+    n = host_plain(material.n(wavelength))
+    k = host_plain(material.k(wavelength))
+    memo[key] = (material, n, k)
+    return n, k
 
 
 def _grad_interaction(model: Any) -> list:

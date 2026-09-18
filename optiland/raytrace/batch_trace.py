@@ -663,7 +663,7 @@ def _generate_bundle(
     else:
         dist = distribution
     px, py = dist.x, dist.y
-    with be.no_grad_unless_enabled():
+    with be.no_grad_unless_enabled(), optic.surfaces.paraxial_path_scope():
         hx = be.atleast_1d(Hx)
         hy = be.atleast_1d(Hy)
         num_fields = len(hx)
@@ -1017,7 +1017,7 @@ def _compile_designs(
         for variable in variables:
             rows |= _touched_rows(variable, records.S)
 
-    ctx = {"mode": mode, "w0": w0, "group": group}
+    ctx = {"mode": mode, "w0": w0, "group": group, "materials": {}}
     for b in range(b_count):
         if b:
             _apply_design(optic, variables, values[b])

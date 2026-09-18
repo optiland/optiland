@@ -590,7 +590,11 @@ def test_cooke_triplet_trace_matches_numpy_with_host_path(mps_backend, encode_sp
     assert not any(k.startswith("cpu_") for k in st), st
     launches, host_ops = _count("gpu:"), _count("host:")
     assert 0 < launches < 800, launches  # ~575 bulk ops on the 817-ray arrays
-    assert host_ops > 1000, host_ops  # the scalar bookkeeping never launches
+    # The scalar bookkeeping never launches. It was ~3,800 host ops per trace
+    # until the paraxial path became memoized per trace (SurfaceGroup
+    # .paraxial_path_scope, 2026-09-18) and the hexapolar generator stopped
+    # building per-ring tensors; ~950 remain (ray aiming, fields, validation).
+    assert host_ops > 300, host_ops
     copies = 2 * len(encode_spy)  # one .to(mps) per df64 component
     assert copies < 50, (copies, encode_spy)
 
