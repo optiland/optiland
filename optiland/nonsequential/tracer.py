@@ -31,7 +31,14 @@ class SimulationResult:
         num_rays_flux_killed: Rays killed for falling below flux threshold.
         num_rays_depth_killed: Rays killed for exceeding max_depth.
         total_flux_in: Total flux launched by all sources [W].
-        total_flux_detected: Total flux recorded on all detectors [W].
+        total_flux_detected: Total flux recorded on all detectors [W],
+            transmissive ones included -- it is what every detector read.
+        total_flux_tapped: The part of ``total_flux_detected`` that was read
+            by transmissive (``absorb=False``) detectors [W]. Such a detector
+            samples the beam and lets the ray continue, so the same watt is
+            booked again wherever it finally leaves the trace; the
+            conservation identity below therefore uses
+            ``total_flux_detected - total_flux_tapped``.
         total_flux_absorbed: Flux absorbed by AbsorbingComponents [W].
         total_flux_bulk_absorbed: Flux lost to Beer-Lambert bulk absorption
             while travelling through an absorbing medium (k > 0),
@@ -40,8 +47,8 @@ class SimulationResult:
         total_flux_escaped: Flux carried by escaped rays [W].
         total_flux_lost: Flux lost to flux/depth kill [W].
         flux_conservation_error:
-            ``|flux_in - detected - absorbed - bulk_absorbed - escaped
-            - lost| / flux_in``.
+            ``|flux_in - (detected - tapped) - absorbed - bulk_absorbed
+            - escaped - lost| / flux_in``.
         trace_time_sec: Wall-clock time for the trace [s].
         ray_paths: Optional per-ray event log dict (``{"events":
             structured_array}``), populated when ``record_paths`` is
@@ -60,6 +67,7 @@ class SimulationResult:
     num_rays_depth_killed: int = 0
     total_flux_in: float = 0.0
     total_flux_detected: float = 0.0
+    total_flux_tapped: float = 0.0
     total_flux_absorbed: float = 0.0
     total_flux_bulk_absorbed: float = 0.0
     total_flux_escaped: float = 0.0

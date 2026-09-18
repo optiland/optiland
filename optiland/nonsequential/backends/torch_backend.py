@@ -460,9 +460,14 @@ class TorchBackend(TracerBackend):
             if isinstance(comp, AbsorbingComponent):
                 num_rays_absorbed += comp._absorbed_count
 
-        # Collect detector results
+        # Collect detector results. A transmissive (``absorb=False``)
+        # detector samples the beam and lets the ray continue, so the watt it
+        # reads is still in the trace and is booked again at whatever finally
+        # removes it. Its reading is therefore not a destination, and the
+        # conservation identity below uses ``detected - tapped``.
         detector_results: dict[str, object] = {}
         total_flux_detected = 0.0
+        total_flux_tapped = 0.0
         det_names = get_detector_names(scene)
         for i, det in enumerate(scene.detectors):
             name = det_names[i] if i < len(det_names) else (det.name or f"detector_{i}")
@@ -471,18 +476,22 @@ class TorchBackend(TracerBackend):
             if hasattr(result, "total_flux"):
                 # IrradianceMap.total_flux may be an attached backend array;
                 # SimulationResult's aggregate stays a plain float.
-                total_flux_detected += float(to_numpy(result.total_flux))
+                flux_here = float(to_numpy(result.total_flux))
+                total_flux_detected += flux_here
+                if not getattr(det, "absorb", True):
+                    total_flux_tapped += flux_here
 
         total_flux_lost = total_flux_depth_killed + total_flux_rr_killed
 
-        # Every launched watt ends up detected, absorbed, escaped, or killed
-        # by the flux/depth cutoffs. Omitting total_flux_lost makes the metric
-        # report a large error for any scene that depth-kills rays, which is
-        # exactly the stray-light case this diagnostic exists to serve.
+        # Every launched watt ends up detected at a detector that removed the
+        # ray, absorbed, escaped, or killed by the flux/depth cutoffs.
+        # Omitting total_flux_lost makes the metric report a large error for
+        # any scene that depth-kills rays, which is exactly the stray-light
+        # case this diagnostic exists to serve.
         flux_err = (
             abs(
                 total_flux_in
-                - total_flux_detected
+                - (total_flux_detected - total_flux_tapped)
                 - total_flux_absorbed
                 - total_flux_bulk_absorbed
                 - total_flux_escaped
@@ -522,6 +531,7 @@ class TorchBackend(TracerBackend):
             num_rays_depth_killed=num_rays_depth_killed,
             total_flux_in=total_flux_in,
             total_flux_detected=total_flux_detected,
+            total_flux_tapped=total_flux_tapped,
             total_flux_absorbed=total_flux_absorbed,
             total_flux_bulk_absorbed=total_flux_bulk_absorbed,
             total_flux_escaped=total_flux_escaped,
