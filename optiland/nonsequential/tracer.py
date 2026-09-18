@@ -33,6 +33,12 @@ class SimulationResult:
         total_flux_in: Total flux launched by all sources [W].
         total_flux_detected: Total flux recorded on all detectors [W].
         total_flux_absorbed: Flux absorbed by AbsorbingComponents [W].
+        total_flux_coating: Flux removed by a mirror below unit reflectance,
+            by a coating whose reflectance and transmittance do not sum to
+            one, or by a BSDF lobe whose weight is below one [W]. Distinct
+            from ``total_flux_absorbed``, which is whole-ray absorption at an
+            AbsorbingComponent, so a coating audit can be read without
+            confusing it with a light trap.
         total_flux_bulk_absorbed: Flux lost to Beer-Lambert bulk absorption
             while travelling through an absorbing medium (k > 0),
             e.g. tinted glass -- distinct from ``total_flux_absorbed``,
@@ -40,8 +46,8 @@ class SimulationResult:
         total_flux_escaped: Flux carried by escaped rays [W].
         total_flux_lost: Flux lost to flux/depth kill [W].
         flux_conservation_error:
-            ``|flux_in - detected - absorbed - bulk_absorbed - escaped
-            - lost| / flux_in``.
+            ``|flux_in - detected - absorbed - coating - bulk_absorbed
+            - escaped - lost| / flux_in``.
         trace_time_sec: Wall-clock time for the trace [s].
         ray_paths: Optional per-ray event log dict (``{"events":
             structured_array}``), populated when ``record_paths`` is
@@ -61,6 +67,7 @@ class SimulationResult:
     total_flux_in: float = 0.0
     total_flux_detected: float = 0.0
     total_flux_absorbed: float = 0.0
+    total_flux_coating: float = 0.0
     total_flux_bulk_absorbed: float = 0.0
     total_flux_escaped: float = 0.0
     total_flux_lost: float = 0.0

@@ -148,6 +148,9 @@ class ArrayBackend(TracerBackend):
         from optiland.nonsequential.components.absorbing import (
             AbsorbingComponent,  # noqa: PLC0415
         )
+        from optiland.nonsequential.components.ledger import (
+            LedgerBooking,  # noqa: PLC0415
+        )
         from optiland.nonsequential.rng import NSQRng  # noqa: PLC0415
         from optiland.nonsequential.tracer import (
             SimulationResult,  # noqa: PLC0415, I001
@@ -162,6 +165,8 @@ class ArrayBackend(TracerBackend):
         for comp in scene.surfaces:
             if isinstance(comp, AbsorbingComponent):
                 comp.reset_stats()
+            if isinstance(comp, LedgerBooking):
+                comp.reset_ledger()
 
         # The per-bounce interaction loop below is driven by this IR, not by
         # iterating scene.surfaces and branching on Python class identity.
@@ -457,6 +462,14 @@ class ArrayBackend(TracerBackend):
             if isinstance(comp, AbsorbingComponent):
                 num_rays_absorbed += comp._absorbed_count
 
+        # Collect the mirror, coating and BSDF lobe loss from the surfaces
+        # that booked it. Zero for a lossless scene.
+        total_flux_coating = sum(
+            comp.coating_loss
+            for comp in scene.surfaces
+            if isinstance(comp, LedgerBooking)
+        )
+
         # Collect detector results
         detector_results: dict[str, object] = {}
         total_flux_detected = 0.0
@@ -472,8 +485,9 @@ class ArrayBackend(TracerBackend):
 
         total_flux_lost = total_flux_depth_killed + total_flux_rr_killed
 
-        # Every launched watt ends up detected, absorbed, escaped, or killed
-        # by the flux/depth cutoffs. Omitting total_flux_lost makes the metric
+        # Every launched watt ends up detected, absorbed at a surface, lost in
+        # a mirror or a coating, absorbed in the bulk, escaped, or killed by
+        # the flux/depth cutoffs. Omitting total_flux_lost makes the metric
         # report a large error for any scene that depth-kills rays, which is
         # exactly the stray-light case this diagnostic exists to serve.
         flux_err = (
@@ -481,6 +495,7 @@ class ArrayBackend(TracerBackend):
                 total_flux_in
                 - total_flux_detected
                 - total_flux_absorbed
+                - total_flux_coating
                 - total_flux_bulk_absorbed
                 - total_flux_escaped
                 - total_flux_lost
@@ -506,6 +521,7 @@ class ArrayBackend(TracerBackend):
             split_budget_saturated,
             detector_results,
             medium_stack_underflows=total_medium_stack_underflows,
+            coating_loss=total_flux_coating,
         )
 
         return SimulationResult(
@@ -518,6 +534,7 @@ class ArrayBackend(TracerBackend):
             total_flux_in=total_flux_in,
             total_flux_detected=total_flux_detected,
             total_flux_absorbed=total_flux_absorbed,
+            total_flux_coating=total_flux_coating,
             total_flux_bulk_absorbed=total_flux_bulk_absorbed,
             total_flux_escaped=total_flux_escaped,
             total_flux_lost=total_flux_lost,

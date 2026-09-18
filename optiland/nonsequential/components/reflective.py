@@ -18,6 +18,7 @@ from optiland.nonsequential.components.coating_support import (
     reject_polarized_coating,
     resolve_reflectance,
 )
+from optiland.nonsequential.components.ledger import LedgerBooking
 from optiland.nonsequential.materials.nsq_material import VACUUM
 from optiland.nonsequential.rng import EventSlot
 
@@ -35,7 +36,7 @@ if TYPE_CHECKING:
     from optiland.nonsequential.rng import NSQRng
 
 
-class ReflectiveComponent(BaseComponent):
+class ReflectiveComponent(BaseComponent, LedgerBooking):
     """Purely reflective optical element (mirror, baffle).
 
     Reflects rays specularly (or via BSDF). Does not transmit.
@@ -81,6 +82,7 @@ class ReflectiveComponent(BaseComponent):
         """
         reject_polarized_coating(reflectance, surface_name=name)
         self.reflectance = reflectance
+        self.reset_ledger()
         super().__init__(
             cs,
             geometry,
@@ -155,6 +157,11 @@ class ReflectiveComponent(BaseComponent):
         # D-3: reflectance is mandatory, applied to every hit ray regardless
         # of whether it also scatters through a BSDF below.
         R = resolve_reflectance(self.reflectance, rays.wavelength)
+        # The (1 - R) a mirror below unit reflectance removes is a
+        # destination, not a leak. Booked before the multiply, while the
+        # incoming weight is still in hand. The event is exactly
+        # weight-preserving -- w = wR + w(1-R) -- so nothing is left over.
+        self.book_loss(rays.flux, 1.0 - R, hit_mask)
         rays.flux = rays.flux * be.where(hit_mask, R, be.ones_like(R))
 
         if bsdf_ir.kind != "none":
@@ -193,9 +200,12 @@ class ReflectiveComponent(BaseComponent):
             rays.flux = rays.flux * be.where(hit_mask, sf_gate, be.ones_like(sf_gate))
 
             new_dirs = be.where(scatters[:, None], bsdf_dirs, new_dirs)
-            rays.flux = rays.flux * be.where(
-                scatters, bsdf_weights, be.ones_like(bsdf_weights)
-            )
+            # A lobe's weight is a fraction of the incident flux (BaseBSDF:
+            # "relative flux weights in [0, 1]"), so what the lobe does not
+            # return was removed at this surface.
+            bsdf_gate = be.where(scatters, bsdf_weights, be.ones_like(bsdf_weights))
+            self.book_loss(rays.flux, 1.0 - bsdf_gate, hit_mask)
+            rays.flux = rays.flux * bsdf_gate
 
         rays.L = new_dirs[:, 0]
         rays.M = new_dirs[:, 1]
