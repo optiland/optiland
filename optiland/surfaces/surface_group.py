@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import copy
 import os
+import sys
 from contextlib import suppress
 from copy import deepcopy
 from functools import cached_property
@@ -878,11 +879,33 @@ class SurfaceGroup:
 def _fused_metal_trace(group, rays, skip, record) -> bool:
     """Fused Metal trace hook: True when the kernel handled the trace (fork-local)."""
     if type(getattr(rays, "x", None)).__name__ != "MetalFloat64":
-        return False  # NumPy / torch-CPU / mps-float32: no env lookup, no import
+        # NumPy / torch-CPU / mps-float32: no env lookup, no import.
+        return _fused_metal_declined(group)
     if os.environ.get("OPTILAND_METAL_FUSED_TRACE", "1") == "0":
-        return False
+        return _fused_metal_declined(group)
     try:
         from optiland.backend.torch_backend.metal.trace import fused_trace
     except ImportError:  # pragma: no cover - torch without Metal, or no torch
-        return False
+        return _fused_metal_declined(group)
     return fused_trace(group, rays, skip, record)
+
+
+def _fused_metal_declined(group) -> bool:
+    """Drop stale fused-trace diagnostics and decline the trace (fork-local).
+
+    ``metal/trace.py::fused_trace`` forgets a group's ``diag_from`` planes at
+    the top of every trace that reaches it, so those planes are either that
+    trace's own or absent.  The early returns above never reach it, and
+    without this the planes of an older fused trace would survive a trace that
+    ran on the per-op loop -- the ray count they describe is then simply not
+    the caller's (round-3 finding R3-V1-04).
+
+    The driver is found in ``sys.modules`` and never imported for this: on the
+    NumPy, torch-CPU and mps-float32 paths the module is absent and this costs
+    one dict lookup, which is what keeps those paths free of every
+    ``optiland.backend.torch_backend.metal.*`` import.
+    """
+    module = sys.modules.get("optiland.backend.torch_backend.metal.trace")
+    if module is not None:
+        module.forget_diag(group)
+    return False

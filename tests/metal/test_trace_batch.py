@@ -13,14 +13,16 @@ Two traps this file is built to avoid:
    ``assert_fused`` therefore pins ``result.fused is True`` on every fused leg,
    and its failure message names the refusal reason and any mirror drift.
 2. **Hiding a kernel divergence behind a convenient fixture.**  The
-   ``asphere_coeff`` row uses ``even_asphere_inf_radius`` rather than
-   ``aspheric_singlet`` because, at the time of writing, the kernel disagrees
-   with the per-op path in the df64 low word for every *finite-radius* Newton
-   geometry (reproduced with ``trace.fused_trace`` alone, no batch code
-   involved; recorded in ``NOTES/fused-trace-research/status.md``).  That is a
-   WP1/WP6 conformance finding, not a batch-API one; the fixture used here
-   still exercises the ``asphere_coeff`` variable, its tier-1 row refresh and
-   the coefficient-list contract of plan 3.9.
+   ``asphere_coeff`` row used ``even_asphere_inf_radius`` rather than
+   ``aspheric_singlet`` because, at the time of writing, the batch result
+   disagreed with the contract loop in the df64 low word for every
+   *finite-radius* Newton geometry.  Round 2 found the cause and it was not the
+   kernel: ``trace_batch`` traced both legs with ``torch.is_grad_enabled()``
+   True, so its own reference took the DiffOptics one-step branch of
+   ``NewtonRaphsonGeometry.distance`` while the kernel mirrored the primal
+   solve (finding R2-V1-04).  Both legs now run inside ``torch.no_grad()`` and
+   the row is back on ``aspheric_singlet`` -- a finite-radius Newton system with
+   three coefficients.
 
 Run: ``pytest tests/metal/test_trace_batch.py -q -p no:cacheprovider -o addopts=``
 """
@@ -262,8 +264,9 @@ def case_thickness():
 
 
 def case_asphere_coeff():
-    # even_asphere_inf_radius, not aspheric_singlet: see the module docstring.
-    optic, _ = trace_fixtures.even_asphere_inf_radius()
+    # aspheric_singlet: a FINITE-radius Newton system, restored to this row
+    # once R2-V1-04 removed the grad-branch divergence (module docstring).
+    optic = trace_fixtures.aspheric_singlet()
     v = Variable(optic, "asphere_coeff", surface_number=1, coeff_number=0)
     base = float(v.value)
     span = abs(base) * 0.05 if base else 1e-3
@@ -865,11 +868,27 @@ def test_tol_floor_scale_is_refused(mps_backend):
 # ---------------------------------------------------------------------------
 # Late fallback and the trailing propagation
 # ---------------------------------------------------------------------------
+#: The crossover systems the late-fallback test runs on.  ``long_path`` is the
+#: WP5 fixture that carries plan 7.2's ``ST_TOL_CROSSOVER`` row; ``inexact``
+#: is the same geometry with an actually curved Newton surface and a conic set
+#: through ``optic.updater.set_conic``.  Round 2 found that on ``long_path``
+#: alone the re-trace path is UNOBSERVABLE -- conic 0.0 is float32-exact and
+#: ``r2/R**2`` is ~6e-4, the same double insensitivity that hid R2-V1-03 -- so
+#: this test passed for a whole iteration while the re-trace trace a different
+#: system (finding R2-V1-05).  Both rows run: the first keeps the status-bit
+#: coverage, the second is the one with teeth.
+LATE_FALLBACK_CASES = {
+    "long_path": trace_fixtures.long_path_batch_values,
+    "inexact_conic": trace_fixtures.long_path_inexact_batch_values,
+}
+
+
+@pytest.mark.parametrize("case", sorted(LATE_FALLBACK_CASES))
 @pytest.mark.parametrize("mode", MODES)
-def test_batch_late_fallback_per_design(mps_backend, monkeypatch, mode):
+def test_batch_late_fallback_per_design(mps_backend, monkeypatch, mode, case):
     """One design crosses the Newton tolerance crossover; only it falls back."""
     use_mode(mode)
-    optic, variables, values = trace_fixtures.long_path_batch_values()
+    optic, variables, values = LATE_FALLBACK_CASES[case]()
     assert values.shape == (4, 1)
     kwargs = {"wavelength": 0.5876, "record": "all"}
 
@@ -884,10 +903,11 @@ def test_batch_late_fallback_per_design(mps_backend, monkeypatch, mode):
 
     # The plan's two comparisons (WP7): the fallen-back design against a
     # standalone per-op trace, the others against single-design fused traces.
-    # The whole-batch tier-A comparison is deliberately NOT made here: this
-    # fixture is a finite-radius Newton system, where the kernel currently
-    # disagrees with the per-op path in the low word (module docstring).
+    # Since R2-V1-04 put both legs of `trace_batch` under `torch.no_grad()` the
+    # whole-batch comparison holds on a finite-radius Newton system too, so it
+    # is made as well -- it is the comparison R2-V1-05 was found through.
     loop = contract_loop(optic, variables, values, monkeypatch, **kwargs)
+    assert_rows_equal(fused, loop)
     for b, fell_back in enumerate(expected):
         if fell_back:
             reference = loop
@@ -1135,6 +1155,20 @@ TOL_R1, TOL_R5 = 22.01359, 79.68360
 #: 8, so the chunk loop of ``monte_carlo_batched`` really runs twice.
 TOL_ITERATIONS, TOL_CHUNK = 16, 8
 
+#: ``(hexapolar rings, ray count, tier)`` the two acceptance tests sample at.
+#:
+#: Finding R2-V1-10: both tests used to run at 19 rings only -- the one side of
+#: ``materials/base.py``'s ``_MAX_VALUE_KEY_ARRAY_SIZE = 1024`` where the
+#: batched frame really does equal the sequential frame cell for cell -- while
+#: the helpers promised that equality unconditionally and the batch gate
+#: happily fuses a 469-ray bundle (design 6.3 skips the bundle checks).  The
+#: 12-ring leg is the range the helpers can only serve at plan 7.1's tier B;
+#: it asserts the tier-B rule, and the 19-ring leg still asserts exact
+#: equality, so nothing here is a widened tolerance (plan 0.2.2).  The
+#: mechanism and its controls are pinned by
+#: ``test_trace_adversarial_round2.py::test_r2v110_locked``.
+TOL_BUNDLES = ((19, 1141, "A"), (12, 469, "B"))
+
 
 def _rms_operand_data(optic, **overrides):
     """``rms_spot_size`` input data at this file's launch settings."""
@@ -1151,7 +1185,7 @@ def _rms_operand_data(optic, **overrides):
     return data
 
 
-def build_tolerancing(*, extra_operand=None, compensator=False, seed=7):
+def build_tolerancing(*, extra_operand=None, compensator=False, seed=7, rings=RINGS):
     """A CookeTriplet with two seeded radius perturbations and one operand.
 
     A fresh ``Optic`` and fresh samplers every call, so the batched run and the
@@ -1170,7 +1204,9 @@ def build_tolerancing(*, extra_operand=None, compensator=False, seed=7):
     be.grad_mode.disable()
     optic = trace_fixtures.cooke()
     tolerancing = Tolerancing(optic)
-    tolerancing.add_operand("rms_spot_size", input_data=_rms_operand_data(optic))
+    tolerancing.add_operand(
+        "rms_spot_size", input_data=_rms_operand_data(optic, num_rays=rings)
+    )
     if extra_operand is not None:
         kind, data = extra_operand
         tolerancing.add_operand(kind, input_data=dict(data, optic=optic))
@@ -1223,6 +1259,59 @@ def sequential_monte_carlo(tolerancing, iterations, monkeypatch, *, grad_off=Tru
         monkeypatch.delenv("OPTILAND_METAL_FUSED_TRACE", raising=False)
 
 
+def operand_columns(frame):
+    """The operand columns of a tolerancing frame (``"<i>: <name>"``).
+
+    Named by shape rather than by position so the perturbation columns -- which
+    are the samplers' own draws and are exact at every bundle size -- can never
+    be swept into a tier-B comparison by accident.
+    """
+    return [
+        column
+        for column in frame.columns
+        if ":" in str(column) and str(column).split(":", 1)[0].strip().isdigit()
+    ]
+
+
+def assert_frames_tier_b(got, want, *, mode, tier):
+    """Plan 7.1's rule for this frame's tier; never a widened tolerance.
+
+    ``tier == "A"`` is exact equality, cell for cell -- the same assertion
+    :func:`assert_frames_identical` makes, and the one every bundle above
+    ``TIER_A_MIN_RAYS`` must satisfy.  ``tier == "B"`` keeps that rule for
+    every perturbation column (they are draws, not traced quantities) and
+    applies ``|delta| <= 64 * eps_mode * scale`` to the operand columns, with
+    ``scale = max(max|reference value|, 1)``.  That bound is derived from
+    ``MACHINE_EPS`` and the operand's own scale (plan 0.2.6), and it is the one
+    the verifier's certificate used: 2.3e-13 in df64, against a measured worst
+    case of 6.5e-16.
+    """
+    from optiland.backend.torch_backend.metal.tensor import MACHINE_EPS
+
+    if tier == "A":
+        assert_frames_identical(got, want)
+        return
+    operands = operand_columns(want)
+    assert len(operands) == 1, f"expected one operand column, got {operands}"
+    assert_frames_identical(
+        got[[c for c in want.columns if c not in operands]],
+        want[[c for c in want.columns if c not in operands]],
+    )
+    eps = float(MACHINE_EPS[mode])
+    for column in operands:
+        a = np.asarray([float(v) for v in got[column]], dtype=np.float64)
+        b = np.asarray([float(v) for v in want[column]], dtype=np.float64)
+        assert np.array_equal(np.isnan(a), np.isnan(b)), column
+        finite = np.isfinite(a) & np.isfinite(b)
+        bound = 64.0 * eps * max(float(np.max(np.abs(b[finite]))), 1.0)
+        delta = np.abs(a[finite] - b[finite])
+        worst = float(delta.max()) if delta.size else 0.0
+        assert worst <= bound, (
+            f"column {column!r}: max |delta| {worst:.3e} > {bound:.3e} "
+            f"(= 64 * eps[{mode}] * scale) -- tier B is a BOUND, not a licence"
+        )
+
+
 def assert_frames_identical(got, want):
     """Same columns, same order, same float64 cells (NaN == NaN)."""
     assert list(got.columns) == list(want.columns), (
@@ -1239,18 +1328,35 @@ def assert_frames_identical(got, want):
         )
 
 
+@pytest.mark.parametrize(("rings", "n_rays", "tier"), TOL_BUNDLES)
 @pytest.mark.parametrize("mode", MODES)
-def test_monte_carlo_batched_matches_loop(mps_backend, monkeypatch, mode):
-    """The batched frame equals ``MonteCarlo.run`` on mps per-op, cell for cell.
+def test_monte_carlo_batched_matches_loop(
+    mps_backend, monkeypatch, mode, rings, n_rays, tier
+):
+    """The batched frame equals ``MonteCarlo.run`` on mps per-op, to its tier.
 
     Both frames are produced from the same seeds, so the perturbation columns
     are the same draws and the operand column is the same ``be.*`` expression
-    on tier-A-identical records (plan 3.9).
+    on the same records (plan 3.9).  How equal those records are is plan 7.1's
+    two-tier rule and it depends on the operand's bundle:
+
+    * 19 rings (N = 1,141, above ``TIER_A_MIN_RAYS``) -- **cell for cell**,
+      exactly as before;
+    * 12 rings (N = 469) -- tier B, ``|delta| <= 64 * eps * scale``, because
+      the per-op path evaluates a dispersive index on the whole ``w`` array
+      below ``materials/base.py``'s ``_MAX_VALUE_KEY_ARRAY_SIZE`` and on one
+      uniform representative above it (plan 7.1 site 1, finding R2-V1-10).
+      This leg is the one the suite was blind to; the mechanism, with its
+      ``IdealMaterial`` and N = 1,141 controls, is pinned by
+      ``test_trace_adversarial_round2.py::test_r2v110_locked``.
+
+    The frame says which rule applies, so a caller does not have to work it
+    out: ``attrs["tier"]`` and ``attrs["num_rays"]``.
     """
     use_mode(mode)
     from optiland.tolerancing import batched as TB
 
-    problem = build_tolerancing()
+    problem = build_tolerancing(rings=rings)
     # The Tolerancing constructor turned autograd on (problem.py:63-66).
     assert be.grad_mode.requires_grad is True
     got = TB.monte_carlo_batched(problem, TOL_ITERATIONS, chunk=TOL_CHUNK)
@@ -1259,21 +1365,31 @@ def test_monte_carlo_batched_matches_loop(mps_backend, monkeypatch, mode):
         "monte_carlo_batched fell back to the contract loop, so this would "
         f"compare the per-op path with itself; reason: {got.attrs['reason']}"
     )
+    assert got.attrs["num_rays"] == n_rays, got.attrs
+    assert got.attrs["tier"] == tier, got.attrs
     # ``_forward_only`` traced without it and put the caller's setting back.
     assert be.grad_mode.requires_grad is True
     assert len(got) == TOL_ITERATIONS
 
-    want = sequential_monte_carlo(build_tolerancing(), TOL_ITERATIONS, monkeypatch)
-    assert_frames_identical(got, want)
+    want = sequential_monte_carlo(
+        build_tolerancing(rings=rings), TOL_ITERATIONS, monkeypatch
+    )
+    assert_frames_tier_b(got, want, mode=mode, tier=tier)
 
 
+@pytest.mark.parametrize(("rings", "n_rays", "tier"), TOL_BUNDLES)
 @pytest.mark.parametrize("mode", MODES)
-def test_sensitivity_batched_matches_loop(mps_backend, monkeypatch, mode):
-    """``sensitivity_batched`` equals ``SensitivityAnalysis.run``, cell for cell.
+def test_sensitivity_batched_matches_loop(
+    mps_backend, monkeypatch, mode, rings, n_rays, tier
+):
+    """``sensitivity_batched`` equals ``SensitivityAnalysis.run``, to its tier.
 
     The sweep is one design per (perturbation, sample) pair with every other
     perturbed variable nominal, which is what ``reset()`` + a single
-    ``apply()`` leaves the system as.
+    ``apply()`` leaves the system as.  Sampled at both sides of tier-B site 1
+    for the reason in :func:`test_monte_carlo_batched_matches_loop`'s docstring
+    (finding R2-V1-10): 19 rings is exact, 12 rings holds to
+    ``64 * eps * scale`` and differed on 2 of 3 rows when it was measured.
     """
     use_mode(mode)
     from optiland.tolerancing import batched as TB
@@ -1285,7 +1401,9 @@ def test_sensitivity_batched_matches_loop(mps_backend, monkeypatch, mode):
         be.grad_mode.disable()  # see build_tolerancing's docstring
         optic = trace_fixtures.cooke()
         tolerancing = Tolerancing(optic)
-        tolerancing.add_operand("rms_spot_size", input_data=_rms_operand_data(optic))
+        tolerancing.add_operand(
+            "rms_spot_size", input_data=_rms_operand_data(optic, num_rays=rings)
+        )
         tolerancing.add_perturbation(
             "radius", RangeSampler(TOL_R1 - 0.1, TOL_R1 + 0.1, 3), surface_number=1
         )
@@ -1297,6 +1415,8 @@ def test_sensitivity_batched_matches_loop(mps_backend, monkeypatch, mode):
     got = TB.sensitivity_batched(build(), chunk=4)
     assert got.attrs["batched"] is True
     assert got.attrs["fused"] is True
+    assert got.attrs["num_rays"] == n_rays, got.attrs
+    assert got.attrs["tier"] == tier, got.attrs
     assert len(got) == 6
 
     monkeypatch.setenv("OPTILAND_METAL_FUSED_TRACE", "0")
@@ -1310,9 +1430,11 @@ def test_sensitivity_batched_matches_loop(mps_backend, monkeypatch, mode):
         monkeypatch.delenv("OPTILAND_METAL_FUSED_TRACE", raising=False)
 
     assert list(got["perturbation_type"]) == list(want["perturbation_type"])
-    assert_frames_identical(
+    assert_frames_tier_b(
         got[got.columns[1:]],
         want[want.columns[1:]],
+        mode=mode,
+        tier=tier,
     )
 
 

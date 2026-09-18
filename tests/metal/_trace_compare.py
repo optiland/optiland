@@ -12,9 +12,12 @@ those words; only the external (NumPy) rule decodes.
 **Tier rules (plan 7.1).**
 
 * :func:`assert_tier_a` -- ``np.array_equal(..., equal_nan=True)`` on every raw
-  component of every plane of every row.  No tolerance exists on this path: a
-  single differing word is a mirror bug.  Valid only for ``N > 1024`` in df64,
-  which :func:`assert_tier_a` enforces itself (below
+  component of every plane of every row, plus the sign of every zero word
+  (round-1 finding R1-V2-01: ``np.array_equal`` compares with ``==``, under
+  which ``-0.0 == 0.0``, so on the df64 float32 words it would accept a
+  sign-of-zero divergence that sf64's int64 patterns reject).  No tolerance
+  exists on this path: a single differing word is a mirror bug.  Valid only
+  for ``N > 1024`` in df64, which :func:`assert_tier_a` enforces itself (below
   ``BaseMaterial._MAX_VALUE_KEY_ARRAY_SIZE`` the per-op path evaluates the
   dispersion on the whole wavelength array instead of the one-element view the
   kernel's ``w0`` mirrors, so the two paths legitimately use different indices
@@ -47,6 +50,41 @@ the first row would under-count every miss fixture by ``S - s`` per ray.
 :func:`predict_status` therefore predicts the per-row bit the kernel defines,
 and :func:`first_event_rows` exposes the sketch's first-occurrence view for
 tests that want it.
+
+**Where the oracle cannot decide (round-1 finding R1-V2-03).**  The oracle
+computes in NumPy float64.  ``sf64`` *is* binary64 with correctly rounded ops,
+so the two agree bit for bit; ``df64`` carries ~48 bits, so a branch whose
+condition sits inside df64's round-off is decided by arithmetic the oracle does
+not have.  Two such bands exist, and both are excluded from the exact count
+rather than absorbed by a tolerance:
+
+* ``ST_CLIPPED`` inside an aperture rim band -- :attr:`StatusPrediction.
+  clip_uncertain`, the band plan 7.1 already names, with the absolute floor of
+  finding R1-V1-06 so that it does not VANISH at an edge of zero, where
+  ``contains`` is true only at the exact pole and the decision is therefore
+  the arithmetic's (:func:`rim_floor`);
+* ``ST_TIR`` inside the band where ``1 - u2 * (1 - dot * dot)`` -- the
+  refraction radicand whose sign IS the TIR decision -- is within
+  :data:`TIR_EPS_MULTIPLIER` ``* (MACHINE_EPS[mode] - MACHINE_EPS['sf64']) *
+  (1 + u2)`` of zero: :attr:`StatusPrediction.tir_uncertain`, which is
+  identically False in sf64 because that width is zero there;
+* the Newton loop's own verdict -- ``iters``, ``ST_NEWTON_NOT_CONVERGED``,
+  ``ST_DF_FLOORED`` and ``ST_NZ_FLOORED`` -- where the convergence test
+  ``|F| < tol`` sits inside :func:`newton_band` or an iterate leaves float32's
+  range and is an infinity on the device but a number here:
+  :attr:`StatusPrediction.newton_uncertain` (round-1 finding R1-V1-07).  This
+  is the plan-7.1 rule modelled rather than re-run: the sketch asks for an
+  instrumented per-op re-run in the mode's own arithmetic, and until that
+  exists the loop is predicted in float64 and the rays it cannot decide are
+  named.
+
+:func:`mask_uncertain` applies all three to the status planes and
+:func:`mask_iters` the last one to the ``iters`` planes, to the prediction and
+to the measurement alike, and to nothing else.  A constant the kernel compares
+against is NOT such a band: ``N_FLOOR`` is rounded to the mode's own
+representation before the comparison (:func:`mode_scalar`), because the kernel
+compares a df64 ``|N|`` against the df64 encoding of ``1e-14``, not against the
+float64 literal.
 """
 
 from __future__ import annotations
@@ -66,11 +104,16 @@ from optiland.backend.torch_backend.metal.tensor import MACHINE_EPS
 __all__ = [
     "BIT_NAMES",
     "Capture",
+    "DF64_HI_MAX",
     "EXTERNAL_COS_FACTOR",
     "EXTERNAL_POS_ABS",
     "MODES",
+    "NEWTON_EPS_MULTIPLIER",
+    "NEWTON_MASKED_BITS",
+    "RIM_EPS_MULTIPLIER",
     "RIM_RTOL",
     "StatusPrediction",
+    "TIR_EPS_MULTIPLIER",
     "TIER_A_MIN_RAYS",
     "TIER_B_MAX_RAYS",
     "TIER_B_MIN_RAYS",
@@ -85,9 +128,16 @@ __all__ = [
     "decode",
     "decoded_rows",
     "first_event_rows",
+    "mask_iters",
+    "mask_uncertain",
+    "mode_hi_max",
+    "mode_scalar",
+    "mode_slack",
+    "newton_band",
     "predict_status",
     "raw",
     "rim_band_mask",
+    "rim_floor",
     "system_scale",
 ]
 
@@ -154,6 +204,131 @@ N_FLOOR = 1e-14
 #: import the module it predicts.
 DENOM_EPS_MULTIPLIER = 32.0
 CONV_EPS_MULTIPLIER = 8.0
+
+#: Rounding steps in the refraction radicand ``1 - u2 * (1 - dot * dot)``
+#: (``rays/real_rays.py::refract``): ``dot * dot``, ``1 -``, ``u2 *``, ``1 -``.
+#: Multiplied by the mode's excess round-off over the oracle's own float64 and
+#: by the magnitude of the terms, it is the half-width of the band in which the
+#: sign of the radicand -- and therefore the TIR decision -- is not decidable
+#: by a float64 oracle (round-1 finding R1-V2-03).
+TIR_EPS_MULTIPLIER = 4.0
+
+
+#: Rounding steps behind the rim band's absolute floor: the two products and
+#: two sums of the hit point ``x + t * L`` / ``y + t * M``, then ``dx * dx``,
+#: ``dy * dy``, their sum and the square root that forms the radius the band
+#: compares against the edge (round-1 finding R1-V1-06).
+RIM_EPS_MULTIPLIER = 8.0
+
+#: Excess-ULP of the TERM magnitude that the Newton residual may differ by
+#: between the mode and this float64 oracle (round-1 finding R1-V1-07).  The
+#: same 32 the mirrored Python uses for its own "inside round-off" floor
+#: (``newton_raphson._DENOM_EPS_MULTIPLIER``); :func:`newton_band` records what
+#: was measured and why 32 rather than 8.
+NEWTON_EPS_MULTIPLIER = 32.0
+
+#: The largest magnitude a df64 word can hold: ``hi`` is a float32, so an
+#: iterate above this is ``+-inf`` on the device and NaN one step later (the
+#: R1-V2-02 break), while a float64 oracle keeps stepping (R1-V1-07, seed 9).
+DF64_HI_MAX = float(np.finfo(np.float32).max)
+
+
+def mode_slack(mode: str) -> float:
+    """The mode's round-off in EXCESS of the oracle's own float64.
+
+    Exactly zero in sf64 -- ``MACHINE_EPS['sf64']`` is binary64's unit
+    round-off and its ops are correctly rounded, so the oracle and the device
+    evaluate every expression identically and no band may open there.
+    """
+    excess = MACHINE_EPS[mode] - MACHINE_EPS["sf64"]
+    return excess if excess > 0.0 else 0.0
+
+
+def mode_hi_max(mode: str) -> float:
+    """Largest magnitude ``mode`` can represent at all (``inf`` in sf64)."""
+    return DF64_HI_MAX if mode == "df64" else float(np.inf)
+
+
+def rim_floor(mode: str, scale: Any) -> Any:
+    """Absolute floor of the rim band, at the hit point's term magnitude.
+
+    The relative band ``rtol * |edge|`` vanishes at ``r_max = 0`` -- an
+    aperture whose ``contains`` is true only at the exact pole, so the
+    prediction turns on whether the hit point is EXACTLY zero, which is a
+    property of the arithmetic that formed it (round-1 finding R1-V1-06).  The
+    floor is the same shape as :func:`tir_band`: the mode's excess round-off
+    times the magnitude of the terms whose cancellation produced the hit
+    point.  Zero in sf64, so every sf64 count stays as strict as it was; a
+    non-finite scale (a ray at infinity, whose side of the edge IS decidable)
+    contributes no floor.
+    """
+    slack = mode_slack(mode)
+    scale = np.asarray(scale, dtype=np.float64)
+    if slack <= 0.0:
+        return np.zeros(scale.shape, dtype=np.float64)
+    return np.where(np.isfinite(scale), RIM_EPS_MULTIPLIER * slack * scale, 0.0)
+
+
+def newton_band(slack: float, scale: Any) -> Any:
+    """Half-width of the undecidable Newton convergence band.
+
+    ``conv = |F| < tol`` is the bit the oracle cannot decide when the mode and
+    this float64 oracle evaluate ``F`` differently by more than
+    ``||F| - tol|``.  What that difference is, measured rather than assumed
+    (finding R1-V1-07, fuzz seed 14, df64, ``slack`` = 3.55e-15): the four
+    disputed rays need 6.55, 6.89, 7.60 and 8.70 excess-ULP of
+    :func:`_newton_terms`' magnitude (~33 mm), i.e. up to 9.83e-13 mm of
+    residual.  Its mechanism is measured too, from the per-op path's OWN
+    recorded hit point: the df64 conic SEED lands 1.16e-12 mm from the float64
+    one at ``|t| = 6.8`` -- 48 ULP relative, not 1 -- because
+    ``sqrt(b*b - 4*a*c)`` is ill-conditioned on the near-tangent rays these
+    draws aim at, and the residual follows it through ``dF/dt``.  That
+    amplification is a property of the root, not of the term magnitude, so no
+    multiplier of a term magnitude bounds it in general; 32 carries 3.7x over
+    every measured case and is still 3.7e-12 mm wide -- 0.4 femtometres of
+    sag, four orders below the 1e-10 mm default Newton tolerance.  A ray
+    banded here keeps every bit decided OUTSIDE the loop (``MISS``,
+    ``CLIPPED``, ``TIR``, ``TOL_CROSSOVER``) under the exact count, and its
+    raw recorded words stay under tier A, which compares all of them.
+    Identically zero in sf64.
+    """
+    scale = np.asarray(scale, dtype=np.float64)
+    if slack <= 0.0:
+        return np.zeros(scale.shape, dtype=np.float64)
+    return np.where(np.isfinite(scale), NEWTON_EPS_MULTIPLIER * slack * scale, 0.0)
+
+
+def tir_band(mode: str, u2: float) -> float:
+    """Half-width of the undecidable TIR band for ``mode`` at ratio ``u2``.
+
+    Zero in sf64: ``MACHINE_EPS['sf64']`` is the oracle's own unit round-off,
+    so the two evaluate the radicand identically and every sf64 TIR bit stays
+    under the exact count.  In df64 it is ~1.4e-14 * (1 + u2) -- twelve orders
+    below the ~1 radicand of a ray that is not at the critical angle, so the
+    band excludes the knife edge and nothing else.
+    """
+    excess = MACHINE_EPS[mode] - MACHINE_EPS["sf64"]
+    if excess <= 0.0:
+        return 0.0
+    return TIR_EPS_MULTIPLIER * excess * (1.0 + abs(float(u2)))
+
+
+def mode_scalar(value: float, mode: str) -> float:
+    """``value`` as ``mode``'s own representation holds it.
+
+    The kernel compares device values against device constants: in df64
+    ``1e-14`` reaches the comparison as ``decode(encode(1e-14))``, which is not
+    the float64 literal.  An oracle that compared the decoded row against the
+    literal would mispredict every ray sitting exactly on the constant (410 of
+    4096 measured on the grazing slab of finding R1-V2-03).  sf64 stores the
+    binary64 pattern, so the round trip is the identity.
+    """
+    if mode != "df64":
+        return float(value)
+    from optiland.backend.torch_backend.metal import encode
+
+    hi, lo = encode.encode_df64(np.asarray(float(value), dtype=np.float64))
+    return float(np.ravel(encode.decode_df64(hi, lo))[0])
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +437,46 @@ def decoded_rows(group: Any) -> list[dict[str, np.ndarray]]:
 # ---------------------------------------------------------------------------
 
 
+def _assert_zero_signs_equal(g: np.ndarray, r: np.ndarray, what: str, c: int) -> None:
+    """The sign of a zero is part of the raw word (round-1 finding R1-V2-01).
+
+    ``np.array_equal`` compares with ``==`` and ``-0.0 == 0.0``, so on the
+    df64 float32 ``hi``/``lo`` words it accepts a ``-0.0`` word against a
+    ``+0.0`` one; sf64 stores int64 bit patterns (``0`` vs
+    ``-9223372036854775808``) and rejects the same pair.  Without this check
+    the two modes do not have the same acceptance criterion, and plan 7.1's
+    "raw-component equality -- hi/lo words, or int64 bit patterns" is not what
+    df64 measures.  The sign of a zero is load-bearing in the mirrored code:
+    ``backend/_conic.py``'s ``copysign(sqrt_d, b)`` decides which quadratic
+    root becomes ``t1``, ``Plane.distance``'s ``-z / N`` returns ``+inf`` or
+    ``-inf`` by it, and ``_sign_preserving_floor`` branches on ``nz >= 0``,
+    which is True for ``-0.0``.
+
+    Only the entries that ARE zero are compared, so the NaN-payload freedom
+    plan 7.1 grants through ``equal_nan=True`` is untouched, and integer
+    components (sf64) are left alone -- their equality is already exact.
+    """
+    if g.dtype.kind != "f":
+        return
+    zeros = g == 0.0
+    if not zeros.any():
+        return
+    # ``g == r`` held entrywise, so ``r`` is zero wherever ``g`` is.
+    g_neg = np.signbit(g[zeros])
+    r_neg = np.signbit(r[zeros])
+    if np.array_equal(g_neg, r_neg):
+        return
+    flat = np.flatnonzero(zeros.reshape(-1))
+    bad = flat[np.flatnonzero(g_neg != r_neg)]
+    raise AssertionError(
+        f"{what}: component {c} differs in the SIGN OF A ZERO on "
+        f"{bad.size}/{g.size} entries; first indices {bad[:8].tolist()}; "
+        f"got {[float(v) for v in g.reshape(-1)[bad[:4]]]} "
+        f"vs {[float(v) for v in r.reshape(-1)[bad[:4]]]} "
+        "(-0.0 and +0.0 are different raw words; plan 7.1 tier A)"
+    )
+
+
 def assert_raw_equal(
     got: Sequence[np.ndarray], ref: Sequence[np.ndarray], what: str
 ) -> None:
@@ -270,6 +485,7 @@ def assert_raw_equal(
     for c, (g, r) in enumerate(zip(got, ref, strict=True)):
         assert g.shape == r.shape, f"{what}: component {c} {g.shape} vs {r.shape}"
         if np.array_equal(g, r, equal_nan=True):
+            _assert_zero_signs_equal(g, r, what, c)
             continue
         same = (np.isnan(g) & np.isnan(r)) | (g == r)
         bad = np.flatnonzero(~same.reshape(-1))
@@ -382,27 +598,49 @@ def assert_tier_b(
 
 
 def rim_band_mask(
-    aperture: Any, x: np.ndarray, y: np.ndarray, *, rtol: float = RIM_RTOL
+    aperture: Any,
+    x: np.ndarray,
+    y: np.ndarray,
+    *,
+    rtol: float = RIM_RTOL,
+    floor: Any = 0.0,
 ) -> np.ndarray:
-    """Rays within ``rtol`` of a finite aperture edge (plan 7.1).
+    """Rays within ``rtol * |edge| + floor`` of a finite aperture edge.
 
     The only place the external rule allows an intensity-mask difference: a
-    ray whose distance to the nearest *finite* edge is ``<= rtol * edge`` may
+    ray whose distance to the nearest *finite* edge is inside the band may
     land on either side of the inclusive bound after two independently rounded
     traces.  Infinite edges are skipped, so an annulus with ``r_max = inf``
     contributes only its ``r_min`` band.
+
+    ``floor`` is the absolute half-width of round-1 finding R1-V1-06
+    (:func:`rim_floor`): a relative band vanishes at an edge of ZERO, where
+    ``contains`` is true only at the exact pole and the decision is therefore
+    the arithmetic's, not the ray's.  An edge whose total width is 0 -- every
+    edge in sf64, where the floor is zero, and a zero edge with no floor -- is
+    skipped exactly as it was before the floor existed, so no sf64 count and
+    no non-zero-edge df64 count changes shape.
     """
     band = np.zeros(np.broadcast(x, y).shape, dtype=bool)
     if aperture is None:
         return band
+    floor = np.asarray(floor, dtype=np.float64)
+
+    def _mark(value: np.ndarray, edge: float, relative: float) -> None:
+        if not np.isfinite(edge):
+            return
+        width = rtol * abs(edge) + floor * relative
+        if not np.any(width > 0.0):
+            return
+        band[...] |= np.abs(value - edge) <= width
+
     name = type(aperture).__name__
     if name in ("RadialAperture", "OffsetRadialAperture"):
         dx = x - float(getattr(aperture, "offset_x", 0.0) or 0.0)
         dy = y - float(getattr(aperture, "offset_y", 0.0) or 0.0)
         r = np.sqrt(dx * dx + dy * dy)
         for edge in (float(aperture.r_max), float(aperture.r_min)):
-            if np.isfinite(edge) and edge != 0.0:
-                band |= np.abs(r - edge) <= rtol * abs(edge)
+            _mark(r, edge, 1.0)
     elif name == "RectangularAperture":
         for value, edge in (
             (x, float(aperture.x_min)),
@@ -410,8 +648,7 @@ def rim_band_mask(
             (y, float(aperture.y_min)),
             (y, float(aperture.y_max)),
         ):
-            if np.isfinite(edge) and edge != 0.0:
-                band |= np.abs(value - edge) <= rtol * abs(edge)
+            _mark(value, edge, 1.0)
     elif name == "EllipticalAperture":
         a = float(aperture.a)
         b = float(aperture.b)
@@ -419,7 +656,9 @@ def rim_band_mask(
         dy = y - float(getattr(aperture, "offset_y", 0.0) or 0.0)
         if np.isfinite(a) and np.isfinite(b) and a != 0.0 and b != 0.0:
             rho = np.sqrt((dx / a) ** 2 + (dy / b) ** 2)
-            band |= np.abs(rho - 1.0) <= rtol
+            # the normalised radius is dimensionless: scale the floor by the
+            # same 1 / min(a, b) the normalisation applies to the hit point.
+            _mark(rho, 1.0, 1.0 / min(abs(a), abs(b)))
     return band
 
 
@@ -485,12 +724,25 @@ class StatusPrediction:
         clip_uncertain: ``bool[S][N]`` -- rays inside an aperture rim band,
             whose ``ST_CLIPPED`` bit the float64 oracle cannot decide (plan
             7.1); excluded from the exact ``clipped`` count.
-        counts: bit name -> number of ``(s, i)`` entries carrying it.
+        tir_uncertain: ``bool[S][N]`` -- rays whose refraction radicand sits
+            inside :func:`tir_band`, so the float64 oracle cannot decide their
+            ``ST_TIR`` bit either (round-1 finding R1-V2-03); excluded from the
+            exact ``tir`` count.  Identically False in sf64.
+        newton_uncertain: ``bool[S][N]`` -- rays whose Newton loop the float64
+            oracle cannot decide, because the convergence test sits inside
+            :func:`newton_band` or an iterate leaves float32's range (round-1
+            finding R1-V1-07); excluded from the exact ``iters``,
+            ``NEWTON_NOT_CONVERGED``, ``DF_FLOORED`` and ``NZ_FLOORED``
+            comparison at those entries.  Identically False in sf64.
+        counts: bit name -> number of ``(s, i)`` entries carrying it.  Counted
+            on ``bits`` as predicted, before any exclusion.
     """
 
     bits: np.ndarray
     iters: np.ndarray
     clip_uncertain: np.ndarray
+    tir_uncertain: np.ndarray
+    newton_uncertain: np.ndarray
     counts: dict[str, int] = field(default_factory=dict)
 
 
@@ -736,25 +988,103 @@ def _select_distance(x, y, z, ell, m, n, p, eps, flags, apcode):
     return np.where(solvable, np.where(pick2, t2, t1), np.nan)
 
 
-def _std_inf_distance(z, n, bits):
-    """``standard.py:88-90``: a POSITIVE floor for both signs of ``N``."""
+def _std_inf_distance(z, n, bits, nfloor):
+    """``standard.py:88-90``: a POSITIVE floor for both signs of ``N``.
+
+    ``nfloor`` is ``N_FLOOR`` in the mode's own representation
+    (:func:`mode_scalar`), which is what the kernel compares against.
+    """
     with np.errstate(divide="ignore", invalid="ignore"):
-        ns = np.where(np.abs(n) > N_FLOOR, n, N_FLOOR)
+        ns = np.where(np.abs(n) > nfloor, n, nfloor)
         bits |= np.where(ns != n, L.ST_NZ_FLOORED, 0).astype(np.uint8)
         return -z / ns
 
 
+def _newton_terms(x, y, z, ell, m, n, t, sag):
+    """Magnitude of the TERMS that form the Newton residual, per ray.
+
+    ``F = sag(x + tL, y + tM) - (z + tN)`` is a difference of two nearly equal
+    quantities on a converging ray, so its round-off is the size of the terms
+    that produced it -- ``|x| + |t L|`` and friends -- not the size of ``F``.
+    This is the scale :func:`newton_band` multiplies.
+    """
+    with np.errstate(invalid="ignore", over="ignore"):
+        return (
+            (np.abs(x) + np.abs(t * ell))
+            + (np.abs(y) + np.abs(t * m))
+            + (np.abs(z) + np.abs(t * n))
+            + np.abs(sag)
+        )
+
+
+def _mark_newton_uncertain(
+    uncertain, active, f_t, tol, terms, slack, hi_max, t, sag
+) -> None:
+    """Mark the rays whose Newton branch this float64 oracle cannot decide.
+
+    Two mechanisms, both measured in round-1 finding R1-V1-07 and both
+    identically empty in sf64 (``slack == 0``, ``hi_max == inf``):
+
+    1. the convergence test ``|F| < tol`` sits inside :func:`newton_band`, so
+       the mode's own arithmetic may put it on the other side;
+    2. an iterate leaves float32's range, where the device's df64 word is
+       ``+-inf`` and NaN one step later while the oracle keeps stepping.
+    """
+    if uncertain is None:
+        return
+    with np.errstate(invalid="ignore", over="ignore"):
+        if slack > 0.0:
+            band = newton_band(slack, terms)
+            close = np.isfinite(f_t) & (np.abs(np.abs(f_t) - tol) <= band)
+            uncertain |= close if active is None else (active & close)
+        if np.isfinite(hi_max):
+            # Only values the oracle holds FINITELY and the mode cannot: an
+            # infinity is an infinity in both, and the R1-V2-02 break already
+            # makes the two agree on it.
+            over = np.zeros(np.shape(uncertain), dtype=bool)
+            for value in (t, sag, f_t, terms):
+                over |= np.isfinite(value) & (np.abs(value) > hi_max)
+            uncertain |= over if active is None else (active & over)
+
+
 def _newton_distance(
-    x, y, z, ell, m, n, p, coef, geom, ncoef, max_iter, flags, apcode, eps, bits, iters
+    x,
+    y,
+    z,
+    ell,
+    m,
+    n,
+    p,
+    coef,
+    geom,
+    ncoef,
+    max_iter,
+    flags,
+    apcode,
+    eps,
+    nfloor,
+    bits,
+    iters,
+    slack=0.0,
+    hi_max=np.inf,
+    uncertain=None,
 ):
     """``_solve_distance_primal`` (newton_raphson.py:317-375), per ray.
 
     The batch ``if be.all(converged): break`` plus the ``be.where(converged, 0,
     step)`` freeze is, per ray, "stop as soon as I converge", so ``iters`` is
-    the ray's own count (design 4.12).  A non-finite ``t`` stops the ray too.
+    the ray's own count (design 4.12).  A NaN ``t`` stops the ray too -- but an
+    INFINITE one does not: Python steps it once more, ``inf - inf`` makes the
+    residual NaN and the final ``t`` NaN with it (round-1 finding R1-V2-02,
+    mirrored in ``trace.metal::newton_distance``).
+
+    ``uncertain`` collects the rays whose loop a float64 oracle cannot decide
+    about a df64 trace (round-1 finding R1-V1-07); see
+    :func:`_mark_newton_uncertain`.  It is filled at the seed and after every
+    step, and it is empty in sf64 by construction.
     """
     if flags & L.FL_RADIUS_INF:
-        t = _std_inf_distance(z, n, bits)
+        t = _std_inf_distance(z, n, bits, nfloor)
     else:
         t = _select_distance(x, y, z, ell, m, n, p, eps, flags, apcode)
 
@@ -766,10 +1096,22 @@ def _newton_distance(
     tol = np.where(crossed, floor_tol, p[L.SR_TOL])
 
     with np.errstate(invalid="ignore"):
-        f_t = _sag_of(geom, x + t * ell, y + t * m, p, coef, ncoef) - (z + t * n)
+        sag = _sag_of(geom, x + t * ell, y + t * m, p, coef, ncoef)
+        f_t = sag - (z + t * n)
         conv = np.abs(f_t) < tol
+    _mark_newton_uncertain(
+        uncertain,
+        None,
+        f_t,
+        tol,
+        _newton_terms(x, y, z, ell, m, n, t, sag),
+        slack,
+        hi_max,
+        t,
+        sag,
+    )
     tau = DENOM_EPS_MULTIPLIER * eps
-    active = ~conv & np.isfinite(t)
+    active = ~conv & ~np.isnan(t)
     for _ in range(max_iter):
         if not active.any():
             break
@@ -790,11 +1132,25 @@ def _newton_distance(
             safe = np.where(near, np.where(df >= 0.0, tau_s, -tau_s), df)
             step = f_t / safe
             t = np.where(active, t - step, t)
-            new_f = _sag_of(geom, x + t * ell, y + t * m, p, coef, ncoef) - (z + t * n)
+            new_sag = _sag_of(geom, x + t * ell, y + t * m, p, coef, ncoef)
+            new_f = new_sag - (z + t * n)
             f_t = np.where(active, new_f, f_t)
             conv = np.abs(f_t) < tol
+        _mark_newton_uncertain(
+            uncertain,
+            active,
+            f_t,
+            tol,
+            _newton_terms(x, y, z, ell, m, n, t, new_sag),
+            slack,
+            hi_max,
+            t,
+            new_sag,
+        )
         iters += active.astype(np.uint8)
-        active = active & ~conv & np.isfinite(t)
+        active = active & ~conv & ~np.isnan(t)
+    # The ``isfinite`` guard mirrors ``trace.metal``'s: a ray with no root has
+    # nothing to report as unconverged and already raises ST_MISS below.
     with np.errstate(invalid="ignore"):
         bits |= np.where(~conv & np.isfinite(t), L.ST_NEWTON_NOT_CONVERGED, 0).astype(
             np.uint8
@@ -803,7 +1159,21 @@ def _newton_distance(
 
 
 def _surface_distance(
-    geom, r, p, coef, ncoef, max_iter, flags, apcode, eps, bits, iters
+    geom,
+    r,
+    p,
+    coef,
+    ncoef,
+    max_iter,
+    flags,
+    apcode,
+    eps,
+    nfloor,
+    bits,
+    iters,
+    slack=0.0,
+    hi_max=np.inf,
+    uncertain=None,
 ):
     """The ``SI_GEOM`` switch of design 4.6, then the ``MISS`` bit."""
     x, y, z = r["x"], r["y"], r["z"]
@@ -812,7 +1182,7 @@ def _surface_distance(
         with np.errstate(divide="ignore", invalid="ignore"):
             t = -z / n
     elif geom == L.GEOM_STD_INF:
-        t = _std_inf_distance(z, n, bits)
+        t = _std_inf_distance(z, n, bits, nfloor)
     elif geom == L.GEOM_CONIC:
         t = _select_distance(x, y, z, ell, m, n, p, eps, flags, apcode)
     else:
@@ -831,21 +1201,36 @@ def _surface_distance(
             flags,
             apcode,
             eps,
+            nfloor,
             bits,
             iters,
+            slack,
+            hi_max,
+            uncertain,
         )
     bits |= np.where(np.isnan(t), L.ST_MISS, 0).astype(np.uint8)
     return t
 
 
-def _interact_bits(ell0, m0, n0, nx, ny, nz, reflective, u2, bits):
-    """The TIR bit of ``interact`` (design 4.8): a NaN radicand at finite dot."""
+def _interact_bits(ell0, m0, n0, nx, ny, nz, reflective, u2, bits, uncertain, band):
+    """The TIR bit of ``interact`` (design 4.8): a NaN radicand at finite dot.
+
+    ``band`` is the half-width inside which the sign of the radicand -- which
+    IS the TIR decision -- is not decidable by this float64 oracle; those rays
+    are marked in ``uncertain`` and excluded from the exact count by
+    :func:`mask_uncertain` (round-1 finding R1-V2-03).  At the critical angle
+    the radicand is zero in exact arithmetic, so its sign is decided by
+    round-off: df64 at 2**-48, the oracle at 2**-53.
+    """
     if reflective:
         return
     with np.errstate(invalid="ignore"):
         dot = np.abs((ell0 * nx + m0 * ny) + n0 * nz)
-        root = np.sqrt(1.0 - u2 * (1.0 - dot * dot))
+        radicand = 1.0 - u2 * (1.0 - dot * dot)
+        root = np.sqrt(radicand)
         tir = np.isnan(root) & np.isfinite(dot)
+        if band > 0.0:
+            uncertain |= np.isfinite(radicand) & (np.abs(radicand) <= band)
     bits |= np.where(tir, L.ST_TIR, 0).astype(np.uint8)
 
 
@@ -889,9 +1274,14 @@ def predict_status(
     cf = np.asarray(records.coef)[design]
 
     eps = MACHINE_EPS[mode]
+    slack = mode_slack(mode)
+    hi_max = mode_hi_max(mode)
+    nfloor = mode_scalar(N_FLOOR, mode)
     bits = np.zeros((s_count, n), dtype=np.uint8)
     iters = np.zeros((s_count, n), dtype=np.uint8)
     uncertain = np.zeros((s_count, n), dtype=bool)
+    tir_uncertain = np.zeros((s_count, n), dtype=bool)
+    newton_uncertain = np.zeros((s_count, n), dtype=bool)
 
     for s in range(1, s_count):
         geom = int(si[s, L.SI_GEOM])
@@ -909,7 +1299,21 @@ def predict_status(
         row_bits = bits[s]
         row_iters = iters[s]
         t = _surface_distance(
-            geom, r, p, coef, ncoef, max_iter, flags, apcode, eps, row_bits, row_iters
+            geom,
+            r,
+            p,
+            coef,
+            ncoef,
+            max_iter,
+            flags,
+            apcode,
+            eps,
+            nfloor,
+            row_bits,
+            row_iters,
+            slack,
+            hi_max,
+            newton_uncertain[s],
         )
         with np.errstate(invalid="ignore"):
             hx = r["x"] + t * r["L"]
@@ -918,7 +1322,20 @@ def predict_status(
         if flags & L.FL_HAS_APERTURE:
             inside = _ap_contains(apcode, p, hx, hy)
             row_bits |= np.where(~inside, L.ST_CLIPPED, 0).astype(np.uint8)
-            uncertain[s] = rim_band_mask(surfaces[s].aperture, hx, hy, rtol=rim_rtol)
+            # The hit point is a cancellation of terms of the size below, so
+            # that -- not |hx| -- is the scale of the round-off the two
+            # representations do not share (finding R1-V1-06).
+            with np.errstate(invalid="ignore", over="ignore"):
+                hit_terms = (np.abs(r["x"]) + np.abs(t * r["L"])) + (
+                    np.abs(r["y"]) + np.abs(t * r["M"])
+                )
+            uncertain[s] = rim_band_mask(
+                surfaces[s].aperture,
+                hx,
+                hy,
+                rtol=rim_rtol,
+                floor=rim_floor(mode, hit_terms),
+            )
 
         nx, ny, nz = _normal_of(geom, hx, hy, p, coef, ncoef)
         _interact_bits(
@@ -931,14 +1348,53 @@ def predict_status(
             bool(flags & L.FL_REFLECTIVE),
             p[L.SR_U2],
             row_bits,
+            tir_uncertain[s],
+            tir_band(mode, p[L.SR_U2]),
         )
 
     return StatusPrediction(
         bits=bits,
         iters=iters,
         clip_uncertain=uncertain,
+        tir_uncertain=tir_uncertain,
+        newton_uncertain=newton_uncertain,
         counts=bit_counts(bits),
     )
+
+
+#: The bits a ``newton_uncertain`` entry cannot be held to: the loop's own
+#: verdict and the two floors it raises inside the loop.  ``ST_MISS``,
+#: ``ST_CLIPPED``, ``ST_TIR`` and ``ST_TOL_CROSSOVER`` are NOT here -- they are
+#: decided outside the loop and stay exact on every ray.
+NEWTON_MASKED_BITS = L.ST_NEWTON_NOT_CONVERGED | L.ST_DF_FLOORED | L.ST_NZ_FLOORED
+
+
+def mask_uncertain(plane: np.ndarray, prediction: StatusPrediction) -> np.ndarray:
+    """``plane`` with the undecidable bits cleared where they are undecided.
+
+    Applied to the kernel's ``status`` plane and to
+    ``prediction.bits`` alike, so the comparison stays exact on every other bit
+    and on every other ray (plan 7.1 "Exact counts per fixture").  All three
+    masks are empty in sf64 by construction, so nothing there is excluded.
+    """
+    out = np.asarray(plane, dtype=np.uint8).copy()
+    out[prediction.clip_uncertain] &= np.uint8(0xFF ^ L.ST_CLIPPED)
+    out[prediction.tir_uncertain] &= np.uint8(0xFF ^ L.ST_TIR)
+    out[prediction.newton_uncertain] &= np.uint8(0xFF ^ NEWTON_MASKED_BITS)
+    return out
+
+
+def mask_iters(plane: np.ndarray, prediction: StatusPrediction) -> np.ndarray:
+    """``plane`` with the undecidable Newton iteration counts zeroed.
+
+    The companion of :func:`mask_uncertain` for the ``iters`` plane: a ray
+    whose convergence test the oracle cannot decide has no predictable
+    iteration count either (round-1 finding R1-V1-07).  Applied to the kernel's
+    plane and to the prediction alike; empty in sf64.
+    """
+    out = np.asarray(plane, dtype=np.uint8).copy()
+    out[prediction.newton_uncertain] = 0
+    return out
 
 
 def compile_tables(optic: Any, mode: str, w0: float, *, record: bool = True) -> Any:

@@ -185,6 +185,8 @@ def register(adapter: GeometryAdapter | ApertureAdapter | InteractionAdapter) ->
 # Imported here rather than at the top so the module keeps its "no torch at
 # module scope" property for the NumPy path: ``optiland.backend`` decides the
 # backend, and these classes are plain Python.
+import numpy as np  # noqa: E402
+
 import optiland.backend as be  # noqa: E402
 from optiland.geometries.even_asphere import EvenAsphere  # noqa: E402
 from optiland.geometries.odd_asphere import OddAsphere  # noqa: E402
@@ -207,7 +209,7 @@ from optiland.physical_apertures.rectangular import (  # noqa: E402
 
 from . import trace_layout as L  # noqa: E402
 
-__all__ += ["attach_fixtures"]
+__all__ += ["attach_fixtures", "is_backend_scalar"]
 
 
 def _is_scalar_like(value: Any) -> bool:
@@ -236,6 +238,31 @@ def _as_float(value: Any) -> float:
     if ndim:
         value = value.reshape(-1)[0]
     return float(value)
+
+
+def is_backend_scalar(value: Any) -> bool:
+    """True for a BACKEND array scalar, False for a Python or NumPy scalar.
+
+    The two forms are not interchangeable in df64: the per-op path launches a
+    different KERNEL VARIANT for each, and df64's ``mul`` is not commutative
+    (it adds ``a.hi*b.lo`` before ``a.lo*b.hi``), so the low word moves.  Two
+    places in this package depend on the distinction:
+
+    * ``EvenAsphere.sag``'s ``Ci * r2 ** (i + 1)`` is a host-scalar op for a
+      Python/NumPy ``Ci`` and an array-array op for a backend tensor.  The
+      record can only carry ``float(Ci)``, so the kernel always mirrors the
+      host-scalar form and ``trace_record._check_surface`` refuses the other
+      one in df64 (finding R1-V1-05).
+    * ``(1 + self.k) * r2`` and ``self.radius * (1 + sqrt(..))`` swap operand
+      SIDES with the form of ``geometry.k`` / ``geometry.radius``.  Those two
+      the kernel mirrors instead of refusing, through ``FL_K1_ON_RIGHT`` and
+      ``FL_R_ON_RIGHT`` (finding R2-V1-03), because ``OpticUpdater.set_conic``
+      assigns the raw value and so every conic ``Variable.update`` produces the
+      Python-number form.
+    """
+    if isinstance(value, (bool, int, float, np.floating, np.integer)):
+        return False
+    return getattr(value, "ndim", None) is not None
 
 
 def _tensors(*values: Any) -> list:
@@ -282,16 +309,26 @@ def _fill_conic(obj, row_int, row_real, row_coef, ctx) -> None:
     row_int[L.SI_MAXITER] = 0
     if infinite:
         row_int[L.SI_FLAGS] |= L.FL_RADIUS_INF
-    _fill_conic_scalars(obj, row_real)
+    _fill_conic_scalars(obj, row_int, row_real)
     row_real[L.SR_TOL] = 0.0
 
 
-def _fill_conic_scalars(obj, row_real) -> None:
-    """Slots 18-21, each through the host-scalar op the per-op path runs."""
+def _fill_conic_scalars(obj, row_int, row_real) -> None:
+    """Slots 18-21, each through the host-scalar op the per-op path runs.
+
+    ``SI_FLAGS`` also records which SIDE of the two conic products the per-op
+    path puts the slot on (finding R2-V1-03): a backend-array ``k``/``radius``
+    keeps it on the left, a Python/NumPy number swaps it to the right because
+    the reflected dunder launches the mirrored kernel variant.
+    """
     row_real[L.SR_R] = _as_float(obj.radius)
     row_real[L.SR_K] = _as_float(obj.k)
     row_real[L.SR_K1] = _as_float(1 + obj.k)
     row_real[L.SR_R2] = _as_float(obj.radius**2)
+    if not is_backend_scalar(obj.k):
+        row_int[L.SI_FLAGS] |= L.FL_K1_ON_RIGHT
+    if not is_backend_scalar(obj.radius):
+        row_int[L.SI_FLAGS] |= L.FL_R_ON_RIGHT
 
 
 def _grad_conic(obj) -> list:
@@ -316,7 +353,7 @@ def _fill_asphere(code: int):
         row_int[L.SI_MAXITER] = int(obj.max_iter)
         if _is_radius_infinite(obj.radius):
             row_int[L.SI_FLAGS] |= L.FL_RADIUS_INF
-        _fill_conic_scalars(obj, row_real)
+        _fill_conic_scalars(obj, row_int, row_real)
         row_real[L.SR_TOL] = _as_float(obj.tol)
         for i, coefficient in enumerate(obj.coefficients):
             # After ``Variable.update`` a coefficient is a 0-d tensor

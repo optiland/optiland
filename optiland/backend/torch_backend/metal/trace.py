@@ -14,13 +14,23 @@ kernel.  It owns, in order:
   ``ITERS_UNWRITTEN`` and checked after the last slab, because a command
   buffer that runs too long is aborted **silently** -- day-1 P9 measured a
   dispatch that returned in 0.51 s with 1,047,360 of 1,048,576 sentinels
-  unwritten and ``torch.mps.synchronize()`` reporting success;
+  unwritten and ``torch.mps.synchronize()`` reporting success.  Reading the
+  sentinel back is also what waits for the slabs: the driver makes no
+  device-wide ``torch.mps.synchronize()`` call, because one thread doing that
+  while another has an encoder open aborts the process (round-3 finding
+  R3-V1-01);
 * the late fallback: a Newton surface that crossed the tolerance crossover
   makes the whole trace go back to the per-op path with nothing written;
 * writeback as zero-copy ``wrap`` views of ``aten.select`` slices (design 5,
   probed in day-1 P2: shared ``data_ptr``, one ``gpu:mul`` and zero ``host:*``
   for arithmetic on a view);
-* the counters, the two one-per-process warnings and the DIAG planes.
+* the counters, the one-per-process notices and the DIAG planes.  None of
+  the driver's notices can become an exception in the caller's process:
+  they announce a fallback the caller never asked for, so a warning filter
+  that promotes them to errors would make the fused path RAISE where the
+  per-op path returns (round-3 finding R3-V1-06).  :func:`_emit` demotes a
+  promoted warning to a ``logging`` record on this module's logger, which
+  reaches stderr through ``logging.lastResort`` and cannot be promoted.
 
 Nothing in here "improves" on the Python path: the kernel mirrors it and this
 driver only moves bytes (plan 0.2.1).
@@ -31,6 +41,8 @@ Import cost: this module imports torch, so it is imported lazily by the hook
 
 from __future__ import annotations
 
+import contextlib
+import logging
 import os
 import warnings
 import weakref
@@ -74,6 +86,7 @@ __all__ = [
     "N_FLOOR",
     "TRACE_FILES",
     "diag_from",
+    "forget_diag",
     "fused_trace",
     "launch_trace",
     "reset_driver_state",
@@ -141,6 +154,11 @@ _DIAG_BITS: tuple[tuple[int, str], ...] = (
 # ---------------------------------------------------------------------------
 # Process state (all resettable for tests; see :func:`reset_driver_state`)
 # ---------------------------------------------------------------------------
+
+#: Where a notice goes when a warning filter refuses to let it be a warning
+#: (R3-V1-06).  ``logging.lastResort`` prints WARNING and above to stderr when
+#: the embedding application configures nothing, so the message is still seen.
+_LOGGER = logging.getLogger(__name__)
 
 _LIBS: dict[str, Any] = {}
 _DRIFT: list[str] | None = None
@@ -592,10 +610,27 @@ def _launch_slabs(
         if count:
             count_gpu("fused_trace")
             count_event("fused_trace:chunks")
-    torch.mps.synchronize()
 
     # Write-completion sentinel, unconditionally and in every mode: a command
-    # buffer the driver aborted reports success (day-1 P9).  One reduction.
+    # buffer the driver aborted reports success (day-1 P9).  One reduction --
+    # and the ``.item()`` that reads its result is also what WAITS for every
+    # slab dispatched above: a host readback commits this stream's command
+    # buffer and blocks until it has completed, so nothing below can read a
+    # half-written buffer.
+    #
+    # There is deliberately no ``torch.mps.synchronize()`` here (round-3
+    # finding R3-V1-01).  That call commits the process-wide MPS command
+    # buffer from the calling thread; when a second thread is tracing another
+    # optic at the same time it has an encoder open on that same buffer, and
+    # the process ABORTS -- SIGSEGV, or `failed assertion _status <
+    # MTLCommandBufferStatusCommitted at line 323 in
+    # -[IOGPUMetalCommandBuffer setCurrentCommandEncoder:]`.  Not a catchable
+    # exception, and it was the only such call in the package: the per-op path
+    # makes none and survives the same workload, so this additive path must
+    # not lower the ceiling (upstream #833 runs analyses on worker jobs).  The
+    # readback gives this trace exactly the ordering the synchronize gave it;
+    # what it does not give is a device-wide barrier, and the driver never
+    # needed one.
     if bool((iters == trace_layout.ITERS_UNWRITTEN).any().item()):
         if count:
             count_event("fused_trace:unvisited")
@@ -788,12 +823,50 @@ def _drift_qualnames() -> list[str]:
     return _DRIFT
 
 
+def _emit(category: type[Warning], message: str, stacklevel: int) -> None:
+    """Announce ``message`` in a way no warning filter can turn into a raise.
+
+    Every notice this driver emits describes a *fallback the caller never asked
+    for*: the trace library could not be built, a mirrored source drifted, or
+    the kernel's Newton loop did not converge on some rays.  In each case the
+    caller still gets an answer -- the per-op path's -- and the plan's
+    transparency rule (preface, 1.2) is about that outcome, not only about the
+    numbers.  A process that runs with ``warnings.simplefilter("error")``
+    (``python -W error``, ``pytest -W error``, ``filterwarnings = error``)
+    turns any warning into an exception, so emitting these through
+    ``warnings.warn`` alone made the fused path RAISE where the per-op path
+    returns: 4 of 4 checks in round-3 finding R3-V1-06, both modes.
+
+    So the warning is still emitted -- ``pytest.warns`` and the ordinary
+    filters keep working -- but if the filter promotes it, the exception is
+    caught here and the same text goes to this module's logger instead.
+    ``logging.lastResort`` writes WARNING and above to stderr when the
+    application has configured no handler, so nothing is lost; it simply cannot
+    become the caller's exception.
+
+    The loud channel for "do not silently fall back" is unchanged and is not a
+    warning: ``OPTILAND_METAL_FUSED_TRACE=require`` raises
+    :class:`MetalFallbackError` from :func:`_refuse`, and every refusal is
+    counted under ``fused_trace_skip:*`` whether or not anybody is listening.
+
+    Args:
+        category: The warning class to emit.
+        message: The text, used for both channels.
+        stacklevel: ``warnings.warn``'s ``stacklevel`` as seen by *the caller
+            of this function* (this frame is added here).
+    """
+    try:
+        warnings.warn(message, category, stacklevel=stacklevel + 1)
+    except Exception:  # the filter promoted it; it must not reach the caller
+        _LOGGER.warning("%s", message)
+
+
 def _warn_once(key: str, category: type[Warning], message: str) -> None:
-    """Emit ``message`` once per process (plan 1.5)."""
+    """Emit ``message`` once per process (plan 1.5), never as an exception."""
     if key in _WARNED:
         return
     _WARNED.add(key)
-    warnings.warn(message, category, stacklevel=3)
+    _emit(category, message, 3)
 
 
 def _refuse(reason: FusedTraceSkip, raising: bool) -> bool:
@@ -824,31 +897,126 @@ def _trace_record() -> Any:
 
 
 def diag_from(group: Any) -> tuple[torch.Tensor, torch.Tensor] | None:
-    """The ``(status, iters)`` planes of ``group``'s last fused trace, or None.
+    """The ``(status, iters)`` planes of ``group``'s LAST trace, or None.
 
     Populated only under ``OPTILAND_METAL_TRACE_DIAG=1``.  The planes live in a
     module-level ``WeakKeyDictionary`` keyed by the group, never on the group
     itself, so ``copy.deepcopy(optic)`` neither copies them nor keeps them
     alive ([fix: L1.8]).
+
+    The planes are never stale (round-1 finding R1-V1-01).  ``fused_trace``
+    drops whatever the group's previous trace left here before it does anything
+    else, so exactly three outcomes are possible for the trace that just ran:
+
+    * it completed on the kernel -- the planes are that trace's own;
+    * it reached the kernel and the driver then discarded the result (the late
+      fallback of ``ST_TOL_CROSSOVER``) -- the planes are that discarded
+      launch's own, complete for every ``(b, s, i)``, and
+      ``fused_trace:late_fallback`` says the rays the caller holds came from
+      the per-op path instead (round-1 finding R1-V1-02);
+    * it never reached the kernel (the hook is off, the gate refused, DIAG is
+      off, or a launch raised) -- None.
+
+    A consumer may therefore zip ``diag_from(group)[0][0]`` with the bundle it
+    just traced without checking a ray count.
+
+    Three paths rewrite a group's state without ever reaching ``fused_trace``,
+    and each drops the planes itself through :func:`forget_diag` so the third
+    outcome above is true for them too: ``SurfaceGroup._fused_metal_trace``'s
+    early returns -- the plan 1.5 runtime rollback
+    ``OPTILAND_METAL_FUSED_TRACE=0``, a bundle that is not a ``MetalFloat64``,
+    and a driver that cannot be imported (round-3 finding R3-V1-04) -- and
+    ``BatchTraceResult.install``, which writes one design's rows onto a group
+    that the batch never traced through the hook (R3-V2-01).  A batch's own
+    diagnostics are never installed as a group's: they are per design, in
+    ``BatchTraceResult.status`` and ``.iters``.
+
+    One caveat on the middle case, and it is not a defect: a discarded
+    launch's planes record what the KERNEL did, and the crossover is by
+    definition the point where the kernel's Newton iteration is allowed to
+    diverge from Python's -- that divergence is the reason the launch is
+    discarded.  So those planes carry the reason for the fallback, but their
+    ``iters`` must not be compared against a per-op prediction the way a
+    completed trace's are (measured: 11 of 4096 rays on the Newton row of a
+    ``tol = 0`` singlet).  The rays the caller holds come from the per-op path.
     """
     return _DIAG_PLANES.get(group)
 
 
-def _record_diag(group: Any, result: LaunchResult) -> None:
-    """Store the planes, count ``fused_trace:diag:<bit>`` and warn on Newton."""
+def _forget_diag(group: Any) -> None:
+    """Drop ``group``'s DIAG planes, so a later trace cannot read them.
+
+    Called at the top of every :func:`fused_trace`: from that moment the
+    group's planes are either this trace's own or absent (R1-V1-01).
+
+    ``group`` is whatever the hook was called with, so it need not be weakly
+    referenceable; such a key can never have been stored, and forgetting it is
+    a no-op rather than a ``TypeError``.
+    """
+    if not _DIAG_PLANES:
+        return
+    # A key `_record_diag` could never have stored anyway.
+    with contextlib.suppress(TypeError):
+        _DIAG_PLANES.pop(group, None)
+
+
+def forget_diag(group: Any) -> None:
+    """Drop ``group``'s DIAG planes from outside the driver.
+
+    :func:`fused_trace` already does this for every trace that reaches it.
+    This is the entry point for the callers that rewrite a group's state
+    WITHOUT reaching it, and it exists so that neither of them has to import
+    this module to do it -- both look it up in ``sys.modules`` and skip the
+    call when it is absent, which is what keeps the NumPy and torch-CPU paths
+    free of every ``optiland.backend.torch_backend.metal.*`` import
+    (plan 0.2.4, ``test_trace_gate.py::test_non_metal_paths_untouched``):
+
+    * ``SurfaceGroup._fused_metal_trace``'s three early returns -- the hook is
+      off (the plan 1.5 runtime rollback), the bundle is not a
+      ``MetalFloat64``, or the driver cannot be imported.  The upstream per-op
+      loop then runs, and an older fused trace's planes must not survive it
+      describing a ray count that is no longer the caller's (R3-V1-04);
+    * ``BatchTraceResult.install`` -- it writes one design's recorded rows onto
+      a group that the batch never traced through the hook, so the planes of
+      whatever that group was traced with before would outlive the rows they
+      claim to describe (R3-V2-01).
+    """
+    _forget_diag(group)
+
+
+def _record_diag(group: Any, result: LaunchResult, *, kept: bool = True) -> None:
+    """Store the planes, count ``fused_trace:diag:<bit>`` and warn on Newton.
+
+    Args:
+        group: The traced ``SurfaceGroup``.
+        result: The launch whose planes these are.
+        kept: Whether the driver kept this launch's results.  A discarded
+            launch (the late fallback) still records its planes and counts its
+            bits -- that is the only place ``ST_TOL_CROSSOVER`` is ever
+            observable, and without it nothing in the counters says WHY
+            ``fused_trace:late_fallback`` fired (R1-V1-02).  It does not warn
+            about Newton: nobody will see the numbers that did not converge,
+            because the per-op path is about to recompute the whole trace.
+    """
     _DIAG_PLANES[group] = (result.status, result.iters)
     status = result.status.cpu().numpy()
     for bit, name in _DIAG_BITS:
         n = int(np.count_nonzero(status & bit))
         if n:
             count_event(f"fused_trace:diag:{name}", n)
-            if bit == trace_layout.ST_NEWTON_NOT_CONVERGED:
-                warnings.warn(
+            if kept and bit == trace_layout.ST_NEWTON_NOT_CONVERGED:
+                # Through ``_emit``, not ``warnings.warn``: under
+                # ``-W error`` this notice used to be the exception that a
+                # DIAG=1 trace of a non-converging system raised where the
+                # per-op path returns (R3-V1-06).  The per-op path hides
+                # non-convergence entirely, so the fused path must not be
+                # able to fail on having noticed it.
+                _emit(
+                    RuntimeWarning,
                     f"fused trace: Newton did not converge for {n} "
                     "(surface, ray) pairs; the per-op path hides this "
                     "(newton_raphson.py:580-581)",
-                    RuntimeWarning,
-                    stacklevel=3,
+                    3,
                 )
 
 
@@ -868,7 +1036,12 @@ def fused_trace(group: Any, rays: Any, skip: int, record: bool) -> bool:
         group: The ``SurfaceGroup``.
         rays: The ``RealRays`` bundle (mutated in place on success).
         skip: ``SurfaceGroup.trace``'s ``skip``; anything but 0 is refused.
-        record: Whether per-surface snapshots are wanted.
+        record: Whether per-surface snapshots are wanted.  Taken for its truth
+            value only, exactly as the per-op path takes it (``if record:``),
+            so ``1``, ``numpy.True_`` and ``"image"`` all mean "record every
+            surface" here as they do there (R3-V1-02, R3-V1-03).  The richer
+            ``bool | str | Sequence[int]`` policy of ``compile_records`` is the
+            batch API's, not the hook's.
 
     Returns:
         bool: True when the kernel handled the trace and ``rays`` and the
@@ -880,6 +1053,10 @@ def fused_trace(group: Any, rays: Any, skip: int, record: bool) -> bool:
             refused for a feature reason or takes the late fallback; and, in
             every setting, when the write-completion sentinel survives.
     """
+    # R1-V1-01: the previous trace's DIAG planes stop being readable here, at
+    # the top, before any early return can leave them behind.  Only this
+    # trace's own launch puts planes back.
+    _forget_diag(group)
     switch = _switch()
     if switch == "0":
         return False
@@ -933,7 +1110,19 @@ def fused_trace(group: Any, rays: Any, skip: int, record: bool) -> bool:
         )
         return _refuse(FusedTraceSkip.UNAVAILABLE, require)
 
-    records = tr.compile_records(group, w0, mode, record=record)
+    # R3-V1-02 / R3-V1-03: ``record`` comes from ``SurfaceGroup.trace``, whose
+    # upstream contract is a bool that is only ever used for its truth value
+    # (``surface.trace(rays, record=record)`` -> ``if record:``).  The hook may
+    # not narrow that domain to ``compile_records``' richer
+    # ``bool | str | Sequence[int]``: with the hook on, ``record=1`` and
+    # ``record=np.True_`` used to raise ``TypeError`` where the per-op path
+    # returns, and ``record="image"`` / ``record=[1, 3]`` used to record one or
+    # two of the eight Cooke rows where the per-op path records all eight --
+    # silently, so flipping OPTILAND_METAL_FUSED_TRACE changed the answer.
+    # The batch API keeps the rich domain; it calls ``compile_records``
+    # directly.  A value that cannot be taken for truth at all (a multi-element
+    # array) raises here exactly what ``if record:`` raises on the per-op path.
+    records = tr.compile_records(group, w0, mode, record=bool(record))
 
     budget = _memory_fraction() * float(torch.mps.recommended_max_memory())
     if tr.memory_bytes(records, n, 1, True) > budget:
@@ -953,8 +1142,14 @@ def fused_trace(group: Any, rays: Any, skip: int, record: bool) -> bool:
 
     if bool(result.late_fallback_designs.any()):
         # Nothing has been written into ``rays`` or the surfaces; the caller's
-        # upstream loop runs on the same bundle.
+        # upstream loop runs on the same bundle.  The planes of the launch that
+        # is being discarded are still recorded and counted (R1-V1-01,
+        # R1-V1-02): they are complete -- every slab ran and the sentinel check
+        # passed above -- and they carry the ``ST_TOL_CROSSOVER`` bit that is
+        # the reason for this fallback.
         count_event("fused_trace:late_fallback")
+        if _diag():
+            _record_diag(group, result, kept=False)
         if require:
             raise MetalFallbackError(
                 "OPTILAND_METAL_FUSED_TRACE=require: a Newton seed crossed the "

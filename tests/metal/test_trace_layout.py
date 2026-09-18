@@ -83,12 +83,24 @@ def test_constants_are_disjoint_and_dense():
 
 
 def test_flag_and_status_bits_are_distinct_single_bits():
-    for prefix in ("FL_", "ST_"):
+    """``SI_FLAGS`` carries 10 bits, the status byte exactly 8.
+
+    Bits 0-7 of ``FL_`` are plan 3.2's frozen set.  Bits 8-9
+    (``FL_K1_ON_RIGHT``, ``FL_R_ON_RIGHT``) were added by the round-2 fix for
+    R2-V1-03: they select the operand side of the two conic products, and they
+    live in ``SI_FLAGS`` because it is an int32 that every ``sag_of`` /
+    ``normal_of`` call site already has in scope.  ``ST_`` must stay at 8 --
+    the status plane is a ``uchar``.
+    """
+    counts = {"FL_": 10, "ST_": 8}
+    for prefix, count in counts.items():
         bits = _named(prefix)
-        assert len(bits) == 8, sorted(bits)
+        assert len(bits) == count, sorted(bits)
         for name, value in bits.items():
             assert value > 0 and value & (value - 1) == 0, f"{name} is not a single bit"
-        assert sorted(bits.values()) == [1 << i for i in range(8)], bits
+        assert sorted(bits.values()) == [1 << i for i in range(count)], bits
+    assert max(_named("ST_").values()) <= 0x80, "the status plane is a uchar"
+    assert (L.FL_K1_ON_RIGHT, L.FL_R_ON_RIGHT) == (1 << 8, 1 << 9)
 
 
 def test_iters_sentinel_is_out_of_range():
@@ -147,11 +159,37 @@ def test_refusal_reason_values_are_unique_and_snake_case():
         assert value.replace("_", "").isalnum()
 
 
-def test_adapter_registries_start_empty():
-    """WP0 ships the skeleton; WP2 fills the registries."""
-    assert A.GEOMETRY_ADAPTERS == {}
-    assert A.APERTURE_ADAPTERS == {}
-    assert A.INTERACTION_ADAPTERS == {}
+def test_adapter_registries_are_filled_with_the_frozen_codes():
+    """WP0 shipped the registries empty; WP2 filled them (plan 3.1).
+
+    The original WP0 assertion was ``== {}``, which described the C1 skeleton
+    only and has been false since WP2 registered the adapters.  What this file
+    owns is the layout side of the registries, so the replacement predicts
+    exactly that: the sizes of plan 1.1's supported set, and every registered
+    code equal to a frozen ``trace_layout`` code, used exactly once.  The
+    registry *contents* (exact-type keying, per-class codes, fixtures) are
+    predicted by ``test_trace_adapters.py``.
+    """
+    assert len(A.GEOMETRY_ADAPTERS) == 4
+    assert len(A.APERTURE_ADAPTERS) == 4
+    assert len(A.INTERACTION_ADAPTERS) == 1
+
+    geom_codes = sorted(a.code for a in A.GEOMETRY_ADAPTERS.values())
+    assert geom_codes == sorted([L.GEOM_PLANE, L.GEOM_CONIC, L.GEOM_EVEN, L.GEOM_ODD])
+    aperture_codes = sorted(a.code for a in A.APERTURE_ADAPTERS.values())
+    assert aperture_codes == sorted(
+        [L.AP_RADIAL, L.AP_OFFSET_RADIAL, L.AP_RECT, L.AP_ELLIPSE]
+    )
+    # AP_NONE and GEOM_OBJECT/GEOM_STD_INF are written by the record compiler,
+    # never by an adapter, so no registered adapter may claim them.
+    assert L.AP_NONE not in aperture_codes
+    assert L.GEOM_OBJECT not in geom_codes
+    assert L.GEOM_STD_INF not in geom_codes
+
+    # One interaction model in v1 (plan 1.1): RefractiveReflectiveModel, code 0.
+    ((interaction_cls, interaction_adapter),) = A.INTERACTION_ADAPTERS.items()
+    assert interaction_cls.__name__ == "RefractiveReflectiveModel"
+    assert interaction_adapter.code == 0
 
 
 def test_register_rejects_duplicates_and_non_adapters():

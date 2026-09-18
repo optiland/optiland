@@ -380,7 +380,12 @@ def test_gate_requires_grad(mps_df64):
     finally:
         be.grad_mode.disable()
 
-    # A tensor coefficient that requires grad refuses on its own (plan 3.9).
+    # A tensor coefficient that requires grad refuses on its own (plan 3.9),
+    # and grad is checked FIRST: with grad on the reason is ``requires_grad``,
+    # with grad off the same tensor coefficient is refused in df64 as
+    # ``geometry_type`` (round-1 finding R1-V1-05 -- ``EvenAsphere.sag``
+    # rounds an array-array product differently from the host-scalar one the
+    # record carries; see ``test_trace_adversarial_round1.py``).
     optic = _simple_optic(geometry="even")
     rays = _bundle()
     assert _gate(optic, rays).ok is True
@@ -393,7 +398,7 @@ def test_gate_requires_grad(mps_df64):
     assert geometry.coefficients[0].requires_grad is True
     assert _gate(optic, rays).reason is FusedTraceSkip.REQUIRES_GRAD
     with torch.no_grad():
-        assert _gate(optic, rays).ok is True
+        assert _gate(optic, rays).reason is FusedTraceSkip.GEOMETRY_TYPE
 
 
 def test_gate_newton_params(mps_mode):
@@ -609,7 +614,33 @@ def test_surf_real_matches_host_scalar_ops(mps_df64, name):
             numpy_records.surf_real[:, :, slot],
             equal_nan=True,
         ), (name, slot)
-    assert np.array_equal(records.surf_int, numpy_records.surf_int), name
+    # The two operand-side bits are the one part of ``surf_int`` that is
+    # deliberately backend-specific (R2-V1-03): they record which df64 KERNEL
+    # VARIANT the mps per-op path launches for ``(1 + k) * r2`` and
+    # ``radius * (..)``, which depends on whether the geometry stores the scalar
+    # as a backend array or as a Python/NumPy number.  The two backends store
+    # them differently for five catalog systems (``Telephoto`` and friends keep
+    # a ``numpy.float64`` radius on the NumPy backend and a ``MetalFloat64`` one
+    # on mps), and on NumPy the bit means nothing at all -- there is no kernel
+    # and the arithmetic is commutative.  Everything else in the table must
+    # still agree exactly.
+    opside = LY.FL_K1_ON_RIGHT | LY.FL_R_ON_RIGHT
+    masked, numpy_masked = records.surf_int.copy(), numpy_records.surf_int.copy()
+    masked[:, :, LY.SI_FLAGS] &= ~opside
+    numpy_masked[:, :, LY.SI_FLAGS] &= ~opside
+    assert np.array_equal(masked, numpy_masked), name
+    # ... and on mps each bit must equal what the surface's storage form says.
+    for index, surface in enumerate(optic.surfaces.surfaces[1:], start=1):
+        geometry = surface.geometry
+        flags = int(records.surf_int[0, index, LY.SI_FLAGS])
+        if not hasattr(geometry, "k"):  # Plane: neither product is evaluated
+            continue
+        assert bool(flags & LY.FL_K1_ON_RIGHT) == (
+            not A.is_backend_scalar(geometry.k)
+        ), (name, index, "k")
+        assert bool(flags & LY.FL_R_ON_RIGHT) == (
+            not A.is_backend_scalar(geometry.radius)
+        ), (name, index, "radius")
     assert np.array_equal(records.coef, numpy_records.coef, equal_nan=True), name
 
 
@@ -873,7 +904,16 @@ def test_geometry_codes(mps_df64):
 
 
 def test_coefficients_after_variable_update(mps_df64):
-    """A coefficient list holding 0-d tensors compiles to the same floats."""
+    """A coefficient list holding 0-d tensors compiles to the same floats.
+
+    The record is the same either way, which is what plan 3.9 asks of the
+    adapter -- but in df64 the *trace* is not, so the gate refuses the form
+    (round-1 finding R1-V1-05): ``EvenAsphere.sag`` evaluates ``Ci * r2 **
+    (i + 1)`` as an array-array df64 op for a tensor coefficient and as a
+    host-scalar one for a float, and only the second is what ``_fill_asphere``
+    stores.  Both halves are asserted here: the tables are equal AND the gate
+    says no.
+    """
     optic = _simple_optic(geometry="even", coefficients=(-2.2e-4, -4.7e-6, -6.4e-8))
     w0 = R.canonical_w0(0.55, "df64")
     before = R.compile_records(_group(optic), w0, "df64")
@@ -891,7 +931,7 @@ def test_coefficients_after_variable_update(mps_df64):
     assert after.coef[0, 1, 0] == _float(coefficients[0])
     assert after.coef[0, 1, 0] == -3.5e-4
     assert list(after.coef[0, 1, 1:]) == [-4.7e-6, -6.4e-8]
-    assert _gate(optic, _bundle()).ok is True
+    assert _gate(optic, _bundle()).reason is FusedTraceSkip.GEOMETRY_TYPE
 
 
 def test_compile_records_designs_axis(mps_df64):

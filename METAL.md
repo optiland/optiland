@@ -85,9 +85,11 @@ bundle the kernel does not support falls back to that loop transparently.
 
 **`require` is structural-safe.** A *candidate* is a bundle that passes every structural check:
 `type(group) is SurfaceGroup`, `type(rays) is RealRays`, `rays.x` a GPU-resident `MetalFloat64`
-with `numel > 256`, `skip == 0`, autograd off, uniform shapes. Chief rays, 6-ring bundles,
-`ParaxialRays`, `PolarizedRays` and grad-on traces are *not* candidates, so they pass through
-`require` untouched and only ever count their reason.
+with `numel > 256`, `skip == 0`, no participating tensor carrying `requires_grad`, uniform
+shapes. Chief rays, 6-ring bundles, `ParaxialRays`, `PolarizedRays` and traces whose tensors
+carry `requires_grad` are *not* candidates, so they pass through `require` untouched and only
+ever count their reason. Autograd merely *enabled*, with no tensor flagged, leaves a bundle a
+candidate -- see the documented limit under "Autograd".
 
 **Rollback.** Set `OPTILAND_METAL_FUSED_TRACE=0` (read per trace, so it works at runtime), or
 revert the hook commit; nothing else in the package is on the per-op path.
@@ -104,9 +106,33 @@ any tilt/decenter; `ObjectSurface` at index 0; `RealRays` only; one wavelength p
 Everything else is refused with a counted reason and runs on the per-op path: Zernike /
 Chebyshev / Forbes / toroidal / biconic / grid-sag / NURBS / polynomial geometries, gratings,
 thin-lens and diffractive interaction models, coatings, BSDFs, polarization, polygon and file
-apertures, nested `reference_cs` chains, GRIN propagation, non-finite indices, mixed-wavelength
-bundles, autograd, `skip != 0`, `SequencedSurfaceGroup` (its loop is not hooked at all) and
-bundles that would exceed the memory budget.
+apertures, nested `reference_cs` chains, `CoordinateSystem` subclasses, GRIN propagation,
+non-finite indices, mixed-wavelength
+bundles, tensors carrying `requires_grad`, `skip != 0`, `SequencedSurfaceGroup` (its loop is
+not hooked at all) and bundles that would exceed the memory budget.
+
+Two refusals are about the *form* a supported configuration arrives in rather than the feature
+itself, because the kernel mirrors one specific Python expression and cannot mirror the other:
+
+* a bundle whose `is_normalized` flag is clear (`propagation_model`). `HomogeneousPropagation.
+  propagate` then re-normalises the directions after every surface, which the kernel does not
+  do; the flag is a public `RealRays` attribute and nothing in Optiland clears it.
+* in `df64` only, an asphere coefficient stored as a backend tensor rather than a Python or
+  NumPy scalar (`geometry_type`). `EvenAsphere.sag` evaluates `Ci * r2 ** (i + 1)` as an
+  array-array op for a tensor and as a host-scalar op for a scalar, and the two round
+  differently at ~1 ulp; the record carries the host-scalar form. `Variable.update` stores a
+  tensor when the caller passes one (`be.array(v)`); the batch API's own value arrays are NumPy
+  scalars and are unaffected.
+
+Every mirrored class is keyed by **exact type** -- `SurfaceGroup`, `RealRays`, `Surface` /
+`ImageSurface`, the geometry / aperture / interaction registries, `HomogeneousPropagation` and
+`CoordinateSystem` -- because a subclass overrides a mirrored method without touching the base
+source the fingerprint is taken from, so the drift check cannot see it (R3-V2-03). A subclass is
+refused with the family's own counted reason (`group_type`, `rays_type`, `surface_type`,
+`geometry_type`, `aperture_type`, `interaction_type`, `propagation_model`, `reference_cs`) and
+the per-op path runs. A *material* subclass is the one exception, and it is deliberate: `n` and
+`k` are host reads that the record and the per-op path make through the same call, so the two
+answers move together.
 
 ### Counters and the census
 
@@ -130,10 +156,29 @@ fused_trace:candidates == fused_trace:traces
 
 ### Autograd
 
-The fused path is for forward traces only. With `be.grad_mode` enabled, or with any
-participating tensor requiring grad, the gate refuses with `requires_grad` and the per-op Metal
-path runs, so gradients keep flowing exactly as before. Suite sweeps that want the kernel
-exercised set `OPTILAND_TEST_MPS_GRAD=0`.
+The fused path is for forward traces only. The gate refuses with `requires_grad` when
+`torch.is_grad_enabled()` is True **and** a participating tensor actually carries
+`requires_grad` -- the state `be.grad_mode.enable()` produces -- and the per-op Metal path runs,
+so gradients keep flowing exactly as before. Suite sweeps that want the kernel exercised set
+`OPTILAND_TEST_MPS_GRAD=0`.
+
+**Documented limit (R2-V1-06): autograd merely *enabled* is not refused, and a Newton
+geometry is not bit-exact there.** `be.grad_mode.disable()` clears the flag new arrays are
+created with; it does **not** clear `torch.is_grad_enabled()`, which is the default True and
+is the flag `NewtonRaphsonGeometry.distance` branches on: with it set, the per-op path applies
+the DiffOptics one-step implicit correction `t - F(t)/stopgrad(dF/dt)` after the primal solve,
+and the kernel mirrors the primal solve. No tensor carries `requires_grad` in that state, so
+the gate does not refuse and `SurfaceGroup.trace` -- hence `optic.trace`, every analysis and
+the GUI -- fuses and disagrees with the per-op path it mirrors, on the rays whose extra
+refinement step moves a word. Measured on 4096-ray bundles (differing quantities / worst ray
+count): `aspheric_singlet` 11/594 df64 and 0 sf64, `even_asphere_5coeff` 20/592 and 13/1,
+`odd_asphere_singlet` 26/672 and 17/22, `nonconverging_asphere` 43/1112 and 21/1112; a group
+with no Newton row (e.g. a Cooke triplet) is unaffected in both modes.
+
+Wrap the trace in `torch.no_grad()` for raw-component agreement -- that is what `trace_batch`
+does for both its legs, and what every conformance fixture does. The limit is pinned by
+`tests/metal/test_trace_adversarial_round2.py::test_r2v106_locked`, so a later change of policy
+(refusing the configuration at the gate) fails a test rather than drifting.
 
 ### Mirror fingerprints and drift
 
@@ -153,6 +198,73 @@ python -m optiland.backend.torch_backend.metal.trace_mirror --update --verified 
 A second class of rows, `CONTRACT`, is not hashed; those are host-consumed helpers whose
 *values* named adapter tests compare.
 
+The table's *coverage* is checked too, not only its rows:
+`tests/metal/test_trace_mirror_sources.py::test_every_executed_physics_function_is_fingerprinted_or_exempt`
+profiles a per-op trace of ten fixtures, collects every `optiland.*` function that really runs
+inside `SurfaceGroup.trace`, and requires each one to be either fingerprinted or named in an
+explicit exemption list with the reason it carries no physics. Five functions were reaching the
+kernel's scope without a row when that census was first run (R3-V2-02), and an edit to any of
+them left the kernel serving the physics it was verified against while the Python path had
+moved. An upstream merge that adds a function to the trace path now fails that test until
+somebody decides which of the two it is.
+
+That census drops `optiland.backend.*` as arithmetic both paths share, which is true of the
+elementwise kernels and false of `metal/conic.py`: that module is the per-op GPU path's own
+conic solver -- the reference the conformance tests measure the kernel against -- and the fused
+kernel runs none of it. A root-order edit there moved the per-op answer while the kernel kept
+serving the physics it was verified against, with no warning and no counter (R3-V2-04). Three
+rows (`conic_candidates`, `_ConicMetal.forward`, `_scalar_float`) and a carve-out with a
+GPU census leg behind it close that;
+`test_every_executed_conic_function_is_fingerprinted_or_exempt` is what keeps it closed, and
+`test_no_executed_mirrored_row_is_hidden_from_the_census` states the residue exactly: the only
+fingerprint rows a census still drops are the four `ops_elementwise` `CONTRACT` rows, which are
+guarded by value tests by design. The same finding removed a duplicated constant: the conic
+solver's epsilon was written as the literals `2.0**-48` / `2.0**-53` although it is
+`MACHINE_EPS[mode]`, the number the kernel reads as `consts[C_EPS]`; there is one copy now.
+
+### Notices, warning filters and threads
+
+The driver's notices -- the one-shot `FusedTraceUnavailableWarning`, `FusedTraceDriftWarning`,
+and the `OPTILAND_METAL_TRACE_DIAG=1` note that the kernel's Newton loop did not converge --
+all announce a *fallback the caller never asked for*: the per-op path runs and the caller still
+gets an answer. None of them can become an exception in your process. Under
+`warnings.simplefilter("error")` (`python -W error`, `pytest -W error`, a
+`filterwarnings = error` ini section) the promotion is caught and the same text is logged on
+the `optiland.backend.torch_backend.metal.trace` logger instead, which `logging.lastResort`
+still prints to stderr (R3-V1-06). Without such a filter they are ordinary warnings and
+`pytest.warns` sees them as before. The loud channel is unchanged and is not a warning:
+`OPTILAND_METAL_FUSED_TRACE=require` raises `MetalFallbackError`, and every refusal is counted
+under `fused_trace_skip:*` whether or not anybody is listening.
+
+**Documented limit (R3-V1-05): do one trace on the main thread before tracing from threads.**
+Several threads whose *first* trace in the process is concurrent can abort or hang the
+interpreter -- on the fused path **and on the per-op path** (measured at 4 threads: fused df64
+7/8 and sf64 3 aborts in 6 runs; per-op df64 7/8, its failure a hang past 300 s). A sampled
+hang wedges inside torch's own `metal gpu stream` dispatch queue, on kernels both paths use, so
+this is not a fused-trace defect and there is no trigger in this package to fix. After one
+main-thread trace, concurrent tracing is fine: 4 and 6 threads x 20 traces are clean and
+raw-component equal. Pinned by `test_r3v105_locked_*`.
+
+**Documented limit (R3-V1-07): a recorded row is a view that pins its whole `snap`.** The
+writeback is zero-copy, so `surface.y` from a fused trace is a view of the one `snap` buffer and
+keeps `8 * n_rows` times its own bytes alive -- 64x for an 8-surface system. A loop that keeps
+one row per trace grew by +624 MB per iteration at N = 1,250,000 where the per-op path grew by
++9.7 MB; loops that do not retain rows are flat, so it is retention, not a leak. Copy the row
+(`be.copy(row)`) or read records through `SurfaceGroup.x/y/...`, which stacks into fresh
+storage -- every shipped analysis already does the latter. Pinned by `test_r3v107_locked`.
+
+**Documented limit (R3-V1-09): a large trace makes the process hold about a gigabyte until you
+call `torch.mps.empty_cache()`.** `snap` is one contiguous buffer per raw component, and
+PyTorch's MPS caching allocator reserves a 1 024 MiB heap for a single allocation above ~8-12 MB
+(measured with plain torch, no Optiland). An 8-surface system at N = 60,000 therefore leaves the
+process holding 1,072.6 MiB for a 33.6 MiB live set, where the per-op path -- whose largest
+single block is one ray plane -- holds 48.6 MiB and does not cross until ~1e6 rays. It is
+allocator granularity, not retention: `empty_cache()` returns it to 0.6 MiB, the number is
+reached at the first trace and does not grow, and the memory budget of
+`OPTILAND_METAL_FUSED_TRACE_MEMORY_FRACTION` is computed on *live* bytes, which are within 1.3 %
+of the design's model. Pinned by `test_r3v109_locked*`; the related note about what plan 9.2's
+T8 benchmark row measures is R3-V1-08 in `NOTES/fused-trace-research/documented-limits.md`.
+
 ### Batch API
 
 The same kernel carries a design axis: `optiland.raytrace.batch_trace.trace_batch` traces
@@ -160,6 +272,44 @@ B designs x N rays in one launch and returns a result whose `install(optic, b)` 
 design's recorded rows back onto an optic; `optiland.tolerancing.batched` builds Monte-Carlo
 and sensitivity runs on it for the operands in `BATCHABLE_OPERANDS`, falling back to the
 existing per-design loop for anything else.
+
+`trace_batch` is a **primal** batch tracer: both its legs -- the fused launch and the
+contract loop it is verified against -- run inside `torch.no_grad()`.
+`NewtonRaphsonGeometry.distance` returns the DiffOptics one-step implicit correction
+`t - F(t)/(dF/dt)` instead of the primal `result.t` whenever `torch.is_grad_enabled()` is True,
+and the kernel mirrors the primal solve, so a batch traced with autograd merely enabled would
+not agree with its own reference on any Newton system. Note that `be.grad_mode.disable()` does
+*not* clear `torch.is_grad_enabled()`: it decides which leaves carry `requires_grad`, which is
+what the gate reads. Derivatives come from `batch_trace.fd_jacobian`, not from autograd through
+the returned planes.
+
+**What a batch leaves on your optic.** `trace_batch` mutates the system design by design and
+puts it back in a `finally` -- the *objects* it found, not a replay of their values. Restoring
+the values is not enough and used to lose two things: `ThicknessVariable.get_value()` reads
+`cs.z[i+1] - cs.z[i]` rather than `surface.thickness`, so the round trip handed back a
+1-ulp-moved `MetalFloat64` where the caller had a Python `float`, and `Variable("index")`
+mutates through `IdealMaterial(n, k=0)`, so restoring its value restored an *ideal* glass and
+threw the caller's dispersion and absorption away. Both are fixed: after a call, every
+surface's `thickness`, `material_post`, `semi_aperture`, geometry attributes and coordinate
+system are the objects they were. The *records* on `optic.surfaces` are not part of that
+promise -- they are trace output, and `install(optic, b)` is what writes them.
+
+That fixes the restore, not the meaning of an `index` design. While the batch runs, each
+`index` row is applied by `OpticUpdater.set_index` as `IdealMaterial(n=value, k=0)`, so **no**
+row of an `index` variable traces a dispersive system -- not even the row carrying the nominal
+index, and 23 of the 29 shipped samples are absorbing. That is the shared `Variable.update`
+path every optimizer and every tolerancing run uses, so the sequential loop does exactly the
+same thing; use a `material` variable if a design has to keep a real glass.
+
+**How equal a batched tolerancing frame is.** `monte_carlo_batched` and `sensitivity_batched`
+equal `MonteCarlo.run` / `SensitivityAnalysis.run` cell for cell only when every operand's
+bundle is larger than 1024 rays (`optiland.tolerancing.batched.TIER_A_MIN_RAYS`). At or below
+that, `materials/base.py`'s `_MAX_VALUE_KEY_ARRAY_SIZE` makes the per-op path evaluate a
+dispersive index on the whole wavelength array instead of on the one uniform representative the
+kernel always uses, and the frames agree only to `64 * eps_mode * scale` (in df64; sf64 is
+exact). The frame says which applies: `df.attrs["tier"]` is `"A"` or `"B"`, beside
+`df.attrs["num_rays"]`. Measured on a Cooke triplet's `rms_spot_size` at 12 hexapolar rings
+(469 rays), 16 samples: 14 of 16 rows differ, worst 1.1e-14 against a bound of 2.3e-13.
 
 ## How it works
 

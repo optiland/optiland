@@ -115,12 +115,15 @@ __all__ = [
     "ellipse_aperture",
     "even_asphere_5coeff",
     "even_asphere_inf_radius",
+    "inexact_conic_asphere",
     "exact_grazing_bundle",
     "fold_mirror",
     "grazing_bundle",
     "hubble",
     "long_path_asphere",
     "long_path_batch_values",
+    "long_path_inexact_batch_values",
+    "long_path_inexact_conic_asphere",
     "make_rays",
     "miss_bundle",
     "mixed_wavelength_bundle",
@@ -941,6 +944,52 @@ def even_asphere_5coeff() -> tuple[Optic, Callable[..., RealRays]]:
     return lens, _wide_collimated_rays
 
 
+def inexact_conic_asphere() -> tuple[Optic, Callable[..., RealRays]]:
+    """An even asphere whose conic is inexact AND stored as a Python float.
+
+    Round-2 finding R2-V1-03.  Every other Newton row in plan 7.2's matrix uses
+    a float32-exact conic (``aspheric_singlet`` k = 0, ``even_asphere_5coeff``
+    k = -0.5, ``even_asphere_inf_radius`` k = 0, ``long_path_asphere`` k = 0),
+    so ``SR_K1``'s df64 low word is exactly zero in every end-to-end Newton
+    trace the suite runs, and two whole classes of kernel bug are invisible:
+
+    1. any mis-association of ``(1 + k) * r2 / R**2`` whose error only shows
+       when ``K1``'s low word is non-zero (``1 + (-0.4) = 0.6`` is not
+       float32-exact), and
+    2. the operand SIDE of that product, which moves with the storage form of
+       ``geometry.k``: ``StandardGeometry.__init__`` wraps the conic in
+       ``be.array`` (slot on the left) while ``OpticUpdater.set_conic`` -- and
+       therefore every conic ``Variable.update``, i.e. every tolerancing and
+       optimization run -- assigns the raw value (slot on the right).
+
+    ``set_conic`` is called after ``_build`` deliberately: it is the form the
+    public API produces, and the one the matrix could not see.  Both are
+    df64-only effects; sf64 is correctly rounded and commutative.
+    Status bits: none.
+    """
+    lens = _build(
+        [
+            {"radius": be.inf, "thickness": be.inf},
+            {
+                "surface_type": "even_asphere",
+                "radius": 25.0,
+                "thickness": 6.0,
+                "material": "N-BK7",
+                "is_stop": True,
+                "conic": -0.4,
+                "coefficients": [-1.0e-4, 2.0e-6, -5.0e-8],
+            },
+            {"radius": -35.0, "thickness": 45.0},
+            {},
+        ],
+        epd=14.0,
+    )
+    # The storage form is the point: after this, `geometry.k` is a Python
+    # float and the per-op path launches `mul(r2, K1)`, not `mul(K1, r2)`.
+    lens.updater.set_conic(-0.4, 1)
+    return lens, _wide_collimated_rays
+
+
 def even_asphere_inf_radius() -> tuple[Optic, Callable[..., RealRays]]:
     """An even asphere whose base conic is a plane (``radius = inf``).
 
@@ -1203,6 +1252,86 @@ def long_path_batch_values() -> tuple[Optic, list, np.ndarray]:
     from optiland.optimization.variable import Variable
 
     lens, _ = long_path_asphere()
+    variable = Variable(lens, "thickness", surface_number=1)
+    physical = np.array([1000.0, 2000.0, 5000.0, 1500.0])
+    values = np.array([[variable.variable.scale(v)] for v in physical])
+    return lens, [variable], values
+
+
+def long_path_inexact_conic_asphere(
+    conic: float = -0.4,
+) -> tuple[Optic, Callable[..., RealRays]]:
+    """:func:`inexact_conic_asphere`'s surface, 5 m past the crossover.
+
+    Round-2 finding R2-V1-05.  :func:`long_path_asphere` is the crossover
+    fixture the batch late-fallback test used, and it is blind to everything
+    the per-design re-trace can get wrong, for the same two reasons that hid
+    R2-V1-03: its conic is 0.0 (float32-exact, so ``SR_K1``'s df64 low word is
+    zero and the operand side of ``(1 + k) * r2`` cannot show) and R = 200 mm
+    with a single 1e-7 coefficient over a 5 mm semi-aperture keeps ``r2/R**2``
+    near 6e-4, which is below the observable threshold anyway.
+
+    This fixture keeps the crossover -- the Newton surface is 5 m downstream
+    and ``tol`` is the ``NewtonRaphsonGeometry`` default 1e-10, for which
+    Python's round-off floor ``8 * eps * max(1, |t|)`` overtakes ``tol`` at
+    ``|t| = 3.5e3`` mm in df64 and ``1.1e5`` mm in sf64 (plan 1.2) -- and puts
+    an actually curved surface there, with the conic applied through
+    ``optic.updater.set_conic`` so ``geometry.k`` is a Python float.  That
+    storage form is the one an ``Optic.from_dict(optic.to_dict())`` round trip
+    does NOT preserve, so a re-trace of a copy rather than of the caller's own
+    optic is visible here and invisible on ``long_path_asphere``.
+    Status bits: ``ST_TOL_CROSSOVER`` on every ray at surface 2 in df64; none
+    in sf64.
+    """
+    lens = _build(
+        [
+            {"radius": be.inf, "thickness": be.inf},
+            {"thickness": 5000.0, "is_stop": True},
+            {
+                "surface_type": "even_asphere",
+                "radius": 25.0,
+                "thickness": 6.0,
+                "material": "N-BK7",
+                "conic": float(conic),
+                "coefficients": [-1.0e-4, 2.0e-6, -5.0e-8],
+                "tol": 1e-10,
+            },
+            {"radius": -35.0, "thickness": 45.0},
+            {},
+        ],
+        epd=14.0,
+    )
+    # The storage form is the point (see the docstring): after this,
+    # `geometry.k` is a Python float, not a `be.array` scalar.  `conic` is a
+    # parameter only so a test can build the float32-EXACT control (k = 0.0,
+    # where `1 + k` has a zero df64 low word and neither operand side nor
+    # storage form can show); the fixture's own value is the inexact one.
+    lens.updater.set_conic(float(conic), 2)
+    lens.updater.update()
+    return lens, _long_path_wide_rays
+
+
+def _long_path_wide_rays(optic: Any, num_rays: int = DEFAULT_RAYS) -> RealRays:
+    """Collimated bundle, 7 mm in radius, launched 10 mm before surface 1."""
+    del optic
+    return collimated_bundle(num_rays, radius=7.0, z=-10.0)
+
+
+def long_path_inexact_batch_values(
+    conic: float = -0.4,
+) -> tuple[Optic, list, np.ndarray]:
+    """:func:`long_path_batch_values` on the sensitive crossover system.
+
+    Same variable (surface 1's thickness, i.e. the distance to the Newton
+    surface), same four physical distances ``[1000, 2000, 5000, 1500]`` mm and
+    therefore the same expectation -- exactly design index 2 is past the df64
+    crossover -- on the system of :func:`long_path_inexact_conic_asphere`,
+    where the re-traced design's rows can actually differ from the contract
+    loop's (finding R2-V1-05).
+    """
+    from optiland.optimization.variable import Variable
+
+    lens, _ = long_path_inexact_conic_asphere(conic)
     variable = Variable(lens, "thickness", surface_number=1)
     physical = np.array([1000.0, 2000.0, 5000.0, 1500.0])
     values = np.array([[variable.variable.scale(v)] for v in physical])
@@ -1978,6 +2107,7 @@ FIXTURES: dict[str, Callable[[], Any]] = {
     "nonconverging_asphere": nonconverging_asphere,
     "even_asphere_5coeff": even_asphere_5coeff,
     "even_asphere_inf_radius": even_asphere_inf_radius,
+    "inexact_conic_asphere": inexact_conic_asphere,
     "off_axis_parabola_far_root": off_axis_parabola_far_root,
     "rect_aperture": rect_aperture,
     "ellipse_aperture": ellipse_aperture,
@@ -2029,6 +2159,7 @@ FIXTURES_BY_CLASS: dict[type, tuple[Callable[[], Any], ...]] = {
         aspheric_singlet,
         even_asphere_5coeff,
         even_asphere_inf_radius,
+        inexact_conic_asphere,
         nonconverging_asphere,
         backward_newton,
         long_path_asphere,

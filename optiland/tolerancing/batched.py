@@ -24,10 +24,41 @@ therefore fixes the contract used here:
   to the existing loop, which runs completely unchanged.  The returned frame
   then carries ``df.attrs["batched"] is False`` and a ``reason``.
 
-Because the rows ``install()`` writes are tier-A identical to the per-op path
-(plan 7.1) and the reader applies the same backend ops to them, the batched
-frame equals the sequential frame cell for cell -- ``test_monte_carlo_batched_
-matches_loop`` asserts exactly that with ``np.array_equal``.
+How close "the same computation" is, exactly
+--------------------------------------------
+
+The reader applies the same backend ops to the rows ``install()`` writes, so
+the batched frame is as close to the sequential frame as those rows are -- and
+that is plan 7.1's **two-tier** rule, not one blanket promise.  The tier is
+decided by the operand's bundle size, and both frames carry it in
+``df.attrs["tier"]`` beside ``df.attrs["num_rays"]``:
+
+* **tier A**, every operand bundle strictly larger than
+  :data:`TIER_A_MIN_RAYS` (1024) rays: the frames are equal **cell for cell**.
+  ``test_monte_carlo_batched_matches_loop[19 rings]`` and
+  ``test_sensitivity_batched_matches_loop[19 rings]`` assert exactly that with
+  an exact float64 comparison, at N = 1,141.
+* **tier B**, any operand bundle of 1024 rays or fewer: equal to
+  ``64 * eps_mode * scale`` per cell, and in df64 **not** bit for bit.  This is
+  plan 7.1's tier-B **site 1** and it is not a kernel defect: below
+  ``materials/base.py``'s ``_MAX_VALUE_KEY_ARRAY_SIZE = 1024`` the per-op path
+  evaluates a dispersive index on the whole ``w`` array, above it on one
+  uniform representative -- which is what the kernel always uses (plan 3.8).
+  Measured (finding R2-V1-10): a Cooke triplet's ``rms_spot_size`` at 12
+  hexapolar rings (N = 469) differs from ``MonteCarlo.run`` on 3-4 of 4 samples
+  in df64, by at most 6.5e-16 against a bound of 2.3e-13; at 19 rings
+  (N = 1,141) and at 27 rings (N = 2,269) it is exact, in sf64 it is exact at
+  every size, and with ``IdealMaterial`` glasses it is exact at N = 469 too.
+  ``test_monte_carlo_batched_matches_loop[12 rings]``,
+  ``test_sensitivity_batched_matches_loop[12 rings]`` and the lock test
+  ``tests/metal/test_trace_adversarial_round2.py::test_r2v110_locked`` pin it;
+  the entry is in ``NOTES/fused-trace-research/documented-limits.md``.
+
+Nothing here refuses a small bundle: the batch gate deliberately skips the
+bundle-size checks (design 6.3), and refusing 256 < N <= 1024 would not help
+anyway -- the hook path fuses that range too and is tier B there for the same
+reason.  Tolerancing operands are exactly where small bundles live, so the
+qualification is stated rather than hidden.
 
 Deviations, stated here and in place
 ------------------------------------
@@ -58,8 +89,10 @@ Deviations, stated here and in place
    spelling of the loop it replaces.  Nothing here differentiates and the
    caller's setting is restored.
    This is not cosmetic: **measured**, the per-op Metal path is not
-   grad-invariant in df64.  Same optic, same radii, same operand call, kernel
-   off throughout, only ``be.grad_mode`` different -- 53 of 1,141 image-row
+   grad-invariant in df64 (and on a Newton geometry it is not
+   ``torch.is_grad_enabled()``-invariant either -- finding R2-V1-04).  Same
+   optic, same radii, same operand call, kernel off throughout, only
+   ``be.grad_mode`` different -- 53 of 1,141 image-row
    ``x`` low words and 35 ``y`` low words change, moving the RMS spot by 1.7e-13
    relative; sf64 is unaffected.  The fused path's contract is therefore with
    the **grad-off** per-op path (plan section 7, and the harness's
@@ -95,6 +128,14 @@ __all__ = [
 
 #: Designs per fused launch when the caller does not say otherwise.
 DEFAULT_CHUNK = 64
+
+#: The bundle size above which the batched frame equals the sequential frame
+#: cell for cell (plan 7.1 tier A).  It is ``materials/base.py``'s
+#: ``_MAX_VALUE_KEY_ARRAY_SIZE``: at or below it the per-op path evaluates a
+#: dispersive index on the whole wavelength array instead of on one uniform
+#: representative, which is plan 7.1's tier-B site 1.  See the module
+#: docstring and finding R2-V1-10.
+TIER_A_MIN_RAYS = 1024
 
 
 # ---------------------------------------------------------------------------
@@ -291,10 +332,24 @@ def _forward_only() -> Iterator[None]:
     spelling of the sequential loop.
 
     Nothing here differentiates: the perturbations are sampled, the trace is
-    forward, the operand is a reduction.  Autograd records a graph; it does not
-    change the forward arithmetic, and
-    ``test_monte_carlo_batched_matches_loop`` pins that by comparing against a
-    grad-**on** sequential run and demanding equality.
+    forward, the operand is a reduction.
+
+    Two qualifications, both measured, on "autograd only records a graph":
+
+    * ``be.grad_mode.disable()`` does NOT clear ``torch.is_grad_enabled()``
+      (round-2 observation 3).  It controls which leaves carry
+      ``requires_grad``, which is what the gate reads, and that is exactly what
+      this context manager is for.
+    * ``torch.is_grad_enabled()`` DOES change the forward arithmetic on a
+      Newton geometry: ``NewtonRaphsonGeometry.distance`` returns the DiffOptics
+      one-step correction instead of the primal solve (round-2 finding
+      R2-V1-04).  ``trace_batch`` therefore traces both of its legs inside
+      ``torch.no_grad()`` and this manager does not have to.  The systems this
+      module tolerances today are conic (``rms_spot_size`` on a Cooke triplet),
+      where the branch does not exist, so
+      ``test_monte_carlo_batched_matches_loop`` still compares against a
+      grad-**on** sequential run and demands equality; a Newton system would
+      need that reference under ``torch.no_grad()`` too.
     """
     if be.get_backend() != "torch":
         yield
@@ -316,15 +371,18 @@ def _evaluate_batched(
     variables: Sequence[Any],
     table: np.ndarray,
     chunk: int,
-) -> tuple[list[list[float]], bool, str | None]:
+) -> tuple[list[list[float]], bool, str | None, int]:
     """Every design's operand values, in ``chunk``-sized fused launches.
 
     Returns:
-        (values, fused, reason) -- ``values[b][i]`` is operand ``i`` of design
-        ``b``; ``fused`` is True only when every launch was produced by the
-        kernel; ``reason`` names the first gate refusal when it is not (the
+        (values, fused, reason, n_rays) -- ``values[b][i]`` is operand ``i`` of
+        design ``b``; ``fused`` is True only when every launch was produced by
+        the kernel; ``reason`` names the first gate refusal when it is not (the
         fallback is still correct, just sequential, and a silently unfused run
-        would otherwise look exactly like a fused one).
+        would otherwise look exactly like a fused one); ``n_rays`` is the
+        SMALLEST bundle any launch used, which is what decides the frame's tier
+        (module docstring, :data:`TIER_A_MIN_RAYS`, finding R2-V1-10) -- the
+        smallest, because one tier-B operand qualifies the whole frame.
 
     A refusal worth knowing about: an optic **constructed** while
     ``be.grad_mode`` was enabled holds ``requires_grad`` leaves, which plan 1.2
@@ -342,6 +400,7 @@ def _evaluate_batched(
     values: list[list[float]] = [[0.0] * n_operands for _ in range(n_designs)]
     fused = True
     reason: str | None = None
+    n_rays = 0
 
     with _forward_only():
         for start in range(0, n_designs, chunk):
@@ -362,6 +421,8 @@ def _evaluate_batched(
                     record=True,
                 )
                 fused = fused and bool(result.fused)
+                launched = int(result.n_rays)
+                n_rays = launched if n_rays == 0 else min(n_rays, launched)
                 if not result.fused and reason is None:
                     skips = [
                         k.split(":", 1)[1]
@@ -375,7 +436,25 @@ def _evaluate_batched(
                         values[start + b][index] = float(
                             reader.read(optic, operand.input_data or {})
                         )
-    return values, fused, reason
+    return values, fused, reason, n_rays
+
+
+def _label(
+    frame: Any, *, batched: bool, fused: bool, reason: str | None, n_rays: int | None
+) -> Any:
+    """Stamp a frame with which path produced it and which tier applies.
+
+    ``tier`` is "A" when every operand bundle was larger than
+    :data:`TIER_A_MIN_RAYS`, "B" otherwise (module docstring, R2-V1-10).  A
+    frame the sequential loop produced is trivially tier A: it *is* the
+    reference, and ``num_rays`` is None because no launch was made here.
+    """
+    frame.attrs["batched"] = batched
+    frame.attrs["fused"] = fused
+    frame.attrs["reason"] = reason
+    frame.attrs["num_rays"] = n_rays
+    frame.attrs["tier"] = "A" if n_rays is None or n_rays > TIER_A_MIN_RAYS else "B"
+    return frame
 
 
 # ---------------------------------------------------------------------------
@@ -402,6 +481,13 @@ def monte_carlo_batched(
         (``"<i>: <operand>"``).  ``df.attrs["batched"]`` says which path ran,
         ``df.attrs["fused"]`` whether the kernel produced the rows, and
         ``df.attrs["reason"]`` names the refusal when it did not.
+        ``df.attrs["tier"]`` is "A" when the operand column equals
+        ``MonteCarlo.run``'s **cell for cell** and "B" when it equals it only
+        to ``64 * eps_mode * scale``; "B" is what a bundle of
+        :data:`TIER_A_MIN_RAYS` rays or fewer can deliver, and
+        ``df.attrs["num_rays"]`` is the bundle that decided it (module
+        docstring, finding R2-V1-10).  The perturbation columns are the
+        samplers' draws and are exact either way.
 
     Raises:
         ValueError: whatever ``MonteCarlo`` raises for an invalid problem (no
@@ -427,7 +513,7 @@ def monte_carlo_batched(
     ]
     table = _values_table(draws, len(variables))
 
-    values, fused, gate_reason = _evaluate_batched(
+    values, fused, gate_reason, n_rays = _evaluate_batched(
         tolerancing, variables, table, int(chunk)
     )
 
@@ -445,9 +531,7 @@ def monte_carlo_batched(
         records.append(record)
 
     frame = pd.DataFrame(records)
-    frame.attrs["batched"] = True
-    frame.attrs["fused"] = fused
-    frame.attrs["reason"] = gate_reason
+    _label(frame, batched=True, fused=fused, reason=gate_reason, n_rays=n_rays)
     return frame
 
 
@@ -468,8 +552,10 @@ def sensitivity_batched(tolerancing: Any, *, chunk: int = DEFAULT_CHUNK):
     Returns:
         pandas.DataFrame: the same frame ``SensitivityAnalysis.run`` produces,
         with ``perturbation_type`` and ``perturbation_value`` columns first.
-        ``df.attrs`` carries ``batched``, ``fused`` and ``reason`` as in
-        :func:`monte_carlo_batched`.
+        ``df.attrs`` carries ``batched``, ``fused``, ``reason``, ``num_rays``
+        and ``tier`` as in :func:`monte_carlo_batched` -- including the tier-B
+        qualification for an operand bundle of :data:`TIER_A_MIN_RAYS` rays or
+        fewer (finding R2-V1-10).
     """
     from optiland.tolerancing.sensitivity_analysis import SensitivityAnalysis
 
@@ -495,7 +581,7 @@ def sensitivity_batched(tolerancing: Any, *, chunk: int = DEFAULT_CHUNK):
             labels.append((str(perturbation.variable), value))
 
     table = _values_table(rows, len(variables))
-    values, fused, gate_reason = _evaluate_batched(
+    values, fused, gate_reason, n_rays = _evaluate_batched(
         tolerancing, variables, table, int(chunk)
     )
 
@@ -517,9 +603,7 @@ def sensitivity_batched(tolerancing: Any, *, chunk: int = DEFAULT_CHUNK):
 
     frame = pd.DataFrame(records)
     tolerancing.reset()
-    frame.attrs["batched"] = True
-    frame.attrs["fused"] = fused
-    frame.attrs["reason"] = gate_reason
+    _label(frame, batched=True, fused=fused, reason=gate_reason, n_rays=n_rays)
     return frame
 
 
@@ -530,7 +614,4 @@ def _loop_result(analysis: Any, reason: str, *run_args: Any):
     """Run the sequential analysis and label its frame."""
     analysis.run(*run_args)
     frame = analysis.get_results()
-    frame.attrs["batched"] = False
-    frame.attrs["fused"] = False
-    frame.attrs["reason"] = reason
-    return frame
+    return _label(frame, batched=False, fused=False, reason=reason, n_rays=None)

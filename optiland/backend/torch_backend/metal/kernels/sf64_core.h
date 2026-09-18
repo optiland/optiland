@@ -165,7 +165,9 @@ inline sf64 copysign(sf64 a, sf64 b) {
 inline sf64 copysign(sf64 a, float b) {
     return make((a.bits & SF64_ABS_MASK) | (metal::signbit(b) ? SF64_SIGN_MASK : 0UL));
 }
-// -1, +-0 (preserved), +1; NaN -> NaN. Matches torch.sign / numpy.sign.
+// -1, +-0 (preserved), +1; NaN -> NaN.  The raw kernel, not `be.sign`:
+// ops_elementwise._sign masks NaN and both zeros to +0.0 on the host, which
+// is torch.sign / numpy.sign's value (R1-V2-04; see df64_core.h::sign).
 inline sf64 sign(sf64 a) {
     if (is_nan(a)) return nan();
     if (is_zero(a)) return a;

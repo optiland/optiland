@@ -22,6 +22,18 @@ Deviation from design 2.2 recorded at WP2: the ``nonfinite_index`` check needs
 other reason keeps the design's order.  When the caller supplies ``wavelength=``
 there is no readback and the order is the design's exactly.
 
+Two checks were added by the round-1 fix lane, both free and both refusing a
+configuration the kernel cannot mirror rather than tracing it (plan 1.2): a
+bundle with ``rays.is_normalized`` clear (``propagation_model``, R1-V1-04) and
+a df64 asphere coefficient stored as a backend tensor (``geometry_type``,
+R1-V1-05).  Both are documented at the line they run on.
+
+The round-3 fix lane added a third, for the same reason: the pose is
+accepted only when ``type(geometry.cs) is CoordinateSystem``
+(``reference_cs``, R3-V2-03).  A source digest cannot see a subclass that
+overrides a mirrored method, so every mirrored family is keyed by exact
+type; the pose was the one that was not.
+
 Nothing here launches a kernel or allocates a device buffer.
 """
 
@@ -35,6 +47,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 import optiland.backend as be
+from optiland.coordinate_system import CoordinateSystem
 from optiland.propagation.homogeneous import HomogeneousPropagation
 from optiland.rays.real_rays import RealRays
 from optiland.surfaces.image_surface import ImageSurface
@@ -50,6 +63,7 @@ from .trace_adapters import (
     INTERACTION_ADAPTERS,
     STRUCTURAL_REASONS,
     FusedTraceSkip,
+    is_backend_scalar,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -342,6 +356,22 @@ def can_fuse_trace(
     ):
         return _refuse(FusedTraceSkip.REQUIRES_GRAD, mode=mode, n=n)
 
+    # A bundle whose ``is_normalized`` flag is clear makes
+    # ``HomogeneousPropagation.propagate`` re-normalise the directions after
+    # every surface (propagation/homogeneous.py:56-57).  The kernel mirrors
+    # that function WITHOUT the branch, so the trace it would run is not the
+    # trace the per-op path runs -- measured at 4.9 mm on a bundle with
+    # non-unit direction cosines and at 4.5e-13 mm on an ordinary pupil bundle
+    # whose flag alone was cleared (finding R1-V1-04).  Plan 1.2: what the
+    # kernel does not mirror is refused with a counted reason, never traced.
+    # The reason is ``propagation_model`` -- the propagation the kernel mirrors
+    # does not cover this bundle -- because the ``FusedTraceSkip`` set is
+    # frozen by plan 3.3 and only the integrator may add a value; a dedicated
+    # ``rays_not_normalized`` would read better and is requested in
+    # ``NOTES/fused-trace-research/status.md``.
+    if not getattr(rays, "is_normalized", True):
+        return _refuse(FusedTraceSkip.PROPAGATION_MODEL, mode=mode, n=n)
+
     surfaces = list(group.surfaces)
     s = len(surfaces)
     if s < 2 or type(surfaces[0]) is not ObjectSurface:
@@ -412,9 +442,38 @@ def _check_surface(
     reason = adapter.check(geometry)
     if reason is not None:
         return reason
+    if mode == "df64" and adapter.code in (L.GEOM_EVEN, L.GEOM_ODD):
+        # ``EvenAsphere.sag``'s ``Ci * r2 ** (i + 1)`` is a host-scalar df64 op
+        # for a Python/NumPy scalar and an array-array df64 op for a backend
+        # tensor; the two round differently (measured: 2 raw words on 1 ray of
+        # 4096, finding R1-V1-05), and ``_fill_asphere`` stores ``float(Ci)``,
+        # so the kernel can only ever mirror the host-scalar form.  Refuse the
+        # form the record cannot represent instead of tracing it -- the same
+        # df64-only asymmetry as the ``SR_AP0..SR_AP3`` denormal scan below.
+        # sf64 is unaffected: both forms are correctly rounded binary64 there,
+        # so the two expressions agree bit for bit (measured: 0 raw words).
+        # The reason is ``geometry_type`` because ``_check_asphere`` already
+        # returns it for a coefficient form the adapter cannot take, and the
+        # ``FusedTraceSkip`` set is frozen by plan 3.3.
+        for coefficient in geometry.coefficients:
+            if is_backend_scalar(coefficient):
+                return FusedTraceSkip.GEOMETRY_TYPE
 
     cs = geometry.cs
-    if cs.reference_cs is not None:
+    if type(cs) is not CoordinateSystem or cs.reference_cs is not None:
+        # R3-V2-03.  Every other mirrored family is keyed by EXACT type --
+        # ``type(group)``, ``type(rays)``, ``type(surface)``,
+        # ``GEOMETRY_ADAPTERS.get(type(geometry))``, ``APERTURE_ADAPTERS``,
+        # ``INTERACTION_ADAPTERS``, ``type(material.propagation_model)`` -- and
+        # the pose was the one exception: it checked only ``reference_cs``.
+        # ``CoordinateSystem.localize``/``globalize`` are MIRRORED rows, but a
+        # subclass overrides them without touching the base source the digest
+        # is taken from, so ``trace_mirror.check_all()`` cannot see it: a
+        # subclass whose ``localize`` adds a shift fused and disagreed with the
+        # per-op path in both modes.  The reason is ``reference_cs`` because it
+        # is the pose block's own counted reason and the ``FusedTraceSkip`` set
+        # is frozen by plan 3.3 -- the same precedent as the ``geometry_type``
+        # reuse above.
         return FusedTraceSkip.REFERENCE_CS
     for pose in (cs.x, cs.y, cs.z, cs.rx, cs.ry, cs.rz):
         value = _scalar_float(pose)

@@ -167,6 +167,11 @@ CASES: tuple[Case, ...] = tuple(
         # even asphere powers >= 4 / R = inf seed / odd asphere
         Case("even5", "even_asphere_5coeff"),
         Case("even_inf", "even_asphere_inf_radius"),
+        # even asphere with an INEXACT conic stored as a Python float: the
+        # only matrix row whose SR_K1 has a non-zero df64 low word and whose
+        # `(1 + k) * r2` product is launched with the slot on the right
+        # (round-2 finding R2-V1-03).
+        Case("even_inexact_conic", "inexact_conic_asphere"),
         *_pupil_cases("odd_asphere_singlet", FIELDS_AXIAL, prefix="odd"),
         # Plane and StandardGeometry(inf).  Plan 7.2 lists NZ_FLOORED for this
         # row; the WP5 bundle is tilted to (0.2, 0.1) and floors nothing
@@ -431,26 +436,30 @@ def predicted_and_actual(case: Case, monkeypatch, mode: str):
 def test_predicted_status(mps_backend, monkeypatch, case, mode):
     """The kernel's status/iters planes equal the pure-NumPy prediction.
 
-    The rim-band rays of plan 7.1 are the one exception: the float64 oracle
-    cannot decide an inclusive aperture bound that the mode's arithmetic
-    decides, so those ``(s, i)`` entries are excluded from the ``CLIPPED``
-    comparison -- and from nothing else.
+    The undecidable bands of plan 7.1 are the only exceptions: the float64
+    oracle cannot decide an inclusive aperture bound, nor the sign of a
+    refraction radicand at the critical angle (round-1 finding R1-V2-03), nor
+    a Newton loop whose convergence test sits inside df64's round-off or whose
+    iterate leaves float32's range (round-1 finding R1-V1-07), that the mode's
+    own arithmetic decides; those ``(s, i)`` entries are excluded from the
+    ``CLIPPED`` / ``TIR`` / Newton comparison -- and from nothing else.  All
+    three bands are empty in sf64, so this is an exact comparison there.
     """
     metal.set_mode(mode)
     prediction, status, iters, _ = predicted_and_actual(case, monkeypatch, mode)
     assert status.shape == prediction.bits.shape
 
-    free = ~prediction.clip_uncertain
-    not_clip = np.uint8(0xFF ^ trace_layout.ST_CLIPPED)
-    got = np.where(free, status, status & not_clip)
-    want = np.where(free, prediction.bits, prediction.bits & not_clip)
+    got = tc.mask_uncertain(status, prediction)
+    want = tc.mask_uncertain(prediction.bits, prediction)
     bad = np.argwhere(got != want)
     assert bad.size == 0, (
         f"{case.id}[{mode}]: status differs at {len(bad)} (surface, ray) "
         f"entries; first {bad[:5].tolist()} got {got[tuple(bad[0])]:#04x} "
         f"want {want[tuple(bad[0])]:#04x}"
     )
-    bad = np.argwhere(iters != prediction.iters)
+    got_iters = tc.mask_iters(iters, prediction)
+    want_iters = tc.mask_iters(prediction.iters, prediction)
+    bad = np.argwhere(got_iters != want_iters)
     assert bad.size == 0, (
         f"{case.id}[{mode}]: iters differs at {len(bad)} entries; "
         f"first {bad[:5].tolist()}"

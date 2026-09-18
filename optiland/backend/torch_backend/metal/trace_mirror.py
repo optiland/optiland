@@ -416,6 +416,30 @@ _ROWS: tuple[tuple[str, str, str, str | None, str, str], ...] = (
         "096ccfc8",
     ),
     (
+        "optiland.surfaces.object_surface:ObjectSurface._trace_real",
+        "trace_body",
+        MIRRORED,
+        "67fd88eba48ae25d5744f063ca84ade6f23d1f9822cf7773e0734426694b6376",
+        "R3-V2-02: census gap; MSL mirrors this source",
+        "096ccfc8",
+    ),
+    (
+        "optiland.geometries.base:BaseGeometry.localize",
+        "localize",
+        MIRRORED,
+        "6fee574148a4d3fe4d96878efc94bb7e8d240e917ce0461146bd3132e70010a9",
+        "R3-V2-02: census gap; MSL mirrors this source",
+        "096ccfc8",
+    ),
+    (
+        "optiland.geometries.base:BaseGeometry.globalize",
+        "globalize",
+        MIRRORED,
+        "294cabe53bf801f48d015c1621b5b398d1a590dfb73a9392dc524477a41a1933",
+        "R3-V2-02: census gap; MSL mirrors this source",
+        "096ccfc8",
+    ),
+    (
         "optiland.coordinate_system:CoordinateSystem.localize",
         "localize",
         MIRRORED,
@@ -568,6 +592,14 @@ _ROWS: tuple[tuple[str, str, str, str | None, str, str], ...] = (
         "096ccfc8",
     ),
     (
+        "optiland.geometries.standard:StandardGeometry.surface_normal",
+        "normal_of",
+        MIRRORED,
+        "0bb2332663e2ee3efe6eb60e6bdfddd9e23e6ed0101bc8f8f797e05c04c129d3",
+        "R3-V2-02: census gap; MSL mirrors this source",
+        "096ccfc8",
+    ),
+    (
         "optiland.geometries.standard:StandardGeometry.distance",
         "conic_distance",
         MIRRORED,
@@ -661,6 +693,14 @@ _ROWS: tuple[tuple[str, str, str, str | None, str, str], ...] = (
         MIRRORED,
         "48ebb668115caf527f47619194d4f8a3ca62564d8d2df7cdea7506ecf196f372",
         "I0 baseline: MSL mirrored from this source",
+        "096ccfc8",
+    ),
+    (
+        "optiland.geometries.newton_raphson:NewtonRaphsonGeometry.surface_normal",
+        "normal_of",
+        MIRRORED,
+        "00cff3eaaea7631c7d08866b6bb981c2123174665920f4be24133463a08500d7",
+        "R3-V2-02: census gap; MSL mirrors this source",
         "096ccfc8",
     ),
     (
@@ -832,6 +872,33 @@ _ROWS: tuple[tuple[str, str, str, str | None, str, str], ...] = (
         "096ccfc8",
     ),
     (
+        "optiland.backend.torch_backend.metal.conic:conic_candidates",
+        "conic_candidates",
+        MIRRORED,
+        "b35313221d3d0f27e59439369d377181081399af7d8213bb50265b33e491fdc6",
+        "R3-V2-04: the per-op GPU conic solver; same roots, same five flag bits and"
+        " the same eps as consts[C_EPS]",
+        "096ccfc8",
+    ),
+    (
+        "optiland.backend.torch_backend.metal.conic:_ConicMetal.forward",
+        "conic_distance",
+        MIRRORED,
+        "4db7786135f6aa62bc970e7648dea2bc735d1c460998bd6be98fe3803c8072bc",
+        "R3-V2-04: composes conic_candidates with _select_distance; the kernel's"
+        " conic_distance is that composition",
+        "096ccfc8",
+    ),
+    (
+        "optiland.backend.torch_backend.metal.conic:_scalar_float",
+        "host:compile_records",
+        MIRRORED,
+        "8bde0cc7c0f0e5bb3d4f30ff31f09fdde2b6672b8acb0e3c0ca269e17e8f874d",
+        "R3-V2-04: the per-op path's host read of R/k, mirrored by"
+        " trace_adapters._as_float into SR_R / SR_K",
+        "096ccfc8",
+    ),
+    (
         "optiland.backend.torch_backend.metal.tensor:MACHINE_EPS",
         "consts[C_EPS]",
         MIRRORED,
@@ -901,6 +968,18 @@ _ROWS: tuple[tuple[str, str, str, str | None, str, str], ...] = (
         CONTRACT,
         None,
         "contract row: values compared by the named test; never hashed",
+        "096ccfc8",
+    ),
+    (
+        "optiland.backend.torch_backend.metal.ops_elementwise:_sign",
+        "test_r1v204_be_sign_of_a_negative_zero_is_positive",
+        CONTRACT,
+        None,
+        "contract row: values compared by the named test; never hashed. be.sign is"
+        " this wrapper, not the sign kernel: it masks NaN and BOTH zeros to +0.0 after"
+        " the kernel runs, and trace_ops<R>::sign mirrors the wrapper (round-1 finding"
+        " R1-V2-04), so a changed mask fails a named test instead of silently"
+        " un-mirroring interact",
         "096ccfc8",
     ),
     (

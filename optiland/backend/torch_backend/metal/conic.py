@@ -20,6 +20,7 @@ from optiland.backend._conic import _Candidates, _select_distance
 from optiland.backend.torch_backend.metal import compile as _compile
 from optiland.backend.torch_backend.metal import encode
 from optiland.backend.torch_backend.metal.tensor import (
+    MACHINE_EPS,
     MetalFloat64,
     coerce,
     count_gpu,
@@ -79,7 +80,15 @@ def conic_candidates(
     radius: Any,
     conic: Any,
 ) -> _Candidates:
-    """Run the fused kernel: ``_Candidates`` with MetalFloat64 roots and bool masks."""
+    """Run the fused kernel: ``_Candidates`` with MetalFloat64 roots and bool masks.
+
+    The solver epsilon is ``MACHINE_EPS[mode]`` -- the same table
+    ``optiland.utils.machine_eps`` reads and the same number the fused trace
+    kernel receives as ``consts[C_EPS]`` (plan 3.2).  It was written here as
+    the literals ``2.0**-48`` / ``2.0**-53`` until round-3 finding R3-V2-04:
+    two copies of a MIRRORED constant can part, and the digest of this
+    function cannot see the other copy move.
+    """
     mode = x.mode
     lib = _kernel_library(mode)
     n = x.numel()
@@ -98,7 +107,7 @@ def conic_candidates(
                 *comps,
                 encode.df64_scalar(r),
                 encode.df64_scalar(k),
-                encode.df64_scalar(2.0**-48),
+                encode.df64_scalar(MACHINE_EPS[mode]),
                 *outs,
                 flags,
                 threads=[n, 1, 1],
@@ -112,7 +121,7 @@ def conic_candidates(
                 *comps,
                 encode.sf64_scalar(r),
                 encode.sf64_scalar(k),
-                encode.sf64_scalar(2.0**-53),
+                encode.sf64_scalar(MACHINE_EPS[mode]),
                 *outs,
                 flags,
                 threads=[n, 1, 1],

@@ -278,7 +278,12 @@ inline df64 abs(df64 a) {
 }
 inline df64 copysign(df64 a, df64 b) { return signbit(b.hi) ? neg(abs(a)) : abs(a); }
 inline df64 copysign(df64 a, float b) { return signbit(b) ? neg(abs(a)) : abs(a); }
-// -1, 0, +1 (NaN -> NaN) as df64, matching torch.sign / numpy.sign.
+// -1, +-0 (the sign of the zero is PRESERVED), +1; NaN -> NaN.  This is the
+// raw kernel, not `be.sign`: ops_elementwise._sign masks NaN and both zeros
+// to +0.0 on the host, which is what torch.sign / numpy.sign return
+// (measured: numpy.sign(-0.0) and torch.sign(-0.0) are +0.0, torch.sign(nan)
+// is +0.0).  A caller that needs be.sign's value must apply that mask too --
+// trace.metal's trace_ops<R>::sign does (round-1 finding R1-V2-04).
 inline df64 sign(df64 a) {
     if (is_nan(a)) return nan();
     if (is_negative(a)) return make(-1.0f, 0.0f);

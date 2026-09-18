@@ -160,7 +160,20 @@ struct trace_ops<df64> {
     static inline bool is_zero(df64 a) { return df::is_zero(a); }
     static inline df64 inf() { return df::inf(); }
     static inline df64 neg(df64 a) { return df::neg(a); }
-    static inline df64 sign(df64 a) { return df::sign(a); }
+    // NOT df::sign.  `be.sign` is ops_elementwise._sign
+    // (metal/ops_elementwise.py:546-558), which runs the `sign` kernel and
+    // then masks NaN AND both zeros to +0.0 -- torch's `(0 < x) - (x < 0)`,
+    // measured on this checkout: numpy.sign(-0.0) and torch.sign(-0.0) are
+    // +0.0, torch.sign(nan) is +0.0.  df::sign keeps the sign of a zero and
+    // returns NaN for NaN, so `interact` would align the normal with the
+    // opposite zero at dot == -0.0 and record `N = +0.0` where the per-op path
+    // records -0.0 (round-1 finding R1-V2-04).  The mask lives here rather
+    // than in df64_core.h because that header is shared with the elementwise
+    // backend, whose own `sign` op is masked on the host.
+    static inline df64 sign(df64 a) {
+        if (df::is_nan(a) || df::is_zero(a)) return df::zero();
+        return df::sign(a);
+    }
     static inline df64 recip(df64 a) { return df::recip(a); }
     static inline df64 rsqrt(df64 a) { return df::rsqrt(a); }
     static inline df64 maximum(df64 a, df64 b) { return df::maximum(a, b); }
@@ -193,7 +206,12 @@ struct trace_ops<sf64> {
     static inline bool is_zero(sf64 a) { return sf::is_zero(a); }
     static inline sf64 inf() { return sf::inf(); }
     static inline sf64 neg(sf64 a) { return sf::neg(a); }
-    static inline sf64 sign(sf64 a) { return sf::sign(a); }
+    // The df64 note above applies verbatim: sf::sign preserves +-0 and
+    // returns NaN for NaN, `be.sign` returns +0.0 for both (R1-V2-04).
+    static inline sf64 sign(sf64 a) {
+        if (sf::is_nan(a) || sf::is_zero(a)) return sf::zero();
+        return sf::sign(a);
+    }
     static inline sf64 recip(sf64 a) { return sf::recip(a); }
     static inline sf64 rsqrt(sf64 a) { return sf::rsqrt(a); }
     static inline sf64 maximum(sf64 a, sf64 b) { return sf::maximum(a, b); }
@@ -449,10 +467,13 @@ inline bool ap_contains(int code, R p0, R p1, R p2, R p3, R x, R y) {
 
 // The interaction step (design 4.8): RealRays._align_surface_normal
 // (real_rays.py:561-597) followed by reflect (:213-231) or refract
-// (:189-211).  `sign(0) == 0` at exact grazing zeroes the aligned normal and
-// `dot`, so refraction returns the unnormalised `u * L0` instead of NaN --
-// reproduced, not fixed.  TIR is a NaN `root`, hence NaN L/M/N, and leaves the
-// intensity untouched (there is no TIR branch in `refract`).
+// (:189-211).  `O::sign` is `be.sign`, so `sign(+-0) == +0.0` at exact grazing
+// zeroes the aligned normal and `dot` -- with the SIGN of the +0.0 the per-op
+// path produces, which a mirror reflection keeps in its recorded `N`
+// (round-1 finding R1-V2-04, trace_ops<R>::sign above).  Refraction then
+// returns the unnormalised `u * L0` instead of NaN -- reproduced, not fixed.
+// TIR is a NaN `root`, hence NaN L/M/N, and leaves the intensity untouched
+// (there is no TIR branch in `refract`).
 template <typename R>
 inline dir3<R> interact(R L0, R M0, R N0, R nx, R ny, R nz, bool reflective, R u,
                         R u2, thread uchar &st) {
@@ -492,7 +513,12 @@ inline dir3<R> interact(R L0, R M0, R N0, R nx, R ny, R nz, bool reflective, R u
 //     scalars (0-d `be.array`s built in StandardGeometry.__init__,
 //     standard.py:117-118, plus two host-scalar ops), so `self.radius * s` and
 //     `(1 + self.k) * r2` keep the SLOT on the left while `/ self.radius**2`
-//     puts it on the right;
+//     puts it on the right -- UNLESS the geometry stores the scalar as a plain
+//     Python/NumPy number (`OpticUpdater.set_conic` assigns `geometry.k = value`
+//     raw, so every `set_conic` and every conic `Variable.update` does), which
+//     makes the same source line launch the reflected kernel with the slot on
+//     the RIGHT.  `FL_K1_ON_RIGHT` / `FL_R_ON_RIGHT` carry that choice per row
+//     (round-2 finding R2-V1-03);
 //   * a Python literal swaps to the right -- `1 + be.sqrt(..)` launches
 //     add(sqrt, 1) and `2 * (i + 1) * x` launches mul(x, 2(i+1)) -- except
 //     `1 - u`, which stays sub(1, u), and `-1 / mag`, which is recip(mag)
@@ -527,27 +553,36 @@ inline R radial_sq(R x, R y) {
 #endif
 }
 
-//: `1 - (1 + k) * r2 / R**2` -- slot K1 on the left, slot R2 on the right and
-//  the literal 1 on the left (standard.py:163, 195).
+//: `1 - (1 + k) * r2 / R**2` -- slot R2 on the right, the literal 1 on the left
+//  (standard.py:163, 195) and slot K1 on whichever side `FL_K1_ON_RIGHT` says
+//  the per-op path launched it (finding R2-V1-03).  df64's mul adds `a.hi*b.lo`
+//  before `a.lo*b.hi`, so the two orders differ in the low word whenever BOTH
+//  operands have a non-zero low word; sf64 is correctly rounded and the branch
+//  is a no-op there.
 template <typename R>
-inline R conic_radicand(R r2, rspan<R> P, ulong row) {
+inline R conic_radicand(R r2, rspan<R> P, ulong row, int flags) {
     typedef trace_ops<R> O;
-    return O::one() - (slot<R>(P, row, OT_SR_K1) * r2) / slot<R>(P, row, OT_SR_R2);
+    const R k1 = slot<R>(P, row, OT_SR_K1);
+    const R num = (flags & OT_FL_K1_ON_RIGHT) ? (r2 * k1) : (k1 * r2);
+    return O::one() - num / slot<R>(P, row, OT_SR_R2);
 }
 
 //: The base-conic sag `r2 / (R * (1 + sqrt(1 - (1+k) r2 / R^2)))`
 //  (standard.py:161-164; even_asphere.py:103; odd_asphere.py:96).
 template <typename R>
-inline R conic_sag(R r2, rspan<R> P, ulong row) {
+inline R conic_sag(R r2, rspan<R> P, ulong row, int flags) {
     typedef trace_ops<R> O;
-    R s = O::sqrt(conic_radicand<R>(r2, P, row));
-    return r2 / (slot<R>(P, row, OT_SR_R) * (s + O::one()));
+    R s = O::sqrt(conic_radicand<R>(r2, P, row, flags));
+    const R rad = slot<R>(P, row, OT_SR_R);
+    const R one_plus = s + O::one();
+    const R denom = (flags & OT_FL_R_ON_RIGHT) ? (one_plus * rad) : (rad * one_plus);
+    return r2 / denom;
 }
 
 //: `geometry.sag(x, y)` in the LOCAL frame for one surface row.
 template <typename R>
 inline R sag_of(int geom, R x, R y, rspan<R> P, ulong row, rspan<R> C, ulong cbase,
-                int ncoef) {
+                int ncoef, int flags) {
     typedef trace_ops<R> O;
     if (geom == OT_GEOM_PLANE) {
         return O::zero();  // plane.py:66 -- be.zeros_like(y)
@@ -557,13 +592,13 @@ inline R sag_of(int geom, R x, R y, rspan<R> P, ulong row, rspan<R> C, ulong cba
         // odd_asphere.py:94-99: r = sqrt(r2) first, then the base conic, then
         // `z + Ci * r**(i+1)` with the coefficient on the right.
         R r = O::sqrt(r2);
-        R z = conic_sag<R>(r2, P, row);
+        R z = conic_sag<R>(r2, P, row, flags);
         for (int i = 0; i < ncoef; ++i) {
             z = z + pow_scalar<R>(r, float(i + 1)) * C.get(cbase + ulong(i));
         }
         return z;
     }
-    R z = conic_sag<R>(r2, P, row);
+    R z = conic_sag<R>(r2, P, row, flags);
     if (geom == OT_GEOM_EVEN) {
 #ifdef OPTILAND_TRACE_BREAK_HORNER
         // Round-0 injection (plan 6): Horner instead of the Python sum
@@ -594,7 +629,7 @@ inline R sag_of(int geom, R x, R y, rspan<R> P, ulong row, rspan<R> C, ulong cba
 //  `interact` makes both work, and the conformance test checks the raw sign.
 template <typename R>
 inline void normal_of(int geom, R x, R y, rspan<R> P, ulong row, rspan<R> C,
-                      ulong cbase, int ncoef, thread R &nx, thread R &ny,
+                      ulong cbase, int ncoef, int flags, thread R &nx, thread R &ny,
                       thread R &nz) {
     typedef trace_ops<R> O;
     if (geom == OT_GEOM_PLANE) {
@@ -604,7 +639,9 @@ inline void normal_of(int geom, R x, R y, rspan<R> P, ulong row, rspan<R> C,
         return;
     }
     R r2 = radial_sq<R>(x, y);
-    R denom = slot<R>(P, row, OT_SR_R) * O::sqrt(conic_radicand<R>(r2, P, row));
+    const R rad = slot<R>(P, row, OT_SR_R);
+    const R root = O::sqrt(conic_radicand<R>(r2, P, row, flags));
+    R denom = (flags & OT_FL_R_ON_RIGHT) ? (root * rad) : (rad * root);
     R dfdx = x / denom;
     R dfdy = y / denom;
     if (geom == OT_GEOM_EVEN) {
@@ -718,9 +755,20 @@ inline R select_distance(R x, R y, R z, R L, R M, R Nd, rspan<R> P, ulong row,
 //     can never change again.  `iters` is therefore this thread's own count,
 //     not the batch's single integer (design 4.12; WP5 finding 4).
 //
-//  A non-finite t (a NaN seed, i.e. a conic miss) also stops the thread: in
-//  Python it would keep stepping NaN into NaN for the rest of the batch loop,
-//  with the same final t and the same `converged = False`.
+//  A NaN t (a NaN seed, i.e. a conic miss) also stops the thread: in Python it
+//  would keep stepping NaN into NaN for the rest of the batch loop, with the
+//  same final t and the same `converged = False`.
+//
+//  An INFINITE t does NOT stop the thread, and that is the whole of finding
+//  R1-V2-02.  NaN is absorbing, an infinity is not: Python breaks only on
+//  `be.all(converged)` (:355), so while any ray is unconverged an infinite
+//  iterate is stepped once more, `F(t) = sag(x + tL, y + tM) - (z + tN)`
+//  evaluates `inf - inf = NaN`, and Python's final t is NaN.  Breaking on
+//  `!is_finite(t)` returned `+inf` where Python returns NaN -- measured in
+//  df64 (where the hi word is a float32 and the iterate really overflows) on
+//  the recorded x/y/z/opd of an EvenAsphere row.  `is_nan(t)` takes that one
+//  further step and lands on Python's value; the ray then carries ST_MISS,
+//  exactly as its NaN t says, and `iters` counts the step it took.
 template <typename R>
 inline R newton_distance(R x, R y, R z, R L, R M, R Nd, rspan<R> P, ulong row,
                          rspan<R> C, ulong cbase, int geom, int ncoef, int max_iter,
@@ -745,7 +793,7 @@ inline R newton_distance(R x, R y, R z, R L, R M, R Nd, rspan<R> P, ulong row,
     const R tol = crossed ? floor_tol : tol_user;
 
     // F(t) = sag(x + tL, y + tM) - (z + tN)   (newton_raphson.py:279-284)
-    R f_t = sag_of<R>(geom, x + t * L, y + t * M, P, row, C, cbase, ncoef)
+    R f_t = sag_of<R>(geom, x + t * L, y + t * M, P, row, C, cbase, ncoef, flags)
             - (z + t * Nd);
     bool conv = O::abs(f_t) < tol;
 
@@ -753,12 +801,13 @@ inline R newton_distance(R x, R y, R z, R L, R M, R Nd, rspan<R> P, ulong row,
     const R tau_df = O::lit(32.0f) * eps;  // _denominator_threshold (:88-100)
     int i = 0;
     for (; i < max_iter; ++i) {
-        if (conv || !O::is_finite(t)) {
+        if (conv || O::is_nan(t)) {
             break;
         }
         // dF/dt from the NORMALISED normal (:302-313), not from sag.
         R nx, ny, nz;
-        normal_of<R>(geom, x + t * L, y + t * M, P, row, C, cbase, ncoef, nx, ny, nz);
+        normal_of<R>(geom, x + t * L, y + t * M, P, row, C, cbase, ncoef, flags, nx,
+                     ny, nz);
         // _sign_preserving_floor(nz, tau_nz) (:75-90): sign-preserving, and
         // NaN takes the negative branch (`NaN >= 0` is False).
         const R nzs =
@@ -784,13 +833,19 @@ inline R newton_distance(R x, R y, R z, R L, R M, R Nd, rspan<R> P, ulong row,
         const R tau_neg = O::neg(tau) * O::one();
         const R safe = near ? ((df >= O::zero()) ? tau_pos : tau_neg) : df;
         t = t - f_t / safe;
-        f_t = sag_of<R>(geom, x + t * L, y + t * M, P, row, C, cbase, ncoef)
+        f_t = sag_of<R>(geom, x + t * L, y + t * M, P, row, C, cbase, ncoef, flags)
               - (z + t * Nd);
         conv = O::abs(f_t) < tol;
     }
     it = uchar(i);
     // newton_raphson.py:580-581 keeps the last t with no NaN; the status bit
-    // and `iters` are what make a non-converged ray visible.
+    // and `iters` are what make a non-converged ray visible.  The `is_finite`
+    // guard is deliberate and survives R1-V2-02: Python's `converged` mask is
+    // False for a NaN t too, but such a ray has no root to report and already
+    // raises ST_MISS one level up (`surface_distance`), so flagging it as
+    // "Newton did not converge" would say the loop failed where it never ran.
+    // The pure-NumPy oracle `_trace_compare._newton_distance` carries the same
+    // guard, so the prediction and the plane agree entry for entry.
     if (!conv && O::is_finite(t)) {
         st |= OT_ST_NEWTON_NOT_CONVERGED;
     }
@@ -994,7 +1049,8 @@ inline void trace_body(rspan<R> launch,
         // ---- interact (refractive_reflective_model.py:41-49): the normal is
         // taken at the LOCAL intersection point, then refract or reflect.
         R nx, ny, nz;
-        normal_of<R>(geom, r.x, r.y, surf_real, prow, coef, cbase, ncoef, nx, ny, nz);
+        normal_of<R>(geom, r.x, r.y, surf_real, prow, coef, cbase, ncoef, flags, nx, ny,
+                     nz);
         L0 = r.L;
         M0 = r.M;
         N0 = r.N;
@@ -1289,7 +1345,8 @@ inline void probe_sag_body(rspan<R> in, rspan<R> par, rspan<R> coef,
         return;
     }
     out.set(k, sag_of<R>(ip[OT_PROBE_GEOM], in.get(0UL * n + k), in.get(1UL * n + k),
-                         par, 0UL, coef, 0UL, ip[OT_PROBE_NCOEF]));
+                         par, 0UL, coef, 0UL, ip[OT_PROBE_NCOEF],
+                         ip[OT_PROBE_PARAM]));
 }
 
 template <typename R>
@@ -1302,7 +1359,7 @@ inline void probe_normal_body(rspan<R> in, rspan<R> par, rspan<R> coef,
     }
     R nx, ny, nz;
     normal_of<R>(ip[OT_PROBE_GEOM], in.get(0UL * n + k), in.get(1UL * n + k), par, 0UL,
-                 coef, 0UL, ip[OT_PROBE_NCOEF], nx, ny, nz);
+                 coef, 0UL, ip[OT_PROBE_NCOEF], ip[OT_PROBE_PARAM], nx, ny, nz);
     out.set(0UL * n + k, nx);
     out.set(1UL * n + k, ny);
     out.set(2UL * n + k, nz);

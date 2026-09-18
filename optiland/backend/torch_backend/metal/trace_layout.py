@@ -47,8 +47,10 @@ __all__ = [
     "FL_HAS_RX",
     "FL_HAS_RY",
     "FL_HAS_RZ",
+    "FL_K1_ON_RIGHT",
     "FL_RADIUS_INF",
     "FL_REFLECTIVE",
+    "FL_R_ON_RIGHT",
     "F_I",
     "F_L",
     "F_L0",
@@ -186,6 +188,25 @@ GEOM_OBJECT, GEOM_PLANE, GEOM_STD_INF, GEOM_CONIC, GEOM_EVEN, GEOM_ODD = range(6
     FL_ABSORBING,
     FL_RADIUS_INF,
 ) = (1 << i for i in range(8))
+
+# Operand-side bits (round-2 finding R2-V1-03).  Which df64 kernel VARIANT the
+# per-op path launches for the two conic products depends on how the geometry
+# stores its scalar, and df64's mul is not commutative, so the kernel cannot
+# pick one order and be faithful to both (plan 0.2.1 "mirror, never improve"):
+#
+#   * ``(1 + self.k) * r2``  -- ``mul(K1, r2)`` when ``geometry.k`` is a backend
+#     array (``StandardGeometry.__init__``'s ``be.array(conic)``), ``mul(r2, K1)``
+#     when it is a Python/NumPy number (``OpticUpdater.set_conic`` and therefore
+#     ``Variable.update`` store the raw value);
+#   * ``self.radius * (1 + sqrt(..))`` / ``self.radius * sqrt(..)`` -- the same
+#     split on ``geometry.radius``.
+#
+# The bit is SET for the Python-number form (the slot moves to the RIGHT); clear
+# means the backend-array form, which is what every constructor produces and what
+# the kernel did unconditionally before the fix.  sf64 is correctly rounded and
+# therefore commutative, so the bits change nothing there.
+FL_K1_ON_RIGHT = 1 << 8
+FL_R_ON_RIGHT = 1 << 9
 
 # --------------------------------------------------------------------------
 # Aperture codes (SI_APCODE).
@@ -337,6 +358,8 @@ _SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "FL_AP_IN_ROOT",
             "FL_ABSORBING",
             "FL_RADIUS_INF",
+            "FL_K1_ON_RIGHT",
+            "FL_R_ON_RIGHT",
         ),
     ),
     (

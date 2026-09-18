@@ -69,6 +69,8 @@
 #define OT_FL_AP_IN_ROOT   32
 #define OT_FL_ABSORBING    64
 #define OT_FL_RADIUS_INF   128
+#define OT_FL_K1_ON_RIGHT  256
+#define OT_FL_R_ON_RIGHT   512
 
 // aperture codes (SI_APCODE)
 #define OT_AP_NONE          0

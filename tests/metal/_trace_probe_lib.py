@@ -783,8 +783,13 @@ def run_probe_sag(
     params: np.ndarray,
     geom: int,
     coefficients: np.ndarray | None = None,
+    flags: int = 0,
 ) -> list[np.ndarray]:
-    """``probe_sag``: ``sag_of(geom, x, y)`` over a flat array of points."""
+    """``probe_sag``: ``sag_of(geom, x, y)`` over a flat array of points.
+
+    ``flags`` reaches ``sag_of`` as the row's ``SI_FLAGS``; only the operand-side
+    bits ``FL_K1_ON_RIGHT`` / ``FL_R_ON_RIGHT`` are read there (R2-V1-03).
+    """
     n = int(np.asarray(x).size)
     planes = np.stack(
         [np.asarray(x, dtype=np.float64), np.asarray(y, dtype=np.float64)]
@@ -793,7 +798,7 @@ def run_probe_sag(
     par_bufs = to_device(params, mode)
     coef_bufs, ncoef = _coef_buffers(coefficients, mode)
     out_bufs = empty_device(n, mode)
-    ip = int_params_geom(n, geom=geom, ncoef=ncoef)
+    ip = int_params_geom(n, flags=flags, geom=geom, ncoef=ncoef)
     bufs = [*in_bufs, *par_bufs, *coef_bufs, ip, *out_bufs]
     _run(lib, f"probe_sag_{mode}", bufs, n)
     return raw_components(out_bufs, (n,))
@@ -808,8 +813,13 @@ def run_probe_normal(
     params: np.ndarray,
     geom: int,
     coefficients: np.ndarray | None = None,
+    flags: int = 0,
 ) -> list[np.ndarray]:
-    """``probe_normal``: the raw components of ``float64[3, n]`` (nx, ny, nz)."""
+    """``probe_normal``: the raw components of ``float64[3, n]`` (nx, ny, nz).
+
+    ``flags`` reaches ``normal_of`` as the row's ``SI_FLAGS``; only the
+    operand-side bits are read there (R2-V1-03).
+    """
     n = int(np.asarray(x).size)
     planes = np.stack(
         [np.asarray(x, dtype=np.float64), np.asarray(y, dtype=np.float64)]
@@ -818,7 +828,7 @@ def run_probe_normal(
     par_bufs = to_device(params, mode)
     coef_bufs, ncoef = _coef_buffers(coefficients, mode)
     out_bufs = empty_device(3 * n, mode)
-    ip = int_params_geom(n, geom=geom, ncoef=ncoef)
+    ip = int_params_geom(n, flags=flags, geom=geom, ncoef=ncoef)
     bufs = [*in_bufs, *par_bufs, *coef_bufs, ip, *out_bufs]
     _run(lib, f"probe_normal_{mode}", bufs, n)
     return raw_components(out_bufs, (3, n))
