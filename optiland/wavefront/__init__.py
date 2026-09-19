@@ -8,6 +8,7 @@ structures.
 Public API:
 - `Wavefront`: The main class for wavefront analysis.
 - `WavefrontData`: A data container for wavefront results.
+- `evaluate_wavefront`: Weighted evaluation of supplied OPD samples.
 - `OPD`: A class for calculating and visualizing OPD maps.
 - `OPDFan`: A class for creating OPD fan plots.
 - `ZernikeOPD`: A class for Zernike decomposition of OPD data.
@@ -15,6 +16,12 @@ Public API:
 
 from __future__ import annotations
 
+from .evaluation import (
+    WavefrontEvaluationNumericalError,
+    WavefrontEvaluationResult,
+    WavefrontRemoval,
+    evaluate_wavefront,
+)
 from .opd import OPD
 from .opd_fan import OPDFan
 from .reference_geometry import PlanarReference, ReferenceGeometry, SphericalReference
@@ -25,6 +32,10 @@ from .zernike_opd import ZernikeOPD
 __all__ = [
     "Wavefront",
     "WavefrontData",
+    "WavefrontEvaluationResult",
+    "WavefrontEvaluationNumericalError",
+    "WavefrontRemoval",
+    "evaluate_wavefront",
     "OPD",
     "OPDFan",
     "ZernikeOPD",
