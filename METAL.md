@@ -345,8 +345,12 @@ exact). The frame says which applies: `df.attrs["tier"]` is `"A"` or `"B"`, besi
   arrays live on the GPU. This keeps Optiland's scalar bookkeeping (coordinate transforms, paraxial
   quantities, `.item()` reads) off the launch queue.
 * `optiland/parallel.py` — `evaluate_parallel(fn, jobs, workers=[WorkerConfig(...), ...])` runs
-  independent jobs in spawned worker processes, each with its own backend/device/precision (CPU
-  float64 workers plus one or two GPU workers is the recommended layout).
+  independent jobs in spawned worker processes, each with its own backend/device/precision.
+  Measured layouts (`NOTES/08-parallel-saturation.md`, section 6): eight NumPy workers for
+  traces below ~2e5 rays (103 traces/s at 1e5; a GPU worker added to that pool lowers the
+  total); six NumPy plus two GPU workers for 1e6-ray traces (+20–40%); one GPU worker alone
+  for `trace_batch` sweeps (1.8× the eight-worker CPU pool; CPU workers in the same pool add
+  nothing because they slow the GPU worker's host side).
 
 ## Requirements and safety
 
