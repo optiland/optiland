@@ -13,6 +13,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Literal
 
+import numpy as np
+
 import optiland.backend as be
 
 from ..fields.field_types import AngleField
@@ -41,6 +43,9 @@ class ReferenceStrategy(ABC):
         optic (Optic): The optical system to analyze.
         distribution (Distribution): The pupil sampling distribution.
         reference_type (str): The type of reference geometry ("sphere" or "plane").
+        assume_sample_order: Opt in to attaching source quadrature weights in
+            source order. The caller must establish one-to-one sample association
+            through the trace route. Defaults to False.
     """
 
     def __init__(
@@ -48,11 +53,14 @@ class ReferenceStrategy(ABC):
         optic: Optic,
         distribution: BaseDistribution,
         reference_type: ReferenceType = "sphere",
+        *,
+        assume_sample_order: bool = False,
         **kwargs,
     ) -> None:
         self.optic = optic
         self.distribution = distribution
         self.reference_type = reference_type
+        self.assume_sample_order = assume_sample_order
         self.n_image = optic.surfaces.n(optic.primary_wavelength)[-1]
 
     @abstractmethod
@@ -163,6 +171,80 @@ class ReferenceStrategy(ABC):
             retain_launch=True,
         )
 
+    def _trace_full_wavefront(
+        self, field: tuple[float, float], wavelength: float
+    ) -> tuple[RealRays, BEArrayT | None]:
+        """Trace the full bundle, optionally copying source-order quadrature.
+
+        The opt-in asserts sample association; shape checks only verify counts
+        and cannot detect a same-length permutation. No route audit is inferred.
+        """
+        quadrature_weights = None
+        if self.assume_sample_order:
+            source_weights = self.distribution.quadrature_weights
+            if source_weights is not None:
+                self._validate_quadrature_source(source_weights)
+                self._validate_aligned_shapes(
+                    "source distribution",
+                    x=self.distribution.x,
+                    y=self.distribution.y,
+                    quadrature_weights=source_weights,
+                )
+                quadrature_weights = be.copy(source_weights)
+
+        rays = self.optic.trace(
+            *field,
+            wavelength,
+            None,
+            self.distribution,
+            retain_launch=True,
+        )
+
+        if quadrature_weights is not None:
+            self._validate_aligned_shapes(
+                "traced wavefront",
+                x=rays.x,
+                y=rays.y,
+                z=rays.z,
+                L=rays.L,
+                M=rays.M,
+                N=rays.N,
+                opd=rays.opd,
+                intensity=rays.i,
+                quadrature_weights=quadrature_weights,
+            )
+        return rays, quadrature_weights
+
+    @staticmethod
+    def _validate_quadrature_source(quadrature_weights: BEArrayT) -> None:
+        """Reject unsupported quadrature representations before copying."""
+        if np.ma.isMaskedArray(quadrature_weights):
+            raise TypeError("quadrature weights must not be a NumPy MaskedArray.")
+
+        weights_are_torch = be.is_torch_tensor(quadrature_weights)
+        active_weights = (
+            weights_are_torch
+            if be.get_backend() == "torch"
+            else isinstance(quadrature_weights, np.ndarray) and not weights_are_torch
+        )
+        if not active_weights:
+            raise TypeError(
+                f"quadrature weights must use the active {be.get_backend()} backend."
+            )
+
+    @staticmethod
+    def _validate_aligned_shapes(stage: str, **arrays: BEArrayT) -> None:
+        """Validate that sample arrays are one-dimensional and aligned."""
+        shapes = {name: value.shape for name, value in arrays.items()}
+        if any(len(shape) != 1 for shape in shapes.values()):
+            raise ValueError(
+                f"{stage} sample arrays must be one-dimensional; got {shapes}."
+            )
+        if len(set(shapes.values())) != 1:
+            raise ValueError(
+                f"{stage} sample arrays must have matching shapes; got {shapes}."
+            )
+
     def _opd_image_to_xp(
         self,
         rays: RealRays,
@@ -217,13 +299,7 @@ class ChiefRayStrategy(ReferenceStrategy):
         opd_ref = self._chief_ray.opd - opd_img_ref
 
         # 3. Trace the full grid of rays for the field
-        rays = self.optic.trace(
-            *field,
-            wavelength,
-            None,
-            self.distribution,
-            retain_launch=True,
-        )
+        rays, quadrature_weights = self._trace_full_wavefront(field, wavelength)
         intensity = self.optic.surfaces.intensity[-1, :]
 
         # 4. Compute OPD for all rays
@@ -240,6 +316,17 @@ class ChiefRayStrategy(ReferenceStrategy):
         pupil_x = rays.x - t * rays.L
         pupil_y = rays.y - t * rays.M
         pupil_z = rays.z - t * rays.N
+
+        if quadrature_weights is not None:
+            self._validate_aligned_shapes(
+                "assembled wavefront",
+                pupil_x=pupil_x,
+                pupil_y=pupil_y,
+                pupil_z=pupil_z,
+                opd=opd_wv,
+                intensity=intensity,
+                quadrature_weights=quadrature_weights,
+            )
 
         valid_mask = (
             be.isfinite(opd_wv)
@@ -272,6 +359,7 @@ class ChiefRayStrategy(ReferenceStrategy):
             opd=opd_wv,
             intensity=intensity,
             radius=geometry.radius,
+            quadrature_weights=quadrature_weights,
             **kwargs,
         )
 
@@ -377,13 +465,7 @@ class CentroidStrategy(ReferenceStrategy):
         """
         # 1. Trace ray bundle to image surface
         reference_ray = self._generate_chief_launch(field, wavelength)
-        rays = self.optic.trace(
-            *field,
-            wavelength,
-            None,
-            self.distribution,
-            retain_launch=True,
-        )
+        rays, quadrature_weights = self._trace_full_wavefront(field, wavelength)
 
         # 2. Restore the relative incident phase in object space
         rays.opd = self._restore_launch_phase(rays, rays.opd, wavelength, reference_ray)
@@ -413,6 +495,17 @@ class CentroidStrategy(ReferenceStrategy):
         pupil_y = rays.y - t * rays.M
         pupil_z = rays.z - t * rays.N
 
+        if quadrature_weights is not None:
+            self._validate_aligned_shapes(
+                "assembled wavefront",
+                pupil_x=pupil_x,
+                pupil_y=pupil_y,
+                pupil_z=pupil_z,
+                opd=opd_waves,
+                intensity=rays.i,
+                quadrature_weights=quadrature_weights,
+            )
+
         # 7. Handle polarization data if available
         kwargs = {}
         prt_matrix = getattr(rays, "p", None)
@@ -429,6 +522,7 @@ class CentroidStrategy(ReferenceStrategy):
             opd=opd_waves,
             intensity=rays.i,
             radius=geometry.radius,
+            quadrature_weights=quadrature_weights,
             **kwargs,
         )
 

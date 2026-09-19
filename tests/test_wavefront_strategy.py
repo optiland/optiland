@@ -1,17 +1,24 @@
 from __future__ import annotations
 
+import math
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 
 # Set a backend before importing optiland modules
 import optiland.backend as be
-from optiland.distribution import create_distribution
+from optiland.apodization import GaussianApodization
+from optiland.distribution import (
+    BaseDistribution,
+    GaussianQuadrature,
+    create_distribution,
+)
 from optiland.materials import IdealMaterial
 from optiland.optic import Optic
-from optiland.rays import RealRays
+from optiland.rays import PolarizationState, RealRays
 from optiland.samples.objectives import DoubleGauss
-from optiland.wavefront import OPD
+from optiland.wavefront import OPD, evaluate_wavefront
 from optiland.wavefront.strategy import (
     BestFitSphereStrategy,
     CentroidReferenceSphereStrategy,
@@ -48,6 +55,30 @@ class ConcreteReferenceStrategy(ReferenceStrategy):
     def _create_reference_geometry(self, rays):
         """Mock implementation for the abstract method."""
         pass
+
+
+class TaggedQuadratureDistribution(BaseDistribution):
+    """Synthetic distribution with explicit sample-associated weights."""
+
+    def __init__(self, x, y, weights):
+        self.x = be.array(x)
+        self.y = be.array(y)
+        self.weights = be.array(weights)
+
+    @property
+    def quadrature_weights(self):
+        return self.weights
+
+    def generate_points(self, num_points):
+        raise NotImplementedError
+
+
+class SampleIdentityApodization:
+    """Encode source pupil coordinates as positive per-sample identity tags."""
+
+    @staticmethod
+    def get_intensity(pupil_x, pupil_y):
+        return 2.0 + pupil_x + pupil_y / 16.0
 
 
 class TestReferenceStrategy:
@@ -175,6 +206,209 @@ class TestReferenceStrategy:
         assert corrected_opd.shape == opd.shape
         assert not be.all(corrected_opd == opd)
 
+    def test_opted_in_snapshot_precedes_trace_and_ignores_clipped_intensity(
+        self, set_test_backend
+    ):
+        optic = DoubleGauss()
+        dist = TaggedQuadratureDistribution(
+            [-0.6, -0.1, 0.3, 0.7],
+            [0.1, -0.4, 0.5, -0.2],
+            [0.1, 0.2, 0.3, 0.4],
+        )
+        original = be.copy(dist.weights)
+        rays = MagicMock()
+        rays.x, rays.y = be.copy(dist.x), be.copy(dist.y)
+        for name in ("z", "L", "M", "N", "opd"):
+            setattr(rays, name, be.zeros(4))
+        rays.i = be.array([1.0, 0.0, 0.25, 0.75])
+
+        def trace(*args, **kwargs):
+            dist.weights = be.array([0.9, 0.2, 0.3, 0.4])
+            return rays
+
+        optic.trace = MagicMock(side_effect=trace)
+        strategy = ConcreteReferenceStrategy(optic, dist, assume_sample_order=True)
+        _, snapshot = strategy._trace_full_wavefront((0.0, 0.0), 0.55)
+
+        assert snapshot is not dist.weights
+        assert_allclose(snapshot, original, rtol=0.0, atol=0.0)
+        assert snapshot[1] != original[1] * rays.i[1]
+
+    @pytest.mark.parametrize("assume_sample_order", [False, True])
+    def test_same_length_trace_permutation_is_not_certified(
+        self, set_test_backend, assume_sample_order
+    ):
+        optic = DoubleGauss()
+        dist = TaggedQuadratureDistribution(
+            [-0.6, -0.1, 0.3, 0.7],
+            [0.1, -0.4, 0.5, -0.2],
+            [0.1, 0.2, 0.3, 0.4],
+        )
+        rays = MagicMock()
+        order = [2, 0, 3, 1]
+        rays.x = dist.x[order]
+        rays.y = dist.y[order]
+        rays.z = be.zeros(4)
+        rays.L = be.zeros(4)
+        rays.M = be.zeros(4)
+        rays.N = be.ones(4)
+        rays.opd = be.array(order)
+        rays.i = be.ones(4)
+        optic.trace = MagicMock(return_value=rays)
+        strategy = ConcreteReferenceStrategy(
+            optic, dist, assume_sample_order=assume_sample_order
+        )
+
+        traced_rays, quadrature_weights = strategy._trace_full_wavefront(
+            (0.0, 0.0), 0.55
+        )
+
+        assert traced_rays is rays
+        if assume_sample_order:
+            # An incorrect caller assertion cannot be detected by shape checks:
+            # the snapshot remains in source order, not returned-ray order.
+            assert_allclose(quadrature_weights, dist.weights, rtol=0.0, atol=0.0)
+            assert not be.allclose(quadrature_weights, dist.weights[order])
+        else:
+            assert quadrature_weights is None
+        assert_allclose(traced_rays.x, dist.x[order])
+        optic.trace.assert_called_once_with(
+            0.0,
+            0.0,
+            0.55,
+            None,
+            dist,
+            retain_launch=True,
+        )
+
+    @pytest.mark.parametrize(
+        ("x", "y", "weights"),
+        [
+            ([0.0, 0.5], [0.0], [0.25, 0.75]),
+            ([0.0, 0.5], [0.0, 0.5], [[0.25, 0.75]]),
+        ],
+    )
+    def test_full_trace_rejects_malformed_source_shapes(
+        self, set_test_backend, x, y, weights
+    ):
+        optic = DoubleGauss()
+        optic.trace = MagicMock()
+        strategy = ConcreteReferenceStrategy(
+            optic, TaggedQuadratureDistribution(x, y, weights), assume_sample_order=True
+        )
+
+        with pytest.raises(ValueError, match="source distribution sample arrays"):
+            strategy._trace_full_wavefront((0.0, 0.0), 0.55)
+
+        optic.trace.assert_not_called()
+
+    def test_full_trace_rejects_masked_source_weights_before_copy(
+        self, set_test_backend
+    ):
+        if be.get_backend() != "numpy":
+            pytest.skip("NumPy masked-array provenance regression.")
+
+        optic = DoubleGauss()
+        optic.trace = MagicMock()
+        dist = TaggedQuadratureDistribution(
+            [-0.5, 0.5], [0.0, 0.0], [0.25, 0.75]
+        )
+        dist.weights = np.ma.array(dist.weights, mask=[True, False])
+        strategy = ConcreteReferenceStrategy(optic, dist, assume_sample_order=True)
+
+        with pytest.raises(TypeError, match="MaskedArray"):
+            strategy._trace_full_wavefront((0.0, 0.0), 0.55)
+
+        optic.trace.assert_not_called()
+
+    def test_full_trace_rejects_foreign_source_weight_backend(
+        self, set_test_backend
+    ):
+        optic = DoubleGauss()
+        optic.trace = MagicMock()
+        dist = TaggedQuadratureDistribution(
+            [-0.5, 0.5], [0.0, 0.0], [0.25, 0.75]
+        )
+        if be.get_backend() == "numpy":
+            torch = pytest.importorskip("torch")
+            dist.weights = torch.tensor([0.25, 0.75])
+        else:
+            dist.weights = np.array([0.25, 0.75])
+        strategy = ConcreteReferenceStrategy(optic, dist, assume_sample_order=True)
+
+        with pytest.raises(TypeError, match=f"active {be.get_backend()} backend"):
+            strategy._trace_full_wavefront((0.0, 0.0), 0.55)
+
+        optic.trace.assert_not_called()
+
+    def test_full_trace_rejects_malformed_traced_shapes(self, set_test_backend):
+        optic = DoubleGauss()
+        dist = TaggedQuadratureDistribution(
+            [-0.5, 0.0, 0.5],
+            [0.0, 0.5, 0.0],
+            [0.2, 0.3, 0.5],
+        )
+        rays = MagicMock()
+        rays.x = be.zeros(2)
+        for name in ("y", "z", "L", "M", "N", "opd", "i"):
+            setattr(rays, name, be.zeros(3))
+        optic.trace = MagicMock(return_value=rays)
+        strategy = ConcreteReferenceStrategy(optic, dist, assume_sample_order=True)
+
+        with pytest.raises(ValueError, match="traced wavefront sample arrays"):
+            strategy._trace_full_wavefront((0.0, 0.0), 0.55)
+
+    def test_replaced_tracer_has_no_quadrature_without_opt_in(
+        self, set_test_backend
+    ):
+        optic = DoubleGauss()
+        dist = TaggedQuadratureDistribution(
+            [-0.6, -0.1, 0.3, 0.7],
+            [0.1, -0.4, 0.5, -0.2],
+            [0.1, 0.2, 0.3, 0.4],
+        )
+        order = [2, 0, 3, 1]
+        rays = MagicMock()
+        rays.x = dist.x[order]
+        rays.y = dist.y[order]
+        rays.z = be.zeros(4)
+        rays.L = be.zeros(4)
+        rays.M = be.zeros(4)
+        rays.N = be.ones(4)
+        rays.opd = be.array(order)
+        rays.i = be.ones(4)
+        optic.ray_tracer.trace = MagicMock(return_value=rays)
+        strategy = ConcreteReferenceStrategy(optic, dist)
+
+        traced_rays, quadrature_weights = strategy._trace_full_wavefront(
+            (0.0, 0.0), 0.55
+        )
+
+        assert traced_rays is rays
+        assert quadrature_weights is None
+        assert_allclose(traced_rays.x, dist.x[order])
+
+    @pytest.mark.parametrize("assume_sample_order", [False, True])
+    def test_native_quadrature_handoff_requires_opt_in(
+        self, set_test_backend, assume_sample_order
+    ):
+        class InheritedDoubleGauss(DoubleGauss):
+            pass
+
+        optic = InheritedDoubleGauss()
+        dist = GaussianQuadrature()
+        dist.generate_points(num_rings=2)
+        strategy = ConcreteReferenceStrategy(
+            optic, dist, assume_sample_order=assume_sample_order
+        )
+
+        _, quadrature_weights = strategy._trace_full_wavefront((0.0, 0.0), 0.55)
+
+        if assume_sample_order:
+            assert_allclose(quadrature_weights, dist.weights, rtol=0.0, atol=0.0)
+        else:
+            assert quadrature_weights is None
+
 
 class TestChiefRayStrategy:
     """Tests for the ChiefRayStrategy."""
@@ -232,6 +466,7 @@ class TestChiefRayStrategy:
         assert wavefront_data.pupil_z.shape == (num_points,)
         assert wavefront_data.opd.shape == (num_points,)
         assert wavefront_data.intensity.shape == (num_points,)
+        assert wavefront_data.quadrature_weights is None
         assert isinstance(wavefront_data.radius, float)
         assert wavefront_data.radius > 0
 
@@ -441,6 +676,147 @@ def test_create_strategy(optic, distribution, set_test_backend):
     assert isinstance(bfs_strategy, BestFitSphereStrategy)
 
 
+@pytest.mark.parametrize("strategy", ["chief_ray", "centroid", "best_fit"])
+def test_gaussian_quadrature_provenance_for_each_reference_strategy(
+    set_test_backend, strategy
+):
+    optic = DoubleGauss()
+    optic.updater.set_apodization(GaussianApodization(sigma=0.35))
+    dist = GaussianQuadrature()
+    dist.generate_points(num_rings=3)
+    source_weights = be.copy(dist.weights)
+    field = (0.0, 0.1)
+    wavelength = 0.55
+
+    data = OPD(
+        optic,
+        field,
+        wavelength,
+        distribution=dist,
+        strategy=strategy,
+        assume_sample_order=True,
+    ).get_data(field, wavelength)
+
+    assert data.quadrature_weights is not dist.weights
+    assert_allclose(data.quadrature_weights, source_weights, rtol=0.0, atol=0.0)
+    assert_allclose(be.sum(data.quadrature_weights), 1.0)
+    illumination = optic.apodization.get_intensity(dist.x, dist.y)
+    assert not be.all(data.quadrature_weights == source_weights * illumination)
+
+    dist.weights[0] = 0.0
+    assert_allclose(data.quadrature_weights, source_weights, rtol=0.0, atol=0.0)
+
+
+@pytest.mark.parametrize("strategy", ["chief_ray", "centroid", "best_fit"])
+def test_quadrature_evaluation_requires_producer_opt_in(set_test_backend, strategy):
+    dist = GaussianQuadrature()
+    dist.generate_points(num_rings=2)
+    data = OPD(
+        DoubleGauss(), (0.0, 0.0), 0.55, distribution=dist, strategy=strategy
+    ).get_data((0.0, 0.0), 0.55)
+
+    assert data.quadrature_weights is None
+    with pytest.raises(ValueError, match="No quadrature weights"):
+        data.evaluate(remove="piston", use_quadrature=True)
+
+
+def test_gaussian_quadrature_regeneration_preserves_existing_snapshots(
+    set_test_backend,
+):
+    optic = DoubleGauss()
+    dist = GaussianQuadrature()
+    dist.generate_points(num_rings=2)
+    field = (0.0, 0.1)
+    wavelength = 0.55
+
+    first_data = OPD(
+        optic, field, wavelength, distribution=dist, assume_sample_order=True
+    ).get_data(field, wavelength)
+    first_snapshot = be.copy(first_data.quadrature_weights)
+
+    dist.generate_points(num_rings=3)
+    second_source = be.copy(dist.weights)
+    second_data = OPD(
+        optic, field, wavelength, distribution=dist, assume_sample_order=True
+    ).get_data(field, wavelength)
+
+    assert first_data.quadrature_weights.shape == first_snapshot.shape
+    assert first_data.quadrature_weights.shape != second_data.quadrature_weights.shape
+    assert_allclose(
+        first_data.quadrature_weights, first_snapshot, rtol=0.0, atol=0.0
+    )
+    assert_allclose(
+        second_data.quadrature_weights, second_source, rtol=0.0, atol=0.0
+    )
+
+    dist.weights[0] = 0.0
+    assert_allclose(
+        first_data.quadrature_weights, first_snapshot, rtol=0.0, atol=0.0
+    )
+    assert_allclose(
+        second_data.quadrature_weights, second_source, rtol=0.0, atol=0.0
+    )
+
+
+def test_native_provenance_rejects_masked_weights_before_copy(set_test_backend):
+    if be.get_backend() != "numpy":
+        pytest.skip("NumPy masked-array provenance regression.")
+
+    dist = GaussianQuadrature()
+    dist.generate_points(num_rings=3)
+    mask = np.zeros(dist.weights.shape, dtype=bool)
+    mask[0] = True
+    dist.weights = np.ma.array(dist.weights, mask=mask)
+
+    with pytest.raises(TypeError, match="MaskedArray"):
+        OPD(
+            DoubleGauss(),
+            (0.0, 0.0),
+            0.55,
+            distribution=dist,
+            assume_sample_order=True,
+        )
+
+
+@pytest.mark.parametrize("strategy", ["chief_ray", "centroid", "best_fit"])
+@pytest.mark.parametrize("aiming", ["paraxial", "iterative", "robust"])
+def test_tagged_quadrature_weights_follow_exact_source_sample_identity(
+    set_test_backend, strategy, aiming
+):
+    optic = collimated_planes(
+        index=1.5,
+        field=(3.0, 4.0),
+        vignette=(0.4, 0.1),
+        first_radius=AIMING_DIVERGENT_RADIUS,
+    )
+    optic.ray_tracer.set_aiming(aiming, max_iter=20, tol=1e-8)
+    optic.apodization = SampleIdentityApodization()
+    x = [-0.82, -0.57, -0.29, -0.08, 0.17, 0.38, 0.61, 0.74, 0.31]
+    y = [0.11, -0.34, 0.62, -0.71, 0.48, -0.16, 0.29, -0.52, 0.81]
+    weights = [0.02, 0.03, 0.05, 0.07, 0.11, 0.13, 0.17, 0.19, 0.23]
+    dist = TaggedQuadratureDistribution(x, y, weights)
+    source_identity = optic.apodization.get_intensity(dist.x, dist.y)
+    assert len(set(be.to_numpy(source_identity).tolist())) == len(weights)
+    field = optic.fields.get_field_coords()[-1]
+
+    data = OPD(
+        optic,
+        field,
+        optic.primary_wavelength,
+        distribution=dist,
+        strategy=strategy,
+        afocal=True,
+        assume_sample_order=True,
+    ).get_data(field, optic.primary_wavelength)
+
+    # Intensity independently tags each source coordinate through RayGenerator.
+    # Any nontrivial same-length permutation of rays, weights, or both fails
+    # this source-ordered paired association oracle.
+    expected_pairs = be.stack((source_identity, dist.weights), axis=1)
+    actual_pairs = be.stack((data.intensity, data.quadrature_weights), axis=1)
+    assert_allclose(actual_pairs, expected_pairs, rtol=0.0, atol=1e-14)
+
+
 class TestBestFitSphereStrategy:
     """Tests for the BestFitSphereStrategy."""
 
@@ -504,6 +880,242 @@ def collimated_planes(
     optic.fields.add(x=field[0], y=field[1], vx=vignette[0], vy=vignette[1])
     optic.wavelengths.add(0.55, is_primary=True)
     return optic
+
+
+def test_polarized_optic_has_no_quadrature_without_opt_in(
+    set_test_backend: None,
+) -> None:
+    optic = collimated_planes()
+    optic.updater.set_polarization(
+        PolarizationState(
+            is_polarized=True,
+            Ex=1.0,
+            Ey=0.0,
+            phase_x=0.0,
+            phase_y=0.0,
+        )
+    )
+    dist = GaussianQuadrature()
+    dist.generate_points(num_rings=2)
+    field = optic.fields.get_field_coords()[-1]
+
+    data = OPD(
+        optic,
+        field,
+        optic.primary_wavelength,
+        distribution=dist,
+        strategy="chief_ray",
+        afocal=True,
+    ).get_data(field, optic.primary_wavelength)
+
+    assert dist.quadrature_weights is not None
+    assert data.quadrature_weights is None
+
+
+def test_sequenced_optic_has_no_quadrature_without_opt_in(
+    set_test_backend: None,
+) -> None:
+    optic = collimated_planes()
+    sequence = optic.add_sequence("full", [0, 1, 2, 3])
+    dist = GaussianQuadrature()
+    dist.generate_points(num_rings=2)
+    field = optic.fields.get_field_coords()[-1]
+
+    data = OPD(
+        sequence,
+        field,
+        optic.primary_wavelength,
+        distribution=dist,
+        strategy="chief_ray",
+        afocal=True,
+    ).get_data(field, optic.primary_wavelength)
+
+    assert dist.quadrature_weights is not None
+    assert data.quadrature_weights is None
+
+
+def test_native_quadrature_matches_synthetic_unit_disk_moment(
+    set_test_backend: None,
+) -> None:
+    optic = collimated_planes()
+    dist = GaussianQuadrature()
+    dist.generate_points(num_rings=3)
+    field = optic.fields.get_field_coords()[-1]
+    data = OPD(
+        optic,
+        field,
+        optic.primary_wavelength,
+        distribution=dist,
+        strategy="chief_ray",
+        afocal=True,
+        assume_sample_order=True,
+    ).get_data(field, optic.primary_wavelength)
+
+    # Synthetic OPD is defined in the distribution's sampling chart.
+    rho_squared = dist.x**2 + dist.y**2
+    weighted = evaluate_wavefront(
+        rho_squared,
+        weights=data.quadrature_weights,
+        remove="piston",
+    )
+    equal_sample = evaluate_wavefront(rho_squared, remove="piston")
+
+    assert_allclose(weighted.rms, 1.0 / be.sqrt(be.array(12.0)), atol=1e-12)
+    assert_allclose(equal_sample.rms, 1.0 / be.sqrt(be.array(10.0)), atol=1e-12)
+    assert not be.allclose(weighted.rms, equal_sample.rms)
+
+
+def test_native_gaussian_weighted_synthetic_samples_converge(
+    set_test_backend: None,
+) -> None:
+    optic = collimated_planes()
+    optic.updater.set_apodization(GaussianApodization(sigma=1.0 / 6.0))
+    field = optic.fields.get_field_coords()[-1]
+    opd_scale = 9.0
+    power_truncation = 18.0
+    amplitude_truncation = 9.0
+    expected_power_normalization = (
+        1.0 - math.exp(-power_truncation)
+    ) / power_truncation
+    expected_amplitude_normalization = (
+        1.0 - math.exp(-amplitude_truncation)
+    ) / amplitude_truncation
+    expected_power_variance = (
+        1.0
+        - power_truncation**2
+        * math.exp(power_truncation)
+        / math.expm1(power_truncation) ** 2
+    ) / 4.0
+    expected_amplitude_variance = (
+        1.0
+        - amplitude_truncation**2
+        * math.exp(amplitude_truncation)
+        / math.expm1(amplitude_truncation) ** 2
+    )
+    expected_power_rms = math.sqrt(expected_power_variance)
+    expected_amplitude_rms = math.sqrt(expected_amplitude_variance)
+    power_normalization_errors = []
+    power_rms_errors = []
+    amplitude_normalization_errors = []
+    amplitude_rms_errors = []
+
+    for num_rings in (6, 8, 10, 12):
+        dist = GaussianQuadrature()
+        dist.generate_points(num_rings=num_rings)
+        data = OPD(
+            optic,
+            field,
+            optic.primary_wavelength,
+            distribution=dist,
+            strategy="chief_ray",
+            afocal=True,
+            assume_sample_order=True,
+        ).get_data(field, optic.primary_wavelength)
+
+        # The synthetic W=9*rho^2 is independent of traced OPD and physical
+        # pupil mapping. sigma=1/6 gives I(rho)=exp(-18*rho^2) in this chart.
+        rho_squared = dist.x**2 + dist.y**2
+        expected_intensity = be.exp(-power_truncation * rho_squared)
+        assert_allclose(data.intensity, expected_intensity, rtol=0.0, atol=1e-14)
+        synthetic_opd = opd_scale * rho_squared
+        power_weights = data.quadrature_weights * data.intensity
+        amplitude_weights = data.quadrature_weights * be.sqrt(data.intensity)
+        power_result = evaluate_wavefront(
+            synthetic_opd,
+            weights=power_weights,
+            remove="piston",
+        )
+        amplitude_result = evaluate_wavefront(
+            synthetic_opd,
+            weights=amplitude_weights,
+            remove="piston",
+        )
+        power_normalization_errors.append(
+            abs(
+                float(
+                    be.to_numpy(
+                        be.sum(power_weights) - expected_power_normalization
+                    )
+                )
+            )
+        )
+        power_rms_errors.append(
+            abs(float(be.to_numpy(power_result.rms - expected_power_rms)))
+        )
+        amplitude_normalization_errors.append(
+            abs(
+                float(
+                    be.to_numpy(
+                        be.sum(amplitude_weights) - expected_amplitude_normalization
+                    )
+                )
+            )
+        )
+        amplitude_rms_errors.append(
+            abs(float(be.to_numpy(amplitude_result.rms - expected_amplitude_rms)))
+        )
+
+    assert all(
+        later < earlier
+        for earlier, later in zip(
+            power_normalization_errors[:-1],
+            power_normalization_errors[1:],
+            strict=True,
+        )
+    )
+    assert all(
+        later < earlier
+        for earlier, later in zip(
+            power_rms_errors[:-1], power_rms_errors[1:], strict=True
+        )
+    )
+    assert all(
+        later < earlier
+        for earlier, later in zip(
+            amplitude_normalization_errors[:-1],
+            amplitude_normalization_errors[1:],
+            strict=True,
+        )
+    )
+    assert all(
+        later < earlier
+        for earlier, later in zip(
+            amplitude_rms_errors[:-1], amplitude_rms_errors[1:], strict=True
+        )
+    )
+    assert power_normalization_errors[-1] < 1e-10
+    assert power_rms_errors[-1] < 1e-8
+    assert amplitude_normalization_errors[-1] < 1e-12
+    assert amplitude_rms_errors[-1] < 1e-10
+
+
+def test_native_sigma_half_is_not_an_r3w_beam(set_test_backend: None) -> None:
+    optic = collimated_planes()
+    optic.updater.set_apodization(GaussianApodization(sigma=0.5))
+    field = optic.fields.get_field_coords()[-1]
+    dist = GaussianQuadrature()
+    dist.generate_points(num_rings=12)
+    data = OPD(
+        optic,
+        field,
+        optic.primary_wavelength,
+        distribution=dist,
+        strategy="chief_ray",
+        afocal=True,
+        assume_sample_order=True,
+    ).get_data(field, optic.primary_wavelength)
+
+    rho_squared = dist.x**2 + dist.y**2
+    # In the sampling chart sigma=0.5 gives I(rho)=exp(-2*rho^2),
+    # so its normalized disk integral uses T=2 rather than T=18.
+    expected_intensity = be.exp(-2.0 * rho_squared)
+    expected_normalization = (1.0 - math.exp(-2.0)) / 2.0
+    r3w_normalization = (1.0 - math.exp(-18.0)) / 18.0
+    actual_normalization = be.sum(data.quadrature_weights * data.intensity)
+
+    assert_allclose(data.intensity, expected_intensity, rtol=0.0, atol=1e-14)
+    assert_allclose(actual_normalization, expected_normalization, atol=1e-12)
+    assert not be.allclose(actual_normalization, r3w_normalization)
 
 
 def max_abs_wavefront(

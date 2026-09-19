@@ -84,6 +84,29 @@ def test_aimer_consistency(set_test_backend):
         assert be.allclose(r_i, r_r, atol=1e-6)
 
 
+def test_robust_aimer_restores_interleaved_field_order(set_test_backend):
+    """Robust field regrouping must restore the caller's original ray order."""
+    optic = ReverseTelephoto()
+    iterative_aimer = IterativeRayAimer(optic, tol=1e-8)
+    robust_aimer = RobustRayAimer(optic, tol=1e-8)
+    Hx = be.array([0.0, 0.0, 0.0, 0.0])
+    Hy = be.array([0.6, 0.0, 0.6, 0.0])
+    Px = be.array([-0.7, -0.2, 0.3, 0.8])
+    Py = be.array([0.1, -0.4, 0.5, -0.2])
+    wavelength = 0.55
+
+    expected = iterative_aimer.aim_rays((Hx, Hy), wavelength, (Px, Py))
+    actual = robust_aimer.aim_rays((Hx, Hy), wavelength, (Px, Py))
+
+    report_fields = [
+        (report.Hx, report.Hy) for report in robust_aimer.last_report.field_reports
+    ]
+    assert report_fields == [(0.0, 0.0), (0.0, 0.6)]
+    assert report_fields[0] != (float(Hx[0]), float(Hy[0]))
+    for expected_value, actual_value in zip(expected, actual, strict=True):
+        assert_allclose(actual_value, expected_value, atol=1e-6)
+
+
 def test_large_batch(set_test_backend):
     """Test aiming with a large batch of rays."""
     optic = ReverseTelephoto()
