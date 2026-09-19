@@ -707,6 +707,19 @@ def test_gaussian_quadrature_provenance_for_each_reference_strategy(
     assert_allclose(data.quadrature_weights, source_weights, rtol=0.0, atol=0.0)
 
 
+@pytest.mark.parametrize("strategy", ["chief_ray", "centroid", "best_fit"])
+def test_quadrature_evaluation_requires_producer_opt_in(set_test_backend, strategy):
+    dist = GaussianQuadrature()
+    dist.generate_points(num_rings=2)
+    data = OPD(
+        DoubleGauss(), (0.0, 0.0), 0.55, distribution=dist, strategy=strategy
+    ).get_data((0.0, 0.0), 0.55)
+
+    assert data.quadrature_weights is None
+    with pytest.raises(ValueError, match="No quadrature weights"):
+        data.evaluate(remove="piston", use_quadrature=True)
+
+
 def test_gaussian_quadrature_regeneration_preserves_existing_snapshots(
     set_test_backend,
 ):
