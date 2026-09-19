@@ -48,6 +48,10 @@ class Wavefront:
             Defaults to "chief_ray".
         remove_tilt (bool): If True, removes tilt and piston from the OPD data.
             Defaults to False.
+        assume_sample_order (bool): Opt in to copying distribution quadrature
+            weights into cached data in source order. The caller must establish
+            that the trace preserves one-to-one source sample association.
+            Shape checks do not detect permutations. Defaults to False.
         **kwargs: Additional keyword arguments passed to the strategy.
 
     Attributes:
@@ -71,6 +75,8 @@ class Wavefront:
         strategy: WavefrontStrategyType = "chief_ray",
         afocal: bool = False,
         remove_tilt: bool = False,
+        *,
+        assume_sample_order: bool = False,
         **kwargs,
     ):
         self.optic = optic
@@ -85,6 +91,7 @@ class Wavefront:
             optic=self.optic,
             distribution=self.distribution,
             reference_type=reference_type,
+            assume_sample_order=assume_sample_order,
             **kwargs,
         )
         self.remove_tilt = remove_tilt

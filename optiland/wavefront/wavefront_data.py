@@ -26,6 +26,13 @@ class WavefrontData(Generic[BEArrayT]):
         radius (be.ndarray): Radius of curvature of the exit pupil reference sphere.
         E_exits (list[be.ndarray] | None): A list of 3D electric field vectors at
             the exit pupil, representing incoherent polarization states.
+        quadrature_weights (be.ndarray | None): Quadrature contributions associated
+            with the samples. Generated data require ``assume_sample_order=True``
+            to copy a distribution snapshot. Gaussian-quadrature values describe
+            normalized distribution-coordinate unit-disk area. They are not
+            physical-pupil Jacobian weights, are not multiplied by intensity,
+            and are not changed when a ray is
+            clipped. ``None`` means that no quadrature measure was supplied.
     """
 
     pupil_x: BEArrayT
@@ -36,3 +43,4 @@ class WavefrontData(Generic[BEArrayT]):
     radius: float
     prt_matrix: BEArrayT | None = None
     E_exits: list[BEArrayT] | None = None
+    quadrature_weights: BEArrayT | None = None
