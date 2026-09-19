@@ -330,6 +330,44 @@ exact). The frame says which applies: `df.attrs["tier"]` is `"A"` or `"B"`, besi
 `df.attrs["num_rays"]`. Measured on a Cooke triplet's `rms_spot_size` at 12 hexapolar rings
 (469 rays), 16 samples: 14 of 16 rows differ, worst 1.1e-14 against a bound of 2.3e-13.
 
+## Scheduling mixed workloads across the CPU pool and the GPU
+
+`optiland.parallel.run_scheduled` runs a list of independent jobs on a CPU pool plus one GPU
+worker and routes each job by its shape, so a mixed workload runs efficiently without hand
+placement:
+
+```python
+from optiland.parallel import Job, run_scheduled, trace_rays
+
+jobs = [Job(sweep_fn, (lens_dict, values), kind="batch", rays=trace_rays(182), designs=100),
+        Job(trace_fn, (lens_dict, 0.7), kind="trace", rays=trace_rays(577)),
+        Job(spot_fn, (lens_dict,), kind="trace", rays=trace_rays(18), traces=9)]
+results, plan = run_scheduled(jobs, return_plan=True)   # results in job order
+```
+
+* A `Job` carries the callable and its cost hints: `kind` (`trace`, `batch`, or the forced
+  `cpu` / `gpu`), `rays` per trace or per design, `traces` per job, `designs` per batch and
+  `surfaces`. `trace_rays(num_rays, distribution)` returns the ray count an `optic.trace`
+  call launches, since the distributions interpret `num_rays` differently.
+* A `CostModel` predicts each job's seconds on a CPU worker inside a full pool and on the
+  GPU worker; `plan_jobs` is longest-first list scheduling on those predictions, so small
+  traces stay on the CPU pool, batched sweeps and million-ray traces go to the GPU, and the
+  GPU only takes a small job when every CPU slot is busy far enough ahead. The plan is
+  returned (`assignment`, per-resource queues, predicted makespans).
+* Pool sizes come from the machine: one NumPy worker per performance core minus one core
+  per GPU worker (its host thread needs a performance core), one GPU worker when a Metal
+  device exists. The GPU pool is only started when the plan sends it work.
+* **Hardware awareness.** The shipped coefficients are the M1 Max measurements
+  (`NOTES/08-parallel-saturation.md`, section 6). `default_model()` uses them on that chip
+  (`host_signature()` reads the CPU brand string), and on any other host calibrates once
+  (about a minute of probe traces on the actual pools) and caches the result under the
+  user's cache directory (`OPTILAND_SCHEDULER_CACHE` overrides the directory,
+  `OPTILAND_SCHEDULER_CALIBRATE=1|0` forces or forbids calibration, `CostModel.calibrate()`
+  does it by hand). A newer chip with a faster GPU and more performance cores changes both
+  sides of the balance, which is why the model is refitted rather than scaled.
+* `evaluate_parallel` is unchanged for callers who place work themselves;
+  `WorkerConfig` gained `fused` (the value of `OPTILAND_METAL_FUSED_TRACE` in that worker).
+
 ## How it works
 
 * `optiland/backend/torch_backend/metal/kernels/` — Metal Shading Language sources: double-single
