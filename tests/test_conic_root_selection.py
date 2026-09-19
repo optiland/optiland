@@ -35,7 +35,7 @@ from optiland.optic import Optic
 from optiland.physical_apertures import OffsetRadialAperture, RadialAperture
 from optiland.rays import RealRays
 
-from .utils import assert_allclose, assert_array_equal
+from .utils import assert_allclose, assert_array_equal, xfail_if_emulated_df64
 
 
 class TestConicRootSelection:
@@ -684,7 +684,11 @@ class TestOAPSystemTraces:
         for component in (rays.L, rays.M, rays.N):
             c = be.to_numpy(component)[alive]
             assert np.all(np.isfinite(c))
-            assert c.max() - c.min() < 2e-14
+            with xfail_if_emulated_df64(
+                "df64 (48-bit significand) spreads M by ~2.9e-14 = 8 eps_df64 "
+                "after two mirrors; sf64 is bit-exact with numpy"
+            ):
+                assert c.max() - c.min() < 2e-14
 
         # after an even number of mirrors the beam travels toward +z again
         assert np.all(be.to_numpy(rays.N)[alive] > 0.999999)

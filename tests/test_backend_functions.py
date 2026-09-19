@@ -12,7 +12,7 @@ def test_config(set_test_backend):
         import torch
 
         # Check current settings
-        assert be.get_device() in ["cpu", "cuda"]
+        assert be.get_device() in ["cpu", "cuda", "mps"]
         assert be.get_precision() in [32, 64]
 
         # Test changing precision — get_precision() now returns int (32 or 64)

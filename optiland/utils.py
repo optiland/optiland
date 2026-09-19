@@ -35,6 +35,12 @@ def machine_eps(value) -> float:
     Returns:
         float: The machine epsilon for the corresponding dtype.
     """
+    # Emulated dtypes (e.g. float64 on Apple GPUs, see
+    # optiland.backend.torch_backend.metal) report their true precision here
+    # because ``finfo`` only knows the dtype they *claim*.
+    emulated_eps = getattr(value, "machine_eps", None)
+    if emulated_eps is not None:
+        return float(emulated_eps)
     dtype = getattr(value, "dtype", None)
     if dtype is None:
         return float(be.finfo(float).eps)

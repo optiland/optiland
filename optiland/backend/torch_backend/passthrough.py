@@ -222,7 +222,7 @@ class PassthroughMixin:
         Returns:
             Tensor: Real part.
         """
-        return torch.real(self.array(x))
+        return self._real_from_complex(x, torch.real(self.array(x)))
 
     def imag(self, x: Any) -> Tensor:
         """Return the imaginary part of x.
@@ -233,7 +233,7 @@ class PassthroughMixin:
         Returns:
             Tensor: Imaginary part.
         """
-        return torch.imag(self.array(x))
+        return self._real_from_complex(x, torch.imag(self.array(x)))
 
     def allclose(self, a: Any, b: Any, rtol: float = 1e-5, atol: float = 1e-8) -> bool:
         """Return True if all elements in a and b are close.
@@ -314,7 +314,28 @@ class PassthroughMixin:
         Returns:
             Tensor: Absolute values.
         """
-        return torch.abs(self.array(x))
+        return self._real_from_complex(x, torch.abs(self.array(x)))
+
+    def _real_from_complex(self, x: Any, result: Tensor) -> Tensor:
+        """Bring the real result of a complex input back to the emulated device.
+
+        With emulated float64 on ``mps`` complex data lives on the CPU
+        (``to_complex`` / ``mult_p_E``), so ``abs`` / ``real`` / ``imag`` of a
+        complex tensor yield a *plain CPU float64* tensor; the elementwise
+        lanes refuse to mix that with a MetalFloat64 (torch's device rule).
+        The result is promoted to a MetalFloat64 here, exactly and, when it
+        requires grad, differentiably (``factories.as_tensor``), mirroring
+        the nucleus rule that real results of complex ops are re-encoded.
+        """
+        if (
+            isinstance(x, torch.Tensor)
+            and x.is_complex()
+            and result.device.type == "cpu"
+            and result.dtype.is_floating_point
+            and self._emulated()
+        ):
+            return self._factories().as_tensor(result)
+        return result
 
     def log2(self, x: Any) -> Tensor:
         """Compute the base-2 logarithm of x.

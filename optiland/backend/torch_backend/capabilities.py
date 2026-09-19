@@ -44,8 +44,8 @@ class CapabilitiesMixin:
 
     @property
     def supports_gpu(self) -> bool:
-        """Return True if CUDA is available."""
-        return torch.cuda.is_available()
+        """Return True if a GPU device (CUDA or Apple MPS) is available."""
+        return torch.cuda.is_available() or torch.backends.mps.is_available()
 
     # ------------------------------------------------------------------
     # Capability-gated overrides (torch has real implementations)
@@ -97,6 +97,13 @@ class CapabilitiesMixin:
     def get_complex_precision(self) -> torch.dtype:
         """Return the complex dtype matching the current float precision.
 
+        This is the *declared* complex precision. With emulated float64 on
+        ``mps`` (``MetalFloat64``) it is still ``torch.complex128``, but the
+        Apple GPU has no complex128, so complex data currently lives on the
+        CPU: ``to_complex`` / ``mult_p_E`` decode emulated tensors to CPU
+        complex128 (see ``linalg.py``) and ``tensor(..., dtype=complex128)``
+        allocates on the CPU.
+
         Returns:
             torch.dtype: ``torch.complex64`` or ``torch.complex128``.
 
@@ -124,6 +131,14 @@ class CapabilitiesMixin:
         """
         kwargs.setdefault("device", self._device())
         kwargs.setdefault("dtype", self._dtype())
+        if self._emulated() and torch.device(kwargs["device"]).type == "mps":
+            if kwargs["dtype"] == torch.float64:
+                return self._factories().tensor(
+                    data, requires_grad=bool(kwargs.get("requires_grad", False))
+                )
+            if kwargs["dtype"] == torch.complex128:
+                # No complex128 on the Apple GPU: complex data lives on the CPU.
+                kwargs["device"] = "cpu"
         return torch.tensor(data, **kwargs)
 
     def copy_to(self, source: Tensor, destination: Tensor) -> None:
@@ -135,7 +150,12 @@ class CapabilitiesMixin:
             source: Source tensor.
             destination: Destination tensor (modified in place).
         """
-        if destination.requires_grad:
+        if self._is_metal(destination):
+            # ``copy_`` dispatches to the MetalFloat64 handler, which writes the
+            # (exactly promoted) source into the destination's components.
+            with torch.no_grad():
+                destination.copy_(source)
+        elif destination.requires_grad:
             destination.data.copy_(source)
         else:
             destination.copy_(source)
@@ -156,6 +176,15 @@ class CapabilitiesMixin:
         """
         current_device = device or self._config.get_device()
         current_precision = self._config.get_precision()
+        if (
+            self._emulated()
+            and torch.device(current_device).type == "mps"
+            and current_precision == torch.float64
+        ):
+            factories = self._factories()
+            if not isinstance(data, torch.Tensor):
+                return factories.tensor(data)
+            return factories.as_tensor(data)
         if not isinstance(data, torch.Tensor):
             return torch.tensor(data, device=current_device, dtype=current_precision)
         return data.to(device=current_device, dtype=current_precision)
@@ -212,7 +241,15 @@ class CapabilitiesMixin:
             dim=1,
         )
         all_weights = torch.stack([w00, w01, w10, w11], dim=1)
-        all_weights = all_weights * valid_mask.unsqueeze(1).to(all_weights.dtype)
+        # ``.to(float64)`` on a plain mps bool tensor is rejected by torch; when
+        # the weights are emulated float64, ``cast`` promotes the mask exactly.
+        mask = valid_mask.unsqueeze(1)
+        mask = (
+            self.cast(mask)
+            if self._is_metal(all_weights)
+            else mask.to(all_weights.dtype)
+        )
+        all_weights = all_weights * mask
         return all_indices, all_weights
 
     # ------------------------------------------------------------------
@@ -230,3 +267,45 @@ class CapabilitiesMixin:
     def get_precision(self) -> int:
         """Return the current precision as an integer (32 or 64)."""
         return 32 if self._config.get_precision() == torch.float32 else 64
+
+    # ------------------------------------------------------------------
+    # Metal (emulated float64 on the Apple GPU) passthroughs
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def metal_stats() -> dict[str, int]:
+        """Per-op counters of the Metal emulation (``gpu:<op>``,
+        ``cpu_fallback:<op>``).
+
+        Returns:
+            dict[str, int]: A copy of the counters.
+        """
+        from optiland.backend.torch_backend import metal
+
+        return metal.stats()
+
+    @staticmethod
+    def metal_reset_stats() -> None:
+        """Zero the Metal emulation counters."""
+        from optiland.backend.torch_backend import metal
+
+        metal.reset_stats()
+
+    @staticmethod
+    def metal_mode() -> str:
+        """Representation used by new emulated tensors (``'df64'`` or ``'sf64'``)."""
+        from optiland.backend.torch_backend import metal
+
+        return metal.get_mode()
+
+    @staticmethod
+    def set_metal_mode(mode: str) -> None:
+        """Choose the representation for new emulated tensors.
+
+        Args:
+            mode: ``'df64'`` (double-single, default) or ``'sf64'`` (exact
+                software binary64, slower).
+        """
+        from optiland.backend.torch_backend import metal
+
+        metal.set_mode(mode)

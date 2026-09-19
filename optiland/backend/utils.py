@@ -28,6 +28,11 @@ def torch_to_numpy(obj: Tensor) -> NDArray:
         import torch
 
         if isinstance(obj, torch.Tensor):
+            decode = getattr(obj, "to_numpy", None)
+            if decode is not None:
+                # Emulated float64 on mps (MetalFloat64): decode straight to a
+                # detached float64 copy instead of three dispatched steps.
+                return decode()
             return obj.detach().cpu().numpy()
     raise TypeError
 

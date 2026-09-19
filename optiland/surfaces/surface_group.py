@@ -11,7 +11,9 @@ Kramer Harrison, 2024
 from __future__ import annotations
 
 import copy
-from contextlib import suppress
+import os
+import sys
+from contextlib import contextmanager, suppress
 from copy import deepcopy
 from functools import cached_property
 from typing import TYPE_CHECKING
@@ -28,6 +30,8 @@ from optiland.surfaces.factories.surface_factory import SurfaceFactory
 from optiland.surfaces.standard_surface import Surface
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from optiland._types import SurfaceType
     from optiland.materials import BaseMaterial
 
@@ -236,15 +240,43 @@ class SurfaceGroup:
             [surf.intensity for surf in self.surfaces if be.size(surf.intensity) > 0]
         )
 
+    #: Memo cell of an enclosing :meth:`paraxial_path_scope`, or ``None``.
+    _paraxial_path_memo: list[ParaxialPath | None] | None = None
+
     def build_paraxial_path(self) -> ParaxialPath:
         """Build the shared folded-path metadata for the current geometry.
 
         The path is a per-operation snapshot -- geometry is mutable, so it
         is rebuilt rather than cached. High-level operations should build it
         once and pass it through their call chain instead of re-deriving
-        frames, directions and parity in each consumer.
+        frames, directions and parity in each consumer, or run their call
+        chain inside :meth:`paraxial_path_scope`, which memoizes one path
+        for consumers that cannot be handed it explicitly.
         """
-        return build_paraxial_path(list(self.surfaces))
+        memo = self._paraxial_path_memo
+        if memo is None:
+            return build_paraxial_path(list(self.surfaces))
+        if memo[0] is None:
+            memo[0] = build_paraxial_path(list(self.surfaces))
+        return memo[0]
+
+    @contextmanager
+    def paraxial_path_scope(self) -> Iterator[None]:
+        """Reuse one paraxial path for every ``build_paraxial_path`` call inside.
+
+        A ray-generation call chain rebuilds the path many times (entrance
+        pupil, entry frame, positions, paraxial seed traces) although the
+        geometry cannot change while it runs. Inside this scope the first
+        build is memoized and returned to every consumer, which removes the
+        repeated per-surface frame walks. The geometry must not be modified
+        inside the scope; nested scopes share the outermost memo.
+        """
+        outer = self._paraxial_path_memo
+        self._paraxial_path_memo = [None] if outer is None else outer
+        try:
+            yield
+        finally:
+            self._paraxial_path_memo = outer
 
     @property
     def positions(self):
@@ -503,8 +535,9 @@ class SurfaceGroup:
 
         """
         self.reset()
-        for surface in self.surfaces[skip:]:
-            surface.trace(rays, record=record)
+        if not _fused_metal_trace(self, rays, skip, record):
+            for surface in self.surfaces[skip:]:
+                surface.trace(rays, record=record)
         return rays
 
     def add(
@@ -871,3 +904,38 @@ class SurfaceGroup:
             )
         self._update_surface_links()
         self.reset()
+
+
+def _fused_metal_trace(group, rays, skip, record) -> bool:
+    """Fused Metal trace hook: True when the kernel handled the trace (fork-local)."""
+    if type(getattr(rays, "x", None)).__name__ != "MetalFloat64":
+        # NumPy / torch-CPU / mps-float32: no env lookup, no import.
+        return _fused_metal_declined(group)
+    if os.environ.get("OPTILAND_METAL_FUSED_TRACE", "1") == "0":
+        return _fused_metal_declined(group)
+    try:
+        from optiland.backend.torch_backend.metal.trace import fused_trace
+    except ImportError:  # pragma: no cover - torch without Metal, or no torch
+        return _fused_metal_declined(group)
+    return fused_trace(group, rays, skip, record)
+
+
+def _fused_metal_declined(group) -> bool:
+    """Drop stale fused-trace diagnostics and decline the trace (fork-local).
+
+    ``metal/trace.py::fused_trace`` forgets a group's ``diag_from`` planes at
+    the top of every trace that reaches it, so those planes are either that
+    trace's own or absent.  The early returns above never reach it, and
+    without this the planes of an older fused trace would survive a trace that
+    ran on the per-op loop -- the ray count they describe is then simply not
+    the caller's (round-3 finding R3-V1-04).
+
+    The driver is found in ``sys.modules`` and never imported for this: on the
+    NumPy, torch-CPU and mps-float32 paths the module is absent and this costs
+    one dict lookup, which is what keeps those paths free of every
+    ``optiland.backend.torch_backend.metal.*`` import.
+    """
+    module = sys.modules.get("optiland.backend.torch_backend.metal.trace")
+    if module is not None:
+        module.forget_diag(group)
+    return False

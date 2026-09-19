@@ -106,7 +106,10 @@ class RealRayTracer(BaseRayTracer):
         # With gradients globally disabled, the whole trace runs without
         # autograd bookkeeping; with gradients enabled this context is a
         # no-op and differentiable tracing works as before.
-        with be.no_grad_unless_enabled():
+        with (
+            be.no_grad_unless_enabled(),
+            self.optic.surfaces.paraxial_path_scope(),
+        ):
             Hx = be.atleast_1d(Hx)
             Hy = be.atleast_1d(Hy)
 
@@ -169,7 +172,10 @@ class RealRayTracer(BaseRayTracer):
         self._validate_normalized_coordinates(Hx, Hy, "field")
         self._validate_normalized_coordinates(Px, Py, "pupil")
 
-        with be.no_grad_unless_enabled():
+        with (
+            be.no_grad_unless_enabled(),
+            self.optic.surfaces.paraxial_path_scope(),
+        ):
             vx, vy = self.optic.fields.get_vig_factor(Hx, Hy)
 
             Px = Px * (1 - vx)

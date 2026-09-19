@@ -37,6 +37,23 @@ Whether you're developing prototypes in research or refining production systems,
 
 Under the hood, Optiland uses NumPy for fast CPU calculations and PyTorch for GPU acceleration and automatic differentiation. Switch between engines depending on your use case with the same interface.
 
+## Apple GPU (Metal) in this fork
+
+This fork adds a `mps` device to the torch backend with **float64 emulated on the Apple GPU**
+(a fast 48-bit double-single mode and an exact software-binary64 mode), validated against the
+NumPy float64 backend by the full test suite and independent oracles:
+
+```python
+import optiland.backend as be
+be.set_backend("torch")
+be.set_device("mps")
+be.set_precision("float64")
+```
+
+See [`METAL.md`](METAL.md) for the representations, the dual CPU/GPU residency of small
+tensors, the CPU fallbacks, the performance picture and the `optiland.parallel` helper for
+multi-process design evaluation.
+
 ## Get started in 5 minutes
 
 ```bash

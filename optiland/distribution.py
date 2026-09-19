@@ -207,18 +207,25 @@ class HexagonalDistribution(BaseDistribution):
                 Defaults to 6.
 
         """
-        x = be.zeros([1])
-        y = be.zeros([1])
-        r = be.linspace(0, 1, num_rings + 1)
-
-        for i in range(num_rings):
-            num_theta = 6 * (i + 1)
-            theta = be.linspace(0, 2 * be.pi, num_theta + 1)[:-1]
-            x = be.concatenate([x, r[i + 1] * be.cos(theta)])
-            y = be.concatenate([y, r[i + 1] * be.sin(theta)])
-
-        self.x = x
-        self.y = y
+        # All rings at once. The integer bookkeeping (the ring and the angle
+        # index of every point) is host-side NumPy; the trigonometry and the
+        # products are whole-array backend ops, so a GPU backend issues a
+        # handful of launches instead of four per ring. The values are the
+        # per-ring ``linspace`` values: ``theta = j * (2 pi / n)`` is exactly
+        # what ``linspace(0, 2 pi, n + 1)[j]`` evaluates to, and the radius of
+        # ring ``i`` is ``linspace(0, 1, num_rings + 1)[i]``.
+        if num_rings <= 0:
+            self.x = be.zeros([1])
+            self.y = be.zeros([1])
+            return
+        counts = 6 * np.arange(1, num_rings + 1)
+        ring = np.repeat(np.arange(1, num_rings + 1), counts)
+        offsets = np.repeat(np.cumsum(counts) - counts, counts)
+        j = np.arange(int(counts.sum())) - offsets
+        theta = be.array(j * ((2 * np.pi) / np.repeat(counts, counts)))
+        radius = be.array(np.linspace(0.0, 1.0, num_rings + 1)[ring])
+        self.x = be.concatenate([be.zeros([1]), radius * be.cos(theta)])
+        self.y = be.concatenate([be.zeros([1]), radius * be.sin(theta)])
 
 
 class CrossDistribution(BaseDistribution):

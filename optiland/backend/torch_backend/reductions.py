@@ -19,6 +19,17 @@ if TYPE_CHECKING:
 class ReductionsMixin:
     """Reduction operations."""
 
+    def _like_scalar(self, ref: Tensor, value: Any) -> Tensor:
+        """Materialize ``value`` with ``ref``'s dtype and device.
+
+        ``torch.tensor(value, dtype=torch.float64, device='mps')`` is rejected
+        by torch, so for a ``MetalFloat64`` reference the value is encoded
+        through the Metal factories instead.
+        """
+        if self._is_metal(ref):
+            return self._factories().tensor(value)
+        return torch.tensor(value, device=ref.device, dtype=ref.dtype)
+
     # ------------------------------------------------------------------
     # Reductions
     # ------------------------------------------------------------------
@@ -48,14 +59,13 @@ class ReductionsMixin:
         """
         x = self.array(x)
         mask = ~torch.isnan(x)
-        cnt = mask.sum(dim=axis, keepdim=keepdims).to(x.dtype)
-        x0 = torch.where(mask, x, torch.tensor(0.0, dtype=x.dtype, device=x.device))
+        cnt = mask.sum(dim=axis, keepdim=keepdims)
+        # ``.to(float64)`` on a plain mps tensor is rejected by torch; promote
+        # the (int64) count exactly through the Metal factories instead.
+        cnt = self._factories().as_tensor(cnt) if self._is_metal(x) else cnt.to(x.dtype)
+        x0 = torch.where(mask, x, self._like_scalar(x, 0.0))
         s = x0.sum(dim=axis, keepdim=keepdims)
-        return torch.where(
-            cnt > 0,
-            s / cnt,
-            torch.tensor(float("nan"), dtype=x.dtype, device=x.device),
-        )
+        return torch.where(cnt > 0, s / cnt, self._like_scalar(x, float("nan")))
 
     def std(self, x: Any, axis: int | None = None) -> Tensor:
         """Compute the standard deviation along an axis.
@@ -158,11 +168,11 @@ class ReductionsMixin:
         # and complex tensors, which the backend's default float precision
         # would otherwise clobber.
         if not isinstance(x, torch.Tensor) and isinstance(y, torch.Tensor):
-            x = torch.tensor(x, device=y.device, dtype=y.dtype)
+            x = self._like_scalar(y, x)
         elif not isinstance(x, torch.Tensor):
             x = self.array(x)
         if not isinstance(y, torch.Tensor) and isinstance(x, torch.Tensor):
-            y = torch.tensor(y, device=x.device, dtype=x.dtype)
+            y = self._like_scalar(x, y)
         elif not isinstance(y, torch.Tensor):
             y = self.array(y)
         return torch.where(condition, x, y)
