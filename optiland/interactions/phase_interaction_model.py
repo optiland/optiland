@@ -103,9 +103,10 @@ class PhaseInteractionModel(BaseInteractionModel):
         alpha_mag = be.sqrt(R_sq)
 
         # 9. Choose sign for alpha (Normal component)
-        # Refraction: points along +N
-        # Reflection: points along -N
-        alpha_sign = -1.0 if self.is_reflective else 1.0
+        # Transmission preserves the incident normal hemisphere; reflection
+        # reverses it, independently of the geometry's normal orientation.
+        continuity_sign = be.where(k_in_dot_N < 0.0, -1.0, 1.0)
+        alpha_sign = -continuity_sign if self.is_reflective else continuity_sign
         alpha = alpha_sign * alpha_mag
 
         # 10. Build full outgoing wavevector (k_out = k_out,‖ + alpha*N)
