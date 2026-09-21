@@ -123,7 +123,8 @@ class PhaseInteractionModel(BaseInteractionModel):
         rays.L, rays.M, rays.N = l_o, m_o, n_o
 
         # Update OPD
-        opd_shift = -phase_val / k0
+        # Match k_out_parallel = k_in_parallel + grad(phase).
+        opd_shift = phase_val / k0
         rays.opd = rays.opd + opd_shift
 
         # Apply coating/BSDF
