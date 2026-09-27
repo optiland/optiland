@@ -9,11 +9,16 @@ Kramer Harrison, 2025
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import optiland.backend as be
 from optiland.psf.fft import ScalarFFTPSF, calculate_grid_size
 from optiland.utils import get_working_FNO
 
 from .base import BaseMTF
+
+if TYPE_CHECKING:
+    from optiland._types import BEArray
 
 
 class ScalarFFTMTF(BaseMTF):
@@ -52,7 +57,10 @@ class ScalarFFTMTF(BaseMTF):
         FNO (float): The F-number of the optic.
         psf (list): List of PSF data for each field.
         mtf (list): List of MTF data ([tangential, sagittal]) for each field.
-        freq (be.ndarray): Array of frequency points for the MTF curve.
+        freq_tang (list): Tangential frequency axes in cycles/mm, measured
+            along the local image-surface tangent plane at the chief ray.
+        freq_sag (list): Sagittal frequency axes in cycles/mm on the same plane.
+        freq (list): Backward-compatible alias for ``freq_tang``.
     """
 
     def __init__(
@@ -87,6 +95,9 @@ class ScalarFFTMTF(BaseMTF):
             self.max_freq = max_freq
 
         n_fields = len(self.resolved_fields)
+        self._frequency_steps = [
+            self._get_mtf_frequency_steps(field) for field in self.resolved_fields
+        ]
         self.freq_tang = [
             be.arange(self.grid_size // 2) * self._get_mtf_units_tang(k)
             for k in range(n_fields)
@@ -141,7 +152,7 @@ class ScalarFFTMTF(BaseMTF):
             color=color,
             linestyle="-",
         )
-        # Plot sagittal MTF (no tilt in the sagittal plane — use per-field axis)
+        # Both axes use their own projected pupil bandwidth.
         ax.plot(
             be.to_numpy(self.freq_sag[field_index]),
             be.to_numpy(mtf_field_data[1]),
@@ -193,46 +204,60 @@ class ScalarFFTMTF(BaseMTF):
             mtf.append([norm_tangential, norm_sagittal])
         return mtf
 
-    def _get_mtf_units_tang(self, k):
-        """Tangential frequency step (cycles/mm) with image-plane correction.
+    def _get_mtf_frequency_steps(
+        self, field: tuple[float, float]
+    ) -> tuple[BEArray, BEArray]:
+        """Calibrate pupil autocorrelation lags to image-space frequencies.
 
-        The chief ray tilts in the tangential plane.  Converting the per-field
-        working F/# (measured in the chief-ray frame) to the flat image plane
-        introduces a cos(θ_chief) ≈ FNO_on/FNO_off compression:
+        A pair of ray directions separated by ``du`` gives an image-plane
+        spatial frequency ``n * du_parallel / wavelength``. Project the two
+        opposite marginal-ray differences onto the image surface's tangent
+        plane at the chief ray. One pupil lag spans 1 / (num_rays - 1) of
+        each diameter. Zero-padding interpolates the PSF, not these MTF units.
 
-            df_tang = df_chief * (FNO_on / FNO_off)
-
-        For on-axis fields FNO_on == FNO_off and the correction is unity.
-
-        Args:
-            k (int): Field index.
-
-        Returns:
-            float: Tangential frequency step in cycles/mm.
+        This retains separate tangential (pupil Y) and sagittal (pupil X)
+        bandwidths, including anamorphism and the local slope of a curved
+        image. A mean F/# and an on-axis/off-axis F/# ratio cannot determine
+        either directional bandwidth in general. Like the pupil FFT itself,
+        this calibration assumes approximately affine pupil-to-cosine mapping.
         """
-        on_axis_fno = self._get_fno()
-        off_axis_fno = self.FNO[k]
-        df_chief = 1 / (
-            (self.num_rays - 1) * self.resolved_wavelength * 1e-3 * off_axis_fno
+        rays = self.optic.trace_generic(
+            *field,
+            Px=be.array([0.0, 0.0, 0.0, 1.0, -1.0]),
+            Py=be.array([0.0, 1.0, -1.0, 0.0, 0.0]),
+            wavelength=self.resolved_wavelength,
         )
-        return df_chief * (on_axis_fno / off_axis_fno)
+        geometry = self.optic.image_surface.geometry
+        # trace_generic returns global coordinates; surface_normal expects local
+        # coordinates. Localizing these fresh rays leaves the stored per-surface
+        # trace snapshots in the global frame.
+        geometry.cs.localize(rays)
+        normal = be.stack(geometry.surface_normal(rays), axis=-1)[0]
+        normal = normal / be.sqrt(be.sum(normal**2))
+        directions = be.stack([rays.L, rays.M, rays.N], axis=-1)
+        differences = be.stack(
+            [directions[1] - directions[2], directions[3] - directions[4]]
+        )
+        perpendicular = be.sum(differences * normal, axis=-1)
+        projected = differences - perpendicular[:, None] * normal
+        bandwidths = be.sqrt(be.sum(projected**2, axis=-1))
+        n_image = be.abs(
+            self.optic.image_surface.material_post.n(self.resolved_wavelength)
+        )
+        steps = (
+            n_image
+            * bandwidths
+            / ((self.num_rays - 1) * self.resolved_wavelength * 1e-3)
+        )
+        return steps[0], steps[1]
+
+    def _get_mtf_units_tang(self, k):
+        """Return the tangential frequency step in cycles/mm for field k."""
+        return self._frequency_steps[k][0]
 
     def _get_mtf_units_sag(self, k):
-        """Sagittal frequency step (cycles/mm).
-
-        There is no chief-ray tilt in the sagittal plane, so the per-field
-        working F/# (chief-ray frame) is used directly.
-
-        Args:
-            k (int): Field index.
-
-        Returns:
-            float: Sagittal frequency step in cycles/mm.
-        """
-        off_axis_fno = self.FNO[k]
-        return 1 / (
-            (self.num_rays - 1) * self.resolved_wavelength * 1e-3 * off_axis_fno
-        )
+        """Return the sagittal frequency step in cycles/mm for field k."""
+        return self._frequency_steps[k][1]
 
 
 class FFTMTF:
