@@ -8,7 +8,9 @@ from optiland import backend as be
 from optiland.coordinate_system import CoordinateSystem
 from optiland.geometries.plane import Plane
 from optiland.interactions.phase_interaction_model import PhaseInteractionModel
+from optiland.materials.abbe import AbbeMaterial
 from optiland.materials.ideal import IdealMaterial
+from optiland.phase.height_profile import HeightProfile
 from optiland.phase.radial import RadialPhaseProfile
 from optiland.rays.paraxial_rays import ParaxialRays
 from optiland.rays.real_rays import RealRays
@@ -113,6 +115,31 @@ def test_interact_paraxial_rays(mock_surface):
     interacted_rays = model.interact_paraxial_rays(rays)
 
     assert_allclose(interacted_rays.u, be.array([expected_u]), atol=1e-6)
+
+
+def test_height_profile_interact_paraxial_rays_uses_wavelength(mock_surface):
+    mock_surface.material_post = AbbeMaterial(n=1.5, abbe=50, model="buchdahl")
+    coords = be.linspace(-1.0, 1.0, 5)
+    slope = 1e-3
+    height_map = slope * (coords[:, None] + coords[None, :])
+    profile = HeightProfile(coords, coords, height_map)
+    model = PhaseInteractionModel(mock_surface, profile, is_reflective=False)
+
+    wavelengths = be.array([0.48, 0.65])
+    rays = ParaxialRays(
+        y=be.array([0.1, 0.1]),
+        u=be.array([0.0, 0.0]),
+        z=be.array([0.0, 0.0]),
+        wavelength=wavelengths,
+    )
+
+    n_pre = mock_surface.material_pre.n(wavelengths)
+    n_post = mock_surface.material_post.n(wavelengths)
+    expected_u = -(n_post - n_pre) * slope / n_post
+
+    interacted_rays = model.interact_paraxial_rays(rays)
+
+    assert_allclose(interacted_rays.u, expected_u, atol=1e-9)
 
 
 def test_tir_case(mock_surface):

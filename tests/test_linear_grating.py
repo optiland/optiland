@@ -10,6 +10,7 @@ from optiland.geometries.plane import Plane
 from optiland.interactions.phase_interaction_model import PhaseInteractionModel
 from optiland.materials.ideal import IdealMaterial
 from optiland.phase.linear_grating import LinearGratingPhaseProfile
+from optiland.rays.paraxial_rays import ParaxialRays
 from optiland.rays.real_rays import RealRays
 from optiland.surfaces.standard_surface import Surface
 
@@ -80,6 +81,25 @@ def test_linear_grating_efficiency(mock_surface):
 
     expected_intensity = initial_intensity * efficiency
     assert_allclose(interacted_rays.i, expected_intensity)
+
+
+def test_linear_grating_interact_paraxial_rays(mock_surface):
+    period = 1.0  # mm
+    wavelength = 0.55  # microns
+    profile = LinearGratingPhaseProfile(period=period, angle=be.pi / 2)
+    model = PhaseInteractionModel(mock_surface, profile, is_reflective=False)
+    rays = ParaxialRays(
+        y=be.array([0.0]),
+        u=be.array([0.0]),
+        z=be.array([0.0]),
+        wavelength=wavelength,
+    )
+
+    interacted_rays = model.interact_paraxial_rays(rays)
+
+    n_post = mock_surface.material_post.n(wavelength)
+    expected_u = -(wavelength * 1e-3) / (period * n_post)
+    assert_allclose(interacted_rays.u, be.array([expected_u]), atol=1e-9)
 
 
 @pytest.mark.parametrize("order", [1, -1])

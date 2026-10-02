@@ -157,7 +157,7 @@ class PhaseInteractionModel(BaseInteractionModel):
         y = rays.y
 
         # Get paraxial gradient from the strategy
-        paraxial_gradient = self.phase_profile.get_paraxial_gradient(y)
+        paraxial_gradient = self.phase_profile.get_paraxial_gradient(y, rays.w)
 
         # Apply geometric + gradient deflection
         grad_deflection = paraxial_gradient / k0
