@@ -18,6 +18,7 @@ from optiland.nonsequential.components.base import BaseComponent
 from optiland.nonsequential.components.coating_support import (
     reject_polarized_coating,
 )
+from optiland.nonsequential.components.ledger import LedgerBooking
 from optiland.nonsequential.materials.nsq_material import medium_stack_id
 from optiland.nonsequential.ray_bundle import (
     MEDIUM_STACK_EMPTY,
@@ -39,7 +40,7 @@ if TYPE_CHECKING:
     from optiland.nonsequential.rng import NSQRng
 
 
-class RefractiveComponent(BaseComponent):
+class RefractiveComponent(BaseComponent, LedgerBooking):
     """Refractive optical element (lens, prism, window).
 
     At each interface, Fresnel splitting uses the detached-sample /
@@ -104,6 +105,7 @@ class RefractiveComponent(BaseComponent):
         """
         reject_polarized_coating(coating, surface_name=name)
         self.coating = coating
+        self.reset_ledger()
         super().__init__(
             cs,
             geometry,
@@ -295,6 +297,13 @@ class RefractiveComponent(BaseComponent):
             # TIR: weight is exactly 1
             weight = be.where(tir, be.ones_like(weight), weight)
 
+        # What a lossy coating absorbs is w(1 - R - T). It is zero for a bare
+        # Fresnel interface, where T is 1 - R by construction, and zero under
+        # TIR, where R is forced to 1 and T to 0; a coating with R + T < 1
+        # makes it non-zero. Booked before the multiply, while the incoming
+        # weight is still in hand.
+        self.book_loss(rays.flux, 1.0 - R_used - T_used, hit_mask)
+
         # Apply weight to flux for hit rays
         rays.flux = rays.flux * be.where(hit_mask, weight, be.ones_like(weight))
 
@@ -441,6 +450,9 @@ class RefractiveComponent(BaseComponent):
             rays.M = new_dirs[:, 1]
             rays.N = new_dirs[:, 2]
             bsdf_gate = be.where(scatters, bsdf_weights, be.ones_like(bsdf_weights))
+            # A lobe's weight is a fraction of the incident flux, so what the
+            # lobe does not return was removed at this surface.
+            self.book_loss(rays.flux, 1.0 - bsdf_gate, hit_mask)
             rays.flux = rays.flux * bsdf_gate
 
             # D-4: a scattered ray's medium is decided by its own lobe's

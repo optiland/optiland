@@ -163,6 +163,9 @@ class TorchBackend(TracerBackend):
         from optiland.nonsequential.components.absorbing import (  # noqa: PLC0415
             AbsorbingComponent,
         )
+        from optiland.nonsequential.components.ledger import (  # noqa: PLC0415
+            LedgerBooking,
+        )
         from optiland.nonsequential.tracer import (  # noqa: PLC0415, I001
             SimulationResult,
         )
@@ -176,6 +179,8 @@ class TorchBackend(TracerBackend):
         for comp in scene.surfaces:
             if isinstance(comp, AbsorbingComponent):
                 comp.reset_stats()
+            if isinstance(comp, LedgerBooking):
+                comp.reset_ledger()
 
         # The per-bounce interaction loop below is driven by this IR, not by
         # iterating scene.surfaces and branching on Python class identity.
@@ -460,6 +465,14 @@ class TorchBackend(TracerBackend):
             if isinstance(comp, AbsorbingComponent):
                 num_rays_absorbed += comp._absorbed_count
 
+        # Collect the mirror, coating and BSDF lobe loss from the surfaces
+        # that booked it. Zero for a lossless scene.
+        total_flux_coating = sum(
+            comp.coating_loss
+            for comp in scene.surfaces
+            if isinstance(comp, LedgerBooking)
+        )
+
         # Collect detector results. A transmissive (``absorb=False``)
         # detector samples the beam and lets the ray continue, so the watt it
         # reads is still in the trace and is booked again at whatever finally
@@ -484,7 +497,8 @@ class TorchBackend(TracerBackend):
         total_flux_lost = total_flux_depth_killed + total_flux_rr_killed
 
         # Every launched watt ends up detected at a detector that removed the
-        # ray, absorbed, escaped, or killed by the flux/depth cutoffs.
+        # ray, absorbed at a surface, lost in a mirror or a coating, absorbed
+        # in the bulk, escaped, or killed by the flux/depth cutoffs.
         # Omitting total_flux_lost makes the metric report a large error for
         # any scene that depth-kills rays, which is exactly the stray-light
         # case this diagnostic exists to serve.
@@ -493,6 +507,7 @@ class TorchBackend(TracerBackend):
                 total_flux_in
                 - (total_flux_detected - total_flux_tapped)
                 - total_flux_absorbed
+                - total_flux_coating
                 - total_flux_bulk_absorbed
                 - total_flux_escaped
                 - total_flux_lost
@@ -520,6 +535,7 @@ class TorchBackend(TracerBackend):
             False,
             detector_results,
             medium_stack_underflows=total_medium_stack_underflows,
+            coating_loss=total_flux_coating,
         )
 
         return SimulationResult(
@@ -533,6 +549,7 @@ class TorchBackend(TracerBackend):
             total_flux_detected=total_flux_detected,
             total_flux_tapped=total_flux_tapped,
             total_flux_absorbed=total_flux_absorbed,
+            total_flux_coating=total_flux_coating,
             total_flux_bulk_absorbed=total_flux_bulk_absorbed,
             total_flux_escaped=total_flux_escaped,
             total_flux_lost=total_flux_lost,
