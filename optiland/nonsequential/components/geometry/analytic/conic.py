@@ -133,7 +133,7 @@ class ConicGeometry(AnalyticGeometry):
         solvable: np.ndarray,
         origins: np.ndarray,
         directions: np.ndarray,
-        eps: float,
+        eps: float | np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Test one quadratic root for a physical hit on the sag sheet.
 
@@ -142,7 +142,7 @@ class ConicGeometry(AnalyticGeometry):
             solvable: Lanes where this root came from a well-posed division.
             origins: Ray origins in local frame, shape (N, 3) [mm].
             directions: Ray directions in local frame, shape (N, 3).
-            eps: Minimum accepted distance [mm].
+            eps: Minimum accepted distance [mm], scalar or shape (N,).
 
         Returns:
             (valid, px, py): hit flag and the transverse hit coordinates.
@@ -161,7 +161,10 @@ class ConicGeometry(AnalyticGeometry):
         return valid, px, py
 
     def ray_intersect(
-        self, origins: np.ndarray, directions: np.ndarray
+        self,
+        origins: np.ndarray,
+        directions: np.ndarray,
+        eps: float | np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Intersect rays with the conic surface.
 
@@ -180,6 +183,7 @@ class ConicGeometry(AnalyticGeometry):
         Args:
             origins: Ray origins in local frame, shape (N, 3) [mm].
             directions: Ray directions in local frame, shape (N, 3).
+            eps: See :meth:`ComponentGeometry.ray_intersect`.
 
         Returns:
             (t, normals, hit_mask, n_geom). n_geom points toward local +z
@@ -219,7 +223,8 @@ class ConicGeometry(AnalyticGeometry):
         t1 = q / be.where(a_ok, a, be.ones_like(a))
         t2 = c_0 / be.where(q_ok, q, be.ones_like(q))
 
-        eps = 1e-9
+        if eps is None:
+            eps = 1e-9
         args = (origins, directions, eps)
         valid1, px1, py1 = self._root_valid(t1, disc_ok & a_ok, *args)
         valid2, px2, py2 = self._root_valid(t2, disc_ok & q_ok, *args)

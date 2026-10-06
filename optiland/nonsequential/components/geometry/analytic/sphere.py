@@ -39,7 +39,10 @@ class SphereGeometry(AnalyticGeometry):
         )
 
     def ray_intersect(
-        self, origins: np.ndarray, directions: np.ndarray
+        self,
+        origins: np.ndarray,
+        directions: np.ndarray,
+        eps: float | np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Intersect rays with the sphere.
 
@@ -48,6 +51,7 @@ class SphereGeometry(AnalyticGeometry):
         Args:
             origins: Ray origins in local frame, shape (N, 3) [mm].
             directions: Ray directions in local frame, shape (N, 3), unit.
+            eps: See :meth:`ComponentGeometry.ray_intersect`.
 
         Returns:
             (t, normals, hit_mask, n_geom). n_geom points *inward*, toward
@@ -79,7 +83,8 @@ class SphereGeometry(AnalyticGeometry):
         t2 = be.where(disc_ok, (-b + sqrt_disc) / 2.0, inf_arr)
 
         # Choose nearest positive t
-        eps = 1e-9
+        if eps is None:
+            eps = 1e-9
         use_t1 = disc_ok & (t1 > eps)
         use_t2 = disc_ok & (~use_t1) & (t2 > eps)
         t = be.where(use_t1, t1, be.where(use_t2, t2, inf_arr))
