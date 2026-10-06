@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -7,11 +8,13 @@ import pytest
 # Set a backend before importing optiland modules
 import optiland.backend as be
 from optiland.distribution import create_distribution
+from optiland.fields.field_types import AngleField
 from optiland.materials import IdealMaterial
 from optiland.optic import Optic
 from optiland.rays import RealRays
 from optiland.samples.objectives import DoubleGauss
 from optiland.wavefront import OPD
+from optiland.wavefront.reference_geometry import PlanarReference
 from optiland.wavefront.strategy import (
     BestFitSphereStrategy,
     CentroidReferenceSphereStrategy,
@@ -48,6 +51,88 @@ class ConcreteReferenceStrategy(ReferenceStrategy):
     def _create_reference_geometry(self, rays):
         """Mock implementation for the abstract method."""
         pass
+
+
+def controlled_rays(z, normal_direction, opd, intensity):
+    """Build full-shape ray data for controlled planar strategy tests."""
+    z = be.array(z)
+    normal_direction = be.array(normal_direction)
+    zeros = be.zeros_like(z)
+    rays = SimpleNamespace(
+        x=be.array([3.0, 7.0, 5.0][: len(z)]),
+        y=be.array([4.0, 8.0, 6.0][: len(z)]),
+        z=z,
+        L=be.sqrt(1 - normal_direction**2),
+        M=zeros,
+        N=normal_direction,
+        opd=be.array(opd),
+        i=be.array(intensity),
+        p=be.array([10.0, 20.0, 30.0][: len(z)]),
+        _launch_state=None,
+    )
+    rays.get_exit_fields = lambda _: [be.array([1.0, 2.0, 3.0][: len(z)])]
+    return rays
+
+
+def controlled_planar_strategy(strategy_type, rays, reference_ray=None):
+    """Isolate strategy orchestration while retaining the real plane kernel."""
+    if reference_ray is None:
+        reference_ray = controlled_rays([0.0], [1.0], [11.5], [0.0])
+    optic = SimpleNamespace(
+        trace=MagicMock(return_value=rays),
+        trace_generic=MagicMock(return_value=reference_ray),
+        surfaces=SimpleNamespace(intensity=be.stack((rays.i,), axis=0)),
+        fields=SimpleNamespace(field_definition=object()),
+        polarization_state=object(),
+    )
+    strategy = object.__new__(strategy_type)
+    strategy.optic = optic
+    strategy.n_image = 1.0
+    strategy.reference_type = "plane"
+    strategy.distribution = SimpleNamespace(
+        x=be.zeros_like(rays.x),
+        y=be.zeros_like(rays.y),
+    )
+    strategy._create_reference_geometry = MagicMock(
+        return_value=PlanarReference((0, 0, 0), (0, 0, 1))
+    )
+    strategy._generate_chief_launch = lambda field, wavelength: reference_ray
+    return strategy
+
+
+def controlled_angular_strategy(strategy_type, launch_index):
+    """Use actual angular launch restoration with explicit float32 ray data."""
+    rays = controlled_rays(
+        [1.0, 1.0, 2.0], [1.0, 0.0, 1.0], [11.0, 999.0, 15.0], [1.0, 1.0, 3.0]
+    )
+    reference = controlled_rays([0.0], [1.0], [11.5], [0.0])
+    for bundle in (rays, reference):
+        for name in ("x", "y", "z", "L", "M", "N", "opd", "i"):
+            setattr(bundle, name, be.asarray(getattr(bundle, name), dtype=be.float32))
+    rays._launch_state = SimpleNamespace(
+        x=be.asarray([2.0, float("nan"), 4.0], dtype=be.float32),
+        y=be.asarray([0.0, 0.0, 0.0], dtype=be.float32),
+        z=be.asarray([0.0, 0.0, 0.0], dtype=be.float32),
+        L=be.asarray([1.0, 1.0, 1.0], dtype=be.float32),
+        M=be.asarray([0.0, 0.0, 0.0], dtype=be.float32),
+        N=be.asarray([0.0, 0.0, 0.0], dtype=be.float32),
+    )
+    reference._launch_state = SimpleNamespace(
+        x=be.asarray([1.0], dtype=be.float32),
+        y=be.asarray([0.0], dtype=be.float32),
+        z=be.asarray([0.0], dtype=be.float32),
+        L=be.asarray([1.0], dtype=be.float32),
+        M=be.asarray([0.0], dtype=be.float32),
+        N=be.asarray([0.0], dtype=be.float32),
+    )
+    strategy = controlled_planar_strategy(strategy_type, rays, reference)
+    strategy.optic.surfaces.intensity = be.reshape(rays.i, (1, 3))
+    strategy.optic.fields.field_definition = AngleField()
+    strategy.optic.object_surface = SimpleNamespace(
+        is_infinite=True,
+        material_post=SimpleNamespace(n=lambda wavelength: launch_index),
+    )
+    return strategy, rays, reference
 
 
 class TestReferenceStrategy:
@@ -249,7 +334,12 @@ class TestChiefRayStrategy:
         chief_ray.x = be.array(0.0)
         chief_ray.y = be.array(0.0)
         chief_ray.z = be.array(10.0)
+        chief_ray.L = be.array(0.0)
+        chief_ray.M = be.array(0.0)
+        chief_ray.N = be.array(1.0)
         chief_ray.opd = be.array(0.0)
+        chief_ray.i = be.array(1.0)
+        chief_ray._launch_state = None
         optic.trace_generic.return_value = chief_ray
 
         rays = MagicMock()
@@ -260,6 +350,8 @@ class TestChiefRayStrategy:
         rays.M = be.array([0.0, float("nan")])
         rays.N = be.array([1.0, float("nan")])
         rays.opd = be.array([0.0, float("nan")])
+        rays.i = be.array([1.0, 1.0])
+        rays._launch_state = None
         rays.p = None
         rays.get_exit_fields = None
         optic.trace.return_value = rays
@@ -279,6 +371,656 @@ class TestChiefRayStrategy:
         assert be.all(be.isfinite(wavefront_data.pupil_z))
         assert be.all(be.isfinite(wavefront_data.opd))
         assert_allclose(wavefront_data.intensity, be.array([1.0, 0.0]))
+
+
+@pytest.mark.parametrize(
+    "strategy_type",
+    [ChiefRayStrategy, CentroidReferenceSphereStrategy, BestFitSphereStrategy],
+)
+def test_planar_parallel_sample_is_excluded_without_compacting(
+    set_test_backend, strategy_type
+):
+    rays = controlled_rays(
+        [1.0, 1.0, 2.0],
+        [1.0, 0.0, 1.0],
+        [11.0, 999.0, 15.0],
+        [1.0, 1.0, 3.0],
+    )
+    strategy = controlled_planar_strategy(strategy_type, rays)
+
+    data = strategy.compute_wavefront_data((0.0, 0.0), 1.0)
+
+    # Corrected OPLs are 10 and 13; the arithmetic, unweighted piston is 11.5.
+    assert_allclose(data.opd, be.array([1500.0, 0.0, -1500.0]))
+    assert_allclose(data.pupil_x, be.array([3.0, 0.0, 5.0]))
+    assert_allclose(data.pupil_y, be.array([4.0, 0.0, 6.0]))
+    assert_allclose(data.pupil_z, be.zeros(3))
+    assert_allclose(data.intensity, be.array([1.0, 0.0, 3.0]))
+    assert_allclose(rays.i, be.array([1.0, 1.0, 3.0]))
+    for name in ("opd", "pupil_x", "pupil_y", "pupil_z", "intensity"):
+        assert getattr(data, name).shape == (3,)
+    assert data.prt_matrix.shape == (3,)
+    assert data.E_exits[0].shape == (3,)
+    assert_allclose(data.prt_matrix, be.array([10.0, 20.0, 30.0]))
+    assert_allclose(data.E_exits[0], be.array([1.0, 2.0, 3.0]))
+
+
+@pytest.mark.parametrize(
+    "strategy_type",
+    [ChiefRayStrategy, CentroidReferenceSphereStrategy, BestFitSphereStrategy],
+)
+@pytest.mark.parametrize("index_kind", ["python", "scalar_array", "size_one_array"])
+def test_strategy_preserves_explicit_float32_with_float64_backend(
+    set_test_backend, strategy_type, index_kind
+):
+    assert be.get_precision() == 64
+    default_dtype = be.array([0.0]).dtype
+    rays = controlled_rays(
+        [1.0, 1.0, 2.0], [1.0, 0.0, 1.0], [11.0, 999.0, 15.0], [1.0, 1.0, 3.0]
+    )
+    reference = controlled_rays([0.0], [1.0], [10.75], [0.0])
+    # Explicit dtype overrides only; the backend remains configured for float64.
+    for bundle in (rays, reference):
+        for name in ("x", "y", "z", "L", "M", "N", "opd", "i"):
+            setattr(bundle, name, be.asarray(getattr(bundle, name), dtype=be.float32))
+    strategy = controlled_planar_strategy(strategy_type, rays, reference)
+    strategy.optic.surfaces.intensity = be.reshape(rays.i, (1, 3))
+    index = 1.5
+    if index_kind == "scalar_array":
+        index = be.asarray(1.5, dtype=be.float32)
+    elif index_kind == "size_one_array":
+        index = be.asarray([1.5], dtype=be.float32)
+    strategy.n_image = index
+
+    data = strategy.compute_wavefront_data((0.0, 0.0), 0.55)
+
+    expected = {
+        "opd": [1.25 / (0.55 * 1e-3), 0.0, -1.25 / (0.55 * 1e-3)],
+        "pupil_x": [3.0, 0.0, 5.0],
+        "pupil_y": [4.0, 0.0, 6.0],
+        "pupil_z": [0.0, 0.0, 0.0],
+        "intensity": [1.0, 0.0, 3.0],
+    }
+    for name, values in expected.items():
+        actual = getattr(data, name)
+        assert actual.dtype == rays.z.dtype
+        assert actual.shape == rays.z.shape
+        assert_allclose(actual, be.asarray(values, dtype=be.float32), rtol=1e-6, atol=0)
+    assert be.get_precision() == 64
+    assert be.array([0.0]).dtype == default_dtype
+
+
+@pytest.mark.parametrize(
+    "strategy_type",
+    [
+        ConcreteReferenceStrategy,
+        ChiefRayStrategy,
+        CentroidReferenceSphereStrategy,
+        BestFitSphereStrategy,
+    ],
+)
+@pytest.mark.parametrize(
+    "index_kind", ["python", "scalar32", "array32", "scalar64", "array64"]
+)
+def test_angular_phase_dtype_promotion_and_index_gradient(
+    set_test_backend, strategy_type, index_kind
+):
+    assert be.get_precision() == 64
+    launch_index = 1.5
+    if index_kind != "python":
+        dtype = be.float32 if index_kind.endswith("32") else be.float64
+        values = [1.5] if index_kind.startswith("array") else 1.5
+        launch_index = be.asarray(values, dtype=dtype)
+        if be.get_backend() == "torch":
+            launch_index.requires_grad_(True)
+    strategy, rays, reference = controlled_angular_strategy(strategy_type, launch_index)
+
+    # Native arithmetic is the promotion oracle, including deliberate float64
+    # indices. NumPy and Torch legitimately differ for 0-D float64 operands.
+    phase = launch_index * be.asarray([1.0, 3.0], dtype=be.float32)
+    if strategy_type is ConcreteReferenceStrategy:
+        expected = be.asarray([11.0, 15.0], dtype=be.float32) + phase
+        result = strategy._restore_launch_phase(rays, rays.opd, 1.0, reference)
+        assert be.isnan(result[1])
+        index_derivative = 7.0
+    else:
+        corrected = be.asarray([10.0, 13.0], dtype=be.float32) + phase
+        if strategy_type is ChiefRayStrategy:
+            expected = (reference.opd - corrected) / 1e-3
+            index_derivative = -7000.0
+        else:
+            expected = (be.mean(corrected) - corrected) / 1e-3
+            index_derivative = -1000.0
+        data = strategy.compute_wavefront_data((0.0, 0.0), 1.0)
+        result = data.opd
+        assert result[1] == 0
+        assert_allclose(data.pupil_x, be.array([3.0, 0.0, 5.0]))
+        assert_allclose(data.intensity, be.array([1.0, 0.0, 3.0]))
+        for name in ("pupil_x", "pupil_y", "pupil_z"):
+            assert getattr(data, name).dtype == rays.z.dtype
+        assert rays._launch_state is None
+        assert reference._launch_state is None
+
+    assert result.shape == (3,)
+    assert result.dtype == expected.dtype
+    assert_allclose(result[[0, 2]], expected, rtol=1e-6, atol=0)
+    assert be.get_precision() == 64
+    if be.get_backend() == "torch" and index_kind != "python":
+        (result[0] + 2 * result[2]).backward()
+        assert launch_index.grad is not None
+        assert_allclose(launch_index.grad, index_derivative, rtol=1e-6, atol=0)
+
+
+@pytest.mark.parametrize(
+    "strategy_type",
+    [
+        ConcreteReferenceStrategy,
+        ChiefRayStrategy,
+        CentroidReferenceSphereStrategy,
+        BestFitSphereStrategy,
+    ],
+)
+@pytest.mark.parametrize("component", ["x", "y", "z", "L", "M", "N", "index"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf")])
+def test_angular_phase_rejects_nonfinite_shared_inputs(
+    set_test_backend, strategy_type, component, value
+):
+    launch_index = value if component == "index" else 1.5
+    strategy, rays, reference = controlled_angular_strategy(strategy_type, launch_index)
+    if component != "index":
+        setattr(
+            reference._launch_state, component, be.asarray([value], dtype=be.float32)
+        )
+    message = "Launch refractive index" if component == "index" else "Reference launch"
+
+    with pytest.raises(ValueError, match=message):
+        if strategy_type is ConcreteReferenceStrategy:
+            strategy._restore_launch_phase(rays, rays.opd, 1.0, reference)
+        else:
+            strategy.compute_wavefront_data((0.0, 0.0), 1.0)
+    if strategy_type is not ConcreteReferenceStrategy:
+        assert rays._launch_state is None
+        assert reference._launch_state is None
+
+
+@pytest.mark.parametrize("angular", [False, True])
+def test_launch_wrapper_preserves_inapplicable_inputs(set_test_backend, angular):
+    strategy, rays, reference = controlled_angular_strategy(
+        ConcreteReferenceStrategy, 1.5
+    )
+    if angular:
+        strategy.optic.object_surface.is_infinite = False
+    else:
+        strategy.optic.fields.field_definition = object()
+    opd = be.asarray([1.0, float("nan"), float("inf")], dtype=be.float32)
+
+    result = strategy._restore_launch_phase(rays, opd, 1.0, reference)
+
+    assert result is opd
+
+
+def test_safe_launch_phase_for_finite_object_preserves_validity(set_test_backend):
+    strategy, rays, reference = controlled_angular_strategy(
+        ConcreteReferenceStrategy, 1.5
+    )
+    strategy.optic.object_surface.is_infinite = False
+    # No retained state is needed when launch restoration is inapplicable.
+    rays._launch_state = None
+    reference._launch_state = None
+    opd = be.asarray([1.0, 2.0, float("nan")], dtype=be.float32)
+    existing_valid = be.array([1.0, 0.0, 1.0]) > 0
+
+    restored, valid = strategy._restore_launch_phase_safely(
+        rays, opd, 1.0, reference, existing_valid
+    )
+
+    assert restored.shape == opd.shape
+    assert restored.dtype == opd.dtype
+    assert_allclose(restored, be.asarray([1.0, 0.0, 0.0], dtype=be.float32), atol=0)
+    assert_allclose(valid, be.array([1.0, 0.0, 0.0]))
+    assert opd[1] == 2.0
+    assert be.isnan(opd[2])
+
+
+@pytest.mark.parametrize(
+    "strategy_type",
+    [ChiefRayStrategy, CentroidReferenceSphereStrategy, BestFitSphereStrategy],
+)
+@pytest.mark.parametrize("missing_state", ["sampled", "reference"])
+def test_missing_launch_state_raises_and_cleans_up(
+    set_test_backend, strategy_type, missing_state
+):
+    strategy, rays, reference = controlled_angular_strategy(strategy_type, 1.5)
+    if missing_state == "sampled":
+        rays._launch_state = None
+        assert reference._launch_state is not None
+    else:
+        reference._launch_state = None
+        assert rays._launch_state is not None
+
+    with pytest.raises(ValueError, match="requires retained ray launch state"):
+        strategy.compute_wavefront_data((0.0, 0.0), 1.0)
+
+    assert rays._launch_state is None
+    assert reference._launch_state is None
+
+
+@pytest.mark.parametrize(
+    "strategy_type",
+    [ChiefRayStrategy, CentroidReferenceSphereStrategy, BestFitSphereStrategy],
+)
+@pytest.mark.parametrize("size_one", [False, True])
+def test_strategy_retains_index_and_wavelength_gradients(
+    set_test_backend, strategy_type, size_one
+):
+    if be.get_backend() != "torch":
+        pytest.skip("Requires Torch autograd.")
+    rays = controlled_rays(
+        [1.0, 1.0, 2.0], [1.0, 0.0, 1.0], [11.0, 999.0, 15.0], [1.0, 1.0, 3.0]
+    )
+    reference = controlled_rays([0.0], [1.0], [10.75], [0.0])
+    strategy = controlled_planar_strategy(strategy_type, rays, reference)
+    index = be.array([1.5] if size_one else 1.5).requires_grad_(True)
+    wavelength = be.array([0.55] if size_one else 0.55).requires_grad_(True)
+    strategy.n_image = index
+
+    data = strategy.compute_wavefront_data((0.0, 0.0), wavelength)
+    loss = be.sum(data.opd * be.array([1.0, 11.0, 2.0]))
+    loss.backward()
+
+    index_derivative = 5.0 if strategy_type is ChiefRayStrategy else 0.5
+    assert_allclose(index.grad, index_derivative / (0.55 * 1e-3), rtol=1e-12, atol=0)
+    assert_allclose(wavelength.grad, 1.25 / (0.55**2 * 1e-3), rtol=1e-12, atol=0)
+
+
+@pytest.mark.parametrize(
+    "strategy_type",
+    [ChiefRayStrategy, CentroidReferenceSphereStrategy, BestFitSphereStrategy],
+)
+@pytest.mark.parametrize("divisor", ["index", "wavelength"])
+@pytest.mark.parametrize("value", [0.0, float("nan"), float("inf")])
+def test_strategy_rejects_invalid_divisors(
+    set_test_backend, strategy_type, divisor, value
+):
+    rays = controlled_rays([1.0], [1.0], [11.0], [1.0])
+    strategy = controlled_planar_strategy(strategy_type, rays)
+    wavelength = 0.55
+    if divisor == "index":
+        strategy.n_image = value
+    else:
+        wavelength = value
+
+    with pytest.raises(ValueError, match="finite and nonzero"):
+        strategy.compute_wavefront_data((0.0, 0.0), wavelength)
+
+
+@pytest.mark.parametrize(
+    "strategy_type",
+    [ChiefRayStrategy, CentroidReferenceSphereStrategy, BestFitSphereStrategy],
+)
+@pytest.mark.parametrize("intensity", [[1.0, 1.0], [0.0, 0.0]])
+def test_planar_all_invalid_samples_raise(set_test_backend, strategy_type, intensity):
+    rays = controlled_rays([1.0, 2.0], [0.0, 0.0], [11.0, 15.0], intensity)
+    strategy = controlled_planar_strategy(strategy_type, rays)
+
+    with pytest.raises(ValueError, match="numerically valid"):
+        strategy.compute_wavefront_data((0.0, 0.0), 1.0)
+
+
+@pytest.mark.parametrize(
+    "strategy_type",
+    [CentroidReferenceSphereStrategy, BestFitSphereStrategy],
+)
+def test_planar_no_active_samples_raise(set_test_backend, strategy_type):
+    rays = controlled_rays([1.0, 2.0], [1.0, 1.0], [11.0, 15.0], [0.0, 0.0])
+    strategy = controlled_planar_strategy(strategy_type, rays)
+
+    with pytest.raises(ValueError, match="positive-intensity"):
+        strategy.compute_wavefront_data((0.0, 0.0), 1.0)
+
+
+@pytest.mark.parametrize("parallel_middle", [False, True])
+def test_chief_retains_numerically_valid_unilluminated_bundle(
+    set_test_backend, parallel_middle
+):
+    rays = controlled_rays(
+        [1.0, 1.0, 2.0],
+        [1.0, 0.0 if parallel_middle else 1.0, 1.0],
+        [11.0, 12.0, 15.0],
+        [0.0, 0.0, 0.0],
+    )
+    strategy = controlled_planar_strategy(ChiefRayStrategy, rays)
+
+    data = strategy.compute_wavefront_data((0.0, 0.0), 1.0)
+
+    assert_allclose(data.intensity, be.zeros(3), rtol=0, atol=0)
+    assert_allclose(
+        data.opd, be.array([1500.0, 0.0 if parallel_middle else 500.0, -1500.0])
+    )
+    assert_allclose(data.pupil_x, be.array([3.0, 0.0 if parallel_middle else 7.0, 5.0]))
+    assert_allclose(data.pupil_y, be.array([4.0, 0.0 if parallel_middle else 8.0, 6.0]))
+    assert_allclose(data.pupil_z, be.zeros(3), rtol=0, atol=0)
+    assert data.opd.shape == (3,)
+    assert_allclose(data.prt_matrix, be.array([10.0, 20.0, 30.0]))
+    assert_allclose(data.E_exits[0], be.array([1.0, 2.0, 3.0]))
+
+
+@pytest.mark.parametrize(
+    ("normal_direction", "opd"),
+    [(0.0, 11.5), (1.0, float("nan")), (1.0, float("inf"))],
+)
+def test_invalid_chief_reference_intersection_or_opd_raises(
+    set_test_backend, normal_direction, opd
+):
+    rays = controlled_rays([1.0], [1.0], [11.0], [1.0])
+    reference_ray = controlled_rays([1.0], [normal_direction], [opd], [0.0])
+    reference_ray._launch_state = object()
+    strategy = controlled_planar_strategy(ChiefRayStrategy, rays, reference_ray)
+
+    with pytest.raises(ValueError, match="chief ray reference"):
+        strategy.compute_wavefront_data((0.0, 0.0), 1.0)
+    assert reference_ray._launch_state is None
+
+
+@pytest.mark.parametrize(
+    "strategy_type", [CentroidReferenceSphereStrategy, BestFitSphereStrategy]
+)
+def test_nonfinite_arithmetic_piston_is_rejected(set_test_backend, strategy_type):
+    # Each corrected OPL is finite; their unweighted reduction overflows.
+    rays = controlled_rays([0.0, 0.0], [1.0, 1.0], [1e308, 1e308], [1.0, 3.0])
+    strategy = controlled_planar_strategy(strategy_type, rays)
+
+    with (
+        be.errstate(over="ignore"),
+        pytest.raises(ValueError, match="piston is not finite"),
+    ):
+        strategy.compute_wavefront_data((0.0, 0.0), 1.0)
+
+
+@pytest.mark.parametrize(
+    "strategy_type", [CentroidReferenceSphereStrategy, BestFitSphereStrategy]
+)
+def test_normalization_without_finite_active_outputs_raises(
+    set_test_backend, strategy_type
+):
+    """Finite piston and nonzero wavelength may still overflow forward outputs."""
+    rays = controlled_rays([1.0, 2.0], [1.0, 1.0], [11.0, 15.0], [1.0, 3.0])
+    strategy = controlled_planar_strategy(strategy_type, rays)
+
+    with (
+        be.errstate(over="ignore"),
+        pytest.raises(ValueError, match="positive-intensity wavefront outputs"),
+    ):
+        strategy.compute_wavefront_data((0.0, 0.0), 1e-308)
+
+
+@pytest.mark.parametrize(
+    "strategy_type",
+    [ChiefRayStrategy, CentroidReferenceSphereStrategy, BestFitSphereStrategy],
+)
+def test_projected_overflow_is_excluded_before_piston(set_test_backend, strategy_type):
+    """Test forward placeholders only; overflow derivatives are out of scope."""
+    rays = controlled_rays(
+        [1.0, 8e307, 2.0], [1.0, 0.8, 1.0], [11.0, 1e308, 15.0], [1.0, 2.0, 3.0]
+    )
+    rays.x = be.array([3.0, 1.5e308, 5.0])
+    rays.L = be.array([0.0, -0.6, 0.0])
+    strategy = controlled_planar_strategy(strategy_type, rays)
+    geometry = strategy._create_reference_geometry.return_value
+    path = geometry.path_length(rays, strategy.n_image)
+    assert be.all(be.isfinite(path))
+    assert_allclose(path, be.array([1.0, 1e308, 2.0]), rtol=1e-15, atol=0)
+    assert be.all(be.isfinite(rays.opd - path))
+
+    with be.errstate(over="ignore"):
+        assert be.isinf((rays.x - path * rays.L)[1])
+        data = strategy.compute_wavefront_data((0.0, 0.0), 1.0)
+
+    # Ordinary corrected OPLs 10 and 13 alone determine the piston 11.5.
+    expected = {
+        "opd": [1500.0, 0.0, -1500.0],
+        "pupil_x": [3.0, 0.0, 5.0],
+        "pupil_y": [4.0, 0.0, 6.0],
+        "pupil_z": [0.0, 0.0, 0.0],
+        "intensity": [1.0, 0.0, 3.0],
+    }
+    for name, values in expected.items():
+        actual = getattr(data, name)
+        assert actual.shape == (3,)
+        assert be.all(be.isfinite(actual))
+        assert_allclose(actual, be.array(values), rtol=1e-12, atol=0)
+    assert_allclose(rays.i, be.array([1.0, 2.0, 3.0]))
+    assert_allclose(data.prt_matrix, be.array([10.0, 20.0, 30.0]))
+    assert_allclose(data.E_exits[0], be.array([1.0, 2.0, 3.0]))
+
+
+def test_near_parallel_reference_projection_has_signed_plane_hits(set_test_backend):
+    strategy = object.__new__(ConcreteReferenceStrategy)
+    strategy.n_image = 1.5
+    rays = controlled_rays([1.0, 1.0], [5e-13, -5e-13], [0.0, 0.0], [1.0, 1.0])
+    geometry = PlanarReference((0, 0, 0), (0, 0, 1))
+
+    corrected, pupil_x, pupil_y, pupil_z, valid = strategy._reference_projection(
+        rays, geometry, rays.i
+    )
+
+    assert be.all(valid)
+    assert_allclose(corrected, be.array([-3e12, 3e12]), rtol=1e-12, atol=0)
+    assert_allclose(pupil_x, be.array([3.0 - 2e12, 7.0 + 2e12]), rtol=1e-12, atol=0)
+    assert_allclose(pupil_y, rays.y, rtol=0, atol=0)
+    residual = (
+        (pupil_x - geometry.point[0]) * geometry.normal[0]
+        + (pupil_y - geometry.point[1]) * geometry.normal[1]
+        + (pupil_z - geometry.point[2]) * geometry.normal[2]
+    )
+    assert_allclose(residual, be.zeros(2), rtol=0, atol=1e-15)
+
+
+@pytest.mark.parametrize(
+    "strategy_type",
+    [ChiefRayStrategy, CentroidReferenceSphereStrategy, BestFitSphereStrategy],
+)
+def test_launch_phase_exception_clears_retained_state(set_test_backend, strategy_type):
+    rays = controlled_rays([1.0], [1.0], [11.0], [1.0])
+    reference_ray = controlled_rays([0.0], [1.0], [11.5], [0.0])
+    rays._launch_state = object()
+    reference_ray._launch_state = object()
+    strategy = controlled_planar_strategy(strategy_type, rays, reference_ray)
+    strategy._restore_launch_phase_safely = MagicMock(
+        side_effect=RuntimeError("launch failure")
+    )
+
+    with pytest.raises(RuntimeError, match="launch failure"):
+        strategy.compute_wavefront_data((0.0, 0.0), 1.0)
+
+    assert rays._launch_state is None
+    assert reference_ray._launch_state is None
+
+
+def test_zero_centroid_mean_direction_raises(set_test_backend):
+    strategy = object.__new__(CentroidReferenceSphereStrategy)
+    rays = SimpleNamespace(
+        L=be.array([1.0, -1.0]),
+        M=be.array([0.0, 0.0]),
+        N=be.array([0.0, 0.0]),
+    )
+    valid = be.ones(2) > 0
+
+    with pytest.raises(ValueError, match="mean direction"):
+        strategy._create_planar_ref(
+            be.array([0.0, 0.0, 0.0]),
+            rays,
+            valid,
+            be.ones(2),
+        )
+
+
+@pytest.mark.parametrize(
+    "strategy_type", [CentroidReferenceSphereStrategy, BestFitSphereStrategy]
+)
+@pytest.mark.parametrize("image_index", [0.0, float("nan"), float("inf")])
+def test_points_from_rays_reject_invalid_image_index(
+    set_test_backend, strategy_type, image_index
+):
+    strategy = object.__new__(strategy_type)
+    strategy.n_image = image_index
+    rays = controlled_rays([1.0, 2.0], [1.0, 1.0], [11.0, 15.0], [1.0, 1.0])
+
+    with pytest.raises(ValueError, match="refractive index must be finite and nonzero"):
+        strategy._points_from_rays(rays)
+
+
+@pytest.mark.parametrize(
+    "strategy_type",
+    [None, ChiefRayStrategy, CentroidReferenceSphereStrategy, BestFitSphereStrategy],
+    ids=["projection", "chief", "centroid", "best_fit"],
+)
+def test_fixed_reference_gradients_match_valid_only_bundle(
+    set_test_backend, strategy_type
+):
+    if be.get_backend() != "torch":
+        pytest.skip("Requires Torch autograd.")
+    torch = pytest.importorskip("torch")
+
+    def calculate(indices):
+        # Fixed plane: fitting derivatives are deliberately outside this test.
+        # The last ray is exactly on-plane but is not parallel to the plane.
+        values = (
+            [3.0, 7.0, 5.0],
+            [4.0, 8.0, 6.0],
+            [1.0, 1.0, 0.0],
+            [0.6, 1.0, 0.0],
+            [0.0, 0.0, 0.6],
+            [0.8, 0.0, 0.8],
+            [11.0, 999.0, 15.0],
+        )
+        leaves = [
+            be.array(value)[indices].detach().clone().requires_grad_(True)
+            for value in values
+        ]
+        rays = SimpleNamespace(
+            **dict(zip(("x", "y", "z", "L", "M", "N", "opd"), leaves, strict=True)),
+            i=be.array([1.0, 2.0, 3.0])[indices],
+            _launch_state=None,
+        )
+        medium = be.array(1.5).requires_grad_(True)
+        if strategy_type is None:
+            strategy = object.__new__(ConcreteReferenceStrategy)
+            strategy.n_image = medium
+            *outputs, valid = strategy._reference_projection(
+                rays, PlanarReference((0, 0, 0), (0, 0, 1)), rays.i
+            )
+            assert_allclose(valid, be.array([1.0, 0.0, 1.0])[indices])
+        else:
+            strategy = controlled_planar_strategy(strategy_type, rays)
+            strategy.n_image = medium
+            data = strategy.compute_wavefront_data((0.0, 0.0), 1.0)
+            outputs = (data.opd, data.pupil_x, data.pupil_y, data.pupil_z)
+        return outputs, (*leaves, medium)
+
+    mixed_outputs, mixed_leaves = calculate([0, 1, 2])
+    valid_outputs, valid_leaves = calculate([0, 2])
+    for output_index, (mixed_output, valid_output) in enumerate(
+        zip(mixed_outputs, valid_outputs, strict=True)
+    ):
+        assert be.all(be.isfinite(mixed_output))
+        assert mixed_output[1] == 0
+        assert_allclose(mixed_output[[0, 2]], valid_output, rtol=1e-12, atol=1e-12)
+        # Nonuniform cotangents avoid cancellation of piston-removed OPD.
+        mixed_grads = torch.autograd.grad(
+            (mixed_output * be.array([1.0, 11.0, 2.0])).sum(),
+            mixed_leaves,
+            retain_graph=True,
+            allow_unused=True,
+        )
+        valid_grads = torch.autograd.grad(
+            (valid_output * be.array([1.0, 2.0])).sum(),
+            valid_leaves,
+            retain_graph=True,
+            allow_unused=True,
+        )
+        for index, (mixed_grad, valid_grad) in enumerate(
+            zip(mixed_grads, valid_grads, strict=True)
+        ):
+            if mixed_grad is None or valid_grad is None:
+                assert mixed_grad is None and valid_grad is None
+                continue
+            assert be.all(be.isfinite(mixed_grad))
+            if index < len(mixed_leaves) - 1:
+                assert mixed_grad[1] == 0
+                mixed_grad = mixed_grad[[0, 2]]
+            assert_allclose(mixed_grad, valid_grad, rtol=1e-12, atol=1e-12)
+        if output_index == 0:
+            expected_index_grad = {
+                None: -1.25,
+                ChiefRayStrategy: 1250.0,
+                CentroidReferenceSphereStrategy: -625.0,
+                BestFitSphereStrategy: -625.0,
+            }[strategy_type]
+            assert_allclose(mixed_grads[-1], expected_index_grad, rtol=1e-12, atol=0)
+
+    if strategy_type is None:
+        # Zero intersection distance must not erase the position derivative.
+        position_grad = torch.autograd.grad(mixed_outputs[0][2], mixed_leaves[2])[0]
+        assert_allclose(position_grad, be.array([0.0, 0.0, -1.5 / 0.8]), atol=0)
+
+
+def test_safe_launch_phase_masks_invalid_torch_gradients(set_test_backend):
+    if be.get_backend() != "torch":
+        pytest.skip("Requires Torch autograd.")
+
+    optic = collimated_planes(index=1.5)
+    strategy = object.__new__(ConcreteReferenceStrategy)
+    strategy.optic = optic
+    launch_leaves = [
+        be.array(values).requires_grad_(True)
+        for values in (
+            [0.0, float("nan"), 2.0],
+            [0.0, 1.0, 2.0],
+            [0.0, 1.0, 2.0],
+            [1.0, 1.0, 1.0],
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+        )
+    ]
+    launch = SimpleNamespace(
+        x=launch_leaves[0],
+        y=launch_leaves[1],
+        z=launch_leaves[2],
+        L=launch_leaves[3],
+        M=launch_leaves[4],
+        N=launch_leaves[5],
+    )
+    reference_launch = SimpleNamespace(
+        x=be.array([0.0]),
+        y=be.array([0.0]),
+        z=be.array([0.0]),
+        L=be.array([1.0]),
+        M=be.array([0.0]),
+        N=be.array([0.0]),
+    )
+    rays = SimpleNamespace(_launch_state=launch)
+    reference_rays = SimpleNamespace(_launch_state=reference_launch)
+    opd = be.array([1.0, 2.0, 3.0]).requires_grad_(True)
+
+    restored, valid = strategy._restore_launch_phase_safely(
+        rays,
+        opd,
+        0.55,
+        reference_rays,
+        be.ones(3) > 0,
+    )
+    be.sum(restored).backward()
+
+    assert_allclose(valid, be.array([True, False, True]))
+    assert be.all(be.isfinite(restored))
+    assert be.all(be.isfinite(opd.grad))
+    assert opd.grad[1] == 0
+    assert opd.grad[0] != 0
+    for leaf in launch_leaves:
+        assert be.all(be.isfinite(leaf.grad))
+        assert leaf.grad[1] == 0
+    assert launch_leaves[0].grad[0] != 0
 
 
 class TestCentroidReferenceSphereStrategy:
