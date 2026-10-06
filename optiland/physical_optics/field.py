@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from numbers import Complex, Real
+from numbers import Complex, Integral, Real
 from typing import Generic, Literal
 
 import optiland.backend as be
@@ -51,6 +51,8 @@ class ScalarField(Generic[BEArrayT]):
     The last array dimension is the x-axis and the first is the y-axis. All
     spatial quantities, including ``dx``, ``dy``, and ``wavelength``, must use
     the same unit.
+    Use :meth:`pad` to enlarge the sampling window with zeros without
+    interpolating or moving the existing samples.
 
     Args:
         data: Two-dimensional NumPy array or PyTorch tensor containing the
@@ -60,6 +62,9 @@ class ScalarField(Generic[BEArrayT]):
         wavelength: Vacuum wavelength in the same unit as ``dx``.
         dy: Sample spacing along y. Defaults to ``dx``.
         refractive_index: Homogeneous-medium refractive index. Defaults to 1.
+        center: Coordinates of the center of the sampling grid as ``(x, y)``
+            in the field's spatial unit. Defaults to the optical axis. This
+            describes the grid location, not a displacement of its contents.
 
     Raises:
         TypeError: If ``data`` does not belong to the active backend.
@@ -73,6 +78,8 @@ class ScalarField(Generic[BEArrayT]):
         wavelength: float,
         dy: float | None = None,
         refractive_index: float = 1.0,
+        *,
+        center: tuple[float, float] = (0.0, 0.0),
     ) -> None:
         if not isinstance(data, be.ndarray):
             raise TypeError("data must be a NumPy array or PyTorch tensor.")
@@ -90,6 +97,15 @@ class ScalarField(Generic[BEArrayT]):
         self.dy = self.dx if dy is None else _positive_float(dy, "dy")
         self.wavelength = _positive_float(wavelength, "wavelength")
         self.refractive_index = _positive_float(refractive_index, "refractive_index")
+        if (
+            not isinstance(center, (tuple, list))
+            or len(center) != 2
+            or any(not isinstance(value, Real) for value in center)
+        ):
+            raise TypeError("center must contain two real scalar coordinates.")
+        self.center = (float(center[0]), float(center[1]))
+        if not all(math.isfinite(value) for value in self.center):
+            raise ValueError("center coordinates must be finite.")
         self._backend = backend
 
     @property
@@ -109,12 +125,80 @@ class ScalarField(Generic[BEArrayT]):
         return be.sum(self.intensity) * self.dx * self.dy
 
     def coordinates(self) -> tuple[BEArrayT, BEArrayT]:
-        """Return centered one-dimensional x and y coordinate arrays."""
+        """Return one-dimensional x and y coordinates in the field's plane."""
         self._ensure_active_backend()
         ny, nx = self.shape
         return (
-            _centered_axis(nx, self.dx, like=self.data),
-            _centered_axis(ny, self.dy, like=self.data),
+            _centered_axis(nx, self.dx, like=self.data) + self.center[0],
+            _centered_axis(ny, self.dy, like=self.data) + self.center[1],
+        )
+
+    def pad(
+        self, pad_width: int | tuple[tuple[int, int], tuple[int, int]]
+    ) -> ScalarField[BEArrayT]:
+        """Enlarge the sampling window with explicit zero padding.
+
+        Existing samples retain their physical coordinates and spacing.
+        Asymmetric padding changes the grid center, not the beam location.
+        Padding can provide room for propagation, but does not guarantee that
+        later FFT propagation is free of aliasing or periodic wraparound.
+        No interpolation is performed.
+
+        Args:
+            pad_width: Nonnegative integer padding every side equally, or
+                ``((y_before, y_after), (x_before, x_after))`` giving the
+                nonnegative integer widths for each side. Boolean widths and
+                flat pairs are not accepted.
+
+        Returns:
+            ScalarField: New field with independently owned data, including
+            for zero-width padding. Sample spacing, wavelength, refractive
+            index, data dtype, device, and gradient connectivity are preserved.
+
+        Raises:
+            TypeError: If widths are not integers or the nested tuple has an
+                invalid structure.
+            ValueError: If any padding width is negative.
+            RuntimeError: If the active backend has changed.
+        """
+        self._ensure_active_backend()
+        if isinstance(pad_width, Integral) and not isinstance(pad_width, bool):
+            widths = ((pad_width, pad_width), (pad_width, pad_width))
+        elif (
+            isinstance(pad_width, tuple)
+            and len(pad_width) == 2
+            and all(isinstance(pair, tuple) and len(pair) == 2 for pair in pad_width)
+        ):
+            widths = pad_width
+        else:
+            raise TypeError("pad_width must be an integer or a ((y, y), (x, x)) tuple.")
+        if any(
+            not isinstance(width, Integral) or isinstance(width, bool)
+            for pair in widths
+            for width in pair
+        ):
+            raise TypeError("padding widths must be integers, not booleans.")
+        if any(width < 0 for pair in widths for width in pair):
+            raise ValueError("padding widths must be nonnegative.")
+        (y_before, y_after), (x_before, x_after) = (
+            (int(before), int(after)) for before, after in widths
+        )
+        data = be.pad(
+            self.data,
+            ((y_before, y_after), (x_before, x_after)),
+            mode="constant",
+            constant_values=0,
+        )
+        return ScalarField(
+            data,
+            dx=self.dx,
+            dy=self.dy,
+            wavelength=self.wavelength,
+            refractive_index=self.refractive_index,
+            center=(
+                self.center[0] + (x_after - x_before) * self.dx / 2,
+                self.center[1] + (y_after - y_before) * self.dy / 2,
+            ),
         )
 
     def propagate(
@@ -150,7 +234,7 @@ class ScalarField(Generic[BEArrayT]):
         return (
             f"ScalarField(shape={self.shape}, dx={self.dx}, dy={self.dy}, "
             f"wavelength={self.wavelength}, "
-            f"refractive_index={self.refractive_index})"
+            f"refractive_index={self.refractive_index}, center={self.center})"
         )
 
 
