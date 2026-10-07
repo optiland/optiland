@@ -336,30 +336,59 @@ class RingDistribution(BaseDistribution):
 
 
 class SobolDistribution(BaseDistribution):
-    """A class representing a Sobol distribution.
+    """Sobol samples with normalized area weights on the unit disk.
 
-    Generates `num_points` points using a Sobol low-discrepancy sequence
-    within the unit disk.
+    The area-preserving map ``r = sqrt(u1)``, ``theta = 2*pi*u2`` gives each
+    sample weight ``1 / num_points``. Thus, ``sum(weights * f(x, y))`` estimates
+    the area average of ``f`` over the unit disk. These weights do not include
+    physical pupil area, illumination, apodization, or optical mapping Jacobians.
+
+    Powers of two are recommended to retain Sobol balance properties, but other
+    positive counts are supported. Each call starts a new sequence; a fixed seed
+    and scrambling setting reproduce its prefix within the same backend.
+    NumPy and PyTorch need not generate identical scrambled samples.
+
+    Args:
+        seed: Seed for scrambling, interpreted by the active backend.
+        scramble: Whether to scramble the Sobol sequence. Defaults to True.
 
     Attributes:
         seed (int | None): Seed for the Sobol sequence generator.
+        scramble (bool): Whether to scramble the sequence.
         x: The x-coordinates of the generated points.
         y: The y-coordinates of the generated points.
+        weights: Backend-native area weights of shape ``(num_points,)``,
+            normalized to one. None until points are generated.
     """
 
-    def __init__(self, seed: int | None = None):
+    def __init__(self, seed: int | None = None, *, scramble: bool = True) -> None:
         super().__init__()
         self.seed = seed
+        self.scramble = scramble
+        self.weights: BEArray | None = None
 
-    def generate_points(self, num_points: int):
-        """Generates Sobol points.
+    def generate_points(self, num_points: int) -> None:
+        """Generate Sobol points and their normalized area weights.
+
+        Replace coordinates and weights together after successful generation.
 
         Args:
-            num_points (int): The number of points to generate.
+            num_points: Positive number of points. Python and NumPy integers
+                are accepted; booleans are not.
 
+        Raises:
+            ValueError: If num_points is not a positive integer.
         """
+        if (
+            isinstance(num_points, bool | np.bool_)
+            or not isinstance(num_points, int | np.integer)
+            or num_points <= 0
+        ):
+            raise ValueError("num_points must be a positive integer")
+        num_points = int(num_points)
+
         sample = be.sobol_sampler(
-            dim=2, num_samples=num_points, scramble=True, seed=self.seed
+            dim=2, num_samples=num_points, scramble=self.scramble, seed=self.seed
         )
 
         u1 = sample[:, 0]
@@ -368,8 +397,11 @@ class SobolDistribution(BaseDistribution):
         r = be.sqrt(u1)
         theta = 2 * be.pi * u2
 
-        self.x = r * be.cos(theta)
-        self.y = r * be.sin(theta)
+        x = r * be.cos(theta)
+        y = r * be.sin(theta)
+        weights = be.full((num_points,), 1.0 / num_points)
+
+        self.x, self.y, self.weights = x, y, weights
 
 
 def create_distribution(distribution_type: DistributionType) -> BaseDistribution:
