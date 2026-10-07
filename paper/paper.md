@@ -92,7 +92,7 @@ As different numerical precisions can in principle affect ray accuracy, we also 
 
 Optiland bridges the gap between optical engineering and machine learning, enabling research that was previously difficult or computationally prohibitive in open-source environments.
 
-* **Realized Impact:** Optiland is currently used as the optical computation engine for [Visisipy](https://github.com/MReye-LUMC/visisipy) [@visisipy-zenodo], a Python library for simulating visual optics developed by the MReye group at Leiden University Medical Center. This integration demonstrates Optiland's reliability in handling real-world biomedical optical simulations.
+* **Realized Impact:** Optiland is currently used as the optical computation engine for [Visisipy](https://github.com/MReye-LUMC/visisipy) [@haasjes2026visisipy], a Python library for simulating visual optics developed by the MReye group at Leiden University Medical Center. This integration demonstrates Optiland's reliability in handling real-world biomedical optical simulations.
 * **Performance Significance:** As demonstrated in our benchmarks, the GPU-accelerated backend achieves a **100x speedup** over standard NumPy implementations. This throughput gain makes large-scale optical simulations and gradient-based optimization feasible on consumer hardware.
 * **Community Readiness:** Optiland is released with a comprehensive suite of analysis tools, a verified material database [@polyanskiy2024], extensive documentation, and unit tests, ensuring it is ready for immediate adoption by the research community.
 
