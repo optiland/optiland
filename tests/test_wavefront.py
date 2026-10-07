@@ -22,6 +22,24 @@ matplotlib.use("Agg")  # use non-interactive backend for testing
 
 
 class TestWavefront:
+    def test_wavefront_data_positional_constructor_compatibility(
+        self, set_test_backend
+    ):
+        arrays = [be.array([value]) for value in range(1, 7)]
+        exit_fields = [be.array([8.0])]
+
+        data = WavefrontData(*arrays[:5], 6.0, arrays[5], exit_fields)
+
+        assert data.pupil_x is arrays[0]
+        assert data.pupil_y is arrays[1]
+        assert data.pupil_z is arrays[2]
+        assert data.opd is arrays[3]
+        assert data.intensity is arrays[4]
+        assert data.radius == 6.0
+        assert data.prt_matrix is arrays[5]
+        assert data.E_exits is exit_fields
+        assert data.quadrature_weights is None
+
     @pytest.mark.parametrize("OpticClass", [CookeTriplet, DoubleGauss, EyepieceErfle])
     def test_wavefront_initialization(self, OpticClass, set_test_backend):
         optic = OpticClass()
@@ -54,6 +72,67 @@ class TestWavefront:
         assert (
             be.size(w.data[((0.0, 1.0), 0.6563)].opd) == 469
         )  # num points in the pupil
+
+    def test_generate_data_retains_independent_quadrature_snapshots(
+        self, set_test_backend
+    ):
+        optic = DoubleGauss()
+        dist = distribution.GaussianQuadrature()
+        dist.generate_points(num_rings=2)
+        first_source = be.copy(dist.weights)
+        wavefront = Wavefront(
+            optic,
+            fields=[(0.0, 0.0), (0.0, 0.7)],
+            wavelengths=[0.4861, 0.5876],
+            distribution=dist,
+            assume_sample_order=True,
+        )
+        first_data = dict(wavefront.data)
+
+        dist.generate_points(num_rings=3)
+        second_source = be.copy(dist.weights)
+        wavefront._generate_data()
+        second_data = dict(wavefront.data)
+
+        assert len(first_data) == len(second_data) == 4
+        all_data = [*first_data.values(), *second_data.values()]
+        snapshots = [data.quadrature_weights for data in all_data]
+        assert len({id(snapshot) for snapshot in snapshots}) == len(snapshots)
+
+        for data in first_data.values():
+            for sample_array in (
+                data.pupil_x,
+                data.pupil_y,
+                data.pupil_z,
+                data.opd,
+                data.intensity,
+            ):
+                assert data.quadrature_weights.shape == sample_array.shape
+            assert_allclose(
+                data.quadrature_weights, first_source, rtol=0.0, atol=0.0
+            )
+        for data in second_data.values():
+            for sample_array in (
+                data.pupil_x,
+                data.pupil_y,
+                data.pupil_z,
+                data.opd,
+                data.intensity,
+            ):
+                assert data.quadrature_weights.shape == sample_array.shape
+            assert_allclose(
+                data.quadrature_weights, second_source, rtol=0.0, atol=0.0
+            )
+
+        dist.weights[:] = 0.0
+        for data in first_data.values():
+            assert_allclose(
+                data.quadrature_weights, first_source, rtol=0.0, atol=0.0
+            )
+        for data in second_data.values():
+            assert_allclose(
+                data.quadrature_weights, second_source, rtol=0.0, atol=0.0
+            )
 
 
 class TestOPDFan:

@@ -11,6 +11,25 @@ from optiland import distribution
 from .utils import assert_allclose
 
 
+@pytest.mark.parametrize(
+    "distribution_type",
+    [
+        "line_x",
+        "line_y",
+        "random",
+        "uniform",
+        "hexapolar",
+        "cross",
+        "ring",
+        "sobol",
+    ],
+)
+def test_nonquadrature_distributions_have_no_quadrature_weights(distribution_type):
+    dist = distribution.create_distribution(distribution_type)
+
+    assert dist.quadrature_weights is None
+
+
 @pytest.mark.parametrize("num_points", [10, 25, 106, 512])
 def test_line_x(set_test_backend, num_points):
     d = distribution.create_distribution("line_x")
@@ -98,7 +117,8 @@ def test_cross(set_test_backend, num_points):
         x_line_y_to_concat = be.concatenate(
             (x_line_y_expected_full[:mid_idx], x_line_y_expected_full[mid_idx + 1 :])
         )
-    else:  # Even number of points (origin is not in the middle of linspace for an odd-length array)
+    else:
+        # For even num_points, linspace has no origin at the middle index.
         x_line_x_to_concat = x_line_x_expected_full
         x_line_y_to_concat = x_line_y_expected_full
 
@@ -161,6 +181,29 @@ def test_gaussian_quad_distribution(num_rings, set_test_backend):
     r = be.hypot(d.x, d.y)
     assert_allclose(r, radius_dict[num_rings], atol=1e-4)
     assert_allclose(d.weights.sum(), 1.0)
+
+
+def test_gaussian_quadrature_exposes_backend_weight_provenance(set_test_backend):
+    d = distribution.GaussianQuadrature()
+    assert d.quadrature_weights is None
+
+    d.generate_points(num_rings=3)
+
+    assert d.quadrature_weights is d.weights
+    assert isinstance(d.quadrature_weights, be.ndarray)
+    assert_allclose(be.sum(d.quadrature_weights), 1.0)
+    assert_allclose(
+        be.sum((d.x**2 + d.y**2) * d.quadrature_weights),
+        0.5,
+    )
+
+    previous_weights = d.weights
+    d.generate_points(num_rings=2)
+
+    assert d.quadrature_weights is d.weights
+    assert d.quadrature_weights is not previous_weights
+    assert d.quadrature_weights.shape != previous_weights.shape
+    assert_allclose(be.sum(d.quadrature_weights), 1.0)
 
 
 def test_gaussian_quad_distribution_errors(set_test_backend):

@@ -41,6 +41,15 @@ class BaseDistribution(ABC):
         self.x: BEArray = be.empty(0)
         self.y: BEArray = be.empty(0)
 
+    @property
+    def quadrature_weights(self) -> BEArray | None:
+        """Return explicit quadrature weights associated with the samples.
+
+        ``None`` means that the distribution does not define a quadrature
+        measure. It does not imply equal-area or equal-sample weights.
+        """
+        return None
+
     @abstractmethod
     def generate_points(self, num_points: int):
         """Generate points based on the distribution.
@@ -276,12 +285,31 @@ class GaussianQuadrature(BaseDistribution):
     Attributes:
         x: Array of x-coordinates of the generated points.
         y: Array of y-coordinates of the generated points.
-        weights: Array of weights, normalized to 1.0.
+        weights: Quadrature weights for normalized distribution-coordinate
+            unit-disk area, normalized to sum to 1.0. ``None`` before point
+            generation.
+        quadrature_weights: Alias exposing ``weights`` through the common
+            distribution provenance interface.
+
+    Notes:
+        The weights approximate the normalized area measure
+        ``(1 / pi) * integral_unit_disk f(x, y) dA`` in the distribution's
+        coordinate chart. They contain no Jacobian for a physical pupil or stop
+        mapping and no intensity or apodization factor.
 
     .. [1] William H. Peirce, "Numerical Integration Over the Planar Annulus,",  Journal
             of the Society for Industrial and Applied Mathematics, Vol. 5, No. 2 (Jun.,
             1957), pp. 66-73
     """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.weights: BEArray | None = None
+
+    @property
+    def quadrature_weights(self) -> BEArray | None:
+        """Return normalized unit-disk area weights after point generation."""
+        return self.weights
 
     def generate_points(self, num_rings: int, num_spokes: int | None = None):
         """Generate radially symmetric points.
