@@ -103,14 +103,22 @@ class MMDFTPSF(BasePSF):
             if image_size is None:
                 # Use grid_size above to set Q and therefore pixel pitch
                 image_size = grid_size
-            pixel_pitch = wavelength * self._get_working_FNO() * clear_size / image_size
+            pixel_pitch = (
+                self.wavelengths[0].value
+                * self._get_working_FNO()
+                * clear_size
+                / image_size
+            )
 
         # Below triggers only if pixel_pitch was given but image_size was not
         if image_size is None:
             # Use pixel_pitch to calculate max pad size and set image size to be 1
             # pixel less than that
             image_size = int(
-                wavelength * self._get_working_FNO() * clear_size / pixel_pitch
+                self.wavelengths[0].value
+                * self._get_working_FNO()
+                * clear_size
+                / pixel_pitch
             )
 
         self.image_size = image_size
