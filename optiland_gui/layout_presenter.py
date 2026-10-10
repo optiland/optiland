@@ -30,8 +30,7 @@ def present_2d(viewer, data, context, restyle=False, *, reset=False):
             )
         )
         xlim, ylim = viewer.ax.get_xlim(), viewer.ax.get_ylim()
-        if hasattr(viewer, "_finish_default_pan"):
-            viewer._finish_default_pan()
+        viewer.toolbar.finish_navigation()
         if hasattr(viewer, "clear_2d_highlights"):
             viewer.clear_2d_highlights()
         viewer.ax.clear()
@@ -190,6 +189,7 @@ def present_sag(viewer, data, context, restyle=False):
     from mpl_toolkits.axes_grid1 import make_axes_locatable
 
     gui_plot_utils.apply_gui_matplotlib_styles(viewer.current_theme)
+    viewer.toolbar.update()
     viewer.figure.clear()
     axes = viewer.figure.add_subplot(111)
     divider = make_axes_locatable(axes)

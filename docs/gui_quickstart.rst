@@ -64,10 +64,20 @@ When you first open the Optiland GUI, you'll see a main window containing severa
     *   **2D View**: Shows a 2D cross-section of the lens, with options to display rays.
     *   **3D View**: Renders a 3D model of the system (if VTK is installed and working).
 
-    In the 2D view, select **Zoom to rectangle** and drag around the area to
-    inspect. The drawing stays fixed while the rectangle is drawn; releasing
-    the mouse applies the zoom. Toolbar pan and ordinary drag-pan use separate
-    gestures. **Back** and **Forward** navigate the resulting view history.
+    All 2D plots share the same direct controls: **right-drag** or
+    **middle-drag** pans, and the **mouse wheel** zooms around the pointer.
+    Ordinary left-click is available for selection where the plot supports it
+    and does not pan. These defaults also apply to sag plots, analysis plots
+    and optimizer candidate previews. There is currently no mouse-binding
+    settings window.
+
+    Select **Zoom to rectangle** and
+    left-drag around the area to inspect. The drawing stays fixed until you
+    release the mouse. The **Pan** tool enables left-drag panning. Right/middle
+    panning and wheel zoom remain available with either tool selected; wheel
+    zoom waits until any drag is finished. ``Escape`` exits the selected tool.
+    **Back** and **Forward** navigate completed views. The 3D view has its own
+    rotation and navigation controls.
 
     .. image:: _static/gui_viewer_panel.png
        :alt: Viewer Panel (2D/3D)

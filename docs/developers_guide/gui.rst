@@ -162,6 +162,24 @@ to that window. Sending a test click directly to a label, or selecting it with
 ``QApplication.widgetAt``, bypasses layered-window hit testing and does not
 reproduce clicks passing through to the console.
 
+Shared 2D plot navigation
+-------------------------
+
+``widgets.plot_navigation.PlotNavigationToolbar`` owns the shared 2D mouse
+gestures for lens layout, sag, analysis and optimization preview canvases.
+Right/middle drag uses Matplotlib's frozen press-time pan transform; wheel zoom
+uses each axis's scale transform so logarithmic and inverted axes behave
+consistently. Ordinary left-click remains available to plot selection handlers.
+Explicit toolbar tools use left-drag. A gesture holds the canvas widget lock
+and records a completed view in navigation history; focus loss, Escape, scene
+replacement and tool changes end active gestures.
+
+Call ``finish_navigation()`` before replacing an existing scene, or ``update()``
+when the replacement also requires clearing view history. Do not attach an
+additional scroll or default-pan handler to a canvas using this toolbar.
+``test_plot_navigation.py`` exercises the shared contract, while
+``test_viewer_navigation.py`` checks real lens-worker integration.
+
 Contributing to the GUI
 -----------------------
 

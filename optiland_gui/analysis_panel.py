@@ -21,7 +21,6 @@ from typing import TYPE_CHECKING, Literal, get_args, get_origin, get_type_hints
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
 from PySide6.QtCore import (
     QEasingCurve,
@@ -72,6 +71,7 @@ from optiland.analysis import (
     YYbar,
 )
 from optiland.mtf import FFTMTF, GeometricMTF
+from optiland_gui.widgets.plot_navigation import PlotNavigationToolbar
 
 from . import gui_plot_utils
 from .services.analysis_plots import draw_analysis_plot
@@ -81,7 +81,7 @@ if TYPE_CHECKING:
     from .optiland_connector import OptilandConnector
 
 
-class CustomMatplotlibToolbar(NavigationToolbar):
+class CustomMatplotlibToolbar(PlotNavigationToolbar):
     """A custom Matplotlib toolbar with styleable buttons.
 
     This toolbar assigns unique object names to its buttons, allowing them to be
@@ -1189,7 +1189,6 @@ class AnalysisPanel(QWidget):
 
         # Connect events and store their IDs for later disconnection
         cids = [
-            canvas.mpl_connect("scroll_event", self.on_scroll_zoom),
             canvas.mpl_connect("motion_notify_event", self.on_mouse_move_on_plot),
             canvas.mpl_connect("button_press_event", self.on_plot_double_click),
         ]
@@ -1723,9 +1722,6 @@ class AnalysisPanel(QWidget):
                     tm.notify(msg, "error")
                 else:
                     QMessageBox.critical(self, "Save Error", msg)
-
-    def on_scroll_zoom(self, event):
-        gui_plot_utils.handle_matplotlib_scroll_zoom(event)
 
     @Slot()
     def _load_analysis_settings_slot(self):

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from PySide6.QtWidgets import QDialog, QLabel, QVBoxLayout, QWidget
+
+from optiland_gui.widgets.plot_navigation import PlotNavigationToolbar
 
 from .layout_presenter import present_2d
 
@@ -23,7 +25,7 @@ class OptimizationPreview(QDialog):
         self.figure = Figure()
         self.canvas = FigureCanvasQTAgg(self.figure)
         self.ax = self.figure.add_subplot()
-        self.toolbar = NavigationToolbar2QT(self.canvas, self)
+        self.toolbar = PlotNavigationToolbar(self.canvas, self)
         layout.addWidget(self.toolbar)
         layout.addWidget(self.canvas)
         self._is_plotting = False
