@@ -161,6 +161,21 @@ class ParaxialRayAimer(BaseRayAimer):
         M = be.where(is_zero, 0.0, (y1 - y0) / mag)
         N = be.where(is_zero, 1.0, (z1 - z0) / mag)
 
+        # A finite object closer to the lens than its virtual entrance pupil has the
+        # pupil behind it: the aim point is then behind the launch point, and a ray
+        # sent toward it would leave the lens, its optical path counted backwards.
+        # Send it toward the lens along the same line through the pupil point.
+        finite = not self.optic.object_surface.is_infinite
+        if finite and not self.optic.obj_space_telecentric:
+            if frame is None:
+                along = z1 - z0
+            else:
+                along = (x1 - x0) * d0[0] + (y1 - y0) * d0[1] + (z1 - z0) * d0[2]
+            behind = along < 0
+            L = be.where(behind, -L, L)
+            M = be.where(behind, -M, M)
+            N = be.where(behind, -N, N)
+
         return x0, y0, z0, L, M, N
 
     def _check_telecentric_compatibility(self) -> None:

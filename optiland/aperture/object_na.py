@@ -132,7 +132,9 @@ class ObjectNAAperture(BaseSystemAperture):
         obj_z = paraxial.optic.object_surface.geometry.cs.z
         u0 = be.arcsin(sine)
         z = paraxial.entrance_pupil_axial_position() - obj_z
-        return 2 * z * be.tan(u0)
+        # A diameter: a virtual entrance pupil behind the object (z < 0) is as wide
+        # as one in front of it at the same distance, not negative.
+        return 2 * be.abs(z) * be.tan(u0)
 
     def scale(self, factor: float) -> ObjectNAAperture:
         """Return ``self`` — NA is dimensionless and does not scale.
