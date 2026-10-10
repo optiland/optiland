@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 
 import optiland.backend as be
 from optiland.fileio import (
@@ -61,17 +62,13 @@ class SpecialFloatEncoder(json.JSONEncoder):
             if encoded is not None:
                 return encoded
 
-        if hasattr(obj, "item") and isinstance(obj.item(), float):
-            encoded = self._encode_special_float(obj.item())
-            if encoded is not None:
-                return encoded
-
-        try:
-            return super().default(obj)
-        except TypeError:
-            if hasattr(obj, "tolist"):
-                return obj.tolist()
-            return str(obj)
+        if hasattr(obj, "tolist") and callable(obj.tolist):
+            return obj.tolist()
+        if hasattr(obj, "item") and callable(obj.item):
+            return obj.item()
+        # Unknown optical data must fail before publication, never turn into
+        # display text that cannot be reconstructed when the file is reopened.
+        return super().default(obj)
 
 
 def json_inf_nan_hook(dct: dict) -> dict:
@@ -110,6 +107,9 @@ class FileService:
     def __init__(self, connector: object) -> None:
         self._connector = connector
         self._current_filepath: str | None = None
+        from optiland_gui.services.file_operations import FileOperations
+
+        self.operations = FileOperations(self, connector)
 
     # ------------------------------------------------------------------
     # Toast helper
@@ -132,6 +132,7 @@ class FileService:
         initialises a default 3-surface structure, and emits the appropriate
         signals.
         """
+        self.operations.cancel_load()
         self._connector._undo_redo_manager.clear_stacks()
         self._connector._optic = Optic("New Untitled System")
         self._connector._initialize_optic_structure(
@@ -146,33 +147,26 @@ class FileService:
 
         Supports Optiland JSON (``.json``) and Zemax (``.zmx``) files.
         On success, the undo/redo stack is cleared and ``opticLoaded`` is
-        emitted. On failure a message box is shown and the system is reset
-        to a new default.
+        emitted. A failed parse or validation preserves the current document.
 
         Args:
             filepath: Absolute path to the file to load.
         """
+        self.operations.cancel_load()
         try:
             _name, extension = os.path.splitext(filepath)
             if extension.lower() == ".zmx":
-                self._connector._undo_redo_manager.clear_stacks()
-                self._connector._optic = load_zemax_file(filepath)
-                self._current_filepath = None
+                candidate = load_zemax_file(filepath)
+                current_filepath = None
             else:
                 with open(filepath, encoding="utf-8") as f:
                     data = json.load(f, object_hook=json_inf_nan_hook)
-                self._connector._undo_redo_manager.clear_stacks()
-                self._connector._optic = Optic.from_dict(data)
-                self._current_filepath = filepath
-            self._connector._initialize_optic_structure(
-                self._connector._optic, is_specific_new_system=False
-            )
-            self._connector.set_modified(False)
-            self._connector.notify_change("replacement")
+                candidate = Optic.from_dict(data)
+                current_filepath = filepath
+            self._publish_candidate(candidate, current_filepath, modified=False)
             self._toast(f"Opened \u2014 {os.path.basename(filepath)}", "info")
         except Exception as e:
             self._toast(f"Load failed: {e}", "error", sub=filepath)
-            self.new_system()
 
     def save(self, filepath: str) -> None:
         """Save the current optical system to *filepath* as Optiland JSON.
@@ -184,11 +178,32 @@ class FileService:
             filepath: Absolute path to write to.
         """
         try:
+            if self.operations.path_busy(filepath):
+                raise RuntimeError(
+                    "An asynchronous save to this path is still running."
+                )
+            sequence = self.operations.next_save_sequence()
+            edit_token = self._connector.document_state.edit_token
             data = self._connector._capture_optic_state()
-            with open(filepath, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=4, cls=SpecialFloatEncoder)
-            self._current_filepath = filepath
-            self._connector.set_modified(False)
+            destination = os.path.abspath(filepath)
+            temporary = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    dir=os.path.dirname(destination),
+                    prefix=".optiland-",
+                    suffix=".tmp",
+                    delete=False,
+                ) as f:
+                    temporary = f.name
+                    json.dump(data, f, indent=4, cls=SpecialFloatEncoder)
+                os.replace(temporary, destination)
+                temporary = None
+            finally:
+                if temporary is not None:
+                    os.unlink(temporary)
+            self.operations.confirm_saved_document(filepath, edit_token, sequence)
             self._toast(f"Saved \u2014 {os.path.basename(filepath)}", "success")
         except Exception as e:
             self._toast(f"Save failed: {e}", "error", sub=filepath)
@@ -205,15 +220,10 @@ class FileService:
         """
         try:
             optic_data = optic_instance.to_dict()
-            self._connector._undo_redo_manager.clear_stacks()
-            self._connector._optic = Optic.from_dict(optic_data)
-            self._current_filepath = None
-            self._connector._initialize_optic_structure(self._connector._optic)
-            self._connector.set_modified(True)
-            self._connector.notify_change("replacement")
+            candidate = Optic.from_dict(optic_data)
+            self._publish_candidate(candidate, None, modified=True)
         except Exception as e:
             self._toast(f"Failed to load system from sample object: {e}", "error")
-            self.new_system()
 
     def import_zemax(self, filepath: str) -> None:
         """Import a Zemax ``.zmx`` file, replacing the current system.
@@ -225,14 +235,8 @@ class FileService:
             filepath: Path to the ``.zmx`` file to import.
         """
         try:
-            self._connector._undo_redo_manager.clear_stacks()
-            self._connector._optic = load_zemax_file(filepath)
-            self._current_filepath = None
-            self._connector._initialize_optic_structure(
-                self._connector._optic, is_specific_new_system=False
-            )
-            self._connector.set_modified(True)
-            self._connector.notify_change("replacement")
+            candidate = load_zemax_file(filepath)
+            self._publish_candidate(candidate, None, modified=True)
         except Exception as e:
             self._toast(f"Failed to import Zemax file from {filepath}: {e}", "error")
 
@@ -246,14 +250,8 @@ class FileService:
             filepath: Path to the ``.seq`` file to import.
         """
         try:
-            self._connector._undo_redo_manager.clear_stacks()
-            self._connector._optic = load_codev_file(filepath)
-            self._current_filepath = None
-            self._connector._initialize_optic_structure(
-                self._connector._optic, is_specific_new_system=False
-            )
-            self._connector.set_modified(True)
-            self._connector.notify_change("replacement")
+            candidate = load_codev_file(filepath)
+            self._publish_candidate(candidate, None, modified=True)
         except Exception as e:
             self._toast(f"Failed to import CODE V file from {filepath}: {e}", "error")
 
@@ -301,3 +299,13 @@ class FileService:
             saved to or loaded from a file in this session.
         """
         return self._current_filepath
+
+    def _publish_candidate(self, candidate, filepath, *, modified, validated=False):
+        """Validate before changing document ownership, history or path state."""
+        if not validated:
+            self._connector._initialize_optic_structure(candidate)
+        self._connector._optic = candidate
+        self._connector._undo_redo_manager.clear_stacks()
+        self._current_filepath = filepath
+        self._connector.set_modified(modified)
+        self._connector.notify_change("replacement")

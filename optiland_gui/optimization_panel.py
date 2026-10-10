@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtCore import Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QProgressBar,
     QPushButton,
     QRadioButton,
     QScrollArea,
@@ -675,7 +676,17 @@ class OptimizationPanel(QWidget):
         self.current_theme = "dark"
 
         self._init_ui()
+        from .services.operand_previews import OperandPreviews
+
+        self._operand_previews = OperandPreviews(connector, self)
+        self._operand_rows_pending = set()
+        self._operand_install_timer = QTimer(self)
+        self._operand_install_timer.setSingleShot(True)
+        self._operand_install_timer.timeout.connect(self._install_operand_rows)
+        self._operand_previews.rowsChanged.connect(self._queue_operand_rows)
+        self._operand_previews.statusChanged.connect(self._operand_status_changed)
         self._connect_signals()
+        self._refresh_operands_table()
 
     # ------------------------------------------------------------------
     # UI Construction
@@ -782,6 +793,7 @@ class OptimizationPanel(QWidget):
         self.tblOperands.setHorizontalHeaderLabels(
             ["Category", "Type", "Current Value", "Target", "Weight", "Parameters"]
         )
+        self.tblOperands.setColumnWidth(2, 220)
         self.tblOperands.horizontalHeader().setStretchLastSection(True)
         self.tblOperands.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.tblOperands.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -802,6 +814,19 @@ class OptimizationPanel(QWidget):
         btn_layout.addWidget(self.btnRefreshOperands)
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
+
+        progress_layout = QHBoxLayout()
+        self.lblOperandStatus = QLabel("Operand values need refresh")
+        self.lblOperandStatus.setWordWrap(True)
+        self.operandProgress = QProgressBar()
+        self.operandProgress.setMaximumWidth(160)
+        self.operandProgress.setVisible(False)
+        self.btnStopOperandRefresh = QPushButton("Cancel Update")
+        self.btnStopOperandRefresh.setVisible(False)
+        progress_layout.addWidget(self.lblOperandStatus, 1)
+        progress_layout.addWidget(self.operandProgress)
+        progress_layout.addWidget(self.btnStopOperandRefresh)
+        layout.addLayout(progress_layout)
 
         return w
 
@@ -961,6 +986,8 @@ class OptimizationPanel(QWidget):
         self.btnAutoGenerateOperands.clicked.connect(self._on_auto_generate_operands)
         self.btnRemoveOperand.clicked.connect(self._on_remove_operand)
         self.btnRefreshOperands.clicked.connect(self._refresh_operands_current_values)
+        self.btnStopOperandRefresh.clicked.connect(self._operand_previews.stop)
+        self._tabs.currentChanged.connect(self._operand_visibility_changed)
         self.tblOperands.itemDoubleClicked.connect(self._on_operand_double_clicked)
 
         self.btnRun.clicked.connect(self._on_run)
@@ -1136,18 +1163,16 @@ class OptimizationPanel(QWidget):
 
     @Slot()
     def _refresh_operands_table(self) -> None:
-        """Reload the Operands table from the connector."""
+        """Rebuild changed definitions without calculating any operand on Qt."""
         operands = self.connector.get_optimization_operands()
         self.tblOperands.setRowCount(len(operands))
         for i, od in enumerate(operands):
             self.tblOperands.setVerticalHeaderItem(i, QTableWidgetItem(str(i)))
-            cur_val = self.connector.get_operand_current_value(od)
-            cur_str = f"{cur_val:.6f}" if cur_val is not None else "N/A"
             target_str = f"{od['target']:.6f}" if od.get("target") is not None else "—"
 
             self.tblOperands.setItem(i, 0, QTableWidgetItem(od.get("category", "")))
             self.tblOperands.setItem(i, 1, QTableWidgetItem(od.get("type", "")))
-            self.tblOperands.setItem(i, 2, QTableWidgetItem(cur_str))
+            self.tblOperands.setItem(i, 2, QTableWidgetItem("—"))
             self.tblOperands.setItem(i, 3, QTableWidgetItem(target_str))
             self.tblOperands.setItem(i, 4, QTableWidgetItem(str(od.get("weight", 1.0))))
 
@@ -1155,16 +1180,81 @@ class OptimizationPanel(QWidget):
             params = od.get("input_data", {})
             param_str = ", ".join(f"{k}={v}" for k, v in params.items())
             self.tblOperands.setItem(i, 5, QTableWidgetItem(param_str))
+        self._operand_previews.refresh()
+        self._queue_operand_rows(list(range(len(operands))))
 
     def _refresh_operands_current_values(self) -> None:
-        """Update only the Current Value column (cheaper than full refresh)."""
-        operands = self.connector.get_optimization_operands()
-        for i, od in enumerate(operands):
-            if i >= self.tblOperands.rowCount():
-                break
-            cur_val = self.connector.get_operand_current_value(od)
-            cur_str = f"{cur_val:.6f}" if cur_val is not None else "N/A"
-            self.tblOperands.setItem(i, 2, QTableWidgetItem(cur_str))
+        """Explicitly refresh a frozen operand batch in the calculation worker."""
+        self._operand_previews.refresh(explicit=True)
+
+    @Slot(list)
+    def _queue_operand_rows(self, indices):
+        self._operand_rows_pending.update(indices)
+        self._operand_install_timer.start(0)
+
+    @Slot()
+    def _install_operand_rows(self):
+        """Bound each paint update and preserve selection, scroll and definitions."""
+        from .services.operand_previews import definition_key
+
+        previews = self._operand_previews
+        if definition_key(self.connector.get_optimization_operands()) != previews._key:
+            self._operand_rows_pending.clear()
+            self._refresh_operands_table()
+            return
+        for index in sorted(self._operand_rows_pending)[:128]:
+            self._operand_rows_pending.discard(index)
+            if index >= len(previews.rows) or index >= self.tblOperands.rowCount():
+                continue
+            row = previews.rows[index]
+            value, state, error = row["value"], row["state"], row["error"]
+            if value is None:
+                text = {"pending": "Pending…", "error": "Error"}.get(state, "—")
+            else:
+                suffix = {
+                    "pending": " (updating)",
+                    "stale": " (stale)",
+                    "error": " (stale; error)",
+                }.get(state, "")
+                text = f"{value:.6f}{suffix}"
+            item = self.tblOperands.item(index, 2)
+            if item is None:
+                item = QTableWidgetItem()
+                self.tblOperands.setItem(index, 2, item)
+            item.setText(text)
+            item.setToolTip(
+                error
+                or (
+                    "Previous value; awaiting an update"
+                    if state in {"pending", "stale"}
+                    else "Current optical revision"
+                )
+            )
+        if self._operand_rows_pending:
+            self._operand_install_timer.start(0)
+
+    @Slot(str, int, int)
+    def _operand_status_changed(self, status, completed, total):
+        self.lblOperandStatus.setText(status)
+        busy = self._operand_previews.busy
+        self.btnStopOperandRefresh.setVisible(busy)
+        self.operandProgress.setVisible(busy)
+        self.operandProgress.setRange(0, total if completed else 0)
+        self.operandProgress.setValue(completed)
+
+    @Slot()
+    def _operand_visibility_changed(self):
+        self._operand_previews.set_visible(
+            self.isVisible() and self._tabs.currentIndex() == 1
+        )
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._operand_visibility_changed()
+
+    def hideEvent(self, event):
+        self._operand_previews.set_visible(False)
+        super().hideEvent(event)
 
     # ------------------------------------------------------------------
     # Slots — Run / Stop

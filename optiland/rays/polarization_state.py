@@ -78,6 +78,22 @@ class PolarizationState:
         """
         return self.__str__()
 
+    def to_dict(self):
+        """Return JSON-safe incident-state values independent of the backend."""
+        data = {"is_polarized": bool(self.is_polarized)}
+        for name in ("Ex", "Ey", "phase_x", "phase_y"):
+            value = getattr(self, name)
+            data[name] = float(be.to_numpy(value)) if value is not None else None
+        return data
+
+    @classmethod
+    def from_dict(cls, data):
+        """Restore an incident state from its numerical prescription values."""
+        return cls(
+            is_polarized=data["is_polarized"],
+            **{name: data.get(name) for name in ("Ex", "Ey", "phase_x", "phase_y")},
+        )
+
 
 def create_polarization(pol_type: str):
     """Create a polarization state based on the given polarization type.

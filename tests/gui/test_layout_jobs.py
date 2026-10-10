@@ -278,9 +278,15 @@ def test_window_close_keeps_qt_owners_until_worker_is_reaped(qapp):
     class Window(QWidget):
         closeEvent = MainWindow.closeEvent
         _calculations_stopped = MainWindow._calculations_stopped
+        _confirm_discard_changes = MainWindow._confirm_discard_changes
+        _confirm_close_intent = MainWindow._confirm_close_intent
 
     window = Window()
-    window.connector = SimpleNamespace(calculation_jobs=service)
+    window.connector = SimpleNamespace(
+        calculation_jobs=service,
+        is_modified=lambda: False,
+        document_state=service.document,
+    )
     window.panel_manager = SimpleNamespace(
         python_terminal=SimpleNamespace(shutdown_kernel=lambda: closed.append(True))
     )

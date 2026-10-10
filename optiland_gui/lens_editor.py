@@ -9,6 +9,7 @@ Author: Manuel Fragata Mendes, 2025
 
 from __future__ import annotations
 
+from time import perf_counter
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import (
@@ -31,6 +32,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMenu,
+    QProgressBar,
     QPushButton,
     QStyle,
     QStyledItemDelegate,
@@ -224,11 +226,7 @@ class SurfaceTypeWidget(QWidget):
         self.layout.addWidget(self.type_button)
         self.surface_menu = QMenu(self)
         self.surface_menu.setObjectName("SurfaceTypeMenu")
-        for surf_type in self.connector.get_available_surface_types():
-            action = self.surface_menu.addAction(surf_type.title())
-            action.triggered.connect(
-                lambda checked=False, t=surf_type: self.type_selected(t)
-            )
+        self.surface_menu.aboutToShow.connect(self._populate_surface_menu)
         self.type_button.setMenu(self.surface_menu)
         is_editable = current_type_info["is_changeable"]
         self.type_button.setEnabled(is_editable)
@@ -251,6 +249,15 @@ class SurfaceTypeWidget(QWidget):
         )
         self._var_badge.setVisible(False)
         self.layout.insertWidget(0, self._var_badge)
+
+    def _populate_surface_menu(self):
+        if self.surface_menu.actions():
+            return
+        for surf_type in self.connector.get_available_surface_types():
+            action = self.surface_menu.addAction(surf_type.title())
+            action.triggered.connect(
+                lambda checked=False, t=surf_type: self.type_selected(t)
+            )
 
     def setHasVariables(self, types: list[str]) -> None:
         """Show or hide the variable badge for non-standard variable types.
@@ -352,6 +359,11 @@ class _AccentFocusDelegate(QStyledItemDelegate):
 class LensEditor(QWidget):
     """A widget for editing the properties of an optical system's surfaces."""
 
+    loadingFinished = Signal()
+    loadingFailed = Signal(str)
+    _SYNCHRONOUS_ROWS = 64
+    _BATCH_SECONDS = 0.008
+
     def __init__(
         self, connector: OptilandConnector, parent=None, *, interaction_state=None
     ):
@@ -360,6 +372,11 @@ class LensEditor(QWidget):
         self.setWindowTitle("Lens Editor")
         self.open_prop_source_rows: set[int] = set()
         self.interaction_state = interaction_state or SurfaceInteractionState(self)
+        self._table_loading = False
+        self._pending_table_state = None
+        self._load_timer = QTimer(self)
+        self._load_timer.setSingleShot(True)
+        self._load_timer.timeout.connect(self._load_table_batch)
 
         self._init_ui()
         self.hover_presentation = EditorHoverPresentation(self)
@@ -385,6 +402,11 @@ class LensEditor(QWidget):
         self.tableWidget.setItemDelegate(self._focus_delegate)
 
         self.layout.addWidget(self.tableWidget)
+        self._load_progress = QProgressBar(self)
+        self._load_progress.setFormat("Updating lens data — %v of %m rows")
+        self._load_progress.setAccessibleName("Lens data update progress")
+        self._load_progress.hide()
+        self.layout.addWidget(self._load_progress)
 
         self.buttonLayout = QHBoxLayout()
         self.btnAddSurface = QPushButton("Add Surface")
@@ -501,6 +523,9 @@ class LensEditor(QWidget):
             if "presentation" in change.categories:
                 self.tableWidget.viewport().update()
             return
+        if self._table_loading:
+            self.load_data()
+            return
         if change.structural:
             self._refresh_structure()
             return
@@ -509,6 +534,7 @@ class LensEditor(QWidget):
         editing = table.state() == QAbstractItemView.State.EditingState
         rows = change.surface_indices or range(self.connector.get_surface_count())
         columns = change.columns or range(table.columnCount())
+        display_rows = self.connector.get_surface_display_rows(rows, columns)
         previous = table.blockSignals(True)
         try:
             for surface_index in rows:
@@ -526,7 +552,7 @@ class LensEditor(QWidget):
                         continue
                     item = table.item(row, column)
                     if item is not None:
-                        value = self.connector.get_surface_data(surface_index, column)
+                        value = display_rows[surface_index][column]
                         text = str(value) if value is not None else ""
                         if item.text() != text:
                             item.setText(text)
@@ -535,41 +561,57 @@ class LensEditor(QWidget):
         self.update_headers_on_selection()
 
     def _refresh_structure(self):
-        """Restore structural UI state by surface identity, never shifted row IDs."""
+        """Reload with surviving surface identities, including deferred batches."""
+        self.full_refresh_from_optic()
+
+    def _capture_table_state(self):
+        if self._table_loading:
+            return self._pending_table_state
         table = self.tableWidget
-        old_surfaces = self._displayed_surfaces
-        selected_ids = {
-            id(old_surfaces[index])
-            for row in table.selectionModel().selectedRows()
-            if 0
-            <= (index := self.map_ui_row_to_surface_index(row.row()))
-            < len(old_surfaces)
-        }
+        old_surfaces = getattr(self, "_displayed_surfaces", ())
         current_index = self.map_ui_row_to_surface_index(table.currentRow())
         current_id = (
             id(old_surfaces[current_index])
             if 0 <= current_index < len(old_surfaces)
             else None
         )
-        current_column = table.currentColumn()
-        horizontal = table.horizontalScrollBar().value()
-        vertical = table.verticalScrollBar().value()
-        new_surfaces = tuple(self.connector.get_optic().surfaces)
-        self.full_refresh_from_optic()
+        properties = {}
+        for owner in self.open_prop_source_rows:
+            panel = table.cellWidget(self.map_surface_index_to_ui_row(owner) + 1, 0)
+            if 0 <= owner < len(old_surfaces) and isinstance(
+                panel, SurfacePropertiesWidget
+            ):
+                properties[id(old_surfaces[owner])] = panel.tabs.currentIndex()
+        return {
+            "current_id": current_id,
+            "current_column": table.currentColumn(),
+            "properties": properties,
+            "horizontal": table.horizontalScrollBar().value(),
+            "vertical": table.verticalScrollBar().value(),
+        }
+
+    def _restore_table_state(self):
+        state = self._pending_table_state
+        table = self.tableWidget
+        selected_ids = {
+            id(surface) for surface in self.interaction_state.selected_surfaces
+        }
         table.clearSelection()
-        for index, surface in enumerate(new_surfaces):
+        for index, surface in enumerate(self._displayed_surfaces):
             row = self.map_surface_index_to_ui_row(index)
             if id(surface) in selected_ids:
                 table.selectionModel().select(
                     table.model().index(row, 0),
                     QItemSelectionModel.Select | QItemSelectionModel.Rows,
                 )
-            if id(surface) == current_id:
-                table.setCurrentCell(row, current_column, QItemSelectionModel.NoUpdate)
-        table.horizontalScrollBar().setValue(horizontal)
-        table.verticalScrollBar().setValue(vertical)
+            if id(surface) == state["current_id"]:
+                table.setCurrentCell(
+                    row, state["current_column"], QItemSelectionModel.NoUpdate
+                )
+        table.horizontalScrollBar().setValue(state["horizontal"])
+        table.verticalScrollBar().setValue(state["vertical"])
 
-    def _process_table_cell(self, row, col_idx, header):
+    def _process_table_cell(self, row, col_idx, header, display_row=None):
         """Creates and configures the appropriate widget or item for a
         single table cell."""
         if col_idx == self.connector.COL_TYPE:
@@ -596,7 +638,11 @@ class LensEditor(QWidget):
             ]
             widget.setHasVariables(extra_var_types)
         else:
-            item_data = self.connector.get_surface_data(row, col_idx)
+            item_data = (
+                display_row[col_idx]
+                if display_row is not None
+                else self.connector.get_surface_data(row, col_idx)
+            )
             item = QTableWidgetItem(str(item_data) if item_data is not None else "")
 
             # Determine if the cell should be editable
@@ -633,60 +679,141 @@ class LensEditor(QWidget):
 
             self.tableWidget.setItem(row, col_idx, item)
 
-    def _process_table_row(self, row_index):
+    def _process_table_row(self, row_index, display_row=None):
         """Populates a single row in the lens data editor table."""
         self.tableWidget.setVerticalHeaderItem(
             row_index, QTableWidgetItem(str(row_index))
         )
         for col_idx, header in enumerate(self.connector.get_column_headers()):
-            self._process_table_cell(row_index, col_idx, header)
+            self._process_table_cell(row_index, col_idx, header, display_row)
 
     @Slot()
     def load_data(self):
-        previous_surfaces = getattr(self, "_displayed_surfaces", ())
-        settings = {}
-        for owner in self.open_prop_source_rows:
-            panel = self.tableWidget.cellWidget(
-                self.map_surface_index_to_ui_row(owner) + 1, 0
+        self._load_timer.stop()
+        self._pending_table_state = self._capture_table_state()
+        if not self._table_loading:
+            self._table_was_enabled = self.tableWidget.isEnabled()
+            self._buttons_were_enabled = (
+                self.btnAddSurface.isEnabled(),
+                self.btnRemoveSurface.isEnabled(),
             )
-            if owner < len(previous_surfaces) and isinstance(
-                panel, SurfacePropertiesWidget
-            ):
-                settings[id(previous_surfaces[owner])] = panel.tabs.currentIndex()
-        self.interaction_state.sync_document(self.connector.get_optic())
-        self.tableWidget.blockSignals(True)
+        self._table_loading = True
         self._displayed_surfaces = tuple(self.connector.get_optic().surfaces)
+        self.interaction_state.sync_document(self.connector.get_optic())
+        self.interaction_state.set_hover()
         self.open_prop_source_rows = {
             index
             for index, surface in enumerate(self._displayed_surfaces)
-            if id(surface) in settings
+            if id(surface) in self._pending_table_state["properties"]
         }
-        self.tableWidget.setRowCount(0)
+        if hasattr(self, "hover_tracker"):
+            self.hover_tracker.set_suspended(True)
+        self.tableWidget.blockSignals(True)
+        self.tableWidget.setEnabled(False)
+        self.btnAddSurface.setEnabled(False)
+        self.btnRemoveSurface.setEnabled(False)
         num_surfaces = self.connector.get_surface_count()
-        self.tableWidget.setRowCount(num_surfaces)
+        old_count = self.tableWidget.rowCount()
+        self._load_phase = "clear"
+        self._display_rows = None
+        self._next_load_row = 0
+        self._pending_properties = iter(sorted(self.open_prop_source_rows))
+        self._load_progress.setRange(0, 0)
+        self._load_progress.setFormat("Updating lens data — %v of %m rows")
+        if max(num_surfaces, old_count) <= self._SYNCHRONOUS_ROWS:
+            self._load_table_batch(synchronous=True)
+        else:
+            self._load_progress.show()
+            self._load_timer.start(0)
 
-        for r in range(num_surfaces):
-            self._process_table_row(r)
-
-        for owner in sorted(self.open_prop_source_rows):
+    @Slot()
+    def _load_table_batch(self, *, synchronous=False):
+        if not self._table_loading:
+            return
+        deadline = perf_counter() + self._BATCH_SECONDS
+        count = len(self._displayed_surfaces)
+        if self._load_phase == "clear":
+            while self.tableWidget.rowCount():
+                self.tableWidget.removeRow(self.tableWidget.rowCount() - 1)
+                if not synchronous and perf_counter() >= deadline:
+                    self._load_timer.start(0)
+                    return
+            self.tableWidget.setRowCount(count)
+            self.tableWidget.setHorizontalHeaderLabels(
+                self.connector.get_column_headers()
+            )
+            self._load_phase = "capture"
+            if not synchronous:
+                self._load_timer.start(0)
+                return
+        if self._load_phase == "capture":
+            try:
+                self._display_rows = self.connector.get_surface_display_rows()
+            except Exception as exc:
+                self._finish_table_loading(str(exc))
+                return
+            self._load_phase = "populate"
+            self._load_progress.setRange(0, count)
+            self._load_progress.setValue(0)
+            if not synchronous:
+                self._load_timer.start(0)
+                return
+        while self._next_load_row < count:
+            row = self._next_load_row
+            try:
+                self._process_table_row(row, self._display_rows[row])
+            except Exception as exc:
+                self._finish_table_loading(str(exc))
+                return
+            self._next_load_row += 1
+            if not synchronous and perf_counter() >= deadline:
+                break
+        self._load_progress.setValue(self._next_load_row)
+        if self._next_load_row < count:
+            self._load_timer.start(0)
+            return
+        for owner in self._pending_properties:
             self._insert_properties_widget(owner)
             panel = self.tableWidget.cellWidget(
                 self.map_surface_index_to_ui_row(owner) + 1, 0
             )
-            panel.tabs.setCurrentIndex(settings[id(self._displayed_surfaces[owner])])
-
-        for surface in self.interaction_state.selected_surfaces:
-            index = self.interaction_state.index_of(surface)
-            ui_row = self.map_surface_index_to_ui_row(index)
-            model_index = self.tableWidget.model().index(ui_row, 0)
-            self.tableWidget.selectionModel().select(
-                model_index, QItemSelectionModel.Select | QItemSelectionModel.Rows
+            panel.tabs.setCurrentIndex(
+                self._pending_table_state["properties"][
+                    id(self._displayed_surfaces[owner])
+                ]
             )
+            if not synchronous and perf_counter() >= deadline:
+                self._load_timer.start(0)
+                return
+        self._restore_table_state()
+        self._finish_table_loading()
 
+    def _finish_table_loading(self, error=None):
+        self._load_timer.stop()
+        self._display_rows = None
+        self._table_loading = False
+        if error:
+            self.tableWidget.setRowCount(0)
         self.tableWidget.blockSignals(False)
+        self.tableWidget.setEnabled(self._table_was_enabled)
+        self.btnAddSurface.setEnabled(self._buttons_were_enabled[0])
+        self.btnRemoveSurface.setEnabled(self._buttons_were_enabled[1])
+        if error:
+            self._load_progress.setRange(0, 1)
+            self._load_progress.setValue(1)
+            self._load_progress.setFormat(f"Unable to display lens data: {error}")
+            self._load_progress.show()
+        else:
+            self._load_progress.hide()
         if hasattr(self, "hover_tracker"):
+            self.hover_tracker.set_suspended(False)
             self.hover_tracker.refresh()
         self.hover_presentation.refresh()
+        self.update_headers_on_selection()
+        if error:
+            self.loadingFailed.emit(error)
+        else:
+            self.loadingFinished.emit()
 
     def _insert_properties_widget(self, source_row):
         prop_row_index = self.map_surface_index_to_ui_row(source_row) + 1
@@ -740,12 +867,18 @@ class LensEditor(QWidget):
         original_bg = item.background()
 
         def set_bg(color):
-            self.tableWidget.blockSignals(True)
+            if self.tableWidget.item(row, col) is not item:
+                return
+            previous = self.tableWidget.blockSignals(True)
             item.setBackground(QBrush(color))
-            self.tableWidget.blockSignals(False)
+            self.tableWidget.blockSignals(previous)
 
         set_bg(flash_color)
-        QTimer.singleShot(duration_ms, lambda: set_bg(original_bg))
+        timer = QTimer(self.tableWidget)
+        timer.setSingleShot(True)
+        timer.timeout.connect(lambda: set_bg(original_bg))
+        timer.timeout.connect(timer.deleteLater)
+        timer.start(duration_ms)
 
     @Slot(QTableWidgetItem)
     def on_item_changed_handler(self, item: QTableWidgetItem):

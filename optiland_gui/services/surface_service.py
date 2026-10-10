@@ -323,6 +323,39 @@ class SurfaceService:
         handler = column_handlers.get(col_idx)
         return handler(surface) if handler else None
 
+    def get_display_rows(self, rows=None, columns=None):
+        """Capture one refresh's display values without repeated path rebuilding.
+
+        Positions are an operation-local snapshot. Keeping them beyond this call
+        would risk stale spacing after an edit, especially in folded systems.
+        """
+        count = self.get_surface_count()
+        rows = tuple(range(count) if rows is None else rows)
+        columns = tuple(range(7) if columns is None else columns)
+        thickness = self._connector.COL_THICKNESS
+        positions = (
+            self._connector._optic.surfaces.positions
+            if thickness in columns and count > 1
+            else None
+        )
+        result = {}
+        for row in rows:
+            if not 0 <= row < count:
+                continue
+            values = {}
+            for column in columns:
+                if column == thickness:
+                    value = (
+                        f"{float(positions[row + 1][0] - positions[row][0]):.4f}"
+                        if row < count - 1
+                        else "N/A"
+                    )
+                else:
+                    value = self.get_surface_data(row, column)
+                values[column] = value
+            result[row] = values
+        return result
+
     # ------------------------------------------------------------------
     # Write helpers (private)
     # ------------------------------------------------------------------

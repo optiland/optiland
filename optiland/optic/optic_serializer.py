@@ -16,6 +16,7 @@ from optiland.apodization import BaseApodization
 from optiland.fields import BaseFieldDefinition, FieldGroup
 from optiland.paraxial import Paraxial
 from optiland.pickup import PickupManager
+from optiland.rays import PolarizationState
 from optiland.raytrace.real_ray_tracer import RealRayTracer
 from optiland.solves import SolveManager
 from optiland.surfaces import SurfaceGroup
@@ -51,7 +52,11 @@ class OpticSerializer:
             "surface_group": optic.surfaces.to_dict(),
         }
 
-        data["wavelengths"]["polarization"] = optic.polarization
+        data["wavelengths"]["polarization"] = (
+            optic.polarization.to_dict()
+            if isinstance(optic.polarization, PolarizationState)
+            else optic.polarization
+        )
         data["ray_tracer"] = {"ray_aiming_config": optic.ray_tracer.ray_aiming_config}
 
         if getattr(optic, "sequences", None):
@@ -88,7 +93,12 @@ class OpticSerializer:
         optic.pickups = PickupManager.from_dict(optic, data["pickups"])
         optic.solves = SolveManager.from_dict(optic, data["solves"])
 
-        optic.polarization = data["wavelengths"]["polarization"]
+        polarization = data["wavelengths"]["polarization"]
+        optic.polarization = (
+            PolarizationState.from_dict(polarization)
+            if isinstance(polarization, dict)
+            else polarization
+        )
         if data["fields"].get("field_definition"):
             optic.fields.field_definition = BaseFieldDefinition.from_dict(
                 data["fields"]["field_definition"]

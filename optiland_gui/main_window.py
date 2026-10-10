@@ -273,6 +273,18 @@ class MainWindow(FramelessWindow):
         self.toast_manager = ToastManager(self)
         # Expose on connector so services can call it
         self.connector.toast_manager = self.toast_manager
+        from optiland_gui.widgets.file_operation_status import FileOperationStatus
+
+        self.file_operation_status = FileOperationStatus(
+            self.connector.file_operations, self
+        )
+        self.statusBar().addWidget(self.file_operation_status, 1)
+        self.connector.file_operations.completed.connect(
+            self._update_project_name_in_title_bar
+        )
+        self.connector.file_operations.candidate_conflict.connect(
+            self._resolve_file_candidate
+        )
 
         # Logging handler: route Python WARNING+ to toasts
         self._gui_log_handler = _log_handler.install(self.toast_manager)
@@ -627,6 +639,8 @@ class MainWindow(FramelessWindow):
     @Slot()
     def new_system_action(self) -> None:
         """Slot for the *New System* action."""
+        if not self._confirm_discard_changes():
+            return
         self.connector.new_system()
         self._update_project_name_in_title_bar()
         logger.debug("New System action triggered")
@@ -634,6 +648,8 @@ class MainWindow(FramelessWindow):
     @Slot()
     def open_system_action(self) -> None:
         """Slot for the *Open System* action — shows a file chooser dialog."""
+        if not self._confirm_discard_changes():
+            return
         filepath, _ = QFileDialog.getOpenFileName(
             self,
             "Open Optiland System",
@@ -641,7 +657,7 @@ class MainWindow(FramelessWindow):
             "Optiland JSON Files (*.json);;Zemax Files (*.zmx);;All Files (*)",
         )
         if filepath:
-            self.connector.load_optic_from_file(filepath)
+            self.connector.file_operations.request_load(filepath)
             self._update_project_name_in_title_bar()
             logger.debug("Open System action triggered: %s", filepath)
 
@@ -650,7 +666,7 @@ class MainWindow(FramelessWindow):
         """Slot for the *Save System* action — saves to the current file path."""
         current_path = self.connector.get_current_filepath()
         if current_path:
-            self.connector.save_optic_to_file(current_path)
+            self.connector.file_operations.request_output(current_path)
             self._update_project_name_in_title_bar()
             logger.debug("Save System action triggered: %s", current_path)
         else:
@@ -671,11 +687,11 @@ class MainWindow(FramelessWindow):
                 and "(*.json)" in selected_filter.split(";;")[0]
             ):
                 filepath += ".json"
-            self.connector.save_optic_to_file(filepath)
+            self.connector.file_operations.request_output(filepath)
             self._update_project_name_in_title_bar()
             logger.debug("Save System As action triggered: %s", filepath)
 
-    def _confirm_discard_changes(self) -> bool:
+    def _confirm_discard_changes(self, *, closing: bool = False) -> bool:
         """Prompt the user to confirm discarding unsaved changes.
 
         Returns:
@@ -688,7 +704,11 @@ class MainWindow(FramelessWindow):
             self,
             "Unsaved Changes",
             "The current system has unsaved changes. "
-            "Importing will replace it. Continue?",
+            + (
+                "Closing will discard them. Continue?"
+                if closing
+                else "Opening another system will replace it. Continue?"
+            ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
         )
@@ -706,7 +726,7 @@ class MainWindow(FramelessWindow):
             "Zemax Files (*.zmx);;All Files (*)",
         )
         if filepath:
-            self.connector.import_zemax(filepath)
+            self.connector.file_operations.request_load(filepath, "zemax")
             self._update_project_name_in_title_bar()
 
     @Slot()
@@ -721,7 +741,7 @@ class MainWindow(FramelessWindow):
             "CODE V Files (*.seq);;All Files (*)",
         )
         if filepath:
-            self.connector.import_codev(filepath)
+            self.connector.file_operations.request_load(filepath, "codev")
             self._update_project_name_in_title_bar()
 
     @Slot()
@@ -736,7 +756,7 @@ class MainWindow(FramelessWindow):
         if filepath:
             if not filepath.lower().endswith(".zmx"):
                 filepath += ".zmx"
-            self.connector.export_zemax(filepath)
+            self.connector.file_operations.request_output(filepath, "zemax")
 
     @Slot()
     def export_codev_action(self):
@@ -750,7 +770,23 @@ class MainWindow(FramelessWindow):
         if filepath:
             if not filepath.lower().endswith(".seq"):
                 filepath += ".seq"
-            self.connector.export_codev(filepath)
+            self.connector.file_operations.request_output(filepath, "codev")
+
+    @Slot(str, str)
+    def _resolve_file_candidate(self, identifier, path):
+        token = self.connector.document_state.edit_token
+        reply = QMessageBox.question(
+            self,
+            "Document changed while opening",
+            f"The file is ready: {path}\n"
+            "The current document changed while it was loading. "
+            "Replace the current document with this loaded candidate?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        self.connector.file_operations.resolve_candidate(
+            identifier, reply == QMessageBox.StandardButton.Yes, token
+        )
 
     @Slot()
     def about_action(self):
@@ -875,23 +911,106 @@ class MainWindow(FramelessWindow):
 
     def closeEvent(self, event: QEvent) -> None:
         """Revoke calculations and wait asynchronously before destroying Qt owners."""
+        operations = getattr(self.connector, "file_operations", None)
+        if (
+            operations is not None
+            and getattr(self, "_file_operations_settled", False)
+            and not getattr(self, "_calculation_shutdown_requested", False)
+            and not operations.confirm_close_revision()
+        ):
+            event.ignore()
+            return
+        if operations is not None and not getattr(
+            self, "_file_operations_settled", False
+        ):
+            event.ignore()
+            if not getattr(self, "_file_close_requested", False):
+                if not operations.has_pending_writes and not getattr(
+                    self, "_close_confirmed", False
+                ):
+                    if not self._confirm_close_intent():
+                        return
+                    self._close_confirmed = True
+                self._file_close_requested = True
+                self.connector._calculation_shutdown_started = True
+                for service in tuple(self.connector.calculation_services):
+                    if service is not operations.jobs:
+                        service.cancel_cancellable()
+                if not getattr(self, "_file_close_signals_connected", False):
+                    operations.settled.connect(self._files_settled)
+                    operations.close_aborted.connect(self._file_close_aborted)
+                    self._file_close_signals_connected = True
+                operations.begin_close()
+            return
         if not getattr(self, "_calculation_shutdown_complete", False):
             event.ignore()
             if not getattr(self, "_calculation_shutdown_requested", False):
+                if not getattr(self, "_close_confirmed", False):
+                    if not self._confirm_close_intent():
+                        self._file_close_aborted()
+                        return
+                    self._close_confirmed = True
+                if operations is not None and not operations.confirm_close_revision():
+                    return
+                self._enabled_before_calculation_shutdown = self.isEnabled()
+                self.setEnabled(False)
                 self._calculation_shutdown_requested = True
-                jobs = self.connector.calculation_jobs
-                jobs.stopped.connect(self._calculations_stopped)
-                jobs.shutdown()
+                self.connector._calculation_shutdown_started = True
+                services = tuple(
+                    getattr(
+                        self.connector,
+                        "calculation_services",
+                        [self.connector.calculation_jobs],
+                    )
+                )
+                self._stopping_services = set(services)
+                for jobs in services:
+                    jobs.stopped.connect(self._calculations_stopped)
+                for jobs in services:
+                    jobs.shutdown()
             return
         logger.debug("Closing application.")
         if hasattr(self, "panel_manager") and self.panel_manager.python_terminal:
             self.panel_manager.python_terminal.shutdown_kernel()
         event.accept()
 
+    def _confirm_close_intent(self) -> bool:
+        """A modal discard dialog must not approve an intervening document edit."""
+        expected = self.connector.document_state.edit_token
+        if not self._confirm_discard_changes(closing=True):
+            return False
+        if self.connector.document_state.edit_token != expected:
+            self.connector._file_service._toast(
+                "Close cancelled: the document changed during confirmation.", "warning"
+            )
+            return False
+        return True
+
     @Slot()
     def _calculations_stopped(self) -> None:
+        self._stopping_services.discard(self.sender())
+        if self._stopping_services:
+            return
         self._calculation_shutdown_complete = True
         QTimer.singleShot(0, self.close)
+
+    @Slot()
+    def _files_settled(self) -> None:
+        self._file_operations_settled = True
+        QTimer.singleShot(0, self.close)
+
+    @Slot()
+    def _file_close_aborted(self) -> None:
+        """Keep the document usable when an accepted write did not finish safely."""
+        self._file_close_requested = False
+        self._file_operations_settled = False
+        self._close_confirmed = False
+        self.connector._calculation_shutdown_started = False
+        if hasattr(self, "_enabled_before_calculation_shutdown"):
+            self.setEnabled(self._enabled_before_calculation_shutdown)
+        operations = getattr(self.connector, "file_operations", None)
+        if operations is not None:
+            operations.cancel_close()
 
     @Slot()
     def show_settings_wip(self):
@@ -1022,19 +1141,17 @@ class MainWindow(FramelessWindow):
             self.command_palette._reposition()
 
     def _load_sample_action(self, optic_class: type[Optic]) -> None:
-        """Instantiate and load the selected sample class.
+        """Construct and validate the selected built-in sample in an owned worker.
 
         Args:
             optic_class: The sample :class:`~optiland.optic.Optic` subclass to load.
         """
-        try:
-            optic_instance = optic_class()
-            self.connector.load_optic_from_object(optic_instance)
-            print(f"Loaded sample: {optic_class.__name__}")
-
-        except Exception as e:
-            msg = f"Could not load sample '{optic_class.__name__}': {e}"
-            if self.toast_manager:
-                self.toast_manager.notify(msg, "error")
-            else:
-                QMessageBox.critical(self, "Sample Load Error", msg)
+        if not self._confirm_discard_changes():
+            return
+        self.connector.file_operations.request_load(
+            optic_class.__name__,
+            "sample",
+            load_options={
+                "sample_class": (optic_class.__module__, optic_class.__name__)
+            },
+        )

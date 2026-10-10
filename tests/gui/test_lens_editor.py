@@ -11,6 +11,7 @@ import pytest
 def mock_connector(minimal_optic, qapp):
     conn = MagicMock()
     conn._optic = minimal_optic
+    conn.get_optic.return_value = minimal_optic
     conn.toast_manager = MagicMock()
     conn.COL_TYPE = 0
     conn.COL_COMMENT = 1
@@ -37,6 +38,9 @@ def mock_connector(minimal_optic, qapp):
     }
     conn.get_surface_geometry_params.return_value = {}
     conn.get_surface_data.return_value = ""
+    conn.get_surface_display_rows.return_value = {
+        row: dict.fromkeys(range(7), "") for row in range(4)
+    }
     conn.get_available_surface_types.return_value = ["standard", "aspheric"]
     return conn
 

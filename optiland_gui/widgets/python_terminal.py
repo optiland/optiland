@@ -320,6 +320,22 @@ class PythonTerminalWidget(QWidget):
         self.dock_area.addDockWidget(Qt.RightDockWidgetArea, self.console_dock)
         self.editor_dock = self._create_editor_dock()
         self.dock_area.addDockWidget(Qt.LeftDockWidgetArea, self.editor_dock)
+        self.scientific_panel = None
+        connector = self.injected_variables.get("connector")
+        if connector is not None:
+            from .scientific_script_panel import ScientificScriptPanel
+
+            self.scientific_panel = ScientificScriptPanel(connector, self)
+            self.scientific_dock = QDockWidget("Scientific Results", self)
+            self.scientific_dock.setWidget(self.scientific_panel)
+            self.dock_area.addDockWidget(Qt.RightDockWidgetArea, self.scientific_dock)
+            self.dock_area.tabifyDockWidget(self.console_dock, self.scientific_dock)
+            self.console_dock.raise_()
+            self.scientific_panel.service.commands_ready.connect(
+                self._apply_scientific_commands
+            )
+        else:
+            self.btn_run_scientific.setEnabled(False)
 
     def _create_editor_dock(self) -> QDockWidget:
         """Create the dock widget containing the script editor and snippets panel."""
@@ -349,6 +365,13 @@ class PythonTerminalWidget(QWidget):
         toolbar_layout.addWidget(self.btn_save_script)
         toolbar_layout.addWidget(self.btn_load_script)
         toolbar_layout.addWidget(self.btn_save_quick_action)
+        self.btn_run_scientific = QPushButton("Scientific Run")
+        self.btn_run_scientific.setToolTip(
+            "Run with an independent optic outside the GUI. "
+            "Apply Script Result separately to change this document."
+        )
+        self.btn_run_scientific.clicked.connect(self._run_scientific_from_editor)
+        toolbar_layout.addWidget(self.btn_run_scientific)
         toolbar_layout.addStretch()
         layout.addLayout(toolbar_layout)
 
@@ -553,6 +576,35 @@ class PythonTerminalWidget(QWidget):
         if editor and editor.toPlainText().strip():
             self.kernel_client.execute(editor.toPlainText(), silent=False)
             self.console_dock.raise_()
+
+    def _run_scientific_from_editor(self):
+        editor = self._get_current_editor()
+        if self.scientific_panel and editor and editor.toPlainText().strip():
+            self.scientific_panel.service.run(editor.toPlainText())
+            self.scientific_dock.show()
+            self.scientific_dock.raise_()
+
+    def _apply_scientific_commands(self, commands):
+        service = self.scientific_panel.service
+        iface = self.injected_variables.get("iface")
+        for command in commands:
+            if not service.can_apply():
+                return
+            if command == ("refresh_views",):
+                # Repaint retained views, without scheduling new optical solves.
+                if iface is not None:
+                    iface.get_viewer_panel().update()
+            elif len(command) == 2 and command[0] == "show_panel" and iface:
+                window = iface.get_main_window()
+                names = {
+                    "viewer": "viewer_dock",
+                    "analysis": "analysis_dock",
+                    "lens_editor": "lens_editor_dock",
+                }
+                if command[1] in names:
+                    dock = getattr(window.panel_manager, names[command[1]])
+                    dock.show()
+                    dock.raise_()
 
     def _insert_snippet_from_item(self, item: QListWidgetItem) -> None:
         """Insert a snippet into the editor when its list item is double-clicked.

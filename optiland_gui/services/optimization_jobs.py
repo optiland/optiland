@@ -64,6 +64,26 @@ def variable_arguments(optic: Optic, definition: dict) -> dict:
     return values
 
 
+def operand_arguments(optic, definition, operand_metadata):
+    """Resolve one operand's inputs against the explicitly owned optic."""
+    values = definition.get("input_data")
+    values = (
+        dict(values)
+        if isinstance(values, dict)
+        else json.loads(definition.get("input_data_str") or "{}")
+    )
+    if not isinstance(values, dict):
+        raise ValueError("Operand parameters must be a JSON object.")
+    if "wavelength" in values or "wavelength" in operand_metadata.get(
+        definition["type"], {}
+    ):
+        values["wavelength"] = resolve_wavelength(
+            optic, values.get("wavelength", "primary")
+        )
+    values["optic"] = optic
+    return values
+
+
 def build_problem(
     optic: Optic, variables: list[dict], operands: list[dict], operand_metadata: dict
 ) -> OptimizationProblem:
@@ -74,26 +94,13 @@ def build_problem(
             optic, definition["type"], **variable_arguments(optic, definition)
         )
     for definition in operands:
-        values = definition.get("input_data")
-        values = (
-            dict(values)
-            if isinstance(values, dict)
-            else json.loads(definition.get("input_data_str") or "{}")
-        )
-        if "wavelength" in values or "wavelength" in operand_metadata.get(
-            definition["type"], {}
-        ):
-            values["wavelength"] = resolve_wavelength(
-                optic, values.get("wavelength", "primary")
-            )
-        values["optic"] = optic
         problem.add_operand(
             operand_type=definition["type"],
             target=definition.get("target"),
             min_val=definition.get("min_val"),
             max_val=definition.get("max_val"),
             weight=definition.get("weight", 1.0),
-            input_data=values,
+            input_data=operand_arguments(optic, definition, operand_metadata),
         )
     if not len(problem.variables) or not len(problem.operands):
         raise ValueError("Optimization needs at least one variable and one operand.")
