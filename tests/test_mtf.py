@@ -11,6 +11,7 @@ from matplotlib.figure import Figure
 
 import optiland.backend as be
 from optiland.mtf import FFTMTF, GeometricMTF
+from optiland.optic import Optic
 from optiland.samples.objectives import CookeTriplet
 
 # Parametrize every test over the available backends
@@ -67,6 +68,32 @@ class TestGeometricMTF:
         custom_freq = 50.0
         m2 = GeometricMTF(optic, max_freq=custom_freq)
         assert be.to_numpy(m2.max_freq) == pytest.approx(custom_freq)
+
+    def test_cutoff_is_positive_with_odd_number_of_mirrors(self, set_test_backend):
+        """An f/8 mirror has the cutoff of any f/8 system, and its frequency
+        axis runs upwards from zero."""
+        mirror = Optic()
+        mirror.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+        mirror.surfaces.add(
+            index=1,
+            radius=-400,
+            thickness=-200,
+            conic=-1,
+            material="mirror",
+            is_stop=True,
+        )
+        mirror.surfaces.add(index=2)
+        mirror.set_aperture(aperture_type="EPD", value=25)
+        mirror.fields.set_type(field_type="angle")
+        mirror.fields.add(y=0)
+        mirror.wavelengths.add(value=0.55, is_primary=True)
+
+        m = GeometricMTF(mirror)
+
+        assert be.to_numpy(m.max_freq) == pytest.approx(1 / (0.55e-3 * 8))
+        freq = be.to_numpy(m.freq)
+        assert freq[0] == 0
+        assert freq[-1] == pytest.approx(1 / (0.55e-3 * 8))
 
 
 class TestFFTMTF:
