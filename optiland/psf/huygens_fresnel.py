@@ -306,6 +306,7 @@ class ScalarHuygensPSF(BasePSF):
             pupil_opd_ideal,
             self.wavelengths[0].value * 1e-3,
             data.radius,
+            data.reference_center,
         )
 
         return psf_max[0, 0]  # Normalize by the peak of the ideal PSF
@@ -339,6 +340,7 @@ class ScalarHuygensPSF(BasePSF):
             pupil_opd,
             wavelength_mm,
             Rp,
+            data.reference_center,
         )
 
         # Normalize the PSF

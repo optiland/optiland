@@ -43,6 +43,7 @@ class HuygensFresnelSummation(ABC):
         pupil_opd,
         wavelength,
         Rp,
+        reference_center,
     ):
         """
         Compute the point spread function using a specific backend strategy.
@@ -54,6 +55,7 @@ class HuygensFresnelSummation(ABC):
             pupil_opd: 1D array of optical path difference in mm.
             wavelength: Wavelength of the light in mm.
             Rp: Radius of the exit pupil reference sphere in mm.
+            reference_center: Global coordinates of the reference sphere center.
 
         Returns:
             2D array of the point spread function.
@@ -76,6 +78,7 @@ class NumbaSummation(HuygensFresnelSummation):
         pupil_opd,
         wavelength,
         Rp,
+        reference_center,
     ):
         """
         Compute the PSF using the Numba-jitted Huygens-Fresnel summation.
@@ -91,6 +94,7 @@ class NumbaSummation(HuygensFresnelSummation):
             be.to_numpy(pupil_opd),
             wavelength,
             Rp,
+            reference_center,
         )
 
     @staticmethod
@@ -106,6 +110,7 @@ class NumbaSummation(HuygensFresnelSummation):
         pupil_opd,
         wavelength,
         Rp,
+        reference_center,
     ):  # pragma: no cover
         """
         Compute the point spread function using the Huygens–Fresnel diffraction integral
@@ -117,11 +122,14 @@ class NumbaSummation(HuygensFresnelSummation):
             pupil_opd (np.ndarray): 1D array of optical path difference in mm.
             wavelength (float): Wavelength of the light in mm.
             Rp (float): Radius of the exit pupil reference sphere in mm.
+            reference_center (tuple[float, float, float]): Global coordinates of the
+                reference sphere center.
 
         Returns:
             np.ndarray: 2D array of the point spread function.
         """
         k = 2.0 * np.pi / wavelength  # wavenumber
+        xc, yc, zc = reference_center
         Nx, Ny = image_x.shape
         field = np.zeros((Nx, Ny), dtype=np.complex128)
 
@@ -148,10 +156,12 @@ class NumbaSummation(HuygensFresnelSummation):
                     # Spherical propagation kernel
                     wave = np.exp(1j * k * R) / R
 
-                    # Compute the unit normal at the pupil point
-                    nux = u / Rp
-                    nuy = v / Rp
-                    nuz = w / Rp
+                    # The reference sphere is centered at the image reference point,
+                    # not at the global coordinate origin. Its inward unit normal
+                    # points from the pupil sample toward that center.
+                    nux = (xc - u) / Rp
+                    nuy = (yc - v) / Rp
+                    nuz = (zc - w) / Rp
 
                     # Compute the cosine of the angle between (P - Q) and pupil normal.
                     # P is the image point, Q is the pupil point
@@ -193,6 +203,7 @@ class TorchSummation(HuygensFresnelSummation):
         pupil_opd,
         wavelength,
         Rp,
+        reference_center,
     ):
         """
         Compute the PSF using the PyTorch Huygens-Fresnel summation.
@@ -215,6 +226,7 @@ class TorchSummation(HuygensFresnelSummation):
         pupil_opd = be.to_tensor(pupil_opd, device=self.device)
 
         k = 2.0 * torch.pi / wavelength
+        xc, yc, zc = reference_center
 
         # Reshape pupil data for vectorized operations
         pupil_x = pupil_x.reshape(1, -1)
@@ -250,10 +262,10 @@ class TorchSummation(HuygensFresnelSummation):
             # Spherical propagation kernel
             wave = torch.exp(1j * k * R) / R
 
-            # Unit normal at the pupil points
-            nux = pupil_x / Rp
-            nuy = pupil_y / Rp
-            nuz = pupil_z / Rp
+            # Inward unit normal of the reference sphere in global coordinates.
+            nux = (xc - pupil_x) / Rp
+            nuy = (yc - pupil_y) / Rp
+            nuz = (zc - pupil_z) / Rp
 
             # Obliquity factor
             dot = dx * nux + dy * nuy + dz * nuz

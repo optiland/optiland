@@ -11,6 +11,7 @@ except ImportError:
 
 import optiland.backend as be
 from optiland.psf.huygens_fresnel import HuygensPSF
+from optiland.psf.huygens_fresnel_strategies import TorchSummation
 from optiland.samples.objectives import CookeTriplet
 
 
@@ -30,6 +31,54 @@ class TestHuygensPSFTorch:
     WAVELENGTH_GREEN = 0.550
     NUM_RAYS_LOW = 32
     IMAGE_SIZE_LOW = 32
+
+    def test_summation_is_invariant_to_global_translation(self):
+        """Torch must use the reference-sphere center for its pupil normals."""
+        center = torch.tensor([1.25, -2.5, 30.0], dtype=torch.float64)
+        radius = 20.0
+        pupil_x = torch.tensor([-2.0, 0.5, 3.0], dtype=torch.float64) + center[0]
+        pupil_y = torch.tensor([0.5, -1.0, 1.5], dtype=torch.float64) + center[1]
+        radial_xy_sq = (pupil_x - center[0]) ** 2 + (pupil_y - center[1]) ** 2
+        pupil_z = center[2] - torch.sqrt(radius**2 - radial_xy_sq)
+        image_x = torch.tensor(
+            [[center[0] - 0.01, center[0] + 0.01]], dtype=torch.float64
+        )
+        image_y = torch.tensor([[center[1], center[1]]], dtype=torch.float64)
+        image_z = torch.tensor([[center[2], center[2]]], dtype=torch.float64)
+        amplitude = torch.tensor([1.0, 0.8, 0.6], dtype=torch.float64)
+        opd = torch.tensor([0.0, 1e-4, -2e-4], dtype=torch.float64)
+
+        summation = TorchSummation()
+        reference = summation.compute(
+            image_x,
+            image_y,
+            image_z,
+            pupil_x,
+            pupil_y,
+            pupil_z,
+            amplitude,
+            opd,
+            0.00055,
+            radius,
+            tuple(center),
+        )
+
+        translation = torch.tensor([11.0, -7.0, 5.0], dtype=torch.float64)
+        translated = summation.compute(
+            image_x + translation[0],
+            image_y + translation[1],
+            image_z + translation[2],
+            pupil_x + translation[0],
+            pupil_y + translation[1],
+            pupil_z + translation[2],
+            amplitude,
+            opd,
+            0.00055,
+            radius,
+            tuple(center + translation),
+        )
+
+        torch.testing.assert_close(translated, reference, rtol=2e-7, atol=3e-10)
 
     @pytest.fixture()
     def cooke_triplet_optic(self):
@@ -283,6 +332,7 @@ class TestImageVertexGradients:
                 pupil_opd_ideal,
                 0.55 * 1e-3,
                 data.radius,
+                data.reference_center,
             )
             return peak[0, 0]
 

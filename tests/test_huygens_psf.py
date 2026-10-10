@@ -9,6 +9,7 @@ import pytest
 
 import optiland.backend as be
 from optiland.psf.huygens_fresnel import HuygensPSF
+from optiland.psf.huygens_fresnel_strategies import NumbaSummation
 from optiland.samples.objectives import CookeTriplet, DoubleGauss, ReverseTelephoto
 
 matplotlib.use("Agg")  # use non-interactive backend for testing
@@ -59,6 +60,72 @@ class TestHuygensPSF:
         "reverse_telephoto_optic",
     ]
     FIELDS_TO_TEST = [(0, 0), (0.5, 0.0), (0.0, 0.7)]  # On-axis and off-axis
+
+    def test_obliquity_is_unity_at_reference_sphere_center(self):
+        """A wavelet normal points inward from the sphere to its image point."""
+        center = (4.0, -3.0, 20.0)
+        radius = 10.0
+        result = NumbaSummation().compute(
+            np.array([[center[0]]]),
+            np.array([[center[1]]]),
+            np.array([[center[2]]]),
+            np.array([center[0]]),
+            np.array([center[1]]),
+            np.array([center[2] - radius]),
+            np.ones(1),
+            np.zeros(1),
+            0.00055,
+            radius,
+            center,
+        )
+
+        assert result[0, 0] == pytest.approx(1.0 / radius**2)
+
+    def test_summation_is_invariant_to_global_translation(self):
+        """Moving the complete geometry must not change the Huygens result."""
+        center = np.array([1.25, -2.5, 30.0])
+        radius = 20.0
+        pupil_x = np.array([-2.0, 0.5, 3.0]) + center[0]
+        pupil_y = np.array([0.5, -1.0, 1.5]) + center[1]
+        radial_xy_sq = (pupil_x - center[0]) ** 2 + (pupil_y - center[1]) ** 2
+        pupil_z = center[2] - np.sqrt(radius**2 - radial_xy_sq)
+        image_x = np.array([[center[0] - 0.01, center[0] + 0.01]])
+        image_y = np.array([[center[1], center[1]]])
+        image_z = np.array([[center[2], center[2]]])
+        amplitude = np.array([1.0, 0.8, 0.6])
+        opd = np.array([0.0, 1e-4, -2e-4])
+
+        summation = NumbaSummation()
+        reference = summation.compute(
+            image_x,
+            image_y,
+            image_z,
+            pupil_x,
+            pupil_y,
+            pupil_z,
+            amplitude,
+            opd,
+            0.00055,
+            radius,
+            tuple(center),
+        )
+
+        translation = np.array([11.0, -7.0, 5.0])
+        translated = summation.compute(
+            image_x + translation[0],
+            image_y + translation[1],
+            image_z + translation[2],
+            pupil_x + translation[0],
+            pupil_y + translation[1],
+            pupil_z + translation[2],
+            amplitude,
+            opd,
+            0.00055,
+            radius,
+            tuple(center + translation),
+        )
+
+        np.testing.assert_allclose(translated, reference, rtol=1e-10, atol=1e-10)
 
     @pytest.mark.parametrize("optic_fixture_name", OPTIC_FIXTURES)
     @pytest.mark.parametrize("field", FIELDS_TO_TEST)
@@ -282,7 +349,7 @@ class TestHuygensPSF:
                 (
                     0.7,
                     0.0,
-                ): 0.8828802278745688,
+                ): 0.9256881209403168,
             },
         }
         # Tolerance for Strehl comparison
