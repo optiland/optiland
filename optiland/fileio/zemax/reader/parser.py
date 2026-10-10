@@ -78,6 +78,7 @@ class ZemaxDataParser:
             "VCYN": self._read_vignette_compress_y,
             "VANN": self._read_vignette_tangent_angle,
             "CLAP": self._read_circular_aperture,
+            "FLAP": self._read_floating_aperture,
             "OBDC": self._read_aperture_decenter,
         }
 
@@ -421,6 +422,12 @@ class ZemaxDataParser:
         r_min = float(data[1])
         r_max = float(data[2])
         self._current_surf_data["aperture"] = self._make_circular_aperture(r_min, r_max)
+
+    def _read_floating_aperture(self, data: list[str]) -> None:
+        # FLAP stores the clear semi-diameter in its second field; a floating
+        # aperture clips rays outside it just like a circular aperture.
+        r_max = float(data[2])
+        self._current_surf_data["aperture"] = self._make_circular_aperture(0.0, r_max)
 
     def _make_circular_aperture(self, r_min: float, r_max: float) -> RadialAperture:
         offset_x, offset_y = self._current_aperture_offset
