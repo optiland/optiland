@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import optiland.backend as be
 from optiland.aperture.base import BaseSystemAperture
 
 if TYPE_CHECKING:
@@ -16,7 +17,7 @@ if TYPE_CHECKING:
 class ImageFNOAperture(BaseSystemAperture):
     """Aperture specified as an image-space F-number.
 
-    The entrance pupil diameter is derived as ``EPD = f2 / FNO``.
+    The entrance pupil diameter is derived as ``EPD = |f2| / FNO``.
 
     Args:
         value: Image-space F-number.
@@ -45,7 +46,7 @@ class ImageFNOAperture(BaseSystemAperture):
         return False
 
     def compute_epd(self, paraxial: Paraxial, wavelength: float | None = None) -> float:
-        """Compute EPD as ``f2 / FNO``.
+        """Compute EPD as ``|f2| / FNO``.
 
         Args:
             paraxial: Paraxial engine used to obtain the back focal length.
@@ -55,7 +56,9 @@ class ImageFNOAperture(BaseSystemAperture):
             Entrance pupil diameter.
 
         """
-        return paraxial.f2() / self._value
+        # A diameter: f2 is negative after an odd number of mirrors, but the
+        # entrance pupil is as wide as that of the unfolded system, not negative.
+        return be.abs(paraxial.f2()) / self._value
 
     def direct_fno(self) -> float:
         """Return the stored F-number directly, bypassing EPD computation.
