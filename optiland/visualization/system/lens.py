@@ -432,7 +432,7 @@ class Lens3D(Lens2D):
             return False
         for surf in self.surfaces:
             geometry = surf.surf.geometry
-            if not geometry.is_symmetric:
+            if not surf.supports_revolution:
                 return False
             if (
                 geometry.cs.rx != 0
@@ -466,6 +466,7 @@ class Lens3D(Lens2D):
                 Defaults to None.
 
         """
+        self.artist_surfaces = {}
         if self.is_symmetric:
             sags = self._compute_sag()  # sags are in global coordinates
             self._plot_lenses(renderer, sags, theme=theme)
@@ -491,6 +492,17 @@ class Lens3D(Lens2D):
         actor = revolve_contour(be.to_numpy(x), be.to_numpy(y), be.to_numpy(z))
         actor = self._configure_material(actor, theme=theme)
         renderer.AddActor(actor)
+        return actor
+
+    def _adjacent_body_surfaces(self, surface):
+        """Live boundaries of the lens bodies adjoining this physical face."""
+        index = self.surfaces.index(surface)
+        return tuple(
+            item.surf
+            for item in self.surfaces[
+                max(0, index - 1) : min(len(self.surfaces), index + 2)
+            ]
+        )
 
     def _configure_material(self, actor, theme=None):
         """Configures the material properties of a given VTK actor.
@@ -546,6 +558,7 @@ class Lens3D(Lens2D):
             )  # retrieves actor from Surface3D (already transformed)
             actor = self._configure_material(actor, theme=theme)
             renderer.AddActor(actor)
+            self.artist_surfaces[actor] = self._adjacent_body_surfaces(surface_3d_obj)
 
             # Add annulus if surface extent does not extend to lens edge
             if common_axis and surface_3d_obj.extent < max_extent:
@@ -646,6 +659,9 @@ class Lens3D(Lens2D):
         annulus_actor = self._configure_material(annulus_actor, theme=theme)
         annulus_actor = transform_3d(annulus_actor, surf_props)
         renderer.AddActor(annulus_actor)
+        self.artist_surfaces[annulus_actor] = self._adjacent_body_surfaces(
+            surface_3d_obj
+        )
 
     def _get_edge_surface(self, circle1, circle2, theme=None):
         """Generates a VTK actor representing the surface between two circles.
@@ -731,6 +747,10 @@ class Lens3D(Lens2D):
             circle2 = self._align_perimeters(circle1, circle2, rectangular)
             actor = self._get_edge_surface(circle1, circle2, theme=theme)
             renderer.AddActor(actor)
+            self.artist_surfaces[actor] = (
+                self.surfaces[k].surf,
+                self.surfaces[k + 1].surf,
+            )
 
     @staticmethod
     def _align_perimeters(first, second, rectangular):

@@ -221,17 +221,25 @@ class Surface3D(Surface2D):
                 the surface geometry.
 
         """
-        has_symmetric_aperture = (
-            type(self.surf.aperture) is RadialAperture
-            or self.surf.aperture is None  # "no aperture" is symmetric
-        )
-        is_symmetric = self.surf.geometry.is_symmetric
-        if is_symmetric and has_symmetric_aperture:
+        if self.supports_revolution:
             actor = self._get_symmetric_surface()
         else:
             actor = self._get_asymmetric_surface()
         actor = self._configure_material(actor, theme=theme)
         return actor
+
+    @property
+    def supports_revolution(self):
+        """Whether an uninterrupted circular contour represents this aperture.
+
+        Annular clipping creates discontinuous contours; a clipped grid retains
+        the central opening without introducing NaN vertices into VTK.
+        """
+        aperture = self.surf.aperture
+        circular = aperture is None or (
+            type(aperture) is RadialAperture and aperture.r_min == 0
+        )
+        return self.surf.geometry.is_symmetric and circular
 
     def _get_symmetric_surface(self):
         """Generates a symmetric surface actor by computing the sag, revolving
@@ -256,16 +264,15 @@ class Surface3D(Surface2D):
 
         """
         x, y, z = self._compute_sag_3d()
-        x = be.to_numpy(x)
-        y = be.to_numpy(y)
-        z = be.to_numpy(z)
-
-        # Apply aperture filtering to the grid of points
+        # Aperture predicates operate on the active backend's grid. Convert
+        # coordinates and the resulting mask only at the VTK boundary.
         if self.surf.aperture is not None:
             mask = self.surf.aperture.contains(x, y)
         else:
-            r = np.hypot(x, y)
-            mask = r <= be.to_numpy(self.extent)
+            mask = be.hypot(x, y) <= self.extent
+        x = be.to_numpy(x)
+        y = be.to_numpy(y)
+        z = be.to_numpy(z)
 
         # Preserve the original row-major vertex order and vtkPoints float32
         # precision, but avoid one Python/VTK call per coordinate and quad.
