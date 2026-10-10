@@ -192,3 +192,69 @@ def test_confirm_stop_size_floating_stop(set_test_backend):
 
     lens.paraxial.trace(Hy=0, Py=1, wavelength=0.55)
     assert_allclose(lens.surfaces.y[stop_idx], stop_diam / 2)
+
+
+# ── Integration: imageFNO with an odd number of mirrors ──────────────────────
+
+
+def _paraboloid(aperture_type, value):
+    """A single parabolic mirror with f = 200 mm: one mirror, so f2 < 0."""
+    lens = Optic()
+    lens.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+    lens.surfaces.add(
+        index=1,
+        radius=-400.0,
+        thickness=-200.0,
+        conic=-1.0,
+        material="mirror",
+        is_stop=True,
+    )
+    lens.surfaces.add(index=2)
+    lens.set_aperture(aperture_type=aperture_type, value=value)
+    lens.fields.set_type(field_type="angle")
+    lens.fields.add(y=0.0)
+    lens.fields.add(y=1.0)
+    lens.wavelengths.add(value=0.5876, is_primary=True)
+    return lens
+
+
+def test_image_fno_epd_is_positive_with_odd_number_of_mirrors(set_test_backend):
+    """The EPD is a diameter: positive even when f2 < 0 (GH #918)."""
+    lens = _paraboloid("imageFNO", 8.0)
+    assert_allclose(lens.paraxial.f2(), -200.0)
+    assert_allclose(lens.paraxial.EPD(), 25.0)
+    assert_allclose(lens.paraxial.FNO(), 8.0)
+
+
+def test_image_fno_matches_equivalent_epd_with_odd_number_of_mirrors(
+    set_test_backend,
+):
+    """An f/8 mirror is the same system set up as imageFNO = 8 or as EPD = 25.
+
+    With a negative EPD the marginal ray started below the axis, which flipped
+    the sign of the Lagrange invariant (and with it third-order coma and
+    distortion) and mirrored the pupil for real rays (GH #918).
+    """
+    by_fno = _paraboloid("imageFNO", 8.0)
+    by_epd = _paraboloid("EPD", 25.0)
+
+    # First order: pupils, Lagrange invariant and marginal ray.
+    for name in ("EPD", "XPD", "invariant"):
+        assert_allclose(
+            getattr(by_fno.paraxial, name)(), getattr(by_epd.paraxial, name)()
+        )
+    for fno, epd in zip(
+        by_fno.paraxial.marginal_ray(), by_epd.paraxial.marginal_ray(), strict=True
+    ):
+        assert_allclose(fno, epd)
+
+    # Third order: the signs of coma and distortion follow the invariant.
+    assert_allclose(
+        by_fno.aberrations.seidels(), by_epd.aberrations.seidels(), atol=1e-12
+    )
+
+    # Real rays: Py = +1 is the +y edge of the pupil in both.
+    for lens in (by_fno, by_epd):
+        lens.trace_generic(Hx=0, Hy=1, Px=0, Py=1, wavelength=0.5876)
+    assert_allclose(by_fno.surfaces.y[1], by_epd.surfaces.y[1])
+    assert_allclose(by_fno.surfaces.y[-1], by_epd.surfaces.y[-1])
