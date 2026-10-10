@@ -449,6 +449,9 @@ class Paraxial:
     def FNO(self) -> ScalarOrArray:
         """Calculate the image-space F-number (FNO).
 
+        The F-number is ``|f2| / EPD``, so it is positive whatever the sign of
+        ``f2``, which is negative after an odd number of mirrors.
+
         Returns:
             float: Image-space F-number.
 
@@ -462,7 +465,9 @@ class Paraxial:
         fno = self.optic.aperture.direct_fno()
         if fno is not None:
             return fno
-        return self.f2() / self.EPD()
+        # A ratio of sizes: f2 changes sign with every reflection, but the cone
+        # of light is as fast as that of the unfolded system.
+        return be.abs(self.f2()) / self.EPD()
 
     def magnification(self) -> ScalarOrArray:
         """Calculate the transverse magnification.
