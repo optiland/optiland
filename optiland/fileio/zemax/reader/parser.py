@@ -16,11 +16,13 @@ import optiland.backend as be
 from optiland.fileio.zemax.model import ZemaxDataModel
 from optiland.materials import (
     AbbeMaterial,
+    AGFMaterial,
     BaseMaterial,
     IdealMaterial,
     Material,
     OptilandMaterialWarning,
 )
+from optiland.materials.agf import agf_search_dirs, find_agf_catalog, read_agf
 from optiland.materials.material_spec import MatchPolicy
 from optiland.materials.registry import MaterialRegistry
 from optiland.physical_apertures import OffsetRadialAperture, RadialAperture
@@ -38,14 +40,17 @@ class ZemaxDataParser:
 
     Args:
         filename: Path to the .zmx file to parse.
+        agf_dirs: Folders to search for the GCAT catalogs as AGF files; see
+            ``agf_search_dirs``. If None, ``OPTILAND_AGF_PATH`` is used.
 
     Attributes:
         filename: The file path being parsed.
         data_model: The ZemaxDataModel being populated during parsing.
     """
 
-    def __init__(self, filename: str) -> None:
+    def __init__(self, filename: str, agf_dirs=None) -> None:
         self.filename = filename
+        self.agf_dirs = agf_search_dirs(agf_dirs)
         self.data_model = ZemaxDataModel()
         self._current_surf = -1
         self._current_surf_data: dict[str, Any] = {}
@@ -332,15 +337,28 @@ class ZemaxDataParser:
         A catalog glass that had to be modelled emits a warning. There is no
         fuzzy search across all catalogs, so ``Material(name)`` lookups are
         not used here.
+
+        A GCAT catalog found as an AGF file in ``agf_dirs`` is searched there
+        instead of in the material database, and its glasses are evaluated
+        from the catalog's own formula and coefficients (``AGFMaterial``).
         """
         known = {c.lower() for c in MaterialRegistry.instance().list_catalogs()}
+        agf: dict[str, dict[str, Any]] = {}
         catalogs = []
         for catalog in self.data_model.glass_catalogs or []:
-            if catalog.lower() in known:
+            path = find_agf_catalog(catalog, self.agf_dirs)
+            if path is not None:
+                glasses = read_agf(path)
+                agf[catalog.lower()] = {g.lower(): v for g, v in glasses.items()}
+                catalogs.append(catalog.lower())
+            elif catalog.lower() in known:
                 catalogs.append(catalog.lower())
             else:
+                where = "the material database"
+                if self.agf_dirs:
+                    where += " or the AGF folders"
                 warnings.warn(
-                    f"Glass catalog {catalog} is not in the material database; "
+                    f"Glass catalog {catalog} is not in {where}; "
                     "its glasses are modelled from the nd/vd in the file.",
                     OptilandMaterialWarning,
                     stacklevel=4,
@@ -350,16 +368,27 @@ class ZemaxDataParser:
             # Only surfaces with a GLAS line carry "model_glass".
             if "model_glass" in surf:
                 surf["material"] = self._resolve_glass(
-                    index, surf, surf["material"], catalogs
+                    index, surf, surf["material"], catalogs, agf
                 )
 
     @classmethod
     def _resolve_glass(
-        cls, surf_index: int, surf: dict[str, Any], name: str, catalogs: list[str]
+        cls,
+        surf_index: int,
+        surf: dict[str, Any],
+        name: str,
+        catalogs: list[str],
+        agf: dict[str, dict[str, Any]] | None = None,
     ) -> BaseMaterial:
+        agf = agf or {}
         if not surf.get("model_glass"):
             candidates = []
             for catalog in catalogs:
+                if catalog in agf:
+                    glass = agf[catalog].get(name.lower())
+                    if glass is not None:
+                        candidates.append(AGFMaterial.from_glass(glass))
+                    continue
                 try:
                     # reference names the catalog so the writer exports it.
                     candidates.append(

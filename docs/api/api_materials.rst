@@ -91,6 +91,32 @@ User YAML files must follow the `refractiveindex.info <https://refractiveindex.i
 format.  Files placed under ``~/.optiland/catalogs/<catalog_name>/`` are
 auto-discovered on the first registry access.
 
+AGF Glass Catalogs
+------------------
+
+:class:`~optiland.materials.agf.AGFMaterial` evaluates a glass from its entry
+in an OpticStudio AGF catalog, with the catalog's own dispersion formula and
+coefficients. All 13 OpticStudio formulas are supported (Schott, Sellmeier 1
+to 5, Herzberger, Conrady, Handbook of Optics 1 and 2, Extended 1 to 3).
+Indices are relative to air at the catalog's reference temperature; the
+thermal data of the ``TD`` line are not applied, and the extinction
+coefficient is zero. Files may be ASCII or UTF-16. Optiland ships no AGF
+data; the reader works on files you have.
+
+.. code-block:: python
+
+   from optiland.materials import AGFMaterial
+   from optiland.materials.agf import read_agf
+
+   glass = AGFMaterial.from_file("Glasscat/SCHOTT.AGF", "N-BK7")
+   glass.n(0.5875618)
+
+   catalog = read_agf("Glasscat/SCHOTT.AGF")   # {name: AGFGlass}
+   glass = AGFMaterial.from_glass(catalog["N-BK7"])
+
+``load_zemax_file(..., agf_dirs=[...])`` uses the same reader for the
+catalogs a ``.zmx`` file declares; see :doc:`/zemax_import`.
+
 Evaluation and Caching
 ----------------------
 
@@ -137,6 +163,7 @@ lookup when an input or tracked parameter requires a fresh gradient graph.
 
    materials.base
    materials.abbe
+   materials.agf
    materials.ideal
    materials.data
    materials.material_file

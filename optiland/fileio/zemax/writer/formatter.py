@@ -26,6 +26,7 @@ from optiland.fileio.zemax.surfaces import (
     CoordinateBreakSurfaceHandler,
     get_handler_for_optiland_type,
 )
+from optiland.materials.agf import AGFMaterial
 from optiland.materials.data import DataMaterial
 from optiland.materials.material import Material
 
@@ -362,6 +363,15 @@ class OpticToZemaxConverter:
             entry = {"name": name.upper(), "n": n_d, "V": v_d}
             if catalog:
                 entry["catalog"] = catalog.upper()
+                glass_catalogs.append(entry["catalog"])
+            return entry
+
+        # A glass read from an AGF catalog exports under that catalog.
+        if isinstance(mat, AGFMaterial):
+            n_d, v_d = compute_abbe_number(mat, WL_D)
+            entry = {"name": mat.name.upper(), "n": n_d, "V": v_d}
+            if mat.catalog:
+                entry["catalog"] = mat.catalog.upper()
                 glass_catalogs.append(entry["catalog"])
             return entry
 

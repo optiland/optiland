@@ -28,7 +28,7 @@ from optiland.fileio.zemax.reader.converter import ZemaxToOpticConverter as _New
 from optiland.fileio.zemax.writer.exporter import save_zemax_file
 
 
-def load_zemax_file(source: str):
+def load_zemax_file(source: str, agf_dirs=None):
     """Load a Zemax file and return an Optic object.
 
     Glass names are looked up by exact name in the catalogs the file declares
@@ -38,11 +38,17 @@ def load_zemax_file(source: str):
 
     Args:
         source: The path to a local .zmx file or a URL pointing to a .zmx file.
+        agf_dirs: A folder, or a list of folders, holding OpticStudio AGF
+            catalogs. A GCAT catalog found there (``SCHOTT`` as
+            ``SCHOTT.AGF``) is read from its AGF file, and its glasses use the
+            catalog's own dispersion formula and coefficients. Other catalogs
+            use the material database. If None, the folders in the
+            ``OPTILAND_AGF_PATH`` environment variable are used, if set.
 
     Returns:
         An Optic object created from the Zemax file data.
     """
-    return _NewZTC({}).read(source)
+    return _NewZTC({}, agf_dirs=agf_dirs).read(source)
 
 
 def load_codev_file(source: str):

@@ -39,6 +39,38 @@ A ``GCAT`` catalog that is not in the material database (see
 its glasses are modelled from nd/vd. A file without ``GCAT`` models every
 glass.
 
+Glasses from AGF catalogs
+-------------------------
+
+OpticStudio evaluates each glass from its AGF catalog entry: the dispersion
+formula code and the coefficients on its ``CD`` line. The material database
+holds refractiveindex.info data instead, which can differ in fit, wavelength
+range or catalog edition, and it has no vendor, custom or in-house catalogs.
+To use the AGF files you already have, pass the folders that hold them:
+
+.. code-block:: python
+
+   from optiland.fileio import load_zemax_file
+
+   optic = load_zemax_file("design.zmx", agf_dirs=["C:/Users/me/Documents/Zemax/Glasscat"])
+
+or list them in the ``OPTILAND_AGF_PATH`` environment variable, separated as
+in ``PATH``. With AGF folders, step 2 above changes for each ``GCAT``
+catalog that has an AGF file (``SCHOTT`` as ``SCHOTT.AGF``, ignoring case):
+
+* The catalog is searched in its AGF file by exact name (case insensitive),
+  not in the material database, and a glass found there becomes an
+  :class:`~optiland.materials.agf.AGFMaterial`. A glass the AGF file lacks is
+  not looked up in the database's catalog of the same name; it goes on to
+  steps 3 and 4, as in OpticStudio.
+* A catalog without an AGF file uses the material database as before.
+* When the folders hold the same catalog more than once, the first folder
+  wins.
+
+``agf_dirs=[]`` switches the AGF lookup off even when ``OPTILAND_AGF_PATH``
+is set. Without AGF folders, glasses resolve exactly as described above.
+Optiland ships no AGF data.
+
 What changed
 ------------
 
@@ -70,7 +102,7 @@ resolves strictly.
 Export
 ------
 
-``save_zemax_file`` writes the catalog of each ``Material`` to ``GCAT`` and
-records nd/vd on every ``GLAS`` line, so a saved file reloads to the same
-glasses. A ``Material`` created without a reference exports the glass catalog
+``save_zemax_file`` writes the catalog of each ``Material`` and
+``AGFMaterial`` to ``GCAT`` and records nd/vd on every ``GLAS`` line, so a
+saved file reloads to the same glasses. A ``Material`` created without a reference exports the glass catalog
 it resolved to.
