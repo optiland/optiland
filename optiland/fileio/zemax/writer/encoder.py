@@ -13,7 +13,11 @@ import math
 import operator
 from typing import TYPE_CHECKING, Any
 
-from optiland.physical_apertures import OffsetRadialAperture
+from optiland.physical_apertures import (
+    OffsetRadialAperture,
+    RadialAperture,
+    UnionAperture,
+)
 
 if TYPE_CHECKING:
     from optiland.fileio.zemax.model import ZemaxDataModel
@@ -53,6 +57,42 @@ def _fmt(value: float) -> str:
 def _fmt_vals(values: list[float]) -> str:
     """Format a list of floats separated by spaces."""
     return " ".join(_fmt(v) for v in values)
+
+
+def _offset(aperture: Any) -> tuple[float, float]:
+    if isinstance(aperture, OffsetRadialAperture):
+        return float(aperture.offset_x), float(aperture.offset_y)
+    return 0.0, 0.0
+
+
+def _encode_offset(lines: list[str], offset: tuple[float, float]) -> None:
+    if offset != (0.0, 0.0):
+        lines.append(f"  OBDC {_fmt(offset[0])} {_fmt(offset[1])}")
+
+
+def _obscuration(aperture: Any) -> tuple[float, float, tuple[float, float]] | None:
+    """The (r_min, r_max, offset) of an aperture the reader builds from OBSC.
+
+    That is a radial aperture with no outer edge (passing r >= r_max), or the
+    union of a disk of radius r_min with one, sharing the same centre.
+    """
+
+    def _outside(ap: Any) -> bool:
+        return isinstance(ap, RadialAperture) and math.isinf(float(ap.r_max))
+
+    if _outside(aperture):
+        return 0.0, float(aperture.r_min), _offset(aperture)
+    if isinstance(aperture, UnionAperture):
+        inner, outer = aperture.a, aperture.b
+        if (
+            _outside(outer)
+            and isinstance(inner, RadialAperture)
+            and float(inner.r_min) == 0.0
+            and math.isfinite(float(inner.r_max))
+            and _offset(inner) == _offset(outer)
+        ):
+            return float(inner.r_max), float(outer.r_min), _offset(outer)
+    return None
 
 
 class ZemaxFileEncoder:
@@ -228,14 +268,14 @@ class ZemaxFileEncoder:
         clap = raw.get("CLAP")
         if clap is None:
             return
-        if hasattr(clap, "r_min"):
+        obscuration = _obscuration(clap)
+        if obscuration is not None:
+            r_min, r_max, offset = obscuration
+            lines.append(f"  OBSC {_fmt(r_min)} {_fmt(r_max)}")
+            _encode_offset(lines, offset)
+        elif hasattr(clap, "r_min"):
             lines.append(f"  CLAP {_fmt(float(clap.r_min))} {_fmt(float(clap.r_max))}")
-            if isinstance(clap, OffsetRadialAperture) and (
-                clap.offset_x != 0.0 or clap.offset_y != 0.0
-            ):
-                lines.append(
-                    f"  OBDC {_fmt(float(clap.offset_x))} {_fmt(float(clap.offset_y))}"
-                )
+            _encode_offset(lines, _offset(clap))
         elif hasattr(clap, "x_min"):
             lines.append(f"  CLAP {_fmt(0.0)} {_fmt(float(clap.x_max))}")
 

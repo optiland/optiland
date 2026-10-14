@@ -130,7 +130,7 @@ class TestRefractive:
 
     @pytest.mark.parametrize(
         "aperture_line",
-        ["OBSC 0 2 0", "SQAP 6 6 0", "ELAP 6 4 0", "SPID 1 3 0", "USAP 0 0 0"],
+        ["SQAP 6 6 0", "ELAP 6 4 0", "SPID 1 3 0", "USAP 0 0 0"],
     )
     def test_unsupported_aperture_replaces_fixed_clip(
         self, tmp_path, aperture_line, set_test_backend
@@ -166,9 +166,7 @@ class TestRoundTrip:
         assert _passes(reloaded, py=0.499)
         assert not _passes(reloaded, py=0.501)
 
-    def test_automatic_semi_diameter_stays_unclipped(
-        self, tmp_path, set_test_backend
-    ):
+    def test_automatic_semi_diameter_stays_unclipped(self, tmp_path, set_test_backend):
         # optiland's semi_aperture is recomputed from paraxial rays, so the
         # writer must not export it as a fixed semi-diameter; that would add
         # a clip on reload.
@@ -285,7 +283,12 @@ class TestReflectors:
                 tmp_path, 'DIAM 25 1 0 0 1 ""', 'DIAM 20 0 0 0 1 ""', "OBSC 0 5 0"
             )
         )
-        assert optic.surfaces[2].aperture is None
+        # The surface carries the obscuration (see test_zemax_obscuration.py),
+        # not a U clip.
+        aperture = optic.surfaces[2].aperture
+        assert type(aperture) is RadialAperture
+        assert_allclose(aperture.r_min, 5.0)
+        assert math.isinf(float(aperture.r_max))
         assert _passes(optic, py=26.0 / 30)
 
     def test_floating_stop_on_mirror(self, tmp_path, set_test_backend):
