@@ -8,6 +8,7 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+import math
 import re
 import warnings
 from typing import Any
@@ -23,7 +24,15 @@ from optiland.materials import (
 )
 from optiland.materials.material_spec import MatchPolicy
 from optiland.materials.registry import MaterialRegistry
-from optiland.physical_apertures import OffsetRadialAperture, RadialAperture
+from optiland.physical_apertures import (
+    BaseAperture,
+    DifferenceAperture,
+    EllipticalAperture,
+    OffsetRadialAperture,
+    RadialAperture,
+    RectangularAperture,
+    UnionAperture,
+)
 
 # Fraunhofer d-line (um), used to evaluate a candidate glass's index for
 # comparison against the Nd recorded on a GLAS line.
@@ -91,9 +100,11 @@ class ZemaxDataParser:
             "VANN": self._read_vignette_tangent_angle,
             "CLAP": self._read_circular_aperture,
             "FLAP": self._read_floating_aperture,
-            "OBSC": self._read_unsupported_aperture,
-            "SQAP": self._read_unsupported_aperture,
-            "ELAP": self._read_unsupported_aperture,
+            "OBSC": self._read_obscuration,
+            "SQAP": self._read_rectangular_aperture,
+            "SQOB": self._read_rectangular_obscuration,
+            "ELAP": self._read_elliptical_aperture,
+            "ELOB": self._read_elliptical_obscuration,
             "SPID": self._read_unsupported_aperture,
             "USAP": self._read_unsupported_aperture,
             "OBDC": self._read_aperture_decenter,
@@ -276,6 +287,7 @@ class ZemaxDataParser:
         self._store_current_surface()
         self._current_surf += 1
         self._current_aperture_offset = (0.0, 0.0)
+        self._current_aperture_shape = None
         self._current_surf_data = {
             "type": "standard",
             "is_stop": False,
@@ -480,15 +492,71 @@ class ZemaxDataParser:
         self._read_field_column("vignette_tangent_angle", data)
 
     def _read_circular_aperture(self, data: list[str]) -> None:
-        r_min = float(data[1])
-        r_max = float(data[2])
-        self._current_surf_data["aperture"] = self._make_circular_aperture(r_min, r_max)
+        self._set_aperture_shape("circular", float(data[1]), float(data[2]))
 
     def _read_floating_aperture(self, data: list[str]) -> None:
         # FLAP stores the clear semi-diameter in its second field; a floating
         # aperture clips rays outside it just like a circular aperture.
-        r_max = float(data[2])
-        self._current_surf_data["aperture"] = self._make_circular_aperture(0.0, r_max)
+        self._set_aperture_shape("circular", 0.0, float(data[2]))
+
+    def _read_obscuration(self, data: list[str]) -> None:
+        # OBSC <r_min> <r_max>: the complement of a circular aperture. Rays
+        # between the two radii are blocked; rays inside r_min or outside
+        # r_max pass, with no outer limit.
+        self._set_aperture_shape("obscuration", float(data[1]), float(data[2]))
+
+    def _read_rectangular_aperture(self, data: list[str]) -> None:
+        # SQAP <x_half> <y_half> <pickup>: passes rays inside the rectangle.
+        # A nonzero last field picks the aperture up from that surface; the
+        # half-widths on the line are then the picked-up values.
+        self._set_aperture_shape("rectangular", float(data[1]), float(data[2]))
+
+    def _read_rectangular_obscuration(self, data: list[str]) -> None:
+        # SQOB <x_half> <y_half> <pickup>: blocks rays inside the rectangle.
+        self._set_aperture_shape(
+            "rectangular_obscuration", float(data[1]), float(data[2])
+        )
+
+    def _read_elliptical_aperture(self, data: list[str]) -> None:
+        # ELAP <x_half> <y_half> <pickup>: passes rays inside the ellipse.
+        self._set_aperture_shape("elliptical", float(data[1]), float(data[2]))
+
+    def _read_elliptical_obscuration(self, data: list[str]) -> None:
+        # ELOB <x_half> <y_half> <pickup>: blocks rays inside the ellipse.
+        self._set_aperture_shape(
+            "elliptical_obscuration", float(data[1]), float(data[2])
+        )
+
+    def _set_aperture_shape(self, kind: str, first: float, second: float) -> None:
+        self._current_aperture_shape = (kind, first, second)
+        self._current_surf_data["aperture"] = self._build_aperture()
+
+    def _build_aperture(self) -> BaseAperture:
+        kind, first, second = self._current_aperture_shape
+        if kind == "circular":
+            return self._make_circular_aperture(first, second)
+        if kind == "obscuration":
+            # Outside the obscuration: an annulus with no outer edge. Inside
+            # it, when r_min > 0: a disk of radius r_min.
+            r_min, r_max = first, second
+            outside = self._make_circular_aperture(r_max, math.inf)
+            if r_min <= 0.0:
+                return outside
+            return UnionAperture(self._make_circular_aperture(0.0, r_min), outside)
+        offset_x, offset_y = self._current_aperture_offset
+        if kind.startswith("rectangular"):
+            shape = RectangularAperture(
+                x_min=offset_x - first,
+                x_max=offset_x + first,
+                y_min=offset_y - second,
+                y_max=offset_y + second,
+            )
+        else:
+            shape = EllipticalAperture(first, second, offset_x, offset_y)
+        if kind.endswith("_obscuration"):
+            # Everything outside the shape passes, with no outer limit.
+            return DifferenceAperture(RadialAperture(r_min=0.0, r_max=math.inf), shape)
+        return shape
 
     def _read_unsupported_aperture(self, data: list[str]) -> None:
         # An aperture type the reader cannot build yet. It still replaces the
@@ -510,12 +578,9 @@ class ZemaxDataParser:
         offset_x = float(data[1])
         offset_y = float(data[2])
         self._current_aperture_offset = (offset_x, offset_y)
-        aperture = self._current_surf_data["aperture"]
-        if aperture is None:
+        if self._current_aperture_shape is None:
             return
-        self._current_surf_data["aperture"] = self._make_circular_aperture(
-            aperture.r_min, aperture.r_max
-        )
+        self._current_surf_data["aperture"] = self._build_aperture()
 
     # ------------------------------------------------------------------
     # Finalizers
@@ -568,7 +633,7 @@ class ZemaxDataParser:
         OpticStudio vignettes rays at a user-fixed ("U") semi-diameter even
         when the surface has no explicit aperture, so such a surface gets a
         circular aperture of that radius. Any surface aperture, including
-        types not imported yet (OBSC, SQAP, ELAP, SPID, USAP), replaces that
+        types not imported yet (SPID, USAP), replaces that
         clip. Automatic semi-diameters never clip.
         """
         if self._current_surf < 0:

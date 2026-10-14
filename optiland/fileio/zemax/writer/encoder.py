@@ -13,7 +13,14 @@ import math
 import operator
 from typing import TYPE_CHECKING, Any
 
-from optiland.physical_apertures import OffsetRadialAperture
+from optiland.physical_apertures import (
+    DifferenceAperture,
+    EllipticalAperture,
+    OffsetRadialAperture,
+    RadialAperture,
+    RectangularAperture,
+    UnionAperture,
+)
 
 if TYPE_CHECKING:
     from optiland.fileio.zemax.model import ZemaxDataModel
@@ -53,6 +60,70 @@ def _fmt(value: float) -> str:
 def _fmt_vals(values: list[float]) -> str:
     """Format a list of floats separated by spaces."""
     return " ".join(_fmt(v) for v in values)
+
+
+def _offset(aperture: Any) -> tuple[float, float]:
+    if isinstance(aperture, OffsetRadialAperture):
+        return float(aperture.offset_x), float(aperture.offset_y)
+    return 0.0, 0.0
+
+
+def _encode_offset(lines: list[str], offset: tuple[float, float]) -> None:
+    if offset != (0.0, 0.0):
+        lines.append(f"  OBDC {_fmt(offset[0])} {_fmt(offset[1])}")
+
+
+def _obscuration(aperture: Any) -> tuple[float, float, tuple[float, float]] | None:
+    """The (r_min, r_max, offset) of an aperture the reader builds from OBSC.
+
+    That is a radial aperture with no outer edge (passing r >= r_max), or the
+    union of a disk of radius r_min with one, sharing the same centre.
+    """
+
+    def _outside(ap: Any) -> bool:
+        return isinstance(ap, RadialAperture) and math.isinf(float(ap.r_max))
+
+    if _outside(aperture):
+        return 0.0, float(aperture.r_min), _offset(aperture)
+    if isinstance(aperture, UnionAperture):
+        inner, outer = aperture.a, aperture.b
+        if (
+            _outside(outer)
+            and isinstance(inner, RadialAperture)
+            and float(inner.r_min) == 0.0
+            and math.isfinite(float(inner.r_max))
+            and _offset(inner) == _offset(outer)
+        ):
+            return float(inner.r_max), float(outer.r_min), _offset(outer)
+    return None
+
+
+def _shape(aperture: Any) -> tuple[str, float, float, tuple[float, float]] | None:
+    """The (keyword, x_half, y_half, offset) of a rectangle or ellipse.
+
+    SQAP and ELAP pass rays inside the shape; SQOB and ELOB, which the reader
+    builds as an unbounded aperture minus the shape, block them.
+    """
+    if type(aperture) is RectangularAperture:
+        x_min, x_max = float(aperture.x_min), float(aperture.x_max)
+        y_min, y_max = float(aperture.y_min), float(aperture.y_max)
+        offset = ((x_min + x_max) / 2, (y_min + y_max) / 2)
+        return "SQAP", (x_max - x_min) / 2, (y_max - y_min) / 2, offset
+    if type(aperture) is EllipticalAperture:
+        offset = (float(aperture.offset_x), float(aperture.offset_y))
+        return "ELAP", float(aperture.a), float(aperture.b), offset
+    if type(aperture) is DifferenceAperture:
+        unbounded, hole = aperture.a, aperture.b
+        if (
+            type(unbounded) is RadialAperture
+            and float(unbounded.r_min) == 0.0
+            and math.isinf(float(unbounded.r_max))
+        ):
+            shape = _shape(hole)
+            if shape is not None:
+                keyword, x_half, y_half, offset = shape
+                return keyword[:2] + "OB", x_half, y_half, offset
+    return None
 
 
 class ZemaxFileEncoder:
@@ -228,16 +299,19 @@ class ZemaxFileEncoder:
         clap = raw.get("CLAP")
         if clap is None:
             return
-        if hasattr(clap, "r_min"):
+        obscuration = _obscuration(clap)
+        shape = _shape(clap)
+        if shape is not None:
+            keyword, x_half, y_half, offset = shape
+            lines.append(f"  {keyword} {_fmt(x_half)} {_fmt(y_half)}")
+            _encode_offset(lines, offset)
+        elif obscuration is not None:
+            r_min, r_max, offset = obscuration
+            lines.append(f"  OBSC {_fmt(r_min)} {_fmt(r_max)}")
+            _encode_offset(lines, offset)
+        elif hasattr(clap, "r_min"):
             lines.append(f"  CLAP {_fmt(float(clap.r_min))} {_fmt(float(clap.r_max))}")
-            if isinstance(clap, OffsetRadialAperture) and (
-                clap.offset_x != 0.0 or clap.offset_y != 0.0
-            ):
-                lines.append(
-                    f"  OBDC {_fmt(float(clap.offset_x))} {_fmt(float(clap.offset_y))}"
-                )
-        elif hasattr(clap, "x_min"):
-            lines.append(f"  CLAP {_fmt(0.0)} {_fmt(float(clap.x_max))}")
+            _encode_offset(lines, _offset(clap))
 
     def _encode_parameters(self, lines: list[str], raw: dict[str, Any]) -> None:
         for i in range(1, 17):
