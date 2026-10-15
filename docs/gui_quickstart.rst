@@ -86,6 +86,9 @@ When you first open the Optiland GUI, you'll see a main window containing severa
 
 *   **Analysis Panel**: Allows you to select, configure, and run various optical analyses. Results are typically displayed as plots within this panel. Note that you can run several analyses, each of which can be accessed using the numbered tabs on the right sidebar.
 
+    Plot navigation controls follow the light or dark theme. Selected tools
+    have an outlined border; keyboard focus uses a dashed border.
+
     .. image:: _static/gui_analysis_panel.png
        :alt: Analysis Panel
        :align: center

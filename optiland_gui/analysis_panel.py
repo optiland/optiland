@@ -30,7 +30,7 @@ from PySide6.QtCore import (
     QTimer,
     Slot,
 )
-from PySide6.QtGui import QIcon, QRegularExpressionValidator
+from PySide6.QtGui import QColor, QIcon, QPainter, QPalette, QRegularExpressionValidator
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -96,6 +96,14 @@ class CustomMatplotlibToolbar(PlotNavigationToolbar):
     def __init__(self, canvas, parent=None):
         super().__init__(canvas, parent, coordinates=False)
 
+        # Keep the original alpha masks; repeated theme changes must never
+        # recolor an already dimmed disabled icon or replace navigation actions.
+        self._navigation_icons = {
+            action: action.icon().pixmap(64)
+            for action in self.actions()
+            if not action.icon().isNull()
+        }
+
         # Assign unique object names to each tool button
         for action in self.actions():
             tooltip = action.toolTip()
@@ -104,6 +112,57 @@ class CustomMatplotlibToolbar(PlotNavigationToolbar):
                 button_widget = self.widgetForAction(action)
                 if button_widget:
                     button_widget.setObjectName(f"MPL{action_id}Button")
+                    button_widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.update_theme("dark")
+
+    def update_theme(self, theme="dark"):
+        """Theme navigation affordances without changing actions or view mode."""
+        dark = "dark" in theme.lower()
+        foreground, disabled, background, hover, checked = (
+            ("#E0E0E0", "#8D969F", "#2E2E2E", "#3C3C3C", "#4A4A4A")
+            if dark
+            else ("#212529", "#6C757D", "#F8F9FA", "#E9ECEF", "#DEE2E6")
+        )
+        palette = self.palette()
+        for role in (QPalette.ColorRole.Window, QPalette.ColorRole.Button):
+            palette.setColor(role, QColor(background))
+        for role in (QPalette.ColorRole.WindowText, QPalette.ColorRole.ButtonText):
+            palette.setColor(role, QColor(foreground))
+            palette.setColor(QPalette.ColorGroup.Disabled, role, QColor(disabled))
+        self.setPalette(palette)
+        self.setStyleSheet(
+            "QToolBar { background: transparent; border: none; }"
+            "QToolButton {"
+            f"background: {background}; color: {foreground};"
+            "border: 1px solid transparent; border-radius: 3px; padding: 2px; }"
+            f"QToolButton:hover {{ background: {hover}; }}"
+            "QToolButton:checked, QToolButton:pressed {"
+            f"background: {checked}; border-color: {foreground}; }}"
+            "QToolButton:focus {"
+            f"border: 1px dashed {foreground}; }}"
+            f"QToolButton:disabled {{ color: {disabled}; background: {background}; }}"
+        )
+        for action, source in self._navigation_icons.items():
+            icon = QIcon()
+            for mode in (
+                QIcon.Mode.Normal,
+                QIcon.Mode.Active,
+                QIcon.Mode.Selected,
+                QIcon.Mode.Disabled,
+            ):
+                pixmap = source.copy()
+                painter = QPainter(pixmap)
+                painter.setCompositionMode(
+                    QPainter.CompositionMode.CompositionMode_SourceIn
+                )
+                painter.fillRect(
+                    pixmap.rect(),
+                    QColor(disabled if mode == QIcon.Mode.Disabled else foreground),
+                )
+                painter.end()
+                for state in (QIcon.State.Off, QIcon.State.On):
+                    icon.addPixmap(pixmap, mode, state)
+            action.setIcon(icon)
 
 
 class AnalysisPanel(QWidget):
@@ -1205,6 +1264,7 @@ class AnalysisPanel(QWidget):
         self.active_mpl_toolbar_widget = CustomMatplotlibToolbar(
             canvas, self.mpl_toolbar_in_titlebar_container
         )
+        self.active_mpl_toolbar_widget.update_theme(self.current_theme)
         self.mpl_toolbar_in_titlebar_layout.addWidget(self.active_mpl_toolbar_widget)
         self.mpl_toolbar_in_titlebar_container.setVisible(True)
 
