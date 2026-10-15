@@ -164,7 +164,7 @@ class CustomTitleBar(QWidget):
         self.current_theme = theme
         self.minimize_button.setIcon(QIcon(f":/icons/{theme}/minimize.svg"))
         self.close_button.setIcon(QIcon(f":/icons/{theme}/close.svg"))
-        self.maximize_button.setIcon(QIcon(f":/icons/{theme}/maximize_restore.svg"))
+        self.update_maximize_button_state(self.maximize_button.isChecked())
         self.settings_button.setIcon(QIcon(f":/icons/{theme}/settings.svg"))
         self.github_button.setIcon(QIcon(f":/icons/{theme}/brand_github.svg"))
         self.help_button.setIcon(QIcon(f":/icons/{theme}/help.svg"))
@@ -188,6 +188,10 @@ class CustomTitleBar(QWidget):
         """
         self.maximize_button.setChecked(is_maximized)
         self.maximize_button.setToolTip("Restore" if is_maximized else "Maximize")
+        icon_name = "maximize_restore" if is_maximized else "maximize"
+        self.maximize_button.setIcon(
+            QIcon(f":/icons/{self.current_theme}/{icon_name}.svg")
+        )
 
     def mousePressEvent(self, event) -> None:  # noqa: ANN001
         """Begin a window drag on left-button press."""
