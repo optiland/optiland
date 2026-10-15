@@ -40,6 +40,8 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QStyle,
+    QTabBar,
     QTabWidget,
     QTextEdit,
     QVBoxLayout,
@@ -443,6 +445,12 @@ class PythonTerminalWidget(QWidget):
         )
         index = self.script_tabs.addTab(editor, title)
         self.script_tabs.setTabText(index, title)
+        # Keep Qt's close button, with room around its centered glyph.
+        bar = self.script_tabs.tabBar()
+        close_side = QTabBar.ButtonPosition(
+            bar.style().styleHint(QStyle.SH_TabBar_CloseButtonPosition, None, bar)
+        )
+        bar.tabButton(index, close_side).setFixedSize(36, 24)
 
         self.script_tabs.setCurrentIndex(index)
         self.set_theme(self.current_theme)
@@ -695,8 +703,11 @@ class PythonTerminalWidget(QWidget):
             QIcon(f":/icons/{theme_name}/add_quick_action.svg")
         )
         self.script_tabs.setStyleSheet(
-            f"QTabBar::close-button {{ image: url(:/icons/{theme_name}/close.svg); }} "
-            "QTabBar::close-button:hover {{ background: #DB0000; }}"
+            "QTabBar::close-button {"
+            f" image: url(:/icons/{theme_name}/close.svg);"
+            " margin: 2px 8px; }"
+            "QTabBar::close-button:hover {"
+            f" background: {theme_palette['btn_hover']}; }}"
         )
 
         self.jupyter_widget.syntax_style = theme_palette["jupyter_style"]
