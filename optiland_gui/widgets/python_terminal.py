@@ -319,6 +319,7 @@ class PythonTerminalWidget(QWidget):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         self.dock_area = QMainWindow()
+        self.dock_area.setObjectName("ScriptTerminalDockArea")
         self.dock_area.setWindowFlags(Qt.Widget)
         self.dock_area.setDockNestingEnabled(True)
         self.dock_area.setTabPosition(Qt.AllDockWidgetAreas, DEFAULT_TAB_POSITION)
@@ -331,6 +332,7 @@ class PythonTerminalWidget(QWidget):
     def _create_editor_dock(self) -> QDockWidget:
         """Create the dock widget containing the script editor and snippets panel."""
         dock = CustomDockWidget("Script Editor", self)
+        dock.setObjectName("ScriptEditorDock")
         dock.setAllowedAreas(Qt.AllDockWidgetAreas)
         editor_widget = QWidget()
         layout = QVBoxLayout(editor_widget)
@@ -405,6 +407,7 @@ class PythonTerminalWidget(QWidget):
     def _create_console_dock(self) -> QDockWidget:
         """Create the dock widget containing the Jupyter console."""
         dock = CustomDockWidget("Console", self)
+        dock.setObjectName("ScriptConsoleDock")
         dock.setAllowedAreas(Qt.AllDockWidgetAreas)
         self.jupyter_widget = RichJupyterWidget()
         self.jupyter_widget.kernel_manager = self.kernel_manager

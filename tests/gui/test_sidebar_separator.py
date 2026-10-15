@@ -48,6 +48,12 @@ class SeparatorWindow(MainWindow):
             viewer2D=SimpleNamespace(plot_optic=MagicMock()),
             viewer3D=SimpleNamespace(render_optic=MagicMock()),
         )
+        nested = QMainWindow(self)
+        manager.python_terminal = SimpleNamespace(
+            dock_area=nested,
+            editor_dock=QDockWidget("Script Editor", nested),
+            console_dock=QDockWidget("Console", nested),
+        )
 
     showEvent = QMainWindow.showEvent
     resizeEvent = QMainWindow.resizeEvent
