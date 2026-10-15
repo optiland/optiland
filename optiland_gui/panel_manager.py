@@ -21,7 +21,7 @@ from .system_properties_panel import SystemPropertiesPanel
 from .viewer_panel import ViewerPanel
 from .widgets.custom_dock_widget import CustomDockWidget
 from .widgets.python_terminal import PythonTerminalWidget
-from .widgets.sidebar import SidebarWidget
+from .widgets.sidebar import SidebarDockWidget, SidebarWidget
 
 if TYPE_CHECKING:
     from .optiland_connector import OptilandConnector
@@ -54,15 +54,8 @@ class PanelManager:
         """
         # Sidebar
         self.sidebar_content_widget = SidebarWidget(self.main_window)
-        self.sidebar = self._create_dock(
-            widget=self.sidebar_content_widget,
-            name="SidebarDockWidget",
-            title="NavigationSidebar",
-            features=(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable),
-            allowed_areas=Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea,
-            use_custom_title_bar=False,
-        )
-        self.sidebar.setTitleBarWidget(QWidget())
+        self.sidebar = SidebarDockWidget(self.main_window)
+        self.sidebar.setWidget(self.sidebar_content_widget)
 
         # Main panels
         self.surface_interaction = SurfaceInteractionState(self.main_window)

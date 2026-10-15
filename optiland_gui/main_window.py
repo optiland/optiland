@@ -400,6 +400,14 @@ class MainWindow(FramelessWindow):
             toolbar: The QToolBar instance to populate.
         """
         am = self.action_manager
+        sidebar_action = self.panel_manager.sidebar.toggleViewAction()
+        sidebar_action.setToolTip("Show/hide navigation sidebar")
+        toolbar.addAction(sidebar_action)
+        sidebar_button = toolbar.widgetForAction(sidebar_action)
+        sidebar_button.setObjectName("SidebarToggleButton")
+        sidebar_button.setAccessibleName("Show/hide navigation sidebar")
+        sidebar_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        toolbar.addSeparator()
         toolbar.addActions(am.get_actions("new", "open", "save"))
         toolbar.addSeparator()
         toolbar.addActions(
@@ -450,6 +458,9 @@ class MainWindow(FramelessWindow):
 
         is_dark = self.current_theme_path == THEME_DARK_PATH
         theme_name = "dark" if is_dark else "light"
+        self.panel_manager.sidebar.toggleViewAction().setIcon(
+            QIcon(f":/icons/{theme_name}/menu.svg")
+        )
         gui_plot_utils.apply_gui_matplotlib_styles(theme=theme_name)
         # Also apply the new theme-specific rcParams overrides
         apply_plot_theme(is_dark)

@@ -4,13 +4,6 @@
     border-right: 1px solid #2A2A2A; /* Optional: visual separation */
 }
 
-QLabel#SidebarTitleLabel {
-    color: #EEEEEE;
-    font-weight: bold;
-    padding: 5px 0px; /* Vertical padding */
-    /* font-size can be set here if needed */
-}
-
 QToolButton[objectName^="sidebar-btn-"] {
     color: #EEEEEE; /* Default text/icon color */
     background-color: transparent;
