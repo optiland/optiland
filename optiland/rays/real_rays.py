@@ -177,6 +177,13 @@ class RealRays(BaseRays):
             self.L * be.sin(rz) + self.M * be.cos(rz),
         )
 
+    def attenuate(self, factor: ScalarOrArray) -> None:
+        """Apply scalar loss, keeping extinct rays dark for invalid later paths."""
+        # A missed later surface can supply NaN/inf attenuation. Zero incident
+        # power remains zero; nonfinite factors on powered rays stay visible.
+        factor = be.where(self.i == 0, be.zeros_like(self.i), factor)
+        self.i = self.i * factor
+
     def clip(self, condition: BEArray):
         """Clip the rays based on a condition."""
         cond = be.array(condition)

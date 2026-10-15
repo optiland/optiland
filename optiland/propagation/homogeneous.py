@@ -50,7 +50,7 @@ class HomogeneousPropagation(BasePropagationModel):
             alpha = 4 * be.pi * k / rays.w
             # Intensity loss is I = I_0 * exp(-alpha * z)
             # Distance t is in mm; wavelength w is in um. Convert t to um.
-            rays.i = rays.i * be.exp(-alpha * t * 1e3)
+            rays.attenuate(be.exp(-alpha * t * 1e3))
 
         # normalize, if required
         if not rays.is_normalized:

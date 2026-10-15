@@ -154,6 +154,9 @@ class OsloDataParser:
             "TSD",
         ):
             self._dispatch_table[cmd] = self._read_delete
+        for entry in "ABCD":
+            for kind in "AP":
+                self._dispatch_table[f"J{kind}{entry}"] = self._read_jones
 
     def parse(self) -> OsloDataModel:
         """Parse the OSLO file.
@@ -657,6 +660,14 @@ class OsloDataParser:
 
     def _read_flag(self, tokens: list[str]) -> None:
         self._current_surf_data[tokens[0]] = True
+
+    def _read_jones(self, tokens: list[str]) -> None:
+        if len(tokens) != 2:
+            raise ValueError(f"{tokens[0]} requires exactly one argument")
+        value = float(tokens[1])
+        if tokens[0].startswith("JA") and value < 0:
+            raise ValueError(f"{tokens[0]} amplitude must be nonnegative")
+        self._current_surf_data[tokens[0]] = value
 
     def _read_spectrum(self, tokens: list[str]) -> None:
         cmd = tokens[0]

@@ -18,7 +18,7 @@ Rays are the fundamental elements of the ray tracing process. A ray consists of 
 - **Polarization Matrix (optional)**: A 3x3 matrix representing the transformation of a ray's initial electric field into its final state. This is used by the `PolarizedRays` class.
 
 .. note::
-  In Optiland, all ray attributes are defined as NumPy arrays for efficient computation.
+  Ray attributes use arrays from the active backend (NumPy or optional Torch).
 
 Ray Types
 ---------
@@ -66,6 +66,63 @@ Ray tracing is performed by sequentially propagating rays across the surfaces in
 7. The process is repeated for each surface in the system.
 
 Paraxial rays follow a similar process but use simplified equations for faster computations.
+
+.. _polarization_transport:
+
+Polarization frames and scalar power
+----------------------------------------
+
+``PolarizedRays.p`` maps the fixed incident electric-field basis to the current
+output frame. Coordinate-system localization/globalization rotates its output
+rows alongside ray positions and directions; it retains the original input
+basis. This permits a local Cartesian Jones element on a tilted surface without
+interpreting its coefficients as incidence-plane s/p coefficients.
+
+Use ``rays.attenuate(factor)`` for polarization-independent **intensity** losses,
+and ``rays.clip(mask)`` to extinguish rays. In polarized bundles these operations
+update the retained scalar power as well as the currently evaluated intensity.
+``update_intensity(state)`` can then evaluate another incident state without
+restoring absorbed/clipped power or applying a previous loss twice.
+``get_exit_fields(state)`` includes the corresponding square-root field scaling.
+Unpolarized light uses two orthogonal incoherent fields whose powers add to the
+reported intensity.
+
+A zero intensity for one incident polarization is not the same as a clipped
+ray: a polarizer that blocks vertical input may still transmit horizontal input.
+Retained scalar power distinguishes these cases. Extinguished rays remain dark
+even if a later missed surface produces invalid geometry or polarization
+matrices. Invalid results on rays with nonzero retained power remain visible;
+they are not silently converted to zero.
+
+.. list-table:: Responsibilities and callers
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Component
+     - Responsibility and callers
+   * - ``RealRays.attenuate`` / ``PolarizedRays.attenuate``
+     - Apply scalar intensity factors. Called by ``SimpleCoating``,
+       ``HomogeneousPropagation`` and phase-profile efficiency handling.
+   * - ``PolarizedRays.clip``
+     - Extinguish both current intensity and retained scalar power. Called by
+       physical-aperture clipping and other ray rejection paths.
+   * - ``PolarizedRays.rotate_x/y/z``
+     - Transport output fields with the ray frame. Called by coordinate-system
+       transforms; supports scalar or per-ray rotation angles in radians.
+   * - ``CartesianJonesCoating``
+     - Apply local X/Y complex coefficients after geometrical interaction.
+       Called by surface coating dispatch; reused by OSLO import.
+   * - ``update_intensity`` / ``get_exit_fields``
+     - Evaluate an incident state using retained transport and scalar power.
+       Used by the real-ray tracer and field/polarization analyses.
+   * - ``PolarizationState`` / ``OpticSerializer``
+     - Own source-state validation and backend-independent native JSON.
+       File readers reuse that existing contract rather than adding another
+       polarization representation.
+
+Directly assigning ``rays.i`` changes only the current evaluation. Custom scalar
+loss models should call ``attenuate`` so subsequent field/state evaluation keeps
+their losses. This does not change Jones matrices into intensity coefficients.
 
 .. note::
    For details on how rays interact with surfaces, see the :ref:`surface_overview` section.

@@ -141,6 +141,16 @@ UTF-8 (including BOM) and legacy Windows-1252 text are accepted.
      - Finite expansion coefficients retained in the intermediate model.
        Nominal reference-temperature geometry is unchanged; temperature-dependent
        dimensions and thermal studies are not implemented.
+   * - ``JAA/B/C/D``, ``JPA/B/C/D``
+     - Local Cartesian 2x2 Jones matrices, identity defaults, nonnegative
+       amplitudes and phases in degrees. The local Z field is unchanged.
+       Surface coordinate rotations transport the electric field as well as the
+       ray. Object-surface elements are rejected. Choose an explicit input
+       polarization state before tracing; the element does not define the source.
+       Geometrical refraction/reflection precedes the Cartesian element; it does
+       not add Fresnel coefficients. Native save/reload preserves the element
+       and source state, while OSLO export rejects the unsupported coating
+       before writing the destination.
    * - ``CFG NEW`` with ``TH``, ``WVn``, ``WWn``; ``CFWT``, ``CFAC``
      - Independent one-based configuration snapshots. Thickness and indexed
        spectrum overrides apply to a copy of configuration 1 before pickups and

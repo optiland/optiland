@@ -9,9 +9,14 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import optiland.backend as be
 from optiland.rays.polarization_state import PolarizationState
 from optiland.rays.real_rays import RealRays
+
+if TYPE_CHECKING:
+    from optiland._types import BEArray, ScalarOrArray
 
 
 class PolarizedRays(RealRays):
@@ -48,10 +53,37 @@ class PolarizedRays(RealRays):
         super().__init__(x, y, z, L, M, N, intensity, wavelength)
 
         self.p = be.tile(be.eye(3), (be.size(self.x), 1, 1))
-        self._i0 = be.copy(intensity)
+        # Incident power including accumulated polarization-independent losses.
+        self._i0 = be.copy(self.i)
         self._L0 = be.copy(L)
         self._M0 = be.copy(M)
         self._N0 = be.copy(N)
+
+    def _rotate_field_rows(self, first: int, second: int, angle: ScalarOrArray) -> None:
+        """Rotate the output field, retaining the fixed initial-field basis."""
+        cosine = be.cos(be.array(angle))
+        sine = be.sin(be.array(angle))
+        one, zero = be.ones_like(cosine), be.zeros_like(cosine)
+        rows = [[one if i == j else zero for j in range(3)] for i in range(3)]
+        rows[first][first] = rows[second][second] = cosine
+        rows[first][second], rows[second][first] = -sine, sine
+        rotation = be.stack([be.stack(row, axis=-1) for row in rows], axis=-2)
+        self.p = be.matmul(rotation, self.p)
+
+    def rotate_x(self, rx: ScalarOrArray) -> None:
+        """Rotate ray coordinates and output electric fields about x."""
+        super().rotate_x(rx)
+        self._rotate_field_rows(1, 2, rx)
+
+    def rotate_y(self, ry: ScalarOrArray) -> None:
+        """Rotate ray coordinates and output electric fields about y."""
+        super().rotate_y(ry)
+        self._rotate_field_rows(2, 0, ry)
+
+    def rotate_z(self, rz: ScalarOrArray) -> None:
+        """Rotate ray coordinates and output electric fields about z."""
+        super().rotate_z(rz)
+        self._rotate_field_rows(0, 1, rz)
 
     def get_output_field(self, E: be.ndarray) -> be.ndarray:
         """Compute the output electric field given the input electric field.
@@ -60,10 +92,29 @@ class PolarizedRays(RealRays):
             E (be.ndarray): The input electric field as a numpy array.
 
         Returns:
-            be.ndarray: The computed output electric field as a numpy array.
+            be.ndarray: The output field, zero for rays with zero incident power.
 
         """
-        return be.mult_p_E(self.p, E)
+        # Mask operands before multiplication, not a NaN field afterwards. A
+        # clipped ray may later miss geometry and acquire an invalid matrix;
+        # it carries no field. Keep invalid matrices on powered rays visible.
+        extinct = self._i0 == 0
+        matrix = be.where(extinct[:, None, None], be.zeros_like(self.p), self.p)
+        field = be.where(extinct[:, None], be.zeros_like(E), E)
+        return be.mult_p_E(matrix, field)
+
+    def attenuate(self, factor: ScalarOrArray) -> None:
+        """Retain scalar attenuation when evaluating another polarization state."""
+        # Use the incident scalar power, not intensity for the last evaluated
+        # polarization: changing the input state may legitimately transmit light.
+        factor = be.where(self._i0 == 0, be.zeros_like(self._i0), factor)
+        super().attenuate(factor)
+        self._i0 = self._i0 * factor
+
+    def clip(self, condition: BEArray) -> None:
+        """Keep clipped rays dark in both intensity and exit-field evaluations."""
+        super().clip(condition)
+        self._i0 = be.where(be.array(condition) != 0, be.zeros_like(self._i0), self._i0)
 
     def _compute_unscaled_exit_fields(
         self, state: PolarizationState | None
@@ -116,7 +167,10 @@ class PolarizedRays(RealRays):
             scaled down by 1/sqrt(2).
         """
         fields = self._compute_unscaled_exit_fields(state)
-        scale_factor = be.unsqueeze_last(be.sqrt(self._i0 / len(fields)))
+        # Extinct fields are already zero. Avoid sqrt(0)'s infinite derivative
+        # on that branch so live-field gradients do not acquire NaNs.
+        power = be.where(self._i0 == 0, be.ones_like(self._i0), self._i0)
+        scale_factor = be.unsqueeze_last(be.sqrt(power / len(fields)))
         return [E1 * scale_factor for E1 in fields]
 
     def update_intensity(self, state: PolarizationState):

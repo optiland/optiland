@@ -7,6 +7,7 @@ Kramer Harrison, 2026
 
 from __future__ import annotations
 
+import cmath
 import math
 import re
 import warnings
@@ -14,6 +15,7 @@ from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
+from optiland.coatings import CartesianJonesCoating
 from optiland.fields.field_types import ObjectHeightField
 from optiland.fileio.base import BaseOpticReader
 from optiland.fileio.oslo.constants import (
@@ -363,6 +365,19 @@ class OsloToOpticConverter(BaseOpticReader):
         surface_params["material"] = self._resolve_material(
             material_raw, data.get("glass_wavelengths")
         )
+
+        if any(re.fullmatch(r"J[AP][ABCD]", key) for key in data):
+            if index == 0:
+                raise ValueError("OSLO Jones elements on the object are not mapped")
+            # Program Reference pp. 106-107: amplitudes, phase in degrees,
+            # identity defaults and an unchanged local Z field component.
+            surface_params["coating"] = CartesianJonesCoating(
+                *(
+                    data.get(f"JA{entry}", 1.0 if entry in "AD" else 0.0)
+                    * cmath.exp(1j * math.radians(data.get(f"JP{entry}", 0.0)))
+                    for entry in "ABCD"
+                )
+            )
 
         aperture_data = self._neutral_aperture_holes(index, data, surface_params)
         surface_params["aperture"] = physical_aperture(

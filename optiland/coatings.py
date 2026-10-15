@@ -7,20 +7,24 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
 from optiland.jones import (
     BaseJones,
+    ConstantJones,
     JonesFresnel,
     JonesLinearPolarizer,
     JonesLinearRetarder,
 )
 from optiland.materials import BaseMaterial
+from optiland.rays import PolarizedRays
 from optiland.thin_film import ThinFilmStack
 
 if TYPE_CHECKING:
+    from optiland._types import BEArray
     from optiland.rays import RealRays
 
 
@@ -210,7 +214,7 @@ class SimpleCoating(BaseCoating):
             RealRays: The rays after reflection.
 
         """
-        rays.i = rays.i * self.reflectance
+        rays.attenuate(self.reflectance)
         return rays
 
     def transmit(
@@ -233,7 +237,7 @@ class SimpleCoating(BaseCoating):
             RealRays: The rays after transmission.
 
         """
-        rays.i = rays.i * self.transmittance
+        rays.attenuate(self.transmittance)
         return rays
 
     def to_dict(self) -> dict[str, Any]:
@@ -357,6 +361,83 @@ class BaseCoatingPolarized(BaseCoating, ABC):
 
         """
         return cls(data["material_pre"], data["material_post"])
+
+
+class CartesianJonesCoating(BaseCoatingPolarized):
+    """Apply a constant Jones element in the surface's local Cartesian axes.
+
+    Unlike a Jones matrix in the ray's s/p basis, the supplied four complex
+    values act directly on local X/Y electric-field components. The local Z
+    component is unchanged. Geometrical refraction/reflection is performed by
+    the surface interaction before this element is applied. RealRays ignore
+    polarization, consistently with the other polarization coatings.
+
+    Args:
+        j00: Local X-to-X complex field coefficient.
+        j01: Local Y-to-X complex field coefficient.
+        j10: Local X-to-Y complex field coefficient.
+        j11: Local Y-to-Y complex field coefficient.
+
+    Raises:
+        ValueError: If a coefficient has a non-finite real or imaginary part.
+    """
+
+    def __init__(
+        self, j00: complex = 1, j01: complex = 0, j10: complex = 0, j11: complex = 1
+    ) -> None:
+        self.entries = tuple(complex(value) for value in (j00, j01, j10, j11))
+        if not all(
+            math.isfinite(value.real) and math.isfinite(value.imag)
+            for value in self.entries
+        ):
+            raise ValueError("Jones matrix entries must be finite")
+
+    @property
+    def jones(self) -> ConstantJones:
+        """Return the coefficient matrix; its basis is Cartesian for this class."""
+        return ConstantJones(*self.entries)
+
+    def _apply(self, rays: RealRays) -> RealRays:
+        rays.update()
+        if isinstance(rays, PolarizedRays):
+            matrix = self.jones.calculate_matrix(rays)
+            rays.p = be.matmul(matrix, rays.p)
+        return rays
+
+    def reflect(
+        self,
+        rays: RealRays,
+        nx: BEArray | None = None,
+        ny: BEArray | None = None,
+        nz: BEArray | None = None,
+    ) -> RealRays:
+        """Apply the element after the surface's geometrical reflection."""
+        return self._apply(rays)
+
+    def transmit(
+        self,
+        rays: RealRays,
+        nx: BEArray | None = None,
+        ny: BEArray | None = None,
+        nz: BEArray | None = None,
+    ) -> RealRays:
+        """Apply the element after the surface's geometrical refraction."""
+        return self._apply(rays)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize complex entries as JSON-compatible real/imaginary pairs."""
+        return {
+            "type": self.__class__.__name__,
+            "entries": [[value.real, value.imag] for value in self.entries],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CartesianJonesCoating:
+        """Restore the four matrix entries without changing their precision."""
+        entries = data["entries"]
+        if len(entries) != 4 or any(len(pair) != 2 for pair in entries):
+            raise ValueError("Jones matrix requires four real/imaginary pairs")
+        return cls(*(complex(real, imag) for real, imag in entries))
 
 
 class FresnelCoating(BaseCoatingPolarized):
