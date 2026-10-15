@@ -38,7 +38,6 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QToolBar,
     QVBoxLayout,
-    QWidget,
 )
 
 import optiland.samples
@@ -244,10 +243,8 @@ class MainWindow(FramelessWindow):
         self.addToolBar(Qt.TopToolBarArea, self.quick_actions_toolbar)
 
     def _setup_layout(self):
-        """Sets up the central widget and the default dock layout."""
-        self.main_docking_area_placeholder = QWidget()
-        self.main_docking_area_placeholder.setObjectName("MainDockingAreaPlaceholder")
-        self.setCentralWidget(self.main_docking_area_placeholder)
+        """Set up a dock-only workspace with one separator beside navigation."""
+        # An empty central widget creates two adjacent dock-area separators.
         self.setDockNestingEnabled(True)
         self._apply_revised_default_dock_layout()
 

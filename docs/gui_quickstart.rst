@@ -45,6 +45,9 @@ You can launch the Optiland GUI in a couple of ways:
 Main Interface Components
 -------------------------
 
+The navigation sidebar and workspace share one draggable separator. Drag it to
+adjust the sidebar width; the panels use the remaining workspace width.
+
 When you first open the Optiland GUI, you'll see a main window containing several panels. Here's a brief overview:
 
 .. image:: _static/gui_overview.png
