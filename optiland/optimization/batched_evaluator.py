@@ -577,10 +577,13 @@ class BatchedRayEvaluator:
                 "real_N": "N",
             }
 
-            # Vectorize extraction by grouping operands of the same type
+            # Only equality operands have targets for vectorized subtraction.
+            # Bounded operands use the scalar delta helper below.
             for op_type, attr in attr_map.items():
                 mask = [
-                    self.problem.operands[i].operand_type == op_type for i in op_indices
+                    self.problem.operands[i].operand_type == op_type
+                    and self.problem.operands[i].target is not None
+                    for i in op_indices
                 ]
                 if not any(mask):
                     continue
@@ -617,8 +620,8 @@ class BatchedRayEvaluator:
                 for local_idx, global_op_idx in enumerate(matching_op_indices):
                     computed_residuals[global_op_idx] = deltas[local_idx]
 
-            # Handle non-vectorizable generic operands (AOI, local coords) via
-            # scalar fallback
+            # Handle bounded and non-vectorizable generic operands (AOI, local
+            # coordinates) via the shared target/bounds delta helper.
             for local_idx, global_op_idx in enumerate(op_indices):
                 if computed_residuals[global_op_idx] is not None:
                     continue  # Already processed vectorially above
