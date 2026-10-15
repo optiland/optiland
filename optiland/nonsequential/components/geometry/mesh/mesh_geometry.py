@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from optiland.backend.utils import to_numpy
 from optiland.nonsequential.components.geometry.base import AABB, AnalyticGeometry
 
 
@@ -43,7 +44,10 @@ class MeshGeometry(AnalyticGeometry):
         self.mesh = mesh
 
     def ray_intersect(
-        self, origins: np.ndarray, directions: np.ndarray
+        self,
+        origins: np.ndarray,
+        directions: np.ndarray,
+        eps: float | np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Intersect rays with the mesh using trimesh BVH.
 
@@ -53,6 +57,7 @@ class MeshGeometry(AnalyticGeometry):
         Args:
             origins: Ray origins in local frame, shape (N, 3) [mm].
             directions: Ray directions in local frame, shape (N, 3).
+            eps: See :meth:`ComponentGeometry.ray_intersect`.
 
         Returns:
             (t, normals, hit_mask, n_geom). n_geom is trimesh's raw
@@ -79,6 +84,12 @@ class MeshGeometry(AnalyticGeometry):
         normals_out = np.zeros((N, 3), dtype=np.float64)
         n_geom_out = np.zeros((N, 3), dtype=np.float64)
 
+        # Self-intersection accept threshold, one float64 value per ray. A
+        # caller may pass a backend array or tensor; this loop is host NumPy.
+        t_min = np.broadcast_to(
+            np.asarray(to_numpy(1e-9 if eps is None else eps), dtype=np.float64), (N,)
+        )
+
         if len(ray_indices) > 0:
             # Compute t for each hit
             hit_vecs = locations - o_np[ray_indices]
@@ -88,7 +99,7 @@ class MeshGeometry(AnalyticGeometry):
             order = np.argsort(ray_indices)
             for idx, ri in enumerate(ray_indices[order]):
                 tv = t_vals[order[idx]]
-                if tv > 1e-9 and tv < t_out[ri]:
+                if tv > t_min[ri] and tv < t_out[ri]:
                     t_out[ri] = tv
                     tri_idx = triangle_indices[order[idx]]
                     face_normal = self.mesh.face_normals[tri_idx]
