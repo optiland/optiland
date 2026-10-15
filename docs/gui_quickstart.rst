@@ -123,6 +123,21 @@ Optiland features a VS Code-style **Command Palette** that provides quick access
 
    All windows are dockable and can be rearranged to suit your workflow. You can also save your layout for future sessions. These can be loaded by pressing "1" or "2" in the top toolbar, corresponding to the slot used for saving your layout.
 
+   Drag the main window's title background to move it. Drag an outer edge or
+   corner to resize it, including where panel content reaches the window edge.
+   Window controls and menu items retain their usual behavior. Supported
+   platforms use the system's window moving, resizing and snapping behavior.
+   The fallback snaps to a screen's left/right half or maximizes at its top
+   edge on release; ``Escape`` cancels an active fallback move or resize.
+
+   The main window also retains its keyboard commands: ``Ctrl+Left`` and
+   ``Ctrl+Right`` place it on the corresponding half of its current screen,
+   subject to size constraints. ``Ctrl+Up`` maximizes it. ``Ctrl+Down`` restores
+   a maximized window and otherwise minimizes it. Focused widgets receive these
+   keys first; an unhandled key can reach the main window. These commands move
+   the main window rather than rearranging its docked panels. Screen placement
+   depends on support from the platform's window manager.
+
 Resizing analysis plots
 -----------------------
 
