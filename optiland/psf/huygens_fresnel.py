@@ -264,6 +264,16 @@ class ScalarHuygensPSF(BasePSF):
 
         return image_x, image_y, image_z
 
+    def _medium_wavelength_mm(self):
+        """Primary wavelength inside the image-space medium, in mm.
+
+        The Huygens-Fresnel kernel propagates from the exit pupil to the image
+        through the image-space medium, so its wavenumber is 2*pi*n / lambda_0.
+        """
+        wavelength_um = self.wavelengths[0].value
+        n = be.abs(self.optic.image_surface.material_post.n(wavelength_um))
+        return wavelength_um * 1e-3 / be.atleast_1d(n)[0]
+
     def _get_normalization(self):
         """Calculates the normalization factor for the PSF.
 
@@ -304,7 +314,7 @@ class ScalarHuygensPSF(BasePSF):
             data.pupil_z,
             be.ones_like(data.intensity),
             pupil_opd_ideal,
-            self.wavelengths[0].value * 1e-3,
+            self._medium_wavelength_mm(),
             data.radius,
             data.reference_center,
         )
@@ -316,13 +326,14 @@ class ScalarHuygensPSF(BasePSF):
         # Retrieve pupil data from Wavefront instance
         Hx, Hy = self.fields[0].coord
         wavelength_um = self.wavelengths[0].value
-        wavelength_mm = wavelength_um * 1e-3
+        wavelength_mm = self._medium_wavelength_mm()
         data = self.get_data((Hx, Hy), wavelength_um)
 
         # Extract pupil data
         pupil_x, pupil_y, pupil_z = data.pupil_x, data.pupil_y, data.pupil_z
         pupil_amp = be.sqrt(data.intensity)
-        pupil_opd = data.opd * wavelength_mm  # waves to mm
+        # waves to mm in the image medium, so the pupil phase stays 2*pi*opd
+        pupil_opd = data.opd * wavelength_mm
         Rp = data.radius  # Radius of curvature of exit pupil
 
         # Get image coordinates

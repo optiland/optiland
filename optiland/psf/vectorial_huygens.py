@@ -64,7 +64,7 @@ class VectorialHuygensPSF(ScalarHuygensPSF):
         """
         Hx, Hy = self.fields[0].coord
         wavelength_um = self.wavelengths[0].value
-        wavelength_mm = wavelength_um * 1e-3
+        wavelength_mm = self._medium_wavelength_mm()
         data = self.get_data((Hx, Hy), wavelength_um)
 
         if data.E_exits is None:
@@ -74,7 +74,8 @@ class VectorialHuygensPSF(ScalarHuygensPSF):
             )
 
         pupil_x, pupil_y, pupil_z = data.pupil_x, data.pupil_y, data.pupil_z
-        pupil_opd = data.opd * wavelength_mm  # waves to mm
+        # waves to mm in the image medium, so the pupil phase stays 2*pi*opd
+        pupil_opd = data.opd * wavelength_mm
         Rp = data.radius
         is_valid = data.intensity > 0
 
@@ -162,7 +163,7 @@ class VectorialHuygensPSF(ScalarHuygensPSF):
                     data.pupil_z,
                     amplitude,
                     pupil_opd_ideal,
-                    self.wavelengths[0].value * 1e-3,
+                    self._medium_wavelength_mm(),
                     data.radius,
                     data.reference_center,
                 )
