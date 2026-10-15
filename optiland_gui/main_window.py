@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDockWidget,
     QFileDialog,
+    QInputDialog,
     QLabel,
     QMenuBar,
     QMessageBox,
@@ -246,6 +247,12 @@ class MainWindow(FramelessWindow):
         # An empty central widget creates two adjacent dock-area separators.
         self.setDockNestingEnabled(True)
         self._apply_revised_default_dock_layout()
+        # First-launch presentation is separate from layout recovery commands.
+        viewer_panel = self.panel_manager.viewer_panel
+        if viewer_panel.viewer2D and hasattr(viewer_panel.viewer2D, "plot_optic"):
+            viewer_panel.viewer2D.plot_optic()
+        if viewer_panel.viewer3D and hasattr(viewer_panel.viewer3D, "render_optic"):
+            viewer_panel.viewer3D.render_optic()
 
     def _finalize_setup(self):
         """Applies stylesheets, connects signals, and sets the initial UI state."""
@@ -306,13 +313,6 @@ class MainWindow(FramelessWindow):
         """
         self.panel_manager.setup_default_layout()
 
-        # Initial plot/render
-        viewer_panel = self.panel_manager.viewer_panel
-        if viewer_panel.viewer2D and hasattr(viewer_panel.viewer2D, "plot_optic"):
-            viewer_panel.viewer2D.plot_optic()
-        if viewer_panel.viewer3D and hasattr(viewer_panel.viewer3D, "render_optic"):
-            viewer_panel.viewer3D.render_optic()
-
     def showEvent(self, event: QResizeEvent):
         """Handles the window show event.
 
@@ -369,6 +369,7 @@ class MainWindow(FramelessWindow):
 
         view_menu = menu_bar.addMenu("&View")
         view_menu.addActions(am.get_actions("dock_all", "reset_layout"))
+        self._populate_workspace_menu(view_menu.addMenu("&Workspace"))
         view_menu.addSeparator()
         theme_menu = view_menu.addMenu("&Theme")
         theme_menu.addActions(am.get_actions("dark_theme", "light_theme"))
@@ -392,6 +393,42 @@ class MainWindow(FramelessWindow):
         menu_bar.addMenu("&Run")
         help_menu = menu_bar.addMenu("&Help")
         help_menu.addAction(am.get_action("about"))
+
+    def _populate_workspace_menu(self, menu) -> None:
+        """Expose arrangement and named saved-workspace controls in View."""
+        am = self.action_manager
+        menu.addActions(
+            am.get_actions("arrange_two_panes", "arrange_four_panes", "equalize_panes")
+        )
+        menu.addSeparator()
+        self._workspace_slot_menus = {}
+        for slot in (1, 2):
+            name = self._workspace_name(slot).replace("&", "&&")
+            slot_menu = menu.addMenu(f"&{slot}: {name}")
+            slot_menu.addActions(
+                am.get_actions(
+                    f"load_layout_{slot}",
+                    f"save_layout_{slot}",
+                    f"rename_layout_{slot}",
+                )
+            )
+            self._workspace_slot_menus[slot] = slot_menu
+        menu.addSeparator()
+        scripts = menu.addMenu("&Scripts Terminal")
+        terminal = self.panel_manager.python_terminal
+        for dock in (terminal.editor_dock, terminal.console_dock):
+            action = dock.toggleViewAction()
+            scripts.addAction(action)
+            action.triggered.connect(
+                lambda checked, panel=dock: self._show_terminal_pane(panel, checked)
+            )
+
+    def _show_terminal_pane(self, dock: QDockWidget, checked: bool) -> None:
+        """Show a requested script pane together with its outer terminal panel."""
+        if checked:
+            self.panel_manager.terminal_dock.show()
+            self.panel_manager.terminal_dock.raise_()
+            dock.raise_()
 
     def _populate_quick_actions_toolbar(self, toolbar: QToolBar):
         """Populates the quick actions toolbar with common actions.
@@ -692,31 +729,74 @@ class MainWindow(FramelessWindow):
         """Reset the dock layout to the application default."""
         logger.debug("Reset Windows action triggered.")
         self._apply_revised_default_dock_layout()
-        if hasattr(self, "panel_manager"):
-            for dock in self.panel_manager.get_all_docks():
-                if dock and dock.toggleViewAction():
-                    dock.toggleViewAction().setChecked(True)
+
+    @Slot()
+    def arrange_two_panes(self) -> None:
+        """Arrange design/viewer and analysis tools into two tabbed columns."""
+        self.panel_manager.arrange_workspace("two_panes")
+
+    @Slot()
+    def arrange_four_panes(self) -> None:
+        """Arrange design, viewer, analysis and scripts into four split panes."""
+        self.panel_manager.arrange_workspace("four_panes")
+
+    @Slot()
+    def equalize_panes(self) -> None:
+        """Balance visible outer and nested script panes within Qt constraints."""
+        self.panel_manager.equalize_workspace()
+
+    def _workspace_name(self, slot_number: int) -> str:
+        return self.settings.value(
+            f"Layouts/Config{slot_number}Name", f"Workspace {slot_number}", type=str
+        )
+
+    def _refresh_workspace_actions(self) -> None:
+        self.action_manager.update_layout_actions()
+        for slot, menu in getattr(self, "_workspace_slot_menus", {}).items():
+            name = self._workspace_name(slot).replace("&", "&&")
+            menu.setTitle(f"&{slot}: {name}")
+        if getattr(self, "command_registry", None) is not None:
+            self._register_workspace_commands()
+
+    def rename_layout_slot(self, slot_number: int) -> None:
+        """Rename one of the two supported saved workspaces."""
+        if slot_number not in (1, 2):
+            raise ValueError(f"Unknown workspace slot: {slot_number}")
+        name, accepted = QInputDialog.getText(
+            self,
+            "Rename Workspace",
+            f"Name for workspace {slot_number}:",
+            text=self._workspace_name(slot_number),
+        )
+        if accepted and name.strip():
+            self.settings.setValue(f"Layouts/Config{slot_number}Name", name.strip())
+            self._refresh_workspace_actions()
+
+    def save_named_layout_slot(self, slot_number: int) -> None:
+        """Save to a specific workspace without changing the alternating save slot."""
+        if slot_number not in (1, 2):
+            raise ValueError(f"Unknown workspace slot: {slot_number}")
+        self.settings.setValue(
+            f"Layouts/Config{slot_number}Geometry", self.saveGeometry()
+        )
+        self.settings.setValue(f"Layouts/Config{slot_number}State", self.saveState())
+        self.settings.setValue(
+            f"Layouts/Config{slot_number}TerminalState",
+            self.panel_manager.python_terminal.dock_area.saveState(),
+        )
+        self._refresh_workspace_actions()
+        if self.toast_manager:
+            self.toast_manager.notify(
+                f"Workspace saved — {self._workspace_name(slot_number)}", "success"
+            )
 
     @Slot()
     def save_layout_slot(self):
         target_slot = self.next_save_slot_index
-        window_geometry = self.saveGeometry()
-        dock_toolbar_state = self.saveState()
-        self.settings.setValue(f"Layouts/Config{target_slot}Geometry", window_geometry)
-        self.settings.setValue(f"Layouts/Config{target_slot}State", dock_toolbar_state)
-        if self.toast_manager:
-            self.toast_manager.notify(
-                f"Layout saved to configuration — {target_slot}", "success"
-            )
+        self.save_named_layout_slot(target_slot)
         self.next_save_slot_index = 2 if target_slot == 1 else 1
         self.settings.setValue("Layouts/NextSaveSlot", self.next_save_slot_index)
-        load_layout_1 = self.action_manager.get_action("load_layout_1")
-        if load_layout_1:
-            load_layout_1.setEnabled(self.settings.contains("Layouts/Config1Geometry"))
-
-        load_layout_2 = self.action_manager.get_action("load_layout_2")
-        if load_layout_2:
-            load_layout_2.setEnabled(self.settings.contains("Layouts/Config2Geometry"))
+        self._refresh_workspace_actions()
         logger.debug(
             "Layout saved to slot %d. Next save will be slot %d.",
             target_slot,
@@ -724,39 +804,81 @@ class MainWindow(FramelessWindow):
         )
 
     def _load_layout_from_slot(self, slot_number):
+        """Restore outer and optional nested layout, rolling back failed restores."""
+        if slot_number not in (1, 2):
+            raise ValueError(f"Unknown workspace slot: {slot_number}")
+        name = self._workspace_name(slot_number)
         geometry_key = f"Layouts/Config{slot_number}Geometry"
         state_key = f"Layouts/Config{slot_number}State"
         if self.settings.contains(geometry_key) and self.settings.contains(state_key):
             window_geometry = self.settings.value(geometry_key)
             dock_toolbar_state = self.settings.value(state_key)
-            if isinstance(window_geometry, QByteArray) and isinstance(
-                dock_toolbar_state, QByteArray
+            terminal_key = f"Layouts/Config{slot_number}TerminalState"
+            terminal_state = self.settings.value(terminal_key)
+            if (
+                isinstance(window_geometry, QByteArray)
+                and isinstance(dock_toolbar_state, QByteArray)
+                and (terminal_state is None or isinstance(terminal_state, QByteArray))
             ):
-                if not self.restoreGeometry(window_geometry):
-                    logger.warning(
-                        "Failed to restore window geometry from slot %d.",
-                        slot_number,
-                    )
-                if not self.restoreState(dock_toolbar_state):
-                    logger.warning(
-                        "Failed to restore dock/toolbar state from slot %d.",
-                        slot_number,
-                    )
-                if self.toast_manager:
-                    self.toast_manager.notify(
-                        f"Layout from configuration — {slot_number} loaded.", "success"
-                    )
+                terminal = self.panel_manager.python_terminal.dock_area
+                previous_geometry, previous_state = (
+                    self.saveGeometry(),
+                    self.saveState(),
+                )
+                previous_rectangle = self.geometry()
+                previous_window_state = self.windowState()
+                previous_normal_rectangle = self.normalGeometry()
+                previous_terminal = terminal.saveState()
+                updates_enabled = self.updatesEnabled()
+                self.setUpdatesEnabled(False)
+                try:
+                    restored = self.restoreGeometry(
+                        window_geometry
+                    ) and self.restoreState(dock_toolbar_state)
+                    if restored and terminal_state is not None:
+                        restored = terminal.restoreState(terminal_state)
+                    if not restored:
+                        self.restoreGeometry(previous_geometry)
+                        self.restoreState(previous_state)
+                        terminal.restoreState(previous_terminal)
+                        # Retain the active state and the user's original normal
+                        # rectangle; restoreGeometry can clamp that rectangle.
+                        if previous_window_state & (
+                            Qt.WindowMaximized | Qt.WindowFullScreen
+                        ):
+                            self.setWindowState(Qt.WindowNoState)
+                            self.setGeometry(previous_normal_rectangle)
+                            self.setWindowState(previous_window_state)
+                        else:
+                            self.setGeometry(previous_rectangle)
+                        logger.warning(
+                            "Failed to restore workspace from slot %d.", slot_number
+                        )
+                        if self.toast_manager:
+                            self.toast_manager.notify(
+                                f"Could not restore {name}; "
+                                "the current workspace was kept.",
+                                "warning",
+                            )
+                        return False
+                    if self.toast_manager:
+                        self.toast_manager.notify(
+                            f"Workspace restored — {name}",
+                            "success",
+                        )
+                    return True
+                finally:
+                    self.setUpdatesEnabled(updates_enabled)
             else:
                 if self.toast_manager:
                     self.toast_manager.notify(
-                        f"Invalid layout data in configuration — {slot_number}.",
+                        f"Invalid layout data for {name}.",
                         "warning",
                     )
         else:
             if self.toast_manager:
-                self.toast_manager.notify(
-                    f"No layout saved in configuration — {slot_number}.", "info"
-                )
+                self.toast_manager.notify(f"No saved layout for {name}.", "info")
+        return False
 
     @Slot()
     def load_layout_1_slot(self) -> None:
@@ -883,6 +1005,8 @@ class MainWindow(FramelessWindow):
                 )
             )
 
+        self._register_workspace_commands()
+
         # --- Analysis types ---
         if hasattr(self, "panel_manager") and self.panel_manager.analysis_panel:
             ap = self.panel_manager.analysis_panel
@@ -896,6 +1020,52 @@ class MainWindow(FramelessWindow):
                         ),
                         keywords=["analysis", analysis_name.lower()],
                         category="Analysis",
+                    )
+                )
+
+    def _register_workspace_commands(self) -> None:
+        """Refresh searchable names while keeping workspace command IDs stable."""
+        reg, am = self.command_registry, self.action_manager
+        for key, name, description in (
+            (
+                "arrange_two_panes",
+                "Arrange Two Panes",
+                "Design/viewer and analysis/scripts",
+            ),
+            (
+                "arrange_four_panes",
+                "Arrange Four Panes",
+                "Design, viewer, analysis and scripts",
+            ),
+            ("equalize_panes", "Equalize Split Panes", "Balance visible panel sizes"),
+            ("load_layout_1", "Restore Workspace 1", "Restore saved workspace 1"),
+            ("load_layout_2", "Restore Workspace 2", "Restore saved workspace 2"),
+            (
+                "save_layout_1",
+                "Save Workspace 1",
+                "Save the current layout to workspace 1",
+            ),
+            (
+                "save_layout_2",
+                "Save Workspace 2",
+                "Save the current layout to workspace 2",
+            ),
+        ):
+            action = am.get_action(key)
+            if action:
+                slot = 1 if key.endswith("_1") else 2 if key.endswith("_2") else None
+                keywords = []
+                if slot is not None:
+                    workspace_name = self._workspace_name(slot)
+                    description = f"{description}: {workspace_name}"
+                    keywords.append(workspace_name)
+                reg.register(
+                    PaletteCommand(
+                        name,
+                        description,
+                        action.trigger,
+                        keywords=keywords,
+                        category="Workspace",
                     )
                 )
 

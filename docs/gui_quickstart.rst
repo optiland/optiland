@@ -121,7 +121,19 @@ Optiland features a VS Code-style **Command Palette** that provides quick access
 
 .. note::
 
-   All windows are dockable and can be rearranged to suit your workflow. You can also save your layout for future sessions. These can be loaded by pressing "1" or "2" in the top toolbar, corresponding to the slot used for saving your layout.
+   Panels can be rearranged to suit your workflow. Use **View > Workspace** to
+   choose **Arrange Two Panes** (two columns with tabs), **Arrange Four Panes**
+   (a two-by-two arrangement), or **Equalize Split Panes**. Equalization balances
+   visible splits within their size limits and keeps the current arrangement.
+   The presets and **Reset Window Layout** also recover the script editor and
+   console, preserving their contents and existing analysis results.
+
+   The Workspace menu lets you save to either of two workspaces, rename them,
+   and restore them later. A workspace includes floating/hidden panels, tab
+   groups and the script editor/console arrangement. The toolbar's numbered
+   buttons restore these same workspaces. Its save button alternates between
+   them; hover over it to see which workspace it will replace. Workspace
+   arrangement, save and restore commands are also available through ``Ctrl+K``.
 
    Drag a panel's title to detach or reposition it. A small movement remains a
    click; continue dragging to a window side or another panel to preview a
@@ -133,7 +145,7 @@ Optiland features a VS Code-style **Command Palette** that provides quick access
    Drag the separator between docked panels to resize them, or an edge or
    corner of a floating panel. Content minimum sizes limit how far a panel
    can shrink. Docking uses sides, splits and tabs; it does not align panels
-   to a pixel grid. Use Reset Layout to return to the default arrangement.
+   to a pixel grid.
 
    Drag the main window's title background to move it. Drag an outer edge or
    corner to resize it, including where panel content reaches the window edge.

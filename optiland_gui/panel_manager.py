@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, QRect, Qt
 from PySide6.QtWidgets import QDockWidget, QMainWindow, QWidget
 
 from .analysis_panel import AnalysisPanel
@@ -164,33 +164,139 @@ class PanelManager:
 
     def setup_default_layout(self) -> None:
         """Arrange the dock widgets into the application's default layout."""
-        for dock in self.all_docks:
-            if dock:
+        self.arrange_workspace("four_panes")
+
+    def arrange_workspace(self, arrangement: str) -> None:
+        """Arrange existing panels into two columns or four split panes.
+
+        Alternative panels remain accessible as tabs. This changes only Qt's
+        layout; panel contents, scientific results and size constraints remain
+        owned by their existing widgets.
+        """
+        if arrangement not in {"two_panes", "four_panes"}:
+            raise ValueError(f"Unknown workspace arrangement: {arrangement}")
+        window = self.main_window
+        updates_enabled = window.updatesEnabled()
+        window.setUpdatesEnabled(False)
+        try:
+            for dock in self.all_docks:
                 dock.setFloating(False)
-                self.main_window.addDockWidget(Qt.LeftDockWidgetArea, dock)
+                window.removeDockWidget(dock)
+            window.addDockWidget(Qt.LeftDockWidgetArea, self.sidebar)
+            window.addDockWidget(Qt.RightDockWidgetArea, self.lens_editor_dock)
+            window.splitDockWidget(
+                self.lens_editor_dock, self.analysis_dock, Qt.Horizontal
+            )
+            if arrangement == "four_panes":
+                window.splitDockWidget(
+                    self.lens_editor_dock, self.viewer_dock, Qt.Vertical
+                )
+                window.splitDockWidget(
+                    self.analysis_dock, self.terminal_dock, Qt.Vertical
+                )
+            else:
+                window.tabifyDockWidget(self.lens_editor_dock, self.viewer_dock)
+                window.tabifyDockWidget(self.analysis_dock, self.terminal_dock)
+            window.tabifyDockWidget(self.analysis_dock, self.system_properties_dock)
+            window.tabifyDockWidget(self.analysis_dock, self.optimization_dock)
+            for dock in self.all_docks:
                 dock.show()
+            self.lens_editor_dock.raise_()
+            self.viewer_dock.raise_()
+            self.analysis_dock.raise_()
+            if arrangement == "four_panes":
+                self.terminal_dock.raise_()
+            terminal = self.python_terminal
+            for dock in (terminal.editor_dock, terminal.console_dock):
+                dock.setFloating(False)
+                terminal.dock_area.removeDockWidget(dock)
+            terminal.dock_area.addDockWidget(
+                Qt.LeftDockWidgetArea, terminal.editor_dock
+            )
+            terminal.dock_area.addDockWidget(
+                Qt.RightDockWidgetArea, terminal.console_dock
+            )
+            terminal.editor_dock.show()
+            terminal.console_dock.show()
+            window.layout().activate()
+            self.equalize_workspace()
+        finally:
+            window.setUpdatesEnabled(updates_enabled)
 
-        # Place panels in their designated areas
-        self.main_window.addDockWidget(Qt.LeftDockWidgetArea, self.sidebar)
-        self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.lens_editor_dock)
-        self.main_window.splitDockWidget(
-            self.lens_editor_dock, self.analysis_dock, Qt.Horizontal
-        )
-        self.main_window.splitDockWidget(
-            self.lens_editor_dock, self.viewer_dock, Qt.Vertical
-        )
-        self.main_window.splitDockWidget(
-            self.analysis_dock, self.terminal_dock, Qt.Vertical
-        )
-        self.main_window.tabifyDockWidget(
-            self.analysis_dock, self.system_properties_dock
-        )
-        self.main_window.tabifyDockWidget(self.analysis_dock, self.optimization_dock)
+    @staticmethod
+    def _equalize_dock_area(window: QMainWindow, docks: list[QDockWidget]) -> None:
+        """Ask Qt to balance visible splits, using one member of each tab group."""
+        window.layout().activate()
+        representatives = []
+        visited = set()
+        for dock in docks:
+            if dock in visited or dock.isFloating() or dock.isHidden():
+                continue
+            group = [dock, *window.tabifiedDockWidgets(dock)]
+            visited.update(group)
+            visible = [
+                member
+                for member in group
+                if not member.isHidden() and not member.isFloating()
+            ]
+            representative = next(
+                (
+                    member
+                    for member in visible
+                    if window.rect().intersects(
+                        QRect(member.mapTo(window, QPoint()), member.size())
+                    )
+                ),
+                None,
+            )
+            if representative:
+                representatives.append(representative)
+        if len(representatives) < 2:
+            return
 
-        # Raise panels in reverse order so the first item ends up on top
-        for dock in reversed(self.all_docks):
-            if dock:
-                dock.raise_()
+        rectangles = [
+            QRect(dock.mapTo(window, QPoint()), dock.size()) for dock in representatives
+        ]
+        bounds = QRect()
+        for rectangle in rectangles:
+            bounds = bounds.united(rectangle)
+
+        def simultaneous_splits(horizontal: bool) -> int:
+            # A horizontal request balances columns sharing a vertical band;
+            # a vertical request balances rows sharing a horizontal band.
+            events = []
+            for rectangle in rectangles:
+                start = rectangle.top() if horizontal else rectangle.left()
+                length = rectangle.height() if horizontal else rectangle.width()
+                events.extend(((start, 1), (start + length, -1)))
+            active = maximum = 0
+            for _, change in sorted(events):
+                active += change
+                maximum = max(maximum, active)
+            return max(1, maximum)
+
+        for orientation, length, horizontal in (
+            (Qt.Horizontal, bounds.width(), True),
+            (Qt.Vertical, bounds.height(), False),
+        ):
+            size = max(1, length // simultaneous_splits(horizontal))
+            window.resizeDocks(
+                representatives, [size] * len(representatives), orientation
+            )
+        # resizeDocks preserves intrinsic min/max and the existing split tree.
+        window.layout().activate()
+
+    def equalize_workspace(self) -> None:
+        """Balance outer and Script Terminal splits without changing topology."""
+        self._equalize_dock_area(
+            self.main_window,
+            [dock for dock in self.all_docks if dock is not self.sidebar],
+        )
+        terminal = self.python_terminal
+        if terminal.dock_area.isVisible():
+            self._equalize_dock_area(
+                terminal.dock_area, [terminal.editor_dock, terminal.console_dock]
+            )
 
     def get_all_docks(self) -> list[QDockWidget]:
         """Return a list of all managed dock widgets."""
