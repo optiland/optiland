@@ -165,7 +165,8 @@ QDockWidget::title:focus { /* Added for focused dock title */
     text-align: left; /* For expanded mode */
     margin: 2px 0px;
 }
-#SidebarWidget QToolButton:hover {
+#SidebarWidget QToolButton:hover,
+#SidebarWidget QToolButton:checked:hover {
     background-color: #5A5A5A; /* --hover-bg */
 }
 #SidebarWidget QToolButton:checked,

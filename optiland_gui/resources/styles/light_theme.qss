@@ -200,7 +200,8 @@ QToolBar#QuickActionsToolbar QToolButton:checked { /* Style for checkable QToolB
     text-align: left; /* For expanded mode */
     margin: 2px 0px;
 }
-#SidebarWidget QToolButton:hover {
+#SidebarWidget QToolButton:hover,
+#SidebarWidget QToolButton:checked:hover {
     background-color: #DEE2E6; /* --hover-bg */
 }
 #SidebarWidget QToolButton:checked,
