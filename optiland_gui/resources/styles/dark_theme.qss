@@ -59,10 +59,14 @@ QDockWidget::title:focus { /* Added for focused dock title */
 }
 
 /* === Custom Title Bar Styles === */
+QToolBar#CustomTitleBarToolbar {
+    background-color: #2E2E2E; /* Match the title's surface at the toolbar edges. */
+}
+
 /* Main container for the custom title bar */
 #CustomTitleBar {
-    background-color: #E9ECEF; /* --toolbar-sidebar-bg: Background for the title bar area */
-    border-bottom: 1px solid #CED4DA; /* --border-pressed-bg: Bottom border for separation */
+    background-color: #2E2E2E; /* var(--surface-color) */
+    border-bottom: 1px solid #4A4A4A; /* var(--border-color) */
     /* Text color is inherited or set by specific child elements */
 }
 

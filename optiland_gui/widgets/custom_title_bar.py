@@ -63,6 +63,7 @@ class CustomTitleBar(QWidget):
         self.current_theme = "dark"
         self.setObjectName("CustomTitleBar")
         self.setFixedHeight(40)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setAutoFillBackground(True)
 
         self._mouse_move_offset = None
