@@ -46,6 +46,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .config import DEFAULT_TAB_POSITION
 from .editor_hover_presentation import EditorHoverPresentation
 from .surface_interaction import EditorHoverTracker, SurfaceInteractionState
 
@@ -114,6 +115,7 @@ class SurfacePropertiesWidget(QWidget):
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(6, 3, 6, 3)
         self.tabs = _SurfacePropertiesTabs()
+        self.tabs.setTabPosition(DEFAULT_TAB_POSITION)
         outer_layout.addWidget(self.tabs)
         self.close_button = QToolButton(self.tabs)
         self.close_button.setObjectName("CloseSurfacePropertiesButton")

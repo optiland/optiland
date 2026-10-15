@@ -48,6 +48,7 @@ from . import gui_plot_utils
 from .action_manager import ActionManager
 from .config import (
     APPLICATION_NAME,
+    DEFAULT_TAB_POSITION,
     OPTILAND_ICON_PATH,
     ORGANIZATION_NAME,
     SIDEBAR_QSS_PATH,
@@ -189,6 +190,7 @@ class MainWindow(FramelessWindow):
         self.setWindowTitle("Optiland GUI")
         self.setWindowIcon(QIcon(OPTILAND_ICON_PATH))
         self.setGeometry(100, 100, 1600, 900)
+        self.setTabPosition(Qt.AllDockWidgetAreas, DEFAULT_TAB_POSITION)
 
     def _init_core_components(self):
         """Initializes non-UI core components like settings, the connector,

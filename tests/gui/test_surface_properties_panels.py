@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QMenu
+from PySide6.QtWidgets import QMenu, QTabWidget
 
 from optiland_gui.lens_editor import LensEditor, SurfacePropertiesWidget
 from optiland_gui.optiland_connector import OptilandConnector
@@ -80,6 +80,7 @@ def test_close_keeps_other_panels_drafts_selection_and_optical_state(
     editor.toggle_properties_widget(0)
     editor.toggle_properties_widget(1)
     first = panel(editor, 1)
+    assert first.tabs.tabPosition() == QTabWidget.TabPosition.North
     first.close_button.click()
 
     assert editor.open_prop_source_rows == {0, 2}

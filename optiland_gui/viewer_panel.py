@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING
 
 from . import gui_plot_utils
 from .analysis_panel import CustomMatplotlibToolbar
+from .config import DEFAULT_TAB_POSITION
 from .layout_highlighting import LayoutHighlightController
 from .layout_highlighting_3d import LayoutHighlightController3D
 from .layout_presenter import present_2d, present_3d, present_sag
@@ -262,6 +263,7 @@ class ViewerPanel(QWidget):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         self.tabWidget = QTabWidget()
+        self.tabWidget.setTabPosition(DEFAULT_TAB_POSITION)
 
         # Create 2D Viewer Tab
         self.viewer2D = MatplotlibViewer(self.connector)

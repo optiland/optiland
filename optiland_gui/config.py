@@ -8,6 +8,11 @@ from __future__ import annotations
 
 import os
 
+from PySide6.QtWidgets import QTabWidget
+
+# Shared presentation default; future settings should control this policy.
+DEFAULT_TAB_POSITION = QTabWidget.TabPosition.North
+
 # --- Theme and Style Paths ---
 GUI_BASE_DIR = os.path.dirname(__file__)
 RESOURCES_DIR = os.path.join(GUI_BASE_DIR, "resources")

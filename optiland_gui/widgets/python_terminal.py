@@ -48,6 +48,8 @@ from PySide6.QtWidgets import (
 from qtconsole.inprocess import QtInProcessKernelManager
 from qtconsole.rich_jupyter_widget import RichJupyterWidget
 
+from ..config import DEFAULT_TAB_POSITION
+
 
 class PythonHighlighter(QSyntaxHighlighter):
     """A theme-aware syntax highlighter for Python code.
@@ -315,6 +317,7 @@ class PythonTerminalWidget(QWidget):
         self.dock_area = QMainWindow()
         self.dock_area.setWindowFlags(Qt.Widget)
         self.dock_area.setDockNestingEnabled(True)
+        self.dock_area.setTabPosition(Qt.AllDockWidgetAreas, DEFAULT_TAB_POSITION)
         main_layout.addWidget(self.dock_area)
         self.console_dock = self._create_console_dock()
         self.dock_area.addDockWidget(Qt.RightDockWidgetArea, self.console_dock)
@@ -356,6 +359,7 @@ class PythonTerminalWidget(QWidget):
         layout.addLayout(editor_area_layout)
 
         self.script_tabs = QTabWidget()
+        self.script_tabs.setTabPosition(DEFAULT_TAB_POSITION)
         self.script_tabs.setTabsClosable(True)
         self.script_tabs.setMovable(True)
         self.script_tabs.setObjectName("ScriptTabWidget")

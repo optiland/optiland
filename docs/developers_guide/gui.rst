@@ -132,6 +132,12 @@ Styling and Resources
 *   **Qt StyleSheets (`.qss`)**: Themes (e.g., `dark_theme.qss`, `light_theme.qss`) are defined using QSS, Qt's CSS-like styling language. These are located in `optiland_gui/resources/styles/`.
 *   **Resource Files (`resources.qrc`, `resources_rc.py`)**: Icons and other assets are managed using Qt's resource system. `resources.qrc` is an XML file defining resources, which is compiled into `resources_rc.py` using `pyside6-rcc`. This allows resources to be bundled with the application.
 *   **Plot Styling (`gui_plot_utils.py`)**: Contains utility functions to apply consistent Matplotlib styles that match the selected GUI theme.
+*   **Tab Placement (``config.DEFAULT_TAB_POSITION``)**: The shared default is
+    ``QTabWidget.North``. Main-window and nested terminal dock groups apply it
+    to every dock area; viewer, script, optimization, and surface-property tabs
+    use the same default. Future settings should configure this shared policy.
+    Review orientation-dependent theme borders and the surface-properties
+    close-button corner before offering other tab positions.
 
 Running the GUI
 ---------------

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from PySide6.QtWidgets import QTabWidget
 
 from optiland_gui.optiland_connector import OptilandConnector
 
@@ -55,6 +56,7 @@ def set_automatic_limits(viewer):
 
 def test_checkbox_is_read_when_pending_result_is_presented(scene):
     panel, viewer, data, context = scene
+    assert panel.tabWidget.tabPosition() == QTabWidget.TabPosition.North
     set_automatic_limits(viewer)
     panel.preserve_zoom_checkbox.setChecked(True)
     viewer.plot_optic()  # Explicit default must not clear the persistent preference.

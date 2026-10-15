@@ -41,6 +41,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .config import DEFAULT_TAB_POSITION
+
 if TYPE_CHECKING:
     from .optiland_connector import OptilandConnector
 
@@ -708,6 +710,7 @@ class OptimizationPanel(QWidget):
         top_layout.setSpacing(4)
 
         self._tabs = QTabWidget()
+        self._tabs.setTabPosition(DEFAULT_TAB_POSITION)
         self._tabs.addTab(self._build_variables_tab(), "Variables")
         self._tabs.addTab(self._build_operands_tab(), "Operands")
         self._tabs.addTab(self._build_optimizer_tab(), "Optimizer")
