@@ -44,8 +44,9 @@ from . import gui_plot_utils
 from .analysis_panel import CustomMatplotlibToolbar
 from .layout_highlighting import LayoutHighlightController
 from .layout_highlighting_3d import LayoutHighlightController3D
-from .layout_presenter import present_2d, present_3d, present_sag
+from .layout_presenter import present_2d, present_3d, present_sag, style_chief_rays
 from .widgets.layout_job_view import LayoutJobView
+from .widgets.ray_count import RayCountSpinBox
 
 if TYPE_CHECKING:
     from .optiland_connector import OptilandConnector
@@ -407,14 +408,26 @@ class MatplotlibViewer(QWidget):
         settings_layout = QVBoxLayout(self.settings_area)
         self.settings_form_layout = QFormLayout()
 
-        self.num_rays_spinbox = QSpinBox()
-        self.num_rays_spinbox.setRange(1, 100)
+        self.num_rays_spinbox = RayCountSpinBox()
         self.num_rays_spinbox.setValue(3)
         self.settings_form_layout.addRow("Num Rays:", self.num_rays_spinbox)
 
         self.dist_combo = QComboBox()
         self.dist_combo.addItems(["line_y", "line_x", "hexapolar", "random"])
         self.settings_form_layout.addRow("Distribution:", self.dist_combo)
+        self.dist_combo.currentTextChanged.connect(
+            self.num_rays_spinbox.set_distribution
+        )
+        self._chief_ray_artists = []
+        self.chief_ray_checkbox = QCheckBox("Highlight chief ray")
+        self.chief_ray_checkbox.setObjectName("highlight_chief_ray")
+        self.chief_ray_checkbox.setChecked(True)
+        self.chief_ray_checkbox.setToolTip(
+            "Draw each field's pupil-center ray in blue above the other 2D rays. "
+            "The chief is included in Num Rays; unchecking restores its normal style."
+        )
+        self.chief_ray_checkbox.toggled.connect(lambda: style_chief_rays(self))
+        self.settings_form_layout.addRow(self.chief_ray_checkbox)
 
         apply_button = QPushButton("Apply")
         apply_button.clicked.connect(self.plot_optic)
@@ -540,6 +553,7 @@ class MatplotlibViewer(QWidget):
             self.highlight_controller.install_bindings(*self._highlight_bindings)
 
     def _layout_parameters(self):
+        self.num_rays_spinbox.normalize()
         return {
             "num_rays": self.num_rays_spinbox.value(),
             "distribution": self.dist_combo.currentText(),
@@ -547,6 +561,7 @@ class MatplotlibViewer(QWidget):
 
     def _present_layout(self, data, context, restyle=False, *, reset=False):
         present_2d(self, data, context, restyle, reset=reset)
+        style_chief_rays(self)
 
     def plot_optic(self, preserve_zoom=False):
         """Request the latest visible layout; calculation belongs to its worker."""

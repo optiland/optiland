@@ -11,6 +11,7 @@ import numpy as np
 
 import optiland.backend as be
 from optiland_gui.services.job_records import check_cancelled
+from optiland_gui.services.layout_rays import trace_layout_rays
 
 
 def _surface_indices(component, indices):
@@ -27,7 +28,6 @@ def prepare_2d(snapshot, parameters, progress, cancelled):
     from matplotlib.text import Annotation
 
     from optiland.visualization.system.lens import Lens2D
-    from optiland.visualization.system.ray_bundle import RayBundle
     from optiland.visualization.system.rays import Rays2D
     from optiland.visualization.system.surface import Surface2D
     from optiland.visualization.system.system import OpticalSystem
@@ -40,18 +40,27 @@ def prepare_2d(snapshot, parameters, progress, cancelled):
     axes = figure.add_subplot()
     rays = Rays2D(optic)
     progress("Tracing layout rays")
-    ray_artists = rays.plot(
-        axes,
-        fields="all",
-        wavelengths="primary",
-        num_rays=parameters["num_rays"],
-        distribution=parameters["distribution"],
+    paths = trace_layout_rays(
+        rays, parameters["num_rays"], parameters["distribution"], progress, cancelled
     )
     check_cancelled(cancelled)
     progress("Preparing optical outlines")
     system = OpticalSystem(optic, rays, projection="2d")
-    artists = {**ray_artists, **system.plot(axes)}
-    primitives = []
+    artists = system.plot(axes)
+    primitives = [
+        {
+            "kind": "line",
+            "xy": path["xyz"][:, [2, 1]],
+            "role": "ray",
+            "surfaces": (),
+            "chief": path["chief"],
+            "color_index": path["color_index"],
+            "linewidth": 1.0,
+            "linestyle": "-",
+            "label": "Chief ray" if path["chief"] else "_nolegend_",
+        }
+        for path in paths
+    ]
     boundaries = {}
     references = {}
     surface_views = {}
@@ -62,7 +71,7 @@ def prepare_2d(snapshot, parameters, progress, cancelled):
             surface_views[id(component.surf)] = component
     for line in axes.lines:
         component = artists.get(line)
-        role = "ray" if isinstance(component, RayBundle) else "surface"
+        role = "surface"
         if id(component) in indices:
             role = "aperture"
         primitives.append(
@@ -71,9 +80,6 @@ def prepare_2d(snapshot, parameters, progress, cancelled):
                 "xy": line.get_xydata().copy(),
                 "role": role,
                 "surfaces": _surface_indices(component, indices),
-                "color_index": int(component.bundle_id.rsplit("_", 1)[-1])
-                if role == "ray"
-                else 0,
                 "linewidth": line.get_linewidth(),
                 "linestyle": line.get_linestyle(),
                 "label": line.get_label(),
@@ -167,9 +173,13 @@ def prepare_3d(snapshot, parameters, progress, cancelled):
     rays = Rays3D(optic)
     collector = _ActorCollector()
     progress("Tracing 3D rays")
-    rays.plot(
-        collector, fields="all", wavelengths="primary", num_rays=24, distribution="ring"
-    )
+    # Keep the existing 24 rim rays and include the chief with ordinary VTK
+    # ray styling and depth. There is no foreground/overlay actor.
+    paths = trace_layout_rays(rays, 25, "ring", progress, cancelled)
+    for path in paths:
+        rays._plot_single_line(
+            collector, *path["xyz"].T, path["color_index"], path["field"]
+        )
     groups = [(actor, "ray", ()) for actor in collector.actors]
     system = OpticalSystem(optic, rays, projection="3d")
     system._identify_components()

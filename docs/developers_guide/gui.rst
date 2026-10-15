@@ -66,6 +66,29 @@ These are the primary QDockWidget or QWidget instances that provide specific fun
     *   **3D View**: Uses VTK (if available) to render a 3D model of the system, allowing for interactive rotation, panning, and zooming.
     *   Both views update in response to changes in the `Optic` object via signals from `OptilandConnector`.
 
+    GUI ray sampling lives in ``services/layout_rays.py``. ``layout_pupil``
+    returns pupil coordinates and an explicit chief index; the chief is sampled
+    at normalized pupil coordinates ``Px = Py = 0`` for each field, using the
+    configured aiming and polarization at the primary wavelength. GUI totals
+    include the chief. ``RayCountSpinBox`` in ``widgets/ray_count.py`` steps
+    through supported totals and normalizes typed values. In particular,
+    hexapolar GUI totals count rays, while the helper translates them to the
+    ring count expected by the existing Python distribution API. The
+    :ref:`GUI quickstart <gui_quickstart>` describes the user-facing counts.
+
+    ``trace_layout_rays`` retains chief identity alongside each physical path,
+    including paths terminated by blocking. When only the chief is displayed,
+    four additional, undisplayed rim probes size automatic lens outlines.
+    Physical apertures and the schematic image marker retain their existing
+    precedence; these probes do not alter the prescription or displayed count.
+
+    The 2D presenter retains chief artists so ``style_chief_rays`` can change
+    their color, stroke width and drawing order without submitting a calculation
+    or changing the view limits. This styling belongs to the System Viewer;
+    other consumers of the shared presenter need no chief-ray checkbox. The
+    3D preparation includes the chief alongside 24 rim rays per field and creates
+    ordinary depth-tested ray actors, with no chief-specific foreground overlay.
+
 *   **Analysis Panel (`analysis_panel.py`)**:
 
     *   A comprehensive panel for running various optical analyses.

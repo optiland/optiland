@@ -38,6 +38,7 @@ def present_2d(viewer, data, context, restyle=False, *, reset=False):
         viewer.figure.set_facecolor(background)
         viewer.ax.set_facecolor(background)
         body_artists, surface_artists = {}, {}
+        viewer._chief_ray_artists = []
         identities = context["surface_identities"]
         for item in data["primitives"]:
             owned = tuple(identities[i] for i in item["surfaces"])
@@ -72,6 +73,10 @@ def present_2d(viewer, data, context, restyle=False, *, reset=False):
                 )
                 if role == "surface" and len(owned) == 1:
                     surface_artists[line] = owned[0]
+                elif role == "ray" and item["chief"]:
+                    viewer._chief_ray_artists.append(
+                        (line, color, item["linewidth"], line.get_zorder())
+                    )
         for annotation in data["annotations"]:
             viewer.ax.annotate(
                 "",
@@ -103,6 +108,19 @@ def present_2d(viewer, data, context, restyle=False, *, reset=False):
         viewer._scene_document_id = context["document_id"]
     finally:
         viewer._is_plotting = False
+
+
+def style_chief_rays(viewer):
+    """Change retained 2D ray appearance without recalculation or axis changes."""
+    highlight = viewer.chief_ray_checkbox.isChecked()
+    # Keep the chief distinct from the theme's selection/hover accents and
+    # green rays, including under red-green color-vision deficiencies.
+    blue = "#C4CFFF" if viewer.current_theme == "dark" else "#101A78"
+    for line, color, width, order in viewer._chief_ray_artists:
+        line.set_color(blue if highlight else color)
+        line.set_linewidth(1.8 if highlight else width)
+        line.set_zorder(5 if highlight else order)
+    viewer.canvas.draw_idle()
 
 
 def present_3d(viewer, data, context, restyle=False):

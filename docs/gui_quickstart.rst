@@ -164,6 +164,43 @@ With the Cooke Triplet loaded:
 *   Experiment with the Matplotlib toolbar controls, such as zooming and panning.
 *   Switch to the **3D View** tab in the Viewer Panel to see the lens and rays in 3D. You can rotate, pan, and zoom this view.
 
+Open **Viewer Settings** with the gear button in **2D Layout** to choose the
+ray count and distribution. **Num Rays is the total number of rays per field,
+including the chief ray**, at the primary wavelength. A count of **1** displays
+only the chief for each field.
+
+The **chief ray** follows the center of the beam through the entrance pupil,
+using the design's configured ray aiming. It can leave the source at an angle
+in an off-axis or decentered system; it is not necessarily a zero-angle ray.
+
+The available distributions use these counts:
+
+*   **line_x / line_y**: odd totals, **1, 3, 5, ...**, with equal pairs around
+    the chief. An even value rounds up to the next supported total.
+*   **hexapolar**: complete bundles of **1, 7, 19, 37, 61 or 91 rays**. This GUI
+    count means **rays, not rings**: for example, **7 rays = the chief plus six
+    surrounding rays**. The arrows step between complete bundles; an intermediate
+    value rounds up to the next bundle, so entering 8 gives 19.
+*   **random**: the chief plus the remaining randomly sampled rays, all included
+    in the displayed total.
+
+The control shows the normalized count when you finish editing, within its
+displayed limits. Click **Apply** to use count or distribution changes. Each
+field receives its own bundle, and blocked rays can stop before reaching the
+image.
+
+**Highlight chief ray** is enabled by default. It draws each chief in blue with
+a slightly thicker stroke above the other 2D rays, distinct from surface
+selection and hover in both themes. Unchecking it restores ordinary ray styling;
+it does not remove the chief or change the count. This checkbox takes effect
+immediately, without recalculating the layout or moving the view. Highlighting
+does not extend a blocked ray.
+
+In **3D Layout**, the chief uses ordinary ray styling and normal depth/occlusion.
+The 2D highlight checkbox does not place it in front of 3D geometry. These GUI
+count conventions do not change scientific analyses or the public Python
+pupil-distribution APIs.
+
 3. Changing a Surface Parameter
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
