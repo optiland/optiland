@@ -262,25 +262,28 @@ def test_window_close_keeps_qt_owners_until_worker_is_reaped(qapp):
     from PySide6.QtWidgets import QWidget
 
     from optiland_gui.main_window import MainWindow
-    from optiland_gui.services.calculation_jobs import CalculationJobs, DocumentState
+    from optiland_gui.optiland_connector import OptilandConnector
 
-    service = CalculationJobs(
-        DocumentState(),
-        cancel_grace_ms=40,
-        worker_command=[
-            sys.executable,
-            "-u",
-            str(Path(__file__).with_name("calculation_worker_fixture.py")),
-        ],
-    )
+    connector = OptilandConnector()
+    service = connector.calculation_jobs
+    service._cancel_grace_ms = 40
+    service._command = [
+        sys.executable,
+        "-u",
+        str(Path(__file__).with_name("calculation_worker_fixture.py")),
+    ]
     closed = []
 
     class Window(QWidget):
         closeEvent = MainWindow.closeEvent
         _calculations_stopped = MainWindow._calculations_stopped
+        _confirm_discard_changes = MainWindow._confirm_discard_changes
+        _confirm_close_intent = MainWindow._confirm_close_intent
+        _files_settled = MainWindow._files_settled
+        _file_close_aborted = MainWindow._file_close_aborted
 
     window = Window()
-    window.connector = SimpleNamespace(calculation_jobs=service)
+    window.connector = connector
     window.panel_manager = SimpleNamespace(
         python_terminal=SimpleNamespace(shutdown_kernel=lambda: closed.append(True))
     )

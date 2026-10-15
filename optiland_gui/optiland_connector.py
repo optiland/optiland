@@ -13,7 +13,7 @@ from __future__ import annotations
 import pickle
 from contextlib import contextmanager
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QTimer, Signal
 
 from optiland.optic import Optic
 from optiland_gui.services.analysis_runner import AnalysisRunner
@@ -24,6 +24,7 @@ from optiland_gui.services.file_service import (
     json_inf_nan_hook,  # re-exported for backward compat
 )
 from optiland_gui.services.history_service import HistoryService
+from optiland_gui.services.job_records import BackendConfig
 from optiland_gui.services.optimization_service import OptimizationService
 from optiland_gui.services.surface_service import SurfaceService
 from optiland_gui.services.system_service import SystemService
@@ -88,6 +89,12 @@ class OptilandConnector(QObject):
         self.opticLoaded.connect(self._on_optic_loaded)
         self.opticChanged.connect(self._on_optic_changed)
         self.calculation_jobs = CalculationJobs(self.document_state, self)
+        self.calculation_services = [self.calculation_jobs]
+        self._calculation_backend = BackendConfig.capture()
+        self._backend_timer = QTimer(self)
+        self._backend_timer.setInterval(250)
+        self._backend_timer.timeout.connect(self._check_calculation_backend)
+        self._backend_timer.start()
 
         self._optic = Optic("Default System")
         self._undo_redo_manager = UndoRedoManager(self)
@@ -95,6 +102,7 @@ class OptilandConnector(QObject):
 
         # Instantiate services — order does not matter; each receives *self*.
         self._file_service = FileService(self)
+        self.file_operations = self._file_service.operations
         self._surface_service = SurfaceService(self)
         self._system_service = SystemService(self)
         self._analysis_runner = AnalysisRunner(self)
@@ -242,35 +250,9 @@ class OptilandConnector(QObject):
         Args:
             optic: The optic to validate and repair if necessary.
         """
-        if optic.surfaces.num_surfaces < 2:
-            optic.surfaces.clear()
-            optic.surfaces.add(
-                surface_type="standard",
-                radius=float("inf"),
-                thickness=10.0,
-                comment="Object",
-                material="Air",
-            )
-            optic.surfaces.add(
-                surface_type="standard",
-                radius=float("inf"),
-                thickness=0.0,
-                comment="Image",
-                material="Air",
-            )
+        from optiland_gui.services.model_initialization import ensure_valid_structure
 
-        if optic.wavelengths.num_wavelengths == 0:
-            optic.wavelengths.add(
-                self.DEFAULT_WAVELENGTH_UM, is_primary=True, unit="um"
-            )
-        elif optic.wavelengths.primary_index is None:
-            optic.wavelengths.wavelengths[0].is_primary = True
-
-        if not hasattr(optic, "aperture") or optic.aperture is None:
-            try:
-                optic.set_aperture("EPD", 10.0)
-            except Exception as e:
-                print(f"Warning: Failed to set aperture for loaded system: {e}")
+        ensure_valid_structure(optic, self.DEFAULT_WAVELENGTH_UM)
 
     def _initialize_optic_structure(
         self,
@@ -800,3 +782,19 @@ class OptilandConnector(QObject):
             ``True`` while running, ``False`` otherwise.
         """
         return self._optimization_service.is_running
+
+    def register_calculation_service(self, service):
+        """Include another isolated service in backend invalidation and shutdown."""
+        if service not in self.calculation_services:
+            self.calculation_services.append(service)
+
+    def _check_calculation_backend(self):
+        backend = BackendConfig.capture()
+        if backend == self._calculation_backend:
+            return
+        self._calculation_backend = backend
+        for service in self.calculation_services:
+            service.cancel_cancellable()
+        # Backend configuration is a calculation input, not a persisted edit.
+        # Existing view schedulers also include backend configuration in keys.
+        self.document_state.changed.emit(self.document_state.token)

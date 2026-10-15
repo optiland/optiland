@@ -71,3 +71,25 @@ def test_interact(set_test_backend, setup_object_surface):
 def test_material_pre_is_material_post(setup_object_surface):
     object_surface, _ = setup_object_surface
     assert object_surface.material_pre == object_surface.material_post
+
+
+@pytest.mark.parametrize("distance", [25.0, float("inf")])
+def test_serialization_preserves_object_distance(
+    set_test_backend, setup_object_surface, distance
+):
+    surface, geometry = setup_object_surface
+    surface.thickness = distance
+    geometry.cs.z = be.array(-distance)
+    restored = ObjectSurface.from_dict(surface.to_dict())
+    assert restored.thickness == distance
+    assert restored.is_infinite == surface.is_infinite
+
+
+def test_existing_object_record_without_thickness(
+    set_test_backend, setup_object_surface
+):
+    surface, _ = setup_object_surface
+    record = surface.to_dict()
+    del record["thickness"]
+    restored = ObjectSurface.from_dict(record)
+    assert restored.thickness == 0.0

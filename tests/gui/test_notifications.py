@@ -18,10 +18,10 @@ class TestFileServiceNoQMessageBox:
         assert "QMessageBox.warning" not in src
 
     def test_load_failure_calls_toast(self, tmp_path, qapp):
-        conn = MagicMock()
+        from optiland_gui.optiland_connector import OptilandConnector
+
+        conn = OptilandConnector()
         conn.toast_manager = MagicMock()
-        conn._undo_redo_manager = MagicMock()
-        conn._optic = None
 
         from optiland_gui.services.file_service import FileService
 
@@ -36,10 +36,13 @@ class TestFileServiceNoQMessageBox:
         assert severity == "error"
 
     def test_save_failure_calls_toast(self, tmp_path, qapp):
-        conn = MagicMock()
+        from optiland_gui.optiland_connector import OptilandConnector
+
+        conn = OptilandConnector()
         conn.toast_manager = MagicMock()
-        conn._undo_redo_manager = MagicMock()
-        conn._capture_optic_state.side_effect = RuntimeError("capture failed")
+        conn._capture_optic_state = MagicMock(
+            side_effect=RuntimeError("capture failed")
+        )
 
         from optiland_gui.services.file_service import FileService
 
@@ -51,9 +54,10 @@ class TestFileServiceNoQMessageBox:
         assert severity == "error"
 
     def test_load_from_object_failure_calls_toast(self, qapp):
-        conn = MagicMock()
+        from optiland_gui.optiland_connector import OptilandConnector
+
+        conn = OptilandConnector()
         conn.toast_manager = MagicMock()
-        conn._undo_redo_manager = MagicMock()
 
         bad_obj = MagicMock()
         bad_obj.to_dict.side_effect = RuntimeError("serialisation error")
