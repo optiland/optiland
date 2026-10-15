@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import pickle
 import threading
+from math import ceil
 
 import numpy as np
 import pytest
@@ -15,6 +16,7 @@ from shiboken6 import isValid
 from optiland_gui.analysis_panel import AnalysisPanel
 from optiland_gui.services.analysis_worker import prepare_analysis
 from optiland_gui.services.job_records import OpticSnapshot
+from optiland_gui.widgets.analysis_figure_layout import AnalysisFigureLayout
 from tests.gui.analysis_job_fakes import connector_for
 from tests.gui.test_calculation_jobs import wait_for
 
@@ -63,9 +65,55 @@ def assert_final_pixels(canvas):
         atol=1e-8,
     )
     width, height = canvas.get_width_height(physical=True)
-    # Agg exposes floating geometry; its raster storage uses integer bounds.
+    # Fractional DPR geometry can be rounded to raster bounds by the renderer.
     assert (int(canvas.renderer.width), int(canvas.renderer.height)) == (width, height)
     assert canvas.buffer_rgba().shape[:2] == (height, width)
+
+
+def wait_for_completed_resize(qapp, canvas, draws):
+    def final_state():
+        physical_size = (
+            np.array([canvas.width(), canvas.height()]) * canvas.device_pixel_ratio
+        )
+        engine = canvas.figure.get_layout_engine()
+        minimum = (0, 0)
+        if isinstance(engine, AnalysisFigureLayout):
+            scale = canvas.figure.dpi / canvas.device_pixel_ratio
+            minimum = (
+                ceil(engine.minimum_width_inches * scale),
+                ceil(engine.minimum_height_inches * scale),
+            )
+        return (
+            bool(draws)
+            and hasattr(canvas, "renderer")
+            and (canvas.minimumWidth(), canvas.minimumHeight()) == minimum
+            and canvas._resize_frame is None
+            and not canvas._resize_quiet.isActive()
+            and not canvas._resize_progress.isActive()
+            and np.allclose(
+                canvas.figure.get_size_inches() * canvas.figure.dpi,
+                physical_size,
+                rtol=0,
+                atol=1e-8,
+            )
+            and (
+                int(canvas.renderer.width),
+                int(canvas.renderer.height),
+            )
+            == canvas.get_width_height(physical=True)
+        )
+
+    def completed():
+        # A first draw can queue a viewport minimum change and a second resize.
+        # Dispatch that geometry before deciding whether its pixels are final.
+        qapp.processEvents()
+        if not final_state():
+            return False
+        qapp.processEvents()
+        return final_state()
+
+    wait_for(qapp, completed)
+    assert_final_pixels(canvas)
 
 
 def test_completed_native_resize_does_not_repaint_again_after_idle(
@@ -81,9 +129,7 @@ def test_completed_native_resize_does_not_repaint_again_after_idle(
     before_data = digest(page["prepared"])
 
     panel.resize(panel.width() + 60, panel.height() + 30)
-    wait_for(qapp, lambda: bool(draws))
-    qapp.processEvents()
-    assert_final_pixels(canvas)
+    wait_for_completed_resize(qapp, canvas, draws)
     completed = len(draws)
     QTest.qWait(180)
     assert len(draws) == completed
@@ -103,11 +149,11 @@ def test_rapid_resize_coalesces_and_keeps_final_results(qapp, retained_panel):
     before_data = digest(page["prepared"])
     for index in range(12):
         panel.resize(940 + index * 4, 650 + index * 3)
-    wait_for(qapp, lambda: bool(draws))
-    qapp.processEvents()
+    wait_for_completed_resize(qapp, canvas, draws)
     assert len(draws) < 12
-    assert_final_pixels(canvas)
+    completed = len(draws)
     QTest.qWait(180)
+    assert len(draws) == completed
     assert_final_pixels(canvas)
     assert panel.active_mpl_canvas_widget is canvas
     assert len(connector.calculation_jobs.submissions) == before_requests
@@ -127,9 +173,7 @@ def test_hidden_resize_reopens_at_final_size_without_reanalysis(qapp, retained_p
         "draw_event", lambda _event: draws.append(canvas.get_width_height())
     )
     panel.show()
-    wait_for(qapp, lambda: bool(draws))
-    qapp.processEvents()
-    assert_final_pixels(canvas)
+    wait_for_completed_resize(qapp, canvas, draws)
     assert panel.active_mpl_canvas_widget is canvas
     assert len(connector.calculation_jobs.submissions) == before_requests
     assert digest(page["prepared"]) == before_data

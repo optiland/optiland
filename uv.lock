@@ -1492,6 +1492,7 @@ dependencies = [
 
 [package.optional-dependencies]
 gui = [
+    { name = "matplotlib" },
     { name = "pyside6" },
     { name = "qtconsole" },
 ]
@@ -1522,6 +1523,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "matplotlib" },
+    { name = "matplotlib", marker = "extra == 'gui'", specifier = ">=3.10" },
     { name = "numba", specifier = ">=0.60.0" },
     { name = "numpy" },
     { name = "pandas" },

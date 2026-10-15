@@ -32,7 +32,7 @@ dynamic = ["version"]
 prescription-console = ["rich>=13.0"]
 prescription-pdf = ["reportlab>=4.0"]
 prescription = ["rich>=13.0", "reportlab>=4.0"]
-gui = ["PySide6", "qtconsole"]
+gui = ["PySide6", "qtconsole", "matplotlib>=3.10"]
 torch = ["torch"]
 
 [project.urls]

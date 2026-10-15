@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import time
+from typing import Any
 
 from matplotlib.backend_bases import ResizeEvent
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from PySide6.QtCore import QEvent, QTimer
 from PySide6.QtGui import QImage, QPainter, QResizeEvent
 from PySide6.QtWidgets import QWidget
+
+from .analysis_figure_layout import AnalysisFigureLayout
 
 
 class RetainedAnalysisCanvas(FigureCanvasQTAgg):
@@ -67,6 +70,18 @@ class RetainedAnalysisCanvas(FigureCanvasQTAgg):
         self._resize_progress.stop()
         self._resize_frame = None
 
+    def set_analysis_layout(self, prepared: dict[str, Any]) -> None:
+        """Install measured layout only for compatible captured analysis grids."""
+        self.figure.set_layout_engine(
+            AnalysisFigureLayout.for_analysis(self.figure, prepared)
+        )
+
+    def restore_navigation_layout(self) -> None:
+        """Reflow history-restored rectangles while retaining restored limits."""
+        engine = self.figure.get_layout_engine()
+        if isinstance(engine, AnalysisFigureLayout):
+            engine.navigation_restored()
+
     def draw(self):
         self._cancel_resize_frame()
         started = time.perf_counter()
@@ -84,7 +99,9 @@ class RetainedAnalysisCanvas(FigureCanvasQTAgg):
         try:
             return super().print_figure(*args, **kwargs)
         finally:
-            if had_resize_frame:
+            if had_resize_frame or isinstance(
+                self.figure.get_layout_engine(), AnalysisFigureLayout
+            ):
                 # Vector/alternate-DPI export restores the display canvas and
                 # DPI, but may leave its old renderer until another paint event.
                 self.draw_idle()
