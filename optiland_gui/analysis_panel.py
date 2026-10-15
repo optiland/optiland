@@ -75,6 +75,8 @@ from optiland_gui.widgets.plot_navigation import PlotNavigationToolbar
 from . import gui_plot_utils
 from .services.analysis_plots import draw_analysis_plot
 from .services.job_records import BackendConfig
+from .widgets.analysis_canvas_viewport import AnalysisCanvasViewport
+from .widgets.analysis_figure_layout import AnalysisFigureLayout
 from .widgets.retained_analysis_canvas import RetainedAnalysisCanvas
 
 if TYPE_CHECKING:
@@ -163,6 +165,25 @@ class CustomMatplotlibToolbar(PlotNavigationToolbar):
                 for state in (QIcon.State.Off, QIcon.State.On):
                     icon.addPixmap(pixmap, mode, state)
             action.setIcon(icon)
+
+    def _restore_navigation_layout(self) -> None:
+        if isinstance(self.canvas, RetainedAnalysisCanvas):
+            self.canvas.restore_navigation_layout()
+
+    def home(self, *args: object) -> None:
+        """Restore the original view and reflow its saved plot rectangles."""
+        super().home(*args)
+        self._restore_navigation_layout()
+
+    def back(self, *args: object) -> None:
+        """Restore the previous view and reflow its saved plot rectangles."""
+        super().back(*args)
+        self._restore_navigation_layout()
+
+    def forward(self, *args: object) -> None:
+        """Restore the next view and reflow its saved plot rectangles."""
+        super().forward(*args)
+        self._restore_navigation_layout()
 
 
 class AnalysisPanel(QWidget):
@@ -546,6 +567,9 @@ class AnalysisPanel(QWidget):
             if (widget := item.widget()) is not None:
                 if isinstance(widget, FigureCanvas):
                     self._cleanup_figure_canvas(widget)
+                elif isinstance(widget, AnalysisCanvasViewport):
+                    self._cleanup_figure_canvas(widget.canvas)
+                    widget.close()
                 widget.setParent(None)
                 widget.deleteLater()
             elif (sub_layout := item.layout()) is not None:
@@ -1252,6 +1276,7 @@ class AnalysisPanel(QWidget):
     def _draw_plot_on_canvas(self, prepared, canvas, view_args):
         """Draw completed plain data. No analysis or optical object reaches here."""
         draw_analysis_plot(canvas.figure, prepared, self.current_theme)
+        canvas.set_analysis_layout(prepared)
         canvas.draw_idle()
 
     def _setup_plot_toolbar(self, canvas):
@@ -1292,7 +1317,15 @@ class AnalysisPanel(QWidget):
                 page["prepared"], self.active_mpl_canvas_widget, {}
             )
             self._setup_plot_toolbar(self.active_mpl_canvas_widget)
-            plot_layout.addWidget(self.active_mpl_canvas_widget)
+            if isinstance(
+                self.active_mpl_canvas_widget.figure.get_layout_engine(),
+                AnalysisFigureLayout,
+            ):
+                plot_layout.addWidget(
+                    AnalysisCanvasViewport(self.active_mpl_canvas_widget)
+                )
+            else:
+                plot_layout.addWidget(self.active_mpl_canvas_widget)
             # The toolbar exports this completed revision even while a rerun is pending.
             self.active_mpl_toolbar_widget.setToolTip(self.dataInfoLabel.text())
         else:

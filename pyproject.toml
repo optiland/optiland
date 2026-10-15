@@ -39,6 +39,7 @@ gui = [
     "PySide6<6.12; python_version < '3.12'",
     "PySide6; python_version >= '3.12'",
     "qtconsole",
+    "matplotlib>=3.10",
 ]
 torch = ["torch"]
 

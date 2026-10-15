@@ -158,6 +158,15 @@ then redraw sharply at the new size. Plot navigation and image saving use
 the current figure. Resizing preserves results and zoom without running
 the analysis again.
 
+Aligned analysis plots adjust title, label and legend spacing to the panel
+size. At short heights, plots with matching x coordinates in a column share
+the bottom row's x labels. Each field keeps its title, y labels and font
+sizes. Larger views and independently zoomed columns show their own x labels
+again. Manual axes or legend layout edits keep the placement you choose.
+When a compact pane cannot fit those labels, the plot scrolls within the pane.
+Use the scrollbars to inspect every field, or focus the plot viewport and use
+arrow or page keys. The mouse wheel retains plot zoom.
+Saving exports the full plot, including content outside the viewport.
 
 Notifications
 -------------
