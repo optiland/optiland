@@ -782,14 +782,10 @@ class MainWindow(FramelessWindow):
         """Revoke calculations and wait asynchronously before destroying Qt owners."""
         if self.connector.output_operations.busy:
             event.ignore()
-            if not getattr(self, "_output_close_requested", False):
-                self._output_close_requested = True
-                self._output_close_error = False
-                self._output_close_token = self.connector.document_state.edit_token
-                self.connector.output_operations.completed.connect(self._output_settled)
-                self.connector.output_operations.failed.connect(
-                    self._output_failure_during_close
-                )
+            self.connector._file_service._toast(
+                "File operations are still running. Close again when they finish.",
+                "info",
+            )
             return
         if not getattr(self, "_calculation_shutdown_complete", False):
             event.ignore()
@@ -970,28 +966,3 @@ class MainWindow(FramelessWindow):
         self.connector.file_operations.resolve_candidate(
             identifier, reply == QMessageBox.StandardButton.Yes, token
         )
-
-    @Slot()
-    def _output_settled(self):
-        if self.connector.output_operations.busy:
-            return
-        self.connector.output_operations.completed.disconnect(self._output_settled)
-        self.connector.output_operations.failed.disconnect(
-            self._output_failure_during_close
-        )
-        self._output_close_requested = False
-        if (
-            not self._output_close_error
-            and self.connector.document_state.edit_token == self._output_close_token
-        ):
-            QTimer.singleShot(0, self.close)
-        else:
-            self.connector._file_service._toast(
-                "Close cancelled: the save failed or the document "
-                "changed while saving.",
-                "warning",
-            )
-
-    @Slot(str)
-    def _output_failure_during_close(self, reason):
-        self._output_close_error = True

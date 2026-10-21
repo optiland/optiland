@@ -17,8 +17,6 @@ from .test_file_save_export import file_operations as file_operations
 class WriteWindow(QWidget):
     closeEvent = MainWindow.closeEvent
     _calculations_stopped = MainWindow._calculations_stopped
-    _output_settled = MainWindow._output_settled
-    _output_failure_during_close = MainWindow._output_failure_during_close
 
 
 @pytest.mark.parametrize("outcome", ["saved", "edited", "failed"])
@@ -42,8 +40,10 @@ def test_standalone_output_waits_and_keeps_failed_or_newer_document_open(
     operations.jobs._dispatch()
     wait_for(qapp, lambda: not operations.busy)
     if outcome == "saved":
-        wait_for(qapp, lambda: not window.isVisible())
+        assert window.isVisible()
         assert path.exists() and not connector.is_modified()
+        window.close()
+        wait_for(qapp, lambda: not window.isVisible())
     else:
         qapp.processEvents()
         assert window.isVisible() and connector.is_modified()

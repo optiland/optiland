@@ -121,7 +121,7 @@ def test_owned_prepare_publish_and_reconcile_roundtrip(
         else load_zemax_file
         if file_format == "zemax"
         else load_codev_file
-    )(Path(p["path"]))
+    )(Path(p["path"]) if file_format == "optiland" else p["path"])
     assert float(restored.surfaces[1].geometry.radius) == 50
     file_tasks.cleanup_output(None, p, None, None)
 

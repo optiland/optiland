@@ -131,12 +131,18 @@ class OutputOperations(QObject):
                 QTimer.singleShot(50, lambda: self._queue(operation, handler))
                 self._changed()
                 return None
-            self._operations.pop(operation.identifier, None)
-            if operation.phase != "cleaning":
-                self.failed.emit(f"The file operation for {operation.path} failed")
+            self.failed.emit(f"The file operation for {operation.path} failed")
             self._notify(f"File operation could not start: {exc}", "error")
-            self._resume_publications()
-            self._changed()
+            if operation.staged_identity is not None and operation.phase != "cleaning":
+                self._cleanup(operation)
+            else:
+                if operation.phase == "cleaning":
+                    self._notify(
+                        "Temporary-file cleanup could not start: "
+                        f"{operation.staged_path}",
+                        "warning",
+                    )
+                self._complete(operation)
             return None
         self._requests[request.job_id] = operation
         self._changed()

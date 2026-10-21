@@ -65,3 +65,25 @@ def test_unconfirmed_publication_preserves_destination_and_aborts_close(
     assert aborted == [True]
     assert any("could not be confirmed" in text for text, severity in notifications)
     assert not list(tmp_path.glob(".optiland-*.tmp"))
+
+
+def test_rejected_publication_dispatch_cleans_owned_preparation(
+    qapp, tmp_path, file_operations, monkeypatch
+):
+    connector, operations, _, _, notifications = file_operations
+    destination = tmp_path / "saved.json"
+    destination.write_bytes(b"previous valid file")
+    submit = operations.jobs.submit
+
+    def reject_publication(*args, **kwargs):
+        if args[1].endswith(":publish_output"):
+            raise RuntimeError("publication dispatch unavailable")
+        return submit(*args, **kwargs)
+
+    monkeypatch.setattr(operations.jobs, "submit", reject_publication)
+    operations.request_output(destination)
+    wait_for(qapp, lambda: not operations.busy)
+    assert destination.read_bytes() == b"previous valid file"
+    assert connector.is_modified()
+    assert not list(tmp_path.glob(".optiland-*.tmp"))
+    assert any("publication dispatch unavailable" in text for text, _ in notifications)
