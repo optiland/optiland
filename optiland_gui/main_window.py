@@ -281,6 +281,14 @@ class MainWindow(FramelessWindow):
             self._resolve_file_candidate
         )
 
+        self.output_operation_status = FileOperationStatus(
+            self.connector.output_operations, self
+        )
+        self.statusBar().addWidget(self.output_operation_status, 1)
+        self.connector.output_operations.completed.connect(
+            self._update_project_name_in_title_bar
+        )
+
         # Logging handler: route Python WARNING+ to toasts
         self._gui_log_handler = _log_handler.install(self.toast_manager)
 
@@ -547,7 +555,7 @@ class MainWindow(FramelessWindow):
         """Slot for the *Save System* action — saves to the current file path."""
         current_path = self.connector.get_current_filepath()
         if current_path:
-            self.connector.save_optic_to_file(current_path)
+            self.connector.output_operations.request_output(current_path)
             self._update_project_name_in_title_bar()
             logger.debug("Save System action triggered: %s", current_path)
         else:
@@ -568,7 +576,7 @@ class MainWindow(FramelessWindow):
                 and "(*.json)" in selected_filter.split(";;")[0]
             ):
                 filepath += ".json"
-            self.connector.save_optic_to_file(filepath)
+            self.connector.output_operations.request_output(filepath)
             self._update_project_name_in_title_bar()
             logger.debug("Save System As action triggered: %s", filepath)
 
@@ -633,7 +641,7 @@ class MainWindow(FramelessWindow):
         if filepath:
             if not filepath.lower().endswith(".zmx"):
                 filepath += ".zmx"
-            self.connector.export_zemax(filepath)
+            self.connector.output_operations.request_output(filepath, "zemax")
 
     @Slot()
     def export_codev_action(self):
@@ -647,7 +655,7 @@ class MainWindow(FramelessWindow):
         if filepath:
             if not filepath.lower().endswith(".seq"):
                 filepath += ".seq"
-            self.connector.export_codev(filepath)
+            self.connector.output_operations.request_output(filepath, "codev")
 
     @Slot()
     def about_action(self):
@@ -772,6 +780,17 @@ class MainWindow(FramelessWindow):
 
     def closeEvent(self, event: QEvent) -> None:
         """Revoke calculations and wait asynchronously before destroying Qt owners."""
+        if self.connector.output_operations.busy:
+            event.ignore()
+            if not getattr(self, "_output_close_requested", False):
+                self._output_close_requested = True
+                self._output_close_error = False
+                self._output_close_token = self.connector.document_state.edit_token
+                self.connector.output_operations.completed.connect(self._output_settled)
+                self.connector.output_operations.failed.connect(
+                    self._output_failure_during_close
+                )
+            return
         if not getattr(self, "_calculation_shutdown_complete", False):
             event.ignore()
             if not getattr(self, "_calculation_shutdown_requested", False):
@@ -951,3 +970,28 @@ class MainWindow(FramelessWindow):
         self.connector.file_operations.resolve_candidate(
             identifier, reply == QMessageBox.StandardButton.Yes, token
         )
+
+    @Slot()
+    def _output_settled(self):
+        if self.connector.output_operations.busy:
+            return
+        self.connector.output_operations.completed.disconnect(self._output_settled)
+        self.connector.output_operations.failed.disconnect(
+            self._output_failure_during_close
+        )
+        self._output_close_requested = False
+        if (
+            not self._output_close_error
+            and self.connector.document_state.edit_token == self._output_close_token
+        ):
+            QTimer.singleShot(0, self.close)
+        else:
+            self.connector._file_service._toast(
+                "Close cancelled: the save failed or the document "
+                "changed while saving.",
+                "warning",
+            )
+
+    @Slot(str)
+    def _output_failure_during_close(self, reason):
+        self._output_close_error = True
