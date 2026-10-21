@@ -175,6 +175,25 @@ lossless polarized systems retain their previous results. Tilted anisotropic
 elements, scalar-coated bends and polarized power/field analyses with scalar
 loss or clipping may change for the corrections above.
 
+Jones pupil normalization
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``JonesPupil`` evaluates unit H and V source states through
+``PolarizedRays.get_exit_fields``. Those states use each ray's transverse launch
+basis, not the first two columns of a Cartesian matrix for an oblique ray.
+The resulting fields are projected onto the transverse output basis: V is
+parallel to ``k cross X`` and H to ``V cross k``. Launch directions parallel
+to X remain unsupported by the ray source-basis construction.
+
+The pupil includes the square root of launch intensity (including apodization)
+and accumulated scalar attenuation, along with Jones amplitude effects. It is
+not divided by surviving intensity or renormalized to remove losses. For
+example, a 25% transmitting axial element gives ``0.5 * identity(2)`` for unit
+launch power. A lossless oblique plane system gives the identity between its
+matching transverse input/output bases. Clipped samples give zero matrices,
+including when a later surface is missed; invalid powered fields remain visible.
+The selected source polarization does not remove either matrix column.
+
 .. note::
    For details on how rays interact with surfaces, see the :ref:`surface_overview` section.
 
