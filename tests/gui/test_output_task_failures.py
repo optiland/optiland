@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -95,3 +96,44 @@ def test_array_encoding_and_unknown_values_are_lossless_or_explicitly_rejected()
     ) == {"array": [1, 2], "scalar": 3}
     with pytest.raises(TypeError):
         json.dumps({"unsupported": object()}, cls=SpecialFloatEncoder)
+
+
+@pytest.mark.parametrize("file_format", ["optiland", "zemax", "codev"])
+def test_owned_prepare_publish_and_reconcile_roundtrip(
+    minimal_optic, tmp_path, file_format
+):
+    from optiland.fileio import load_codev_file, load_zemax_file
+
+    from .test_file_save_export import read_optic
+
+    p = parameters(tmp_path, file_format)
+    assert file_tasks.reconcile_output(None, p, None, None) == {"matches": False}
+    receipt = file_tasks.prepare_output(
+        OpticSnapshot.capture(minimal_optic), p, lambda *a, **k: None, threading.Event()
+    )
+    p.update(receipt)
+    assert not (tmp_path / "saved.json").exists()
+    file_tasks.publish_output(None, p, None, None)
+    assert file_tasks.reconcile_output(None, p, None, None) == {"matches": True}
+    restored = (
+        read_optic
+        if file_format == "optiland"
+        else load_zemax_file
+        if file_format == "zemax"
+        else load_codev_file
+    )(Path(p["path"]))
+    assert float(restored.surfaces[1].geometry.radius) == 50
+    file_tasks.cleanup_output(None, p, None, None)
+
+
+def test_unowned_stage_and_invalid_staging_path_are_never_removed(tmp_path):
+    p = parameters(tmp_path)
+    stage = tmp_path / ".optiland-owned.tmp"
+    stage.write_bytes(b"another writer")
+    p["staged_identity"] = None
+    with pytest.raises(ValueError, match="ownership"):
+        file_tasks.cleanup_output(None, p, None, None)
+    assert stage.read_bytes() == b"another writer"
+    p["staged_path"] = str(tmp_path / "not-owned.tmp")
+    with pytest.raises(ValueError, match="owned staging"):
+        file_tasks.cleanup_output(None, p, None, None)

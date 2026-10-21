@@ -6,8 +6,8 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from PySide6.QtCore import QObject, Signal
-from PySide6.QtWidgets import QFileDialog, QWidget
+from PySide6.QtCore import QObject, QSettings, Signal
+from PySide6.QtWidgets import QFileDialog, QMainWindow, QWidget
 
 from optiland_gui.main_window import MainWindow
 from optiland_gui.widgets.file_operation_status import FileOperationStatus
@@ -119,3 +119,37 @@ def test_fast_file_completion_never_flashes_a_spinner(qapp):
     assert status.activity.isHidden() and not status.timer.isActive()
     assert status.cancel.isHidden() and status.label.text() == "Opened"
     status.deleteLater()
+
+
+def test_main_window_finalization_connects_output_status(
+    qapp, file_operations, tmp_path, monkeypatch
+):
+    from optiland_gui import main_window
+    from optiland_gui.widgets.command_palette import CommandRegistry
+
+    connector, operations, _, _, _ = file_operations
+    window = QMainWindow()
+    window.connector = connector
+    window.settings = QSettings(
+        str(tmp_path / "settings.ini"), QSettings.Format.IniFormat
+    )
+    window.command_registry = CommandRegistry()
+    window._resolve_file_candidate = Mock()
+    window.action_manager = SimpleNamespace(get_action=lambda name: None)
+    window.panel_manager = SimpleNamespace(connect_signals=Mock())
+    window.load_stylesheets = Mock()
+    window._connect_dock_animations = Mock()
+    window._register_palette_commands = Mock()
+    window._update_project_name_in_title_bar = Mock()
+    monkeypatch.setattr(main_window._log_handler, "install", lambda *args: None)
+    MainWindow._finalize_setup(window)
+    try:
+        assert window.output_operation_status.parent() is window.statusBar()
+        operations.state_changed.emit("Reading input.json", True, True)
+        assert window.output_operation_status.label.text() == "Reading input.json"
+        assert not window.output_operation_status.cancel.isHidden()
+        window._update_project_name_in_title_bar.reset_mock()
+        operations.completed.emit()
+        window._update_project_name_in_title_bar.assert_called_once()
+    finally:
+        window.deleteLater()
