@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 from PySide6.QtCore import QTimer
 
@@ -29,6 +30,7 @@ def test_unknown_publication_reconciles_and_close_drains_without_blocking(
     wait_for(qapp, lambda: "Fixture completed publish_output" in progress)
     started = time.monotonic()
     operations._closing = True
+    assert operations.request_output(tmp_path / "not-started.json") is None
     assert time.monotonic() - started < 0.1
     assert operations.busy and not settled
     assert not states[-1][2]
@@ -59,6 +61,7 @@ def test_unconfirmed_publication_preserves_destination_and_aborts_close(
     operations.request_output(path)
     wait_for(qapp, lambda: "Fixture entered publish_output" in progress)
     operations._closing = True
+    assert operations.request_output(tmp_path / "not-started.json") is None
     wait_for(qapp, lambda: not operations.busy, timeout=30)
     assert path.read_bytes() == b"previous valid contents"
     assert connector.is_modified()
@@ -87,3 +90,29 @@ def test_rejected_publication_dispatch_cleans_owned_preparation(
     assert connector.is_modified()
     assert not list(tmp_path.glob(".optiland-*.tmp"))
     assert any("publication dispatch unavailable" in text for text, _ in notifications)
+
+
+def test_unavailable_cleanup_reports_the_retained_owned_stage(
+    qapp, tmp_path, file_operations, monkeypatch
+):
+    connector, operations, _, _, notifications = file_operations
+    submit = operations.jobs.submit
+
+    def reject_commit_and_cleanup(*args, **kwargs):
+        if not args[1].endswith(":prepare_output"):
+            raise RuntimeError("worker dispatch unavailable")
+        return submit(*args, **kwargs)
+
+    monkeypatch.setattr(operations.jobs, "submit", reject_commit_and_cleanup)
+    destination = tmp_path / "preserved.json"
+    destination.write_bytes(b"previous contents")
+    request = operations.request_output(destination)
+    wait_for(qapp, lambda: not operations.busy)
+    stage = Path(request.context.staged_path)
+    assert stage.exists() and destination.read_bytes() == b"previous contents"
+    assert connector.is_modified()
+    assert any(
+        str(stage) in text and severity == "warning" for text, severity in notifications
+    )
+    assert operations._queue(request.context, "cleanup_output") is None
+    stage.unlink()

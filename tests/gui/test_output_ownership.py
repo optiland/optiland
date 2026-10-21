@@ -44,3 +44,19 @@ def test_failed_save_preserves_existing_file(qapp, tmp_path, monkeypatch):
     connector._file_service.save(str(destination))
     assert destination.read_bytes() == b"existing good file"
     assert list(tmp_path.iterdir()) == [destination]
+
+
+def test_sync_save_publishes_a_complete_native_document_and_marks_it_clean(
+    qapp, tmp_path, minimal_optic
+):
+    from .test_file_save_export import read_optic
+
+    connector = OptilandConnector()
+    connector._optic = minimal_optic
+    connector.set_modified(True)
+    path = tmp_path / "saved.json"
+    connector._file_service.save(str(path))
+    assert read_optic(path).surfaces.num_surfaces == 4
+    assert connector.get_current_filepath() == str(path)
+    assert not connector.is_modified()
+    assert list(tmp_path.iterdir()) == [path]
