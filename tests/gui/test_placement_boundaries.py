@@ -139,3 +139,34 @@ def test_draft_refresh_and_failed_cell_edit_remain_visible(qapp, connector):
     assert item.text() != "12"
     assert "Placement" in editor._edit_error.text()
     editor.deleteLater()
+
+
+def test_positive_thickness_and_global_rotation_only_preserve_their_contracts(
+    connector,
+):
+    import numpy as np
+
+    c = connector
+    c.set_surface_data(1, c.COL_THICKNESS, "6")
+    assert float(c.get_optic().surfaces[1].thickness) == 6
+    surface = c.get_optic().surfaces[2]
+    surface.geometry.cs.reference_cs = CoordinateSystem(x=2, y=3, rx=0.2)
+    before = surface.geometry.cs.get_effective_transform()[0]
+    before = np.array([float(v) for v in before])
+    apply_placement(c.get_optic(), 2, "global", {"rx": 20})
+    after = surface.geometry.cs.get_effective_transform()[0]
+    np.testing.assert_allclose([float(v) for v in after], before)
+
+
+def test_unchanged_owned_preparation_skips_solves(minimal_optic, monkeypatch):
+    def reject(updater):
+        pytest.fail("unchanged placement reran solves")
+
+    monkeypatch.setattr(type(minimal_optic.updater), "update", reject)
+    prepared = prepare_placement(
+        PreparedOptic.capture(minimal_optic),
+        {"row": 1, "frame": "global", "changes": {}},
+        lambda *a: None,
+        Event(),
+    )
+    assert float(prepared.restore().surfaces[1].geometry.cs.z) == 0
