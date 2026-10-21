@@ -166,7 +166,7 @@ def test_real_worker_commit_editor_rebind_and_history(qapp, connector):
     assert c.get_optic() is not before
     assert float(c.get_optic().surfaces[2].geometry.cs.x) == 0.5
     assert float(c.get_optic().surfaces[2].geometry.cs.rx) == math.radians(12.5)
-    assert editor.open_prop_source_row == 2
+    assert editor.open_prop_source_rows == {2}
     assert isinstance(editor.tableWidget.cellWidget(3, 0), SurfacePropertiesWidget)
     assert editor.interaction_state.selected_surfaces == (c.get_optic().surfaces[2],)
     # Verify actual history reconstruction round-trips the placement.
@@ -188,9 +188,13 @@ def test_expansion_and_drafts_for_standard_mirror_object_image(qapp, connector):
         ui_row = editor.map_surface_index_to_ui_row(row)
         assert not editor.tableWidget.cellWidget(ui_row, 0).props_button.isHidden()
         editor.toggle_properties_widget(row)
-        panel = editor.tableWidget.cellWidget(row + 1, 0)
+        panel = editor.tableWidget.cellWidget(
+            editor.map_surface_index_to_ui_row(row) + 1, 0
+        )
         assert panel.placement.inputs["z"].isEnabled()
-    widget = editor.tableWidget.cellWidget(4, 0).placement
+    widget = editor.tableWidget.cellWidget(
+        editor.map_surface_index_to_ui_row(3) + 1, 0
+    ).placement
     original = widget.inputs["x"].text()
     assert not widget.apply_button.isEnabled()
     widget.frame.setCurrentIndex(1)
@@ -345,23 +349,32 @@ def test_placement_rebind_survives_batched_editor_and_keeps_reference_mode(qapp)
     try:
         wait_for(qapp, lambda: not editor._table_loading)
         editor.tableWidget.selectRow(72)
+        editor.toggle_properties_widget(5)
         editor.toggle_properties_widget(72)
         wait_for(qapp, lambda: not editor._table_loading)
-        widget = editor.tableWidget.cellWidget(73, 0).placement
+        widget = editor.tableWidget.cellWidget(
+            editor.map_surface_index_to_ui_row(72) + 1, 0
+        ).placement
         widget.frame.setCurrentIndex(1)
         widget.inputs["y"].setText("0.25")
         widget.apply()
         wait_for(qapp, lambda: not c.placement.busy and not editor._table_loading)
         assert "applied" in c.placement.message, c.placement.message
-        assert editor.open_prop_source_row == 72
+        assert editor.open_prop_source_rows == {5, 72}
         assert editor.interaction_state.selected_surfaces == (
             c.get_optic().surfaces[72],
         )
         assert (
-            editor.tableWidget.cellWidget(73, 0).placement.frame.currentData()
+            editor.tableWidget.cellWidget(
+                editor.map_surface_index_to_ui_row(72) + 1, 0
+            ).placement.frame.currentData()
             == "reference"
         )
         assert float(c.get_optic().surfaces[72].geometry.cs.y) == 0.25
+        other = editor.tableWidget.cellWidget(
+            editor.map_surface_index_to_ui_row(5) + 1, 0
+        )
+        assert other.placement.frame.currentData() == "global"
     finally:
         c.calculation_jobs.shutdown()
         wait_for(qapp, lambda: c.calculation_jobs._process is None)

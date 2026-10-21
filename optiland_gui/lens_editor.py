@@ -381,7 +381,6 @@ class LensEditor(QWidget):
         self._table_loading = False
         self._table_failed = False
         self._pending_table_state = None
-        self._reveal_properties = False
         self._load_timer = QTimer(self)
         self._load_timer.setSingleShot(True)
         self._load_timer.timeout.connect(self._load_table_batch)
@@ -407,15 +406,19 @@ class LensEditor(QWidget):
                 id(old): id(new)
                 for old, new in zip(old_surfaces, new_surfaces, strict=True)
             }
-            for key in ("current_id", "property_id"):
-                self._pending_table_state[key] = identities.get(
-                    self._pending_table_state[key]
-                )
+            self._pending_table_state["current_id"] = identities.get(
+                self._pending_table_state["current_id"]
+            )
+            for key in ("properties", "property_frames"):
+                self._pending_table_state[key] = {
+                    identities[owner]: value
+                    for owner, value in self._pending_table_state[key].items()
+                    if owner in identities
+                }
         self._displayed_surfaces = new_surfaces
         state.sync_document(candidate)
         state.set_selected_indices(selected)
         state.set_hover(hovered, column)
-        self._reveal_properties = self.open_prop_source_row >= 0
 
     def _init_ui(self):
         """Initializes the main UI components of the editor."""
@@ -620,7 +623,9 @@ class LensEditor(QWidget):
                 panel, SurfacePropertiesWidget
             ):
                 properties[id(old_surfaces[owner])] = panel.tabs.currentIndex()
-                property_frames[id(old_surfaces[owner])] = panel.placement.frame.currentData()
+                property_frames[id(old_surfaces[owner])] = (
+                    panel.placement.frame.currentData()
+                )
         return {
             "current_id": current_id,
             "current_column": table.currentColumn(),
@@ -855,12 +860,6 @@ class LensEditor(QWidget):
         if error:
             self.loadingFailed.emit(error)
         else:
-            if self._reveal_properties and self.open_prop_source_row >= 0:
-                self.tableWidget.scrollTo(
-                    self.tableWidget.model().index(self.open_prop_source_row + 1, 0),
-                    QAbstractItemView.ScrollHint.PositionAtTop,
-                )
-            self._reveal_properties = False
             self.loadingFinished.emit()
 
     def _insert_properties_widget(self, source_row):
@@ -874,7 +873,9 @@ class LensEditor(QWidget):
         self.tableWidget.setCellWidget(prop_row_index, 0, prop_widget)
         self.tableWidget.setSpan(prop_row_index, 0, 1, self.tableWidget.columnCount())
         owner_id = id(self._displayed_surfaces[source_row])
-        frame = self._pending_table_state.get("property_frames", {}).get(owner_id, "global")
+        frame = self._pending_table_state.get("property_frames", {}).get(
+            owner_id, "global"
+        )
         prop_widget.placement.frame.setCurrentIndex(1 if frame == "reference" else 0)
         default_props_height = prop_widget.sizeHint().height()
         self.tableWidget.verticalHeader().setMaximumSectionSize(
