@@ -7,7 +7,7 @@ import json
 
 from optiland.fileio import load_codev_file, load_zemax_file
 from optiland.optic import Optic
-from optiland_gui.services.job_records import check_cancelled
+from optiland_gui.services.job_records import OpticSnapshot, check_cancelled
 from optiland_gui.services.model_initialization import initialize_loaded_optic
 from optiland_gui.services.prepared_optic import PreparedOptic
 
@@ -39,7 +39,8 @@ def load_file(snapshot, parameters, progress, cancelled):
         sample_class = getattr(importlib.import_module(module_name), class_name)
         if not isinstance(sample_class, type) or not issubclass(sample_class, Optic):
             raise ValueError("The selected Gallery sample is not an Optic class.")
-        candidate = sample_class()
+        # Built-in subclasses become the same editable model as a saved file.
+        candidate = OpticSnapshot.capture(sample_class()).restore()
     else:
         raise ValueError(f"Unsupported file format: {file_format}")
     check_cancelled(cancelled)
