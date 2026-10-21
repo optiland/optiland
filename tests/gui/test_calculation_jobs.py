@@ -442,6 +442,7 @@ def test_publication_cannot_be_cancelled_after_acceptance(qapp, jobs):
 def test_close_exclusions_preserve_requested_write_and_cancel_other_work(qapp, jobs):
     state, service, receiver = jobs
     write = service.submit("file-output", "unused", None, {"value": "written"})
+    wait_for(qapp, lambda: service.active_request is write)
     preview = service.submit("preview", "unused", None, {"value": "obsolete"})
     service.cancel_cancellable(exclude_targets={"file-output"})
     wait_for(qapp, lambda: len(receiver.results) == 2)
@@ -449,7 +450,8 @@ def test_close_exclusions_preserve_requested_write_and_cancel_other_work(qapp, j
     assert outcomes == {write.job_id: "succeeded", preview.job_id: "cancelled"}
 
 
-def test_shutdown_drains_accepted_publication_asynchronously(qapp, jobs):
+@pytest.mark.parametrize("phase", ["pending", "active"])
+def test_shutdown_drains_accepted_publication_asynchronously(qapp, jobs, phase):
     state, service, receiver = jobs
     request = service.submit(
         "publish",
@@ -459,7 +461,8 @@ def test_shutdown_drains_accepted_publication_asynchronously(qapp, jobs):
         cancellable=False,
         cancel_on_document_change=False,
     )
-    wait_for(qapp, lambda: service.active_request is request)
+    if phase == "active":
+        wait_for(qapp, lambda: service.active_request is request)
     start = time.monotonic()
     service.shutdown()
     assert time.monotonic() - start < 0.1
