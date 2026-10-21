@@ -91,3 +91,37 @@ def test_gallery_candidate_does_not_discard_edits_made_during_construction(
         operations.resolve_candidate(request.context.identifier, False, token) is False
     )
     assert connector.get_optic().surfaces[1].comment == "newer edits"
+
+
+@pytest.mark.parametrize(
+    "module_name,class_name,valid",
+    [
+        ("builtins", "object", False),
+        ("optiland.samples.objectives", "__name__", False),
+        ("optiland.samples.objectives", "CookeTriplet", True),
+    ],
+)
+def test_gallery_worker_validation_and_normalization(module_name, class_name, valid):
+    import threading
+
+    from optiland.optic import Optic
+    from optiland_gui.services.file_tasks import load_file
+    from optiland_gui.services.job_records import BackendConfig
+
+    parameters = {
+        "backend": BackendConfig.capture(),
+        "format": "sample",
+        "load_options": {"sample_class": (module_name, class_name)},
+    }
+    if not valid:
+        with pytest.raises(ValueError, match="Gallery"):
+            load_file(None, parameters, lambda *a: None, threading.Event())
+    else:
+        candidate = load_file(
+            None, parameters, lambda *a: None, threading.Event()
+        ).restore()
+        assert type(candidate) is Optic
+        assert candidate.surfaces.num_surfaces == 8
+        candidate.trace(
+            0, 0, candidate.wavelengths.primary_wavelength.value, 3, "line_y"
+        )
