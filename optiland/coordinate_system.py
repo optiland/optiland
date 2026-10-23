@@ -25,6 +25,20 @@ if TYPE_CHECKING:
     from optiland._types import BEArray, ScalarOrArray
 
 
+def _needs_rotation(angle: BEArray) -> bool:
+    """Return whether a rotation by ``angle`` must be applied to rays.
+
+    Skipping zero rotations saves a full pass over the rays per axis, but it
+    is only exact when every element of ``angle`` is zero and ``angle`` is not
+    tracked by autograd: a tracked angle must enter the graph even at zero so
+    that its gradient is defined. Scalars avoid the ``any()`` call, which
+    costs an order of magnitude more than ``bool()`` on a 0-d array.
+    """
+    if getattr(angle, "requires_grad", False):
+        return True
+    return bool(angle.any()) if angle.ndim else bool(angle)
+
+
 class CoordinateSystem:
     """Represents a coordinate system in 3D space.
 
@@ -135,11 +149,11 @@ class CoordinateSystem:
             self.reference_cs.localize(rays)
 
         rays.translate(-self.x, -self.y, -self.z)
-        if self.rz:
+        if _needs_rotation(self.rz):
             rays.rotate_z(-self.rz)
-        if self.ry:
+        if _needs_rotation(self.ry):
             rays.rotate_y(-self.ry)
-        if self.rx:
+        if _needs_rotation(self.rx):
             rays.rotate_x(-self.rx)
 
     def globalize(self, rays: RealRays):
@@ -149,11 +163,11 @@ class CoordinateSystem:
             rays: The rays to be globalized.
 
         """
-        if self.rx:
+        if _needs_rotation(self.rx):
             rays.rotate_x(self.rx)
-        if self.ry:
+        if _needs_rotation(self.ry):
             rays.rotate_y(self.ry)
-        if self.rz:
+        if _needs_rotation(self.rz):
             rays.rotate_z(self.rz)
         rays.translate(self.x, self.y, self.z)
 

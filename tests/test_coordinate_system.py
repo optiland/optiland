@@ -180,6 +180,83 @@ def test_coordinate_system_setter_autodiff_matches_fd(set_test_backend):
     assert abs(autodiff_grad - fd_grad) < 1e-6
 
 
+@pytest.mark.parametrize("method", ["localize", "globalize"])
+def test_coordinate_system_array_rotations_match_scalar(set_test_backend, method):
+    # Array-valued rotations apply elementwise, one angle per ray, including
+    # rays whose angle is exactly zero.
+    rx = [0.0, 0.1, 0.0]
+    ry = [0.2, 0.0, 0.0]
+    rz = [0.3, 0.0, -0.4]
+    x, y, z = [1.0, -2.0, 0.5], [2.0, 0.5, -1.0], [3.0, 1.0, 4.0]
+    L, M, N = [0.0, 0.6, 0.0], [0.0, 0.0, 0.8], [1.0, 0.8, 0.6]
+
+    cs = CoordinateSystem(1.0, -1.0, 2.0, be.array(rx), be.array(ry), be.array(rz))
+    rays = RealRays(x, y, z, L, M, N, 1.0, 1.0)
+    getattr(cs, method)(rays)
+
+    for i in range(len(rx)):
+        cs_i = CoordinateSystem(1.0, -1.0, 2.0, rx[i], ry[i], rz[i])
+        ray_i = RealRays(x[i], y[i], z[i], L[i], M[i], N[i], 1.0, 1.0)
+        getattr(cs_i, method)(ray_i)
+        for attr in ("x", "y", "z", "L", "M", "N"):
+            assert_allclose(getattr(rays, attr)[i], getattr(ray_i, attr))
+
+
+@pytest.mark.parametrize("axis", ["rx", "ry", "rz"])
+@pytest.mark.parametrize("method", ["localize", "globalize"])
+def test_coordinate_system_zero_rotation_gradient(set_test_backend, axis, method):
+    # A tracked rotation must reach the autograd graph even when its value is
+    # exactly zero, and its gradient must match a central finite difference.
+    if be.get_backend() != "torch":
+        pytest.skip("autodiff vs. finite-difference check is torch-only")
+
+    import torch
+
+    def transformed_sum(angle):
+        cs = CoordinateSystem(**{axis: angle})
+        rays = RealRays(1.0, 2.0, 3.0, 0.6, 0.0, 0.8, 1.0, 1.0)
+        getattr(cs, method)(rays)
+        return rays.x + rays.y + rays.z + rays.L + rays.M + rays.N
+
+    angle = torch.tensor(0.0, dtype=torch.float64, requires_grad=True)
+    transformed_sum(angle).sum().backward()
+    assert angle.grad is not None
+
+    eps = 1e-6
+    with torch.no_grad():
+        f_plus = transformed_sum(torch.tensor(eps, dtype=torch.float64))
+        f_minus = transformed_sum(torch.tensor(-eps, dtype=torch.float64))
+    fd_grad = ((f_plus - f_minus) / (2 * eps)).item()
+
+    assert fd_grad != 0.0
+    assert abs(angle.grad.item() - fd_grad) < 1e-6
+
+
+def test_untilted_mirror_tilt_gradient(set_test_backend):
+    # Tilting a mirror by a small angle deflects the reflected ray by twice
+    # that angle, so d(M)/d(rx) = 2 at rx = 0. The gradient must be available
+    # when the tilt starts at exactly zero.
+    if be.get_backend() != "torch":
+        pytest.skip("gradient check is torch-only")
+
+    import torch
+
+    from optiland.optic import Optic
+
+    rx = torch.tensor(0.0, dtype=torch.float64, requires_grad=True)
+    optic = Optic()
+    optic.surfaces.add(index=0, z=-100)
+    optic.surfaces.add(index=1, z=10, rx=rx, material="mirror")
+    optic.surfaces.add(index=2, z=-50)
+
+    rays = RealRays(0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.55)
+    optic.surfaces.trace(rays, skip=1)
+    rays.M.sum().backward()
+
+    assert rx.grad is not None
+    assert_allclose(rx.grad, 2.0)
+
+
 def test_coordinate_system_from_dict(set_test_backend):
     cs_dict = {"x": 1, "y": -1, "z": 2, "rx": 0, "ry": 0, "rz": 0, "reference_cs": None}
     cs = CoordinateSystem.from_dict(cs_dict)
