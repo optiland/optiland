@@ -53,7 +53,10 @@ class CylindricalFrustumGeometry(AnalyticGeometry):
         self.z_back = as_param(z_back)
 
     def ray_intersect(
-        self, origins: np.ndarray, directions: np.ndarray
+        self,
+        origins: np.ndarray,
+        directions: np.ndarray,
+        eps: float | np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Intersect rays with the frustum lateral surface.
 
@@ -71,6 +74,7 @@ class CylindricalFrustumGeometry(AnalyticGeometry):
         Args:
             origins: Ray origins in local frame, shape (N, 3) [mm].
             directions: Ray directions in local frame, shape (N, 3).
+            eps: See :meth:`ComponentGeometry.ray_intersect`.
 
         Returns:
             (t, normals, hit_mask, n_geom) all in local frame. n_geom points
@@ -106,7 +110,8 @@ class CylindricalFrustumGeometry(AnalyticGeometry):
         disc_safe = be.maximum(disc, 0.0)
         sqrt_disc = be.sqrt(disc_safe)
 
-        eps = 1e-9
+        if eps is None:
+            eps = 1e-9
         inf_val = be.ones_like(a) * be.inf
 
         # Linear fallback when |a| is very small (ray nearly parallel to axis)

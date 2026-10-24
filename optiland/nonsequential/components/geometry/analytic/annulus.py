@@ -49,7 +49,10 @@ class AnnularPlaneGeometry(AnalyticGeometry):
         self.z_offset = as_param(z_offset)
 
     def ray_intersect(
-        self, origins: np.ndarray, directions: np.ndarray
+        self,
+        origins: np.ndarray,
+        directions: np.ndarray,
+        eps: float | np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Intersect rays with the annular plane.
 
@@ -59,6 +62,7 @@ class AnnularPlaneGeometry(AnalyticGeometry):
         Args:
             origins: Ray origins in local frame, shape (N, 3) [mm].
             directions: Ray directions in local frame, shape (N, 3).
+            eps: See :meth:`ComponentGeometry.ray_intersect`.
 
         Returns:
             (t, normals, hit_mask, n_geom) all in local frame. n_geom is
@@ -70,11 +74,12 @@ class AnnularPlaneGeometry(AnalyticGeometry):
         oz = origins[:, 2]
         dz = directions[:, 2]
 
-        eps = 1e-9
+        if eps is None:
+            eps = 1e-9
         inf_arr = be.ones(N) * be.inf
         # Avoid division by zero for rays parallel to the plane
         t = be.where(
-            be.abs(dz) > eps,
+            be.abs(dz) > 1e-9,
             (self.z_offset - oz) / (dz + 1e-30),
             inf_arr,
         )
