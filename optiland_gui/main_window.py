@@ -68,6 +68,7 @@ from .widgets.sidebar import (
     SIDEBAR_MAX_WIDTH,
     SIDEBAR_MIN_WIDTH,
 )
+from .widgets.spinbox_hit_areas import SpinBoxHitAreaGuard
 from .widgets.toast import ToastManager
 
 try:
@@ -172,6 +173,7 @@ class MainWindow(FramelessWindow):
         """Initializes the MainWindow by orchestrating the setup of all
         UI components."""
         super().__init__()
+        self._spinbox_hit_area_guard = SpinBoxHitAreaGuard(self)
         self._configure_window()
         self._init_core_components()
         self._init_ui()
