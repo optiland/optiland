@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 
 import optiland.backend as be
 from optiland.fileio import (
@@ -61,17 +62,13 @@ class SpecialFloatEncoder(json.JSONEncoder):
             if encoded is not None:
                 return encoded
 
-        if hasattr(obj, "item") and isinstance(obj.item(), float):
-            encoded = self._encode_special_float(obj.item())
-            if encoded is not None:
-                return encoded
-
-        try:
-            return super().default(obj)
-        except TypeError:
-            if hasattr(obj, "tolist"):
-                return obj.tolist()
-            return str(obj)
+        if hasattr(obj, "tolist") and callable(obj.tolist):
+            return obj.tolist()
+        if hasattr(obj, "item") and callable(obj.item):
+            return obj.item()
+        # Unknown optical data must fail before publication, never turn into
+        # display text that cannot be reconstructed when the file is reopened.
+        return super().default(obj)
 
 
 def json_inf_nan_hook(dct: dict) -> dict:
@@ -110,6 +107,9 @@ class FileService:
     def __init__(self, connector: object) -> None:
         self._connector = connector
         self._current_filepath: str | None = None
+        from optiland_gui.services.output_operations import OutputOperations
+
+        self.output_operations = OutputOperations(self, connector)
 
     # ------------------------------------------------------------------
     # Toast helper
@@ -184,11 +184,34 @@ class FileService:
             filepath: Absolute path to write to.
         """
         try:
+            if self.output_operations.path_busy(filepath):
+                raise RuntimeError(
+                    "An asynchronous save to this path is still running."
+                )
+            sequence = self.output_operations.next_save_sequence()
+            edit_token = self._connector.document_state.edit_token
             data = self._connector._capture_optic_state()
-            with open(filepath, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=4, cls=SpecialFloatEncoder)
-            self._current_filepath = filepath
-            self._connector.set_modified(False)
+            destination = os.path.abspath(filepath)
+            temporary = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    dir=os.path.dirname(destination),
+                    prefix=".optiland-",
+                    suffix=".tmp",
+                    delete=False,
+                ) as f:
+                    temporary = f.name
+                    json.dump(data, f, indent=4, cls=SpecialFloatEncoder)
+                os.replace(temporary, destination)
+                temporary = None
+            finally:
+                if temporary is not None:
+                    os.unlink(temporary)
+            self.output_operations.confirm_saved_document(
+                filepath, edit_token, sequence
+            )
             self._toast(f"Saved \u2014 {os.path.basename(filepath)}", "success")
         except Exception as e:
             self._toast(f"Save failed: {e}", "error", sub=filepath)
@@ -267,6 +290,10 @@ class FileService:
             filepath: Destination path for the ``.zmx`` file.
         """
         try:
+            if self.output_operations.path_busy(filepath):
+                raise RuntimeError(
+                    "An asynchronous save to this path is still running."
+                )
             optic = self._connector._optic
             if optic is None:
                 self._toast("No optical system loaded to export.", "warning")
@@ -285,6 +312,10 @@ class FileService:
             filepath: Destination path for the ``.seq`` file.
         """
         try:
+            if self.output_operations.path_busy(filepath):
+                raise RuntimeError(
+                    "An asynchronous save to this path is still running."
+                )
             optic = self._connector._optic
             if optic is None:
                 self._toast("No optical system loaded to export.", "warning")

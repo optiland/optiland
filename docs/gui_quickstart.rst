@@ -131,6 +131,32 @@ then redraw sharply at the new size. Plot navigation and image saving use
 the current figure. Resizing preserves results and zoom without running
 the analysis again.
 
+Saving and exporting files
+--------------------------
+
+The GUI's background **Save**, **Save As**, and **Export** operations prepare a
+temporary file beside the destination, then replace the destination with the
+completed file. This keeps an existing design intact while the new output is
+being prepared. It also has these filesystem requirements and effects:
+
+* The destination directory must permit creating a temporary file and replacing
+  directory entries. Write access to an existing destination file alone may
+  not be sufficient. If the temporary file cannot be created, the operation
+  reports an error without writing to the destination. Use **Save As** or choose
+  an export destination in a writable directory, or correct the directory's
+  permissions and retry. The GUI does not fall back to writing directly into
+  the existing file.
+* If the destination itself is a symbolic link, replacement removes the link
+  and puts a regular file at that path. The previous link target is unchanged.
+  To update the target file instead, select its actual path as the destination.
+* Replacement creates a new file identity. Existing destination permissions,
+  ownership, custom access-control lists, and other file metadata are not
+  explicitly copied to it. The replacement keeps the permissions assigned to
+  the temporary file when it was created, subject to the operating system and
+  filesystem (for example, the process umask or inherited directory access
+  rules). Check or reapply any required file-specific permissions after saving
+  or exporting.
+
 Notifications
 -------------
 
