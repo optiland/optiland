@@ -41,6 +41,8 @@ from optiland.fields import (
     RealImageHeightField,
 )
 
+from .widgets.spinbox_hit_areas import DoubleSpinBox
+
 if TYPE_CHECKING:
     from .optiland_connector import OptilandConnector
 
@@ -220,7 +222,7 @@ class ApertureEditor(PropertyEditorBase):
         self.cmbApertureType.addItems(self.connector.get_aperture_types())
         layout.addRow("Aperture Type:", self.cmbApertureType)
 
-        self.spnApertureValue = QDoubleSpinBox()
+        self.spnApertureValue = DoubleSpinBox()
         self.spnApertureValue.setDecimals(4)
         self.spnApertureValue.setRange(-1e9, 1e9)
         self.spnApertureValue.setSingleStep(0.1)
@@ -662,7 +664,7 @@ class PolarizationEditor(PropertyEditorBase):
 
     def _make_spinbox(self) -> QDoubleSpinBox:
         """Return a QDoubleSpinBox suitable for Ex / Ey amplitude."""
-        spn = QDoubleSpinBox()
+        spn = DoubleSpinBox()
         spn.setDecimals(6)
         spn.setRange(-1e9, 1e9)
         spn.setSingleStep(0.1)
@@ -670,7 +672,7 @@ class PolarizationEditor(PropertyEditorBase):
 
     def _make_angle_spinbox(self) -> QDoubleSpinBox:
         """Return a QDoubleSpinBox suitable for phase angles in degrees."""
-        spn = QDoubleSpinBox()
+        spn = DoubleSpinBox()
         spn.setDecimals(4)
         spn.setRange(-360.0, 360.0)
         spn.setSingleStep(1.0)
