@@ -28,6 +28,11 @@ class WavefrontData(Generic[BEArrayT]):
             the exit-pupil reference sphere center. ``None`` for planar references.
         E_exits (list[be.ndarray] | None): A list of 3D electric field vectors at
             the exit pupil, representing incoherent polarization states.
+            Includes launch power and scalar loss in the amplitudes. Vectorial
+            PSFs consume these fields without applying intensity scaling again.
+        prt_matrix (be.ndarray | None): Raw 3D polarization transport matrices.
+            Includes Jones effects but excludes launch power, scalar loss and
+            clipping masks. Use E_exits for power-scaled field calculations.
     """
 
     pupil_x: BEArrayT

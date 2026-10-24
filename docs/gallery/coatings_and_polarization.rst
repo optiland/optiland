@@ -3,6 +3,9 @@
 Coatings and Polarization
 =========================
 
+For field frames, scalar attenuation and clipping,
+see :ref:`polarization_transport` in the ray tracing developer guide.
+
 .. nbgallery::
 
    ../examples/Tutorial_5a_Coatings_and_Multilayer_Stacks

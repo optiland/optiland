@@ -177,6 +177,24 @@ class RealRays(BaseRays):
             self.L * be.sin(rz) + self.M * be.cos(rz),
         )
 
+    def attenuate(self, factor: ScalarOrArray) -> None:
+        """Multiply ray intensity by a polarization-independent factor.
+
+        Args:
+            factor: Scalar or per-ray array of shape (N,). This is an intensity
+                factor, not a field amplitude; 0.25 retains 25% of the power.
+                Loss models are responsible for supplying factors in [0, 1].
+
+        Zero-intensity rays remain dark for invalid later factors. Nonfinite
+        factors on powered rays remain visible. Polarized subclasses also
+        retain this loss for subsequent source-state and field evaluations.
+        """
+        # A missed later surface can supply NaN/inf attenuation. Zero incident
+        # power remains zero; nonfinite factors on powered rays stay visible.
+        # Broadcast a scalar zero instead of allocating a full ray-sized array.
+        factor = be.where(self.i == 0, 0.0, factor)
+        self.i = self.i * factor
+
     def clip(self, condition: BEArray):
         """Clip the rays based on a condition."""
         cond = be.array(condition)

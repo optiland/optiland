@@ -10,10 +10,10 @@
    
       BaseCoating
       BaseCoatingPolarized
+      CartesianJonesCoating
       FresnelCoating
       JonesThinFilm
       PolarizerCoating
       RetarderCoating
       SimpleCoating
       ThinFilmCoating
-   
