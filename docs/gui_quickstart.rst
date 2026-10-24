@@ -123,6 +123,18 @@ Optiland features a VS Code-style **Command Palette** that provides quick access
 
    All windows are dockable and can be rearranged to suit your workflow. You can also save your layout for future sessions. These can be loaded by pressing "1" or "2" in the top toolbar, corresponding to the slot used for saving your layout.
 
+   Drag a panel's title to detach or reposition it. A small movement remains a
+   click; continue dragging to a window side or another panel to preview a
+   docked split or tab group, then release to place it. Double-click the title,
+   or use its Float panel / Dock panel button, to change floating state.
+   The Close panel button hides the panel; reopen it from the View menu.
+   When a floating panel is docked with its Dock panel button, its tab is selected.
+   The Script Editor and Console use the same controls inside Scripts Terminal.
+   Drag the separator between docked panels to resize them, or an edge or
+   corner of a floating panel. Content minimum sizes limit how far a panel
+   can shrink. Docking uses sides, splits and tabs; it does not align panels
+   to a pixel grid. Use Reset Layout to return to the default arrangement.
+
 Resizing analysis plots
 -----------------------
 
@@ -130,6 +142,7 @@ Complex analysis plots can show a temporary scaled view while resizing,
 then redraw sharply at the new size. Plot navigation and image saving use
 the current figure. Resizing preserves results and zoom without running
 the analysis again.
+
 
 Notifications
 -------------

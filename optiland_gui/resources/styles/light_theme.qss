@@ -39,16 +39,16 @@ QMainWindow {
 
 /* Separators between dock widgets in QMainWindow */
 QMainWindow::separator {
-    background-color: #CED4DA; /* --border-pressed-bg: Color of the thin line separator */
-    width: 2px;  /* Thickness */
-    height: 2px; /* Thickness */
-    background-color: #ADB5BD; /* A neutral dark color, adjust to your theme */
-    border: 1px solid #ADB5BD; /* A border to define the separator's edges */
+    /* Five-pixel interior plus two one-pixel borders = seven-pixel target. */
+    width: 5px;
+    height: 5px;
+    background-color: #ADB5BD;
+    border: 1px solid #6C757D;
 }
 
 QMainWindow::separator:hover {
-    /* Optional: Highlight the separator on hover. */
-    background-color: #007ACC; 
+    background-color: #6C757D;
+    border: 1px solid #343A40;
 }
 
 QDockWidget {
@@ -724,44 +724,41 @@ QTableWidget QLineEdit {
 
 /* === Custom Dock Widget Title Bar (Light) === */
 QWidget#CustomDockTitleBar {
-    background-color: #4A4A4A; /* Dark gray background */
-    border: 5px solid #4A4A4A;
-    border-bottom: 1px solid #2E2E2E; /* Match surface color for seamless look */
-    padding: 0px 0px; /* Top/bottom, left/right padding */
-    height: 30px; /* Fixed height for title bar */
-    border-top-left-radius: 4px;
-    border-top-right-radius: 4px;
+    background-color: #E9ECEF;
+    border: none;
+    border-bottom: 1px solid #ADB5BD;
 }
 
 QWidget#CustomDockTitleBar QLabel {
-    color: #E0E0E0; /* Light text */
+    color: #212529;
     font-weight: bold;
-    font-size: 9pt; 
-    padding-left: 6px;
-    letter-spacing: 0.5px; /* Spacing between letters */
-    font-family: 'Segoe UI'; /* Modern font */
+    padding: 0px;
+    border: none;
+    background: transparent;
 }
 
-/* Dock Title Buttons */
-#DockMinimizeButton, #DockUndockButton, #DockCloseButton {
-    min-width: 10px;
-    max-width: 10px;
-    min-height: 10px;
-    max-height: 10px;
-    border-radius: 5px; /* Makes it a circle - half of width/height */
-    border: 1px solid rgba(0, 0, 0, 0.2);
-    margin: 0px 1px; /* Spacing between buttons */
+QToolButton#DockUndockButton, QToolButton#DockCloseButton {
+    color: #212529;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    margin: 0px;
     padding: 0px;
 }
 
-#DockMinimizeButton:hover, #DockUndockButton:hover, #DockCloseButton:hover {
-    border: 1px solid rgba(255, 255, 255, 0.6);
-    /* Removed transform property as it's not supported in Qt stylesheets */
+QToolButton#DockUndockButton:hover, QToolButton#DockCloseButton:hover {
+    background-color: #DEE2E6;
+    border: 1px solid #6C757D;
 }
 
-#DockMinimizeButton { background-color: #6C757D; } /* Green */
-#DockUndockButton { background-color: #F48F4F; } /* Yellow */
-#DockCloseButton { background-color: #ED695E; } /* Red */
+QToolButton#DockUndockButton:pressed, QToolButton#DockCloseButton:pressed {
+    background-color: #CED4DA;
+    border: 1px solid #343A40;
+}
+
+QToolButton#DockUndockButton:focus, QToolButton#DockCloseButton:focus {
+    border: 2px solid #343A40;
+}
 
 /* ============================================================
    Phase 1 QSS Polish (light theme)

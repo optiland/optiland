@@ -10,7 +10,6 @@ Author: Manuel Fragata Mendes, 2025
 
 from __future__ import annotations
 
-import contextlib
 import inspect
 import logging
 import os
@@ -204,8 +203,6 @@ class MainWindow(FramelessWindow):
         self.iface = self.OptilandInterface(self)
         self.panel_manager = PanelManager(self, self.connector)
         self.action_manager = ActionManager(self, self.connector)
-        self.dock_animations = {}
-        self.dock_original_sizes = {}
         self.about_dialog = None
         # These are initialised after the window is shown (needs parent geometry)
         self.toast_manager: ToastManager | None = None
@@ -259,7 +256,6 @@ class MainWindow(FramelessWindow):
             dark_theme_action.setChecked(self.current_theme_path == THEME_DARK_PATH)
             light_theme_action.setChecked(self.current_theme_path != THEME_DARK_PATH)
 
-        self._connect_dock_animations()
         self.panel_manager.connect_signals()
 
         self.connector.opticLoaded.connect(self._update_project_name_in_title_bar)
@@ -338,27 +334,6 @@ class MainWindow(FramelessWindow):
             is_dark = self.current_theme_path == THEME_DARK_PATH
             dark_theme_action.setChecked(is_dark)
             light_theme_action.setChecked(not is_dark)
-
-    def _connect_dock_animations(self):
-        """Connects dock widget view actions to an animation handler.
-
-        This method disconnects the default `triggered` signal from each dock's
-        toggle view action and reconnects it to a custom slot that provides a
-        fade-in/out animation for a smoother user experience.
-        """
-        if not hasattr(self, "panel_manager"):
-            return
-        for dock_widget_ref in self.panel_manager.get_all_docks():
-            if dock_widget_ref:
-                action = dock_widget_ref.toggleViewAction()
-                if action:
-                    with contextlib.suppress(TypeError, RuntimeError):
-                        action.triggered.disconnect()
-                    action.triggered.connect(
-                        lambda checked, dock=dock_widget_ref: self.animate_dock_toggle(
-                            dock, checked
-                        )
-                    )
 
     def _populate_main_menu_bar(self, menu_bar: QMenuBar):
         """Populates the main menu bar with actions and sub-menus.
@@ -494,112 +469,21 @@ class MainWindow(FramelessWindow):
 
             self.custom_title_bar_widget.set_project_name(display_name)
 
-    def _animate_dock_show(
-        self, dock_widget, is_left_or_right, original_dimension, duration, curve
-    ):
-        """Handles the animation for showing a dock widget."""
-        if dock_widget.isHidden():
-            dock_widget.show()
-            dock_widget.raise_()
-            target_prop = b"maximumWidth" if is_left_or_right else b"maximumHeight"
-            animation = QPropertyAnimation(dock_widget, target_prop)
-            animation.setStartValue(0)
-            animation.setEndValue(original_dimension)
-            if is_left_or_right:
-                dock_widget.setMaximumWidth(
-                    original_dimension if original_dimension > 0 else 5000
-                )
-            else:
-                dock_widget.setMaximumHeight(
-                    original_dimension if original_dimension > 0 else 5000
-                )
-            animation.setDuration(duration)
-            animation.setEasingCurve(curve)
-            animation.start(QPropertyAnimation.DeleteWhenStopped)
-            self.dock_animations[dock_widget] = animation
-        else:
-            dock_widget.raise_()
-
-    def _animate_dock_hide(
-        self, dock_widget, is_left_or_right, original_dimension, duration, curve
-    ):
-        """Handles the animation for hiding a dock widget."""
-        if not dock_widget.isHidden():
-            current_size = (
-                dock_widget.width() if is_left_or_right else dock_widget.height()
-            )
-            target_prop = b"maximumWidth" if is_left_or_right else b"maximumHeight"
-            animation = QPropertyAnimation(dock_widget, target_prop)
-            animation.setStartValue(current_size)
-            animation.setEndValue(0)
-            animation.setDuration(duration)
-            animation.setEasingCurve(curve)
-            animation.finished.connect(dock_widget.hide)
-            animation.finished.connect(
-                lambda: dock_widget.setMaximumSize(5000, 5000)
-            )  # Restore max size
-            animation.start(QPropertyAnimation.DeleteWhenStopped)
-            self.dock_animations[dock_widget] = animation
-
     def animate_dock_toggle(
         self, dock_widget: QDockWidget, show_state_after_toggle: bool
     ) -> None:
-        """Toggle a dock widget visibility with a slide/fade animation.
+        """Set dock visibility immediately and bring shown panels to the front.
+
+        This scripting entry point preserves the dock's size constraints. View
+        menu actions use Qt's native ``toggleViewAction`` visibility handling.
 
         Args:
             dock_widget: The dock widget to show or hide.
             show_state_after_toggle: ``True`` to show, ``False`` to hide.
         """
-        animation_duration = 150
-        easing_curve = QEasingCurve.InOutQuad
-        is_left_or_right_dock = self.dockWidgetArea(dock_widget) in [
-            Qt.LeftDockWidgetArea,
-            Qt.RightDockWidgetArea,
-        ]
-
-        # Determine the dimension to animate
-        if (
-            hasattr(self, "panel_manager")
-            and dock_widget == self.panel_manager.sidebar
-            and self.panel_manager.sidebar_content_widget
-        ):
-            original_dimension = (
-                self.panel_manager.sidebar_content_widget.maximumWidth()
-                if not self.panel_manager.sidebar_content_widget._is_collapsed
-                else self.panel_manager.sidebar_content_widget.minimumWidth()
-            )
-        else:
-            default_size = 300 if is_left_or_right_dock else 200
-            current_size = (
-                dock_widget.width() if is_left_or_right_dock else dock_widget.height()
-            )
-            original_dimension = self.dock_original_sizes.get(
-                dock_widget, current_size if current_size > 0 else default_size
-            )
-
-        # Stop any currently running animation on this dock
-        if (
-            dock_widget in self.dock_animations
-            and self.dock_animations[dock_widget].state() == QPropertyAnimation.Running
-        ):
-            self.dock_animations[dock_widget].stop()
-
+        dock_widget.setVisible(show_state_after_toggle)
         if show_state_after_toggle:
-            self._animate_dock_show(
-                dock_widget,
-                is_left_or_right_dock,
-                original_dimension,
-                animation_duration,
-                easing_curve,
-            )
-        else:
-            self._animate_dock_hide(
-                dock_widget,
-                is_left_or_right_dock,
-                original_dimension,
-                animation_duration,
-                easing_curve,
-            )
+            dock_widget.raise_()
 
     @Slot(str)
     def switch_theme(self, theme_path: str) -> None:

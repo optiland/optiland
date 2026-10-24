@@ -51,6 +51,8 @@ from qtconsole.inprocess import QtInProcessKernelManager
 from qtconsole.rich_jupyter_widget import RichJupyterWidget
 
 from ..config import DEFAULT_TAB_POSITION
+from .custom_dock_title_bar import CustomDockTitleBar
+from .custom_dock_widget import CustomDockWidget
 
 
 class PythonHighlighter(QSyntaxHighlighter):
@@ -328,7 +330,7 @@ class PythonTerminalWidget(QWidget):
 
     def _create_editor_dock(self) -> QDockWidget:
         """Create the dock widget containing the script editor and snippets panel."""
-        dock = QDockWidget("Script Editor", self)
+        dock = CustomDockWidget("Script Editor", self)
         dock.setAllowedAreas(Qt.AllDockWidgetAreas)
         editor_widget = QWidget()
         layout = QVBoxLayout(editor_widget)
@@ -402,7 +404,7 @@ class PythonTerminalWidget(QWidget):
 
     def _create_console_dock(self) -> QDockWidget:
         """Create the dock widget containing the Jupyter console."""
-        dock = QDockWidget("Console", self)
+        dock = CustomDockWidget("Console", self)
         dock.setAllowedAreas(Qt.AllDockWidgetAreas)
         self.jupyter_widget = RichJupyterWidget()
         self.jupyter_widget.kernel_manager = self.kernel_manager
@@ -673,6 +675,25 @@ class PythonTerminalWidget(QWidget):
         """
         self.current_theme = theme_name
         theme_palette = self.themes.get(theme_name, self.themes["dark"])
+
+        dark = theme_name == "dark"
+        foreground = "#E0E0E0" if dark else "#212529"
+        background = "#2E2E2E" if dark else "#DEE2E6"
+        hover = "#4A4A4A" if dark else "#CED4DA"
+        for dock in self.findChildren(QDockWidget):
+            title = dock.titleBarWidget()
+            if not isinstance(title, CustomDockTitleBar):
+                continue
+            title.setStyleSheet(
+                "#CustomDockTitleBar {"
+                f"background: {background}; color: {foreground}; }}"
+                f"QLabel {{ color: {foreground}; background: transparent; }}"
+                "QToolButton { background: transparent;"
+                "border: 1px solid transparent; border-radius: 3px; }"
+                "QToolButton:hover, QToolButton:pressed {"
+                f"background: {hover}; border-color: {foreground}; }}"
+                f"QToolButton:focus {{ border: 1px dashed {foreground}; }}"
+            )
 
         btn_style = (
             "QPushButton {"

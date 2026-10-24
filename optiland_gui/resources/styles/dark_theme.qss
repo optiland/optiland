@@ -17,19 +17,16 @@ QMainWindow {
 }
 
 QMainWindow::separator {
-    /* This styles the draggable separator between dock widgets. */
-    /* Making it slightly wider and giving it a border makes it more visible. */
-    width: 2px;  /* Adjust width as needed */
-    height: 2px; /* Adjust height as needed */
-    background-color: #2E2E2E; /* A neutral dark color, adjust to your theme */
-    border: 1px solid #2E2E2E;   /* A border to define the separator's edges */
-    
-    /* Keep any other existing QMainWindow::separator properties. */
+    /* Five-pixel interior plus two one-pixel borders = seven-pixel target. */
+    width: 5px;
+    height: 5px;
+    background-color: #60666D;
+    border: 1px solid #8D969F;
 }
 
 QMainWindow::separator:hover {
-    /* Optional: Highlight the separator on hover. */
-    background-color: #007ACC; 
+    background-color: #9AA7B5;
+    border: 1px solid #E0E0E0;
 }
 
 QDockWidget {
@@ -662,44 +659,41 @@ QTableWidget QLineEdit {
 
 /* === Custom Dock Widget Title Bar (Dark) === */
 QWidget#CustomDockTitleBar {
-    background-color: #4A4A4A; /* Dark gray background */
-    border: 5px solid #4A4A4A;
-    border-bottom: 1px solid #2E2E2E; /* Match surface color for seamless look */
-    padding: 0px 0px; /* Top/bottom, left/right padding */
-    height: 30px; /* Fixed height for title bar */
-    border-top-left-radius: 4px;
-    border-top-right-radius: 4px;
+    background-color: #3C3C3C;
+    border: none;
+    border-bottom: 1px solid #8D969F;
 }
 
 QWidget#CustomDockTitleBar QLabel {
-    color: #E0E0E0; /* Light text */
+    color: #E0E0E0;
     font-weight: bold;
-    font-size: 9pt; 
-    padding-left: 6px;
-    letter-spacing: 0.5px; /* Spacing between letters */
-    font-family: 'Segoe UI'; /* Modern font */
+    padding: 0px;
+    border: none;
+    background: transparent;
 }
 
-/* Dock Title Buttons */
-#DockMinimizeButton, #DockUndockButton, #DockCloseButton {
-    min-width: 10px;
-    max-width: 10px;
-    min-height: 10px;
-    max-height: 10px;
-    border-radius: 5px; /* Makes it a circle - half of width/height */
-    border: 1px solid rgba(0, 0, 0, 0.2);
-    margin: 0px 1px; /* Spacing between buttons */
+QToolButton#DockUndockButton, QToolButton#DockCloseButton {
+    color: #E0E0E0;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    margin: 0px;
     padding: 0px;
 }
 
-#DockMinimizeButton:hover, #DockUndockButton:hover, #DockCloseButton:hover {
-    border: 1px solid rgba(255, 255, 255, 0.6);
-    /* Removed transform property as it's not supported in Qt stylesheets */
+QToolButton#DockUndockButton:hover, QToolButton#DockCloseButton:hover {
+    background-color: #60666D;
+    border: 1px solid #9AA7B5;
 }
 
-#DockMinimizeButton { background-color: #D9D9D9; } /* Green */
-#DockUndockButton { background-color: #F48F4F; } /* Yellow */
-#DockCloseButton { background-color: #ED695E; } /* Red */
+QToolButton#DockUndockButton:pressed, QToolButton#DockCloseButton:pressed {
+    background-color: #4A5158;
+    border: 1px solid #E0E0E0;
+}
+
+QToolButton#DockUndockButton:focus, QToolButton#DockCloseButton:focus {
+    border: 2px solid #E0E0E0;
+}
 
 QFrame#TitleBarSeparator {
     background-color: #E0E0E0; /* Change this color */
