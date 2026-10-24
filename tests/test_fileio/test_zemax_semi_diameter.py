@@ -15,6 +15,7 @@ from numpy.testing import assert_allclose
 
 import optiland.backend as be
 from optiland.fileio import load_zemax_file, save_zemax_file
+from optiland.optic import Optic
 from optiland.physical_apertures import RadialAperture
 
 _HEADER = """VERS 221026 46 20120530 20120530
@@ -154,6 +155,16 @@ def _round_trip(optic, tmp_path):
 
 
 class TestRoundTrip:
+    def test_serialized_object_distance_survives_export(
+        self, tmp_path, set_test_backend
+    ):
+        optic = load_zemax_file(_singlet(tmp_path, 'DIAM 5 1 0 0 1 ""'))
+        restored = Optic.from_dict(optic.to_dict())
+        reloaded = _round_trip(restored, tmp_path)
+        assert reloaded.surfaces[0].is_infinite
+        assert _passes(reloaded, py=0.499)
+        assert not _passes(reloaded, py=0.501)
+
     def test_fixed_clip_survives(self, tmp_path, set_test_backend):
         # The clip is carried by the surface aperture (written as CLAP), not
         # by the DIAM value, so it reloads with the same radius and vignetting.
