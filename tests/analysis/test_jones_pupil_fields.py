@@ -89,3 +89,23 @@ def test_invalid_output_geometry_is_masked_only_for_dark_fields(
         assert_allclose(matrix, 0)
     else:
         assert be.all(be.isnan(matrix))
+
+
+@pytest.mark.parametrize("sign", [-1, 1])
+@pytest.mark.parametrize("z", [0.0, 1e-18, 1e-8])
+def test_output_parallel_to_x_preserves_transverse_field_power(
+    sign, z, monkeypatch, set_test_backend
+):
+    optic = planar_optic()
+    rays = PolarizedRays(*[be.full(9, float(v)) for v in (0, 0, 0, 0, 0, 1, 1, 0.55)])
+    rays.L0, rays.M0, rays.N0 = be.copy(rays.L), be.copy(rays.M), be.copy(rays.N)
+    rays.L = be.full(9, sign * (1 - z**2) ** 0.5)
+    rays.M, rays.N = be.zeros(9), be.full(9, z)
+    rays.update()
+    monkeypatch.setattr(optic, "trace_generic", lambda **kwargs: rays)
+    matrix = JonesPupil(optic, grid_size=3).data[0]["J"]
+    # A Z-to-X bend transports H to -sign*Z and leaves V along Y.
+    # With Y as the reference axis, the output basis is (Y, sign*Z).
+    expected = be.array([[0.0, 1.0], [-1.0, 0.0]]) if z == 0 else be.eye(2)
+    assert_allclose(matrix, be.tile(expected, (9, 1, 1)), atol=1e-14)
+

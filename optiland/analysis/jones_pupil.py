@@ -215,14 +215,17 @@ class JonesPupil(BaseAnalysis):
         v = be.cross(k, x_axis)
         v_norm = be.linalg.norm(v, axis=1)
 
-        # Avoid division by zero
-        v = v / be.unsqueeze_last(v_norm + 1e-15)
+        # An X-directed output is valid after a fold. Use Y as the reference
+        # only at this basis singularity; do not attenuate near-X fields with
+        # an additive normalization epsilon.
+        y_axis = be.broadcast_to(be.array([0.0, 1.0, 0.0]), k.shape)
+        v = be.where(be.unsqueeze_last(v_norm == 0), be.cross(k, y_axis), v)
+        v = v / be.unsqueeze_last(be.linalg.norm(v, axis=1))
 
         # u ~ X-axis: perpendicular to v and k
         u = be.cross(v, k)
         u_norm = be.linalg.norm(u, axis=1)
-        # Avoid division by zero
-        u = u / be.unsqueeze_last(u_norm + 1e-15)
+        u = u / be.unsqueeze_last(u_norm)
 
         # Project the scaled H/V output fields onto the transverse output basis.
         output_basis = be.stack((u, v), axis=1)
