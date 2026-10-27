@@ -118,7 +118,7 @@ class JonesPupil(BaseAnalysis):
         mask = px**2 + py**2 <= 1.0
 
         for col, (name, values) in enumerate(elements):
-            val_np = be.to_numpy(values).reshape(self.grid_size, self.grid_size)
+            val_np = be.to_numpy(values).reshape(self.grid_size, self.grid_size).copy()
             val_np[~mask] = np.nan
 
             # Real part

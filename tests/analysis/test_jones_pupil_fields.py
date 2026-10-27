@@ -109,3 +109,16 @@ def test_output_parallel_to_x_preserves_transverse_field_power(
     expected = be.array([[0.0, 1.0], [-1.0, 0.0]]) if z == 0 else be.eye(2)
     assert_allclose(matrix, be.tile(expected, (9, 1, 1)), atol=1e-14)
 
+
+def test_plotting_does_not_modify_pupil_data(set_test_backend):
+    import matplotlib.pyplot as plt
+
+    pupil = JonesPupil(planar_optic(), grid_size=3)
+    original = be.copy(pupil.data[0]["J"])
+    try:
+        for _ in range(2):
+            fig, _ = pupil.view(show=False)
+            plt.close(fig)
+            assert_allclose(pupil.data[0]["J"], original)
+    finally:
+        plt.close("all")

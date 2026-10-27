@@ -185,7 +185,8 @@ The resulting fields are projected onto the transverse output basis: V is
 parallel to ``k cross X`` and H to ``V cross k``. For an output direction exactly
 parallel to X, Y replaces X as the reference axis so a folded beam retains a
 complete transverse basis. Launch directions parallel to X remain unsupported
-by the ray source-basis construction.
+by the ray source-basis construction. Plotting masks samples outside the unit
+pupil on a display copy and leaves the stored complex matrices unchanged.
 
 The pupil includes the square root of launch intensity (including apodization)
 and accumulated scalar attenuation, along with Jones amplitude effects. It is
