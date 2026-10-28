@@ -10,9 +10,12 @@ These tests verify that:
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 import optiland.backend as be
+from benchmarks.optimization.problems import PROBLEMS
+from optiland import _epoch, _instrument
 from optiland.optimization import optimization
 from optiland.optimization.batched_evaluator import BatchedRayEvaluator
 from optiland.optimization.operand.operand import operand_registry
@@ -310,8 +313,8 @@ class TestBatching:
         evaluator = BatchedRayEvaluator(problem)
         batched = float(be.to_numpy(evaluator.sum_squared()))
 
-        # Should create 3 separate trace_generic jobs (one per wavelength)
-        assert len(evaluator._generic_jobs) == 3
+        # Should create 3 separate bundles (one per wavelength)
+        assert len(evaluator._bundles) == 3
         assert batched == pytest.approx(standard, rel=1e-6)
 
     def test_rms_spot_shared_trace(self):
@@ -340,8 +343,9 @@ class TestBatching:
         evaluator = BatchedRayEvaluator(problem)
         batched = float(be.to_numpy(evaluator.sum_squared()))
 
-        # Should share one distribution trace job
-        assert len(evaluator._distribution_jobs) == 1
+        # Should share one pupil segment of one bundle
+        assert len(evaluator._bundles) == 1
+        assert len(evaluator._bundles[0].segments) == 1
         assert batched == pytest.approx(standard, rel=1e-6)
 
 
@@ -594,12 +598,12 @@ class TestNonRayOperands:
 
 
 # ---------------------------------------------------------------------------
-# Tests: Multi-wavelength rms_spot_size falls back correctly
+# Tests: Multi-wavelength rms_spot_size expands into per-wavelength sub-jobs
 # ---------------------------------------------------------------------------
 
 
 class TestMultiWavelength:
-    """Test that rms_spot_size with wavelength='all' falls back to direct."""
+    """Test that rms_spot_size with wavelength='all' matches direct evaluation."""
 
     def test_rms_spot_all_wavelengths(self):
         lens = CookeTriplet()
@@ -659,16 +663,17 @@ class TestEvaluatorStructure:
                 )
 
         evaluator = BatchedRayEvaluator(problem)
-        assert len(evaluator._generic_jobs) == 2
-        assert len(evaluator._generic_jobs[0].ray_params) == 3
-        assert len(evaluator._generic_jobs[1].ray_params) == 2
+        assert len(evaluator._bundles) == 2
+        assert len(evaluator._bundles[0].ray_params) == 3
+        assert len(evaluator._bundles[1].ray_params) == 2
 
     def test_distribution_job_count(self):
-        """One job per unique (optic, Hx, Hy, wavelength, num_rays, dist)."""
+        """One bundle per (optic, wavelength); one pupil segment per unique
+        (Hx, Hy, num_rays, dist)."""
         lens = CookeTriplet()
         problem = optimization.OptimizationProblem()
 
-        # Two identical trace params -> 1 job
+        # Two identical trace params -> 1 segment
         for _ in range(2):
             problem.add_operand(
                 operand_type="rms_spot_size",
@@ -684,7 +689,7 @@ class TestEvaluatorStructure:
                 },
             )
 
-        # Different Hy -> new job
+        # Different Hy -> new segment of the same bundle
         problem.add_operand(
             operand_type="rms_spot_size",
             target=0.0,
@@ -700,7 +705,8 @@ class TestEvaluatorStructure:
         )
 
         evaluator = BatchedRayEvaluator(problem)
-        assert len(evaluator._distribution_jobs) == 2
+        assert len(evaluator._bundles) == 1
+        assert len(evaluator._bundles[0].segments) == 2
 
     def test_refresh(self):
         """Calling refresh re-creates the plan."""
@@ -760,7 +766,7 @@ class TestEvaluatorHelpers:
         assert raw_values[0] is None
 
         # No contribution terms should be produced for zero-effective-weight ops.
-        assert evaluator._build_contribution_terms(raw_values) == []
+        assert evaluator._assemble(raw_values, [], [False], [0.0], False) is None
 
     def test_evaluate_direct_operands_unknown_operand_raises(self):
         lens = CookeTriplet()
@@ -779,7 +785,7 @@ class TestEvaluatorHelpers:
         with pytest.raises(ValueError, match="Unknown operand type"):
             evaluator._evaluate_direct_operands([None])
 
-    def test_build_contribution_terms_raises_for_missing_value(self):
+    def test_assemble_raises_for_missing_value(self):
         lens = CookeTriplet()
         problem = optimization.OptimizationProblem()
         problem.add_operand(
@@ -791,7 +797,7 @@ class TestEvaluatorHelpers:
         evaluator = BatchedRayEvaluator(problem)
 
         with pytest.raises(RuntimeError, match="was not evaluated"):
-            evaluator._build_contribution_terms([None])
+            evaluator._assemble([None], [], [False], [1.0], False)
 
 
 # ---------------------------------------------------------------------------
@@ -1088,3 +1094,176 @@ class TestTorchAutograd:
         assert abs(standard_val - batched_val) < 1e-10, (
             f"standard={standard_val}, batched={batched_val}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Tests: Super-bundles (opt v2 PR2.4)
+# ---------------------------------------------------------------------------
+
+GOLDEN_RTOL = 1e-12
+
+
+def _unbatched(problem, method="residual_vector"):
+    """Values of ``method`` with batching off (per-operand evaluation)."""
+    problem.disable_batching()
+    try:
+        return be.to_numpy(getattr(problem, method)())
+    finally:
+        problem.enable_batching()
+
+
+def _assert_golden(actual, expected):
+    """Equal NaN masks; finite entries within 1e-12 of the largest magnitude."""
+    actual = np.asarray(be.to_numpy(actual), dtype=float)
+    expected = np.asarray(expected, dtype=float)
+    assert actual.shape == expected.shape
+    assert np.array_equal(np.isnan(actual), np.isnan(expected))
+    finite = np.isfinite(expected)
+    scale = np.max(np.abs(expected[finite]), initial=0.0)
+    err = np.abs(actual[finite] - expected[finite])
+    assert np.all(err <= GOLDEN_RTOL * max(scale, 1e-300)), err.max()
+
+
+def _ray(lens, wavelength=0.55, **data):
+    base = {
+        "optic": lens,
+        "surface_number": -1,
+        "Hx": 0.0,
+        "Hy": 0.7,
+        "Px": 0.0,
+        "Py": 1.0,
+        "wavelength": wavelength,
+    }
+    base.update(data)
+    return base
+
+
+def _spot(lens, Hy, wavelength, **data):
+    base = {
+        "optic": lens,
+        "surface_number": -1,
+        "Hx": 0.0,
+        "Hy": Hy,
+        "wavelength": wavelength,
+        "num_rays": 4,
+        "distribution": "hexapolar",
+    }
+    base.update(data)
+    return base
+
+
+def _counted(problem, method="residual_vector"):
+    getattr(problem, method)()  # warm caches
+    with _instrument.counting() as counts:
+        values = getattr(problem, method)()
+    return values, dict(counts)
+
+
+@pytest.mark.parametrize(
+    "name", ["cooke", "double_gauss", "freeform", "scaling_10", "wide_asphere"]
+)
+def test_super_bundle_matches_unbatched(set_test_backend, name):
+    if name == "wide_asphere" and be.get_backend() == "torch":
+        # ~20 s; torch iterative aiming is covered by the golden bundle test
+        pytest.skip("slow on torch")
+    _, problem = PROBLEMS[name]()
+    _assert_golden(problem.residual_vector(), _unbatched(problem))
+    _assert_golden(problem.fun_array(), _unbatched(problem, "fun_array"))
+
+
+def test_super_bundle_mixes_single_rays_and_spots(set_test_backend):
+    lens = CookeTriplet()
+    problem = optimization.OptimizationProblem()
+    problem.add_operand("real_y_intercept", target=1.0, input_data=_ray(lens))
+    problem.add_operand("real_L", max_val=-0.01, input_data=_ray(lens, Px=0.5))
+    problem.add_operand(
+        "real_x_intercept", target=0.0, weight=0.0, input_data=_ray(lens)
+    )
+    problem.add_operand("real_y_intercept_lcs", target=0.2, input_data=_ray(lens))
+    problem.add_operand("AOI", target=10.0, input_data=_ray(lens, surface_number=3))
+    problem.add_operand("rms_spot_size", target=0.0, input_data=_spot(lens, 0.0, 0.55))
+    problem.add_operand("rms_spot_size", target=0.0, input_data=_spot(lens, 1.0, 0.55))
+    problem.add_operand("f2", target=50.0, input_data={"optic": lens})
+
+    residuals, counts = _counted(problem)
+    assert counts["trace_generic"] == 1
+    assert counts["trace"] == 0
+    _assert_golden(residuals, _unbatched(problem))
+    _assert_golden(problem.fun_array(), _unbatched(problem, "fun_array"))
+
+
+def test_all_wavelength_spot_joins_per_wavelength_bundles(set_test_backend):
+    lens = CookeTriplet()
+    wavelengths = lens.wavelengths.get_wavelengths()
+    problem = optimization.OptimizationProblem()
+    problem.add_operand("rms_spot_size", target=0.0, input_data=_spot(lens, 0.7, "all"))
+    for wavelength in wavelengths:
+        problem.add_operand(
+            "rms_spot_size", target=0.0, input_data=_spot(lens, 0.7, wavelength)
+        )
+
+    residuals, counts = _counted(problem)
+    assert counts["trace_generic"] == len(wavelengths)
+    assert counts["trace"] == 0
+    evaluator = problem._batched_evaluator
+    # The "all" sub-jobs share the explicit operands' segments
+    assert [len(job.segments) for job in evaluator._bundles] == [1] * len(wavelengths)
+    _assert_golden(residuals, _unbatched(problem))
+
+
+def test_all_wavelength_plan_follows_wavelength_changes(set_test_backend):
+    lens = CookeTriplet()
+    problem = optimization.OptimizationProblem()
+    problem.add_operand("rms_spot_size", target=0.0, input_data=_spot(lens, 1.0, "all"))
+    problem.residual_vector()
+
+    lens.wavelengths.add(value=0.75)
+    residuals, counts = _counted(problem)
+    assert counts["trace_generic"] == len(lens.wavelengths.get_wavelengths())
+    _assert_golden(residuals, _unbatched(problem))
+
+
+def test_failing_part_marks_only_its_operands_nan(set_test_backend):
+    # The 0.4861 um trace at field (0.3, 1.0) fails initial ray aiming
+    lens, _ = PROBLEMS["wide_asphere"]()
+    good = [
+        ("rms_spot_size", _spot(lens, 0.0, 0.4861)),
+        ("real_y_intercept", _ray(lens, wavelength=0.4861)),
+        ("rms_spot_size", _spot(lens, 1.0, 0.5876, Hx=0.3)),
+    ]
+    bad = ("rms_spot_size", _spot(lens, 1.0, 0.4861, Hx=0.3))
+
+    reference = optimization.OptimizationProblem()
+    for op_type, data in good:
+        reference.add_operand(op_type, target=0.0, input_data=data)
+    expected = _unbatched(reference)
+
+    problem = optimization.OptimizationProblem()
+    for op_type, data in [*good[:2], bad, good[2]]:
+        problem.add_operand(op_type, target=0.0, input_data=data)
+    problem.add_operand(
+        "rms_spot_size", target=0.0, input_data=_spot(lens, 1.0, "all", Hx=0.3)
+    )
+    residuals = be.to_numpy(problem.residual_vector())
+
+    assert np.isnan(residuals[2])
+    assert np.isnan(residuals[4])  # needs the failing 0.4861 um sub-job
+    _assert_golden(residuals[[0, 1, 3]], expected)
+    assert np.isnan(be.to_numpy(problem.sum_squared()))
+
+
+def test_evaluations_open_an_epoch(set_test_backend, monkeypatch):
+    problem, lens = _make_mixed_problem()
+    seen = []
+    original = lens.trace_generic
+
+    def trace_generic(*args, **kwargs):
+        seen.append(_epoch.current() is not None)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(lens, "trace_generic", trace_generic)
+    problem.residual_vector()
+    problem.fun_array()
+    problem.sum_squared()
+    assert seen == [True, True, True]
+    assert _epoch.current() is None

@@ -4,9 +4,13 @@ This module provides the BatchedRayEvaluator class which accelerates
 optimization by eliminating redundant ray tracing through intelligent batching
 of operand evaluations.
 
-The evaluator analyzes optimization problems to group operands that require
-ray tracing with the same optic and wavelength, then executes a minimal number
-of traces. Each operand extracts its value from the shared trace results.
+The evaluator analyzes optimization problems to group every operand that
+requires real rays with the same optic and wavelength into one super-bundle:
+single-ray operands and the pupil samples of all ``rms_spot_size`` operands are
+traced together in one ``optic.trace_generic`` call, and each operand reads its
+slice of the shared result. ``wavelength="all"`` spot operands are split into
+one sub-job per wavelength, merged into the matching bundles. Each evaluation
+runs inside one evaluation epoch, so per-design work is done once.
 
 This approach works with both NumPy and PyTorch backends and preserves
 automatic differentiation (autograd) by indexing directly into the traced
@@ -20,6 +24,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
+from optiland import _epoch
+from optiland.distribution import create_distribution
 from optiland.optimization.operand.operand import operand_registry
 from optiland.optimization.operand.ray import _angle_of_incidence
 
@@ -50,21 +56,38 @@ _TRACE_OPERANDS = frozenset(
     }
 )
 
+# Single-ray operands that read one per-surface ray attribute directly. With a
+# scalar target, their residuals are computed in one vectorized step.
+_GENERIC_ATTRS = {
+    "real_x_intercept": "x",
+    "real_y_intercept": "y",
+    "real_z_intercept": "z",
+    "real_L": "L",
+    "real_M": "M",
+    "real_N": "N",
+}
+
+_NAN_POLICIES = ("propagate", "omit", "raise")
+
+# Per-surface ray attributes read by the single-ray and spot operands
+_RAY_ATTRS = ("x", "y", "z", "L", "M", "N")
+_SPOT_ATTRS = ("x", "y")
+
 
 def _make_generic_trace_key(optic, wavelength):
-    """Create a grouping key for trace_generic operands.
+    """Create a grouping key for a super-bundle.
 
-    All single-ray operands sharing the same optic and wavelength can be
-    batched into a single ``optic.trace_generic`` call.
+    All ray operands sharing the same optic and wavelength are batched into a
+    single ``optic.trace_generic`` call.
     """
     return (id(optic), float(wavelength))
 
 
 def _make_trace_key(optic, Hx, Hy, wavelength, num_rays, distribution):
-    """Create a grouping key for trace (distribution) operands.
+    """Create a grouping key for a pupil sample (distribution) segment.
 
-    ``rms_spot_size`` operands with identical parameters share a single
-    ``optic.trace`` call.
+    ``rms_spot_size`` operands with identical parameters share one segment of
+    the bundle.
     """
     return (
         id(optic),
@@ -76,94 +99,163 @@ def _make_trace_key(optic, Hx, Hy, wavelength, num_rays, distribution):
     )
 
 
-class _GenericTraceJob:
-    """Batched trace_generic job for single-ray operands.
+class _PupilSegment:
+    """Pupil samples of one distribution at one field point, inside a bundle."""
 
-    Accumulates (Hx, Hy, Px, Py) pairs and traces them all in one call.
-    After execution, operands extract their values by ray index.
-    """
+    __slots__ = ("Hx", "Hy", "num_rays", "distribution")
 
-    __slots__ = ("optic", "wavelength", "ray_params", "operand_indices")
+    def __init__(self, Hx, Hy, num_rays, distribution):
+        self.Hx = Hx
+        self.Hy = Hy
+        self.num_rays = num_rays
+        self.distribution = distribution
 
-    def __init__(self, optic, wavelength):
-        self.optic = optic
-        self.wavelength = wavelength
-        self.ray_params: list[dict[str, float]] = []
-        self.operand_indices: list[int] = []
+    def pupil(self, samples: dict) -> tuple[Any, Any]:
+        """Pupil coordinates, generated as ``optic.trace`` would generate them.
 
-    def add_operand(self, operand_idx: int, Hx: float, Hy: float, Px: float, Py: float):
-        """Register an operand and its ray parameters."""
-        ray_index = len(self.ray_params)
-        self.ray_params.append({"Hx": Hx, "Hy": Hy, "Px": Px, "Py": Py})
-        self.operand_indices.append(operand_idx)
-        return ray_index
-
-    def execute(self):
-        """Execute the batched trace_generic call.
-
-        Returns the optic's surface_group (with traced data stored on
-        surfaces).
+        A distribution named by string is generated once per bundle execution
+        and shared by every segment that names it with the same ``num_rays``.
         """
-        if not self.ray_params:
-            return None
+        distribution = self.distribution
+        if not isinstance(distribution, str):
+            return distribution.x, distribution.y
+        key = (distribution, self.num_rays)
+        if key not in samples:
+            generated = create_distribution(distribution)
+            generated.generate_points(self.num_rays)
+            samples[key] = (generated.x, generated.y)
+        return samples[key]
 
-        Hx = be.array([p["Hx"] for p in self.ray_params])
-        Hy = be.array([p["Hy"] for p in self.ray_params])
-        Px = be.array([p["Px"] for p in self.ray_params])
-        Py = be.array([p["Py"] for p in self.ray_params])
 
-        self.optic.trace_generic(Hx, Hy, Px, Py, self.wavelength)
-        return self.optic.surface_group
+class _BundleJob:
+    """Super-bundle of all rays traced for one (optic, wavelength).
 
-
-class _DistributionTraceJob:
-    """Shared trace job for distribution-based operands (``rms_spot_size``).
-
-    Operands with identical trace parameters share a single ``optic.trace``
-    call.
+    The bundle is made of parts traced together in one ``trace_generic`` call.
+    Part 0 holds the single rays of the single-ray operands, in registration
+    order, so a single ray's index in the bundle is its index in
+    ``ray_params``. Part ``k >= 1`` holds the pupil samples of
+    ``segments[k - 1]``.
     """
 
     __slots__ = (
         "optic",
-        "Hx",
-        "Hy",
         "wavelength",
-        "num_rays",
-        "distribution",
+        "ray_params",
         "operand_indices",
+        "segments",
+        "offsets",
+        "_segment_index",
     )
 
-    def __init__(self, optic, Hx, Hy, wavelength, num_rays, distribution):
+    def __init__(self, optic, wavelength):
         self.optic = optic
-        self.Hx = Hx
-        self.Hy = Hy
         self.wavelength = wavelength
-        self.num_rays = num_rays
-        self.distribution = distribution
+        self.ray_params: list[tuple[float, float, float, float]] = []
         self.operand_indices: list[int] = []
+        self.segments: list[_PupilSegment] = []
+        # part -> (first ray, end ray) of the last execution
+        self.offsets: dict[int, tuple[int, int]] = {}
+        self._segment_index: dict[tuple, int] = {}
 
-    def add_operand(self, operand_idx: int):
-        """Register an operand that uses this trace."""
+    def add_operand(self, operand_idx: int, Hx: float, Hy: float, Px: float, Py: float):
+        """Register a single-ray operand; return its ray index in the bundle."""
+        ray_index = len(self.ray_params)
+        self.ray_params.append((Hx, Hy, Px, Py))
         self.operand_indices.append(operand_idx)
+        return ray_index
 
-    def execute(self):
-        """Execute the trace call.
+    def add_segment(self, key: tuple, Hx, Hy, num_rays, distribution) -> int:
+        """Register a pupil sample segment (shared by key); return its index."""
+        if key not in self._segment_index:
+            self._segment_index[key] = len(self.segments)
+            self.segments.append(_PupilSegment(Hx, Hy, num_rays, distribution))
+        return self._segment_index[key]
 
-        Returns the optic's surface_group.
+    @property
+    def parts(self) -> list[int]:
+        """The parts of the bundle, in ray order."""
+        first = [0] if self.ray_params else []
+        return first + list(range(1, len(self.segments) + 1))
+
+    def execute(self, parts: list[int] | None = None):
+        """Trace the given parts (all by default) in one ``trace_generic`` call.
+
+        Records the ray range of each traced part in ``offsets``.
+
+        Returns the optic's surface_group (with traced data stored on
+        surfaces).
         """
-        if self.wavelength == "all":
-            # Multi-wavelength rms_spot_size — let the operand handle it
-            # directly since it does multiple traces internally.
+        if parts is None:
+            parts = self.parts
+        if not parts:
             return None
 
-        self.optic.trace(
-            self.Hx,
-            self.Hy,
-            self.wavelength,
-            self.num_rays,
-            self.distribution,
+        columns: list[list[Any]] = [[], [], [], []]
+        samples: dict = {}
+        offsets: dict[int, tuple[int, int]] = {}
+        start = 0
+        for part in parts:
+            if part == 0:
+                rays = zip(*self.ray_params, strict=True)
+                for column, values in zip(columns, rays, strict=True):
+                    column.append(be.array(list(values)))
+                count = len(self.ray_params)
+            else:
+                segment = self.segments[part - 1]
+                Px, Py = segment.pupil(samples)
+                count = be.size(Px)
+                columns[0].append(be.full((count,), float(segment.Hx)))
+                columns[1].append(be.full((count,), float(segment.Hy)))
+                columns[2].append(Px)
+                columns[3].append(Py)
+            offsets[part] = (start, start + count)
+            start += count
+
+        Hx, Hy, Px, Py = (
+            column[0] if len(column) == 1 else be.concatenate(column)
+            for column in columns
         )
-        return self.optic.surface_group
+        self.offsets = offsets
+        self.optic.trace_generic(Hx, Hy, Px, Py, self.wavelength)
+        return self.optic.surfaces
+
+
+class _BundlePart:
+    """One part of a bundle traced on its own, used to isolate a failure."""
+
+    __slots__ = ("job", "part")
+
+    def __init__(self, job: _BundleJob, part: int):
+        self.job = job
+        self.part = part
+
+    def execute(self):
+        """Trace only this part of the bundle."""
+        return self.job.execute([self.part])
+
+
+class _TraceView:
+    """Read-once view of a traced surface group.
+
+    ``SurfaceGroup.x`` and friends stack every surface on each access, so each
+    attribute is read once per trace and shared by all operands reading it.
+    Attributes are read lazily: those needed after the next trace overwrites
+    the surface group must be listed in ``prefetch``.
+    """
+
+    __slots__ = ("_surface_group", "_cache")
+
+    def __init__(self, surface_group, prefetch: tuple[str, ...] = ()):
+        self._surface_group = surface_group
+        self._cache: dict[str, Any] = {
+            name: getattr(surface_group, name) for name in prefetch
+        }
+
+    def __getattr__(self, name: str):
+        cache = self._cache
+        if name not in cache:
+            cache[name] = getattr(self._surface_group, name)
+        return cache[name]
 
 
 def _extract_value_generic(operand_type, surface_group, input_data, ray_index):
@@ -254,14 +346,10 @@ def _extract_aoi(surface_group, input_data, ray_index):
     return _angle_of_incidence(L_inc, M_inc, N_inc, nx, ny, nz)
 
 
-def _extract_rms_spot(surface_group, input_data):
-    """Extract rms_spot_size from a shared trace result.
-
-    This replicates the calculation from ``RayOperand.rms_spot_size`` but
-    reads from the already-traced surface_group data, preserving autograd.
-    """
+def _spot_surface(input_data):
+    """The surface an ``rms_spot_size`` operand is measured on."""
     try:
-        surface_number = input_data["surface_number"]
+        return input_data["surface_number"]
     except KeyError:
         raise KeyError(
             "The 'rms_spot_size' operand requires 'surface_number' in its "
@@ -270,10 +358,58 @@ def _extract_rms_spot(surface_group, input_data):
             "'Hy': 0, 'num_rings': 6, 'wavelength': 0.55, "
             "'surface_number': -1}."
         ) from None
-    x = surface_group.x[surface_number, :].flatten()
-    y = surface_group.y[surface_number, :].flatten()
-    r2 = (x - be.mean(x)) ** 2 + (y - be.mean(y)) ** 2
-    return be.sqrt(be.mean(r2))
+
+
+def _extract_rms_spot(xs, ys, input_data, primary_index=None):
+    """RMS spot size from sliced bundle data.
+
+    This replicates the calculation of ``RayOperand.rms_spot_size`` exactly,
+    including its ``nan_policy``, but reads from already-traced data,
+    preserving autograd.
+
+    Args:
+        xs: Per-wavelength x intercepts on the spot surface (one entry unless
+            the operand uses ``wavelength="all"``).
+        ys: Per-wavelength y intercepts, matching ``xs``.
+        input_data: The operand's ``input_data`` dict.
+        primary_index: Index of the primary wavelength in ``xs`` for a
+            ``wavelength="all"`` operand, else None.
+
+    Returns:
+        The RMS spot size.
+    """
+    nan_policy = input_data.get("nan_policy", "propagate")
+    if nan_policy not in _NAN_POLICIES:
+        raise ValueError(
+            f"Invalid nan_policy '{nan_policy}'. Must be one of {_NAN_POLICIES}."
+        )
+
+    has_nan = any(be.any(be.isnan(a)) for a in (*xs, *ys))
+    if primary_index is None:
+        x, y = xs[0], ys[0]
+        r2 = (x - be.nanmean(x)) ** 2 + (y - be.nanmean(y)) ** 2
+        rms = be.sqrt(be.nanmean(r2))
+    else:
+        mean_x = be.nanmean(xs[primary_index])
+        mean_y = be.nanmean(ys[primary_index])
+        r2 = [
+            (x - mean_x) ** 2 + (y - mean_y) ** 2 for x, y in zip(xs, ys, strict=True)
+        ]
+        rms = be.sqrt(be.nanmean(be.concatenate(r2)))
+
+    if has_nan:
+        if nan_policy == "raise":
+            raise ValueError(
+                "rms_spot_size encountered a NaN ray intersection on "
+                f"surface {_spot_surface(input_data)}. This typically "
+                "indicates total internal reflection or a vignetted ray. Use "
+                "nan_policy='omit' to compute the RMS from valid rays "
+                "only, or leave nan_policy='propagate' (default) to "
+                "return NaN."
+            )
+        if nan_policy == "propagate":
+            return rms * be.nan
+    return rms
 
 
 class BatchedRayEvaluator:
@@ -281,9 +417,12 @@ class BatchedRayEvaluator:
     ray tracing.
 
     This evaluator analyses the optimization problem to identify operands that
-    can share ray traces, groups them into minimal trace jobs, and provides
-    ``fun_array`` / ``sum_squared`` methods that compute all operand values
-    efficiently.
+    can share ray traces, groups them into one super-bundle per optic and
+    wavelength, and provides ``fun_array`` / ``sum_squared`` methods that
+    compute all operand values efficiently.
+
+    A bundle whose trace fails is retraced part by part, so a failure marks
+    only the operands of the failing part as non-finite (NaN); it never raises.
 
     The evaluator is fully compatible with both NumPy and PyTorch backends.
     When using PyTorch, the autograd computation graph is preserved because
@@ -307,15 +446,25 @@ class BatchedRayEvaluator:
     def __init__(self, problem: OptimizationProblem):
         self.problem = problem
 
-        # Jobs populated by _analyze
-        self._generic_jobs: list[_GenericTraceJob] = []
-        self._distribution_jobs: list[_DistributionTraceJob] = []
+        # Jobs populated by _analyze: one super-bundle per (optic, wavelength)
+        self._bundles: list[_BundleJob] = []
 
         # Per-operand evaluation strategy:
-        #   ("generic", job_idx, ray_index)
-        #   ("distribution", job_idx, None)
-        #   ("direct", None, None)   -- fallback to standard evaluation
+        #   ("generic", bundle_idx, ray_index)
+        #   ("distribution", primary_index, reads) -- reads: [(bundle, part)];
+        #       primary_index is None unless wavelength="all"
+        #   ("direct", None, None)   -- standard evaluation
         self._operand_plan: list[tuple[str, Any, Any]] = []
+
+        # Per bundle: {attr: (operand indices, surfaces, ray indices)} of the
+        # single-ray operands read straight from one ray attribute.
+        self._attr_groups: list[dict[str, tuple[list, list, list]]] = []
+
+        # Optics referenced by the operands (epoch debug guard), optics with
+        # wavelength="all" operands, and the wavelength sets they expanded to.
+        self._optics: tuple = ()
+        self._all_optics: tuple = ()
+        self._wavelength_signature: tuple = ()
 
         self._analyze()
 
@@ -325,81 +474,98 @@ class BatchedRayEvaluator:
 
     def _analyze(self):
         """Analyse the problem and create batching plan."""
-        self._generic_jobs.clear()
-        self._distribution_jobs.clear()
-        self._operand_plan.clear()
+        self._bundles = []
+        self._operand_plan = []
+        bundle_index: dict[tuple, int] = {}
+        optics: dict[int, Any] = {}
+        all_optics: dict[int, Any] = {}
 
-        # ---- trace_generic grouping ----
-        # key -> job index
-        generic_key_to_idx: dict[tuple, int] = {}
-
-        # ---- distribution trace grouping ----
-        dist_key_to_idx: dict[tuple, int] = {}
+        def bundle_for(optic, wavelength) -> int:
+            key = _make_generic_trace_key(optic, wavelength)
+            if key not in bundle_index:
+                bundle_index[key] = len(self._bundles)
+                self._bundles.append(_BundleJob(optic, wavelength))
+            return bundle_index[key]
 
         for i, operand in enumerate(self.problem.operands):
             op_type = operand.operand_type
             data = operand.input_data
+            if data and data.get("optic") is not None:
+                optics.setdefault(id(data["optic"]), data["optic"])
 
             if op_type in _TRACE_GENERIC_OPERANDS:
-                wl = data["wavelength"]
-                optic = data["optic"]
-                key = _make_generic_trace_key(optic, wl)
-
-                if key not in generic_key_to_idx:
-                    job = _GenericTraceJob(optic, wl)
-                    generic_key_to_idx[key] = len(self._generic_jobs)
-                    self._generic_jobs.append(job)
-
-                job_idx = generic_key_to_idx[key]
-                job = self._generic_jobs[job_idx]
-                ray_idx = job.add_operand(
+                b = bundle_for(data["optic"], data["wavelength"])
+                ray_idx = self._bundles[b].add_operand(
                     i,
                     data["Hx"],
                     data["Hy"],
                     data["Px"],
                     data["Py"],
                 )
-                self._operand_plan.append(("generic", job_idx, ray_idx))
+                self._operand_plan.append(("generic", b, ray_idx))
 
             elif op_type in _TRACE_OPERANDS:
                 wl = data.get("wavelength", 0.587)
                 optic = data["optic"]
-
-                # Multi-wavelength rms_spot_size must be evaluated directly
-                if wl == "all":
-                    self._operand_plan.append(("direct", None, None))
-                    continue
-
                 num_rays = data.get("num_rays", 100)
                 dist = data.get("distribution", "hexapolar")
-                key = _make_trace_key(
-                    optic,
-                    data["Hx"],
-                    data["Hy"],
-                    wl,
-                    num_rays,
-                    dist,
-                )
 
-                if key not in dist_key_to_idx:
-                    job = _DistributionTraceJob(
-                        optic,
-                        data["Hx"],
-                        data["Hy"],
-                        wl,
-                        num_rays,
-                        dist,
+                if wl == "all":
+                    # One sub-job per wavelength, merged into its bundle
+                    all_optics.setdefault(id(optic), optic)
+                    wavelengths = optic.wavelengths.get_wavelengths()
+                    primary_index = optic.wavelengths.primary_index
+                else:
+                    wavelengths = [wl]
+                    primary_index = None
+
+                reads = []
+                for wave in wavelengths:
+                    b = bundle_for(optic, wave)
+                    key = _make_trace_key(
+                        optic, data["Hx"], data["Hy"], wave, num_rays, dist
                     )
-                    dist_key_to_idx[key] = len(self._distribution_jobs)
-                    self._distribution_jobs.append(job)
-
-                job_idx = dist_key_to_idx[key]
-                self._distribution_jobs[job_idx].add_operand(i)
-                self._operand_plan.append(("distribution", job_idx, None))
+                    s = self._bundles[b].add_segment(
+                        key, data["Hx"], data["Hy"], num_rays, dist
+                    )
+                    reads.append((b, s + 1))
+                self._operand_plan.append(("distribution", primary_index, reads))
 
             else:
                 # Non-ray operand (paraxial, aberration, lens, etc.)
                 self._operand_plan.append(("direct", None, None))
+
+        self._optics = tuple(optics.values())
+        self._all_optics = tuple(all_optics.values())
+        self._wavelength_signature = self._current_wavelength_signature()
+        self._build_index_arrays()
+
+    def _build_index_arrays(self) -> None:
+        """Precompute per-bundle index arrays of the single-ray operands."""
+        self._attr_groups = []
+        operands = self.problem.operands
+        for job in self._bundles:
+            groups: dict[str, tuple[list, list, list]] = {}
+            for ray_idx, i in enumerate(job.operand_indices):
+                operand = operands[i]
+                attr = _GENERIC_ATTRS.get(operand.operand_type)
+                if attr is None:
+                    continue
+                idx, surfs, rays = groups.setdefault(attr, ([], [], []))
+                idx.append(i)
+                surfs.append(operand.input_data["surface_number"])
+                rays.append(ray_idx)
+            self._attr_groups.append(groups)
+
+    def _current_wavelength_signature(self) -> tuple:
+        """Wavelength sets of the optics with ``wavelength="all"`` operands."""
+        return tuple(
+            (
+                tuple(optic.wavelengths.get_wavelengths()),
+                optic.wavelengths.primary_index,
+            )
+            for optic in self._all_optics
+        )
 
     # ------------------------------------------------------------------
     # Re-analysis (if the problem structure has changed)
@@ -414,8 +580,11 @@ class BatchedRayEvaluator:
         self._analyze()
 
     def _ensure_plan_current(self) -> None:
-        """Rebuild the operand plan when the problem size has changed."""
-        if len(self._operand_plan) != len(self.problem.operands):
+        """Rebuild the plan when the problem size or a wavelength set changed."""
+        if len(self._operand_plan) != len(self.problem.operands) or (
+            self._all_optics
+            and self._current_wavelength_signature() != self._wavelength_signature
+        ):
             self._analyze()
 
     @staticmethod
@@ -426,43 +595,39 @@ class BatchedRayEvaluator:
         except Exception:
             return None
 
-    def _evaluate_generic_jobs(self, raw_values: list[Any]) -> None:
-        """Populate values for operands covered by ``trace_generic`` jobs."""
-        num_operands = len(self.problem.operands)
-        for job_idx, job in enumerate(self._generic_jobs):
-            sg = self._safe_execute(job)
-            if sg is None:
-                continue
+    def _trace_bundle(self, job: _BundleJob) -> dict[int, tuple[Any, int, int]]:
+        """Trace a bundle; return ``{part: (view, start, stop)}`` per traced part.
 
-            for i in range(num_operands):
-                plan_type, pj, ray_idx = self._operand_plan[i]
-                if plan_type == "generic" and pj == job_idx:
-                    raw_values[i] = _extract_value_generic(
-                        self.problem.operands[i].operand_type,
-                        sg,
-                        self.problem.operands[i].input_data,
-                        ray_idx,
-                    )
+        A bundle that fails as a whole is retraced part by part, so only the
+        parts that fail on their own are missing from the result.
 
-    def _evaluate_distribution_jobs(self, raw_values: list[Any]) -> None:
-        """Populate values for operands covered by distribution trace jobs."""
-        num_operands = len(self.problem.operands)
-        for job_idx, job in enumerate(self._distribution_jobs):
-            sg = self._safe_execute(job)
+        Single rays are read before the next bundle is traced; spot data is
+        read after all bundles, so it is prefetched here.
+        """
+        parts = job.parts
+        surface_group = self._safe_execute(job)
+        if surface_group is not None:
+            view = _TraceView(surface_group, _SPOT_ATTRS if job.segments else ())
+            # Part 0 (the single rays) always starts the bundle
+            return {
+                part: (view, *job.offsets.get(part, (0, len(job.ray_params))))
+                for part in parts
+            }
 
-            for i in range(num_operands):
-                plan_type, pj, _ = self._operand_plan[i]
-                if plan_type == "distribution" and pj == job_idx:
-                    operand = self.problem.operands[i]
-                    if sg is not None:
-                        raw_values[i] = _extract_rms_spot(
-                            sg,
-                            operand.input_data,
-                        )
-                    else:
-                        # Fallback (e.g. multi-wavelength)
-                        metric_fn = operand_registry.get(operand.operand_type)
-                        raw_values[i] = metric_fn(**operand.input_data)
+        reads: dict[int, tuple[Any, int, int]] = {}
+        if len(parts) > 1:
+            for part in parts:
+                surface_group = self._safe_execute(_BundlePart(job, part))
+                if surface_group is not None:
+                    # Later parts overwrite the surface group: read now
+                    prefetch = _RAY_ATTRS if part == 0 else _SPOT_ATTRS
+                    view = _TraceView(surface_group, prefetch)
+                    reads[part] = (view, *job.offsets[part])
+        return reads
+
+    # ------------------------------------------------------------------
+    # Evaluation
+    # ------------------------------------------------------------------
 
     def _evaluate_direct_operands(self, raw_values: list[Any]) -> None:
         """Populate values for non-ray operands evaluated directly."""
@@ -482,25 +647,146 @@ class BatchedRayEvaluator:
                     raise ValueError(f"Unknown operand type: {operand.operand_type}")
                 raw_values[i] = metric_fn(**operand.input_data)
 
-    def _build_contribution_terms(self, raw_values: list[Any]) -> list[Any]:
-        """Convert raw operand values into merit contribution terms."""
-        terms = []
-        for i, operand in enumerate(self.problem.operands):
-            ew = operand.effective_weight()
-            if ew == 0.0:
+    def _residuals(self, include_zero: bool):
+        """Residuals ``effective_weight * delta`` of the operands, in order.
+
+        Args:
+            include_zero: Keep zero-effective-weight operands as exact zeros
+                (``residual_vector``) instead of dropping them
+                (``fun_array``).
+
+        Returns:
+            A 1-D array, or None when no operand contributes.
+        """
+        self._ensure_plan_current()
+        operands = list(self.problem.operands)
+        weights = [operand.effective_weight() for operand in operands]
+        raw_values: list[Any] = [None] * len(operands)
+        covered = [False] * len(operands)
+        chunks: list[tuple[list[int], Any]] = []
+        traced: list[dict[int, tuple[Any, int, int]]] = []
+
+        # --- 1. Super-bundles: one trace per (optic, wavelength) ---
+        for b, job in enumerate(self._bundles):
+            reads = self._trace_bundle(job)
+            traced.append(reads)
+            if not job.ray_params:
+                continue
+            read = reads.get(0)
+
+            # Vectorized extraction and residuals of scalar-target operands
+            for attr, (idx, surfs, rays) in self._attr_groups[b].items():
+                if read is None:
+                    break
+                # Zero-weight operands are exact zeros (or dropped) below
+                keep = [
+                    k
+                    for k, i in enumerate(idx)
+                    if operands[i].target is not None and weights[i] != 0.0
+                ]
+                if not keep:
+                    continue
+                if len(keep) < len(idx):
+                    idx = [idx[k] for k in keep]
+                    surfs = [surfs[k] for k in keep]
+                    rays = [rays[k] for k in keep]
+                values = getattr(read[0], attr)[surfs, rays]
+                targets = be.array([float(operands[i].target) for i in idx])
+                w = be.array([weights[i] for i in idx])
+                chunks.append((idx, w * (values - targets)))
+                for i in idx:
+                    covered[i] = True
+
+            # Bounded, local-coordinate and AOI operands, one by one
+            for ray_idx, i in enumerate(job.operand_indices):
+                if covered[i] or weights[i] == 0.0:
+                    continue
+                if read is None:
+                    raw_values[i] = be.nan
+                    continue
+                operand = operands[i]
+                raw_values[i] = _extract_value_generic(
+                    operand.operand_type, read[0], operand.input_data, ray_idx
+                )
+
+        # --- 2. Spot operands: slices of the bundles ---
+        for i, (plan_type, primary_index, reads) in enumerate(self._operand_plan):
+            if plan_type != "distribution" or weights[i] == 0.0:
+                continue
+            data = operands[i].input_data
+            segments = [traced[b].get(part) for b, part in reads]
+            if any(segment is None for segment in segments):
+                raw_values[i] = be.nan  # failure isolation
+                continue
+            surface_number = _spot_surface(data)
+            xs = [view.x[surface_number, lo:hi] for view, lo, hi in segments]
+            ys = [view.y[surface_number, lo:hi] for view, lo, hi in segments]
+            raw_values[i] = _extract_rms_spot(xs, ys, data, primary_index)
+
+        # --- 3. Direct operands ---
+        self._evaluate_direct_operands(raw_values)
+
+        return self._assemble(raw_values, chunks, covered, weights, include_zero)
+
+    def _assemble(
+        self,
+        raw_values: list[Any],
+        chunks: list[tuple[list[int], Any]],
+        covered: list[bool],
+        weights: list[float],
+        include_zero: bool,
+    ):
+        """Join vectorized and scalar residuals into one vector in operand order.
+
+        Returns:
+            A 1-D array, or None when no operand contributes.
+        """
+        operands = self.problem.operands
+        eq_idx, eq_values, eq_targets = [], [], []
+        other_idx, other_residuals = [], []
+        zero_idx = []
+        for i, operand in enumerate(operands):
+            if covered[i]:
+                continue
+            if weights[i] == 0.0:
+                if include_zero:
+                    zero_idx.append(i)
                 continue
             value = raw_values[i]
             if value is None:
                 raise RuntimeError(
                     f"Operand {i} ({operand.operand_type}) was not evaluated"
                 )
-            delta = self._compute_delta(operand, value)
-            terms.append((ew * delta) ** 2)
-        return terms
+            if operand.target is not None:
+                if be.size(value) == 1:
+                    value = be.ravel(value)[0]
+                eq_idx.append(i)
+                eq_values.append(value)
+                eq_targets.append(float(operand.target))
+            else:
+                other_idx.append(i)
+                other_residuals.append(weights[i] * self._compute_delta(operand, value))
 
-    # ------------------------------------------------------------------
-    # Evaluation
-    # ------------------------------------------------------------------
+        if eq_idx:
+            w = be.array([weights[i] for i in eq_idx])
+            chunks.append((eq_idx, w * (be.stack(eq_values) - be.array(eq_targets))))
+        if other_idx:
+            chunks.append((other_idx, be.stack(other_residuals)))
+        if zero_idx:
+            chunks.append((zero_idx, be.zeros((len(zero_idx),))))
+        if not chunks:
+            return None
+
+        order = [i for idx, _ in chunks for i in idx]
+        residuals = (
+            chunks[0][1]
+            if len(chunks) == 1
+            else be.concatenate([values for _, values in chunks])
+        )
+        permutation = sorted(range(len(order)), key=order.__getitem__)
+        if permutation != list(range(len(order))):
+            residuals = residuals[permutation]
+        return residuals
 
     def fun_array(self):
         """Compute contribution terms for each active operand.
@@ -508,28 +794,15 @@ class BatchedRayEvaluator:
         This is the batched equivalent of
         ``OptimizationProblem.fun_array()``.
 
-        Trace jobs are executed one at a time and operand values are
-        extracted immediately after each trace, before the next trace
+        All ray operands of one (optic, wavelength) share one trace; operand
+        values are extracted right after each trace, before the next trace
         overwrites the shared ``surface_group`` state.
         """
-        self._ensure_plan_current()
-
-        num_operands = len(self.problem.operands)
-
-        # Pre-allocate operand values — None means "not yet computed"
-        raw_values: list[Any] = [None] * num_operands
-
-        # Three-stage evaluation: generic traces, distribution traces, and
-        # direct/non-ray metrics.
-        self._evaluate_generic_jobs(raw_values)
-        self._evaluate_distribution_jobs(raw_values)
-        self._evaluate_direct_operands(raw_values)
-
-        terms = self._build_contribution_terms(raw_values)
-
-        if not terms:
+        with _epoch.evaluation_epoch(self._optics):
+            residuals = self._residuals(include_zero=False)
+        if residuals is None:
             return be.array([0.0])
-        return be.stack(terms)
+        return residuals**2
 
     def residual_vector(self):
         """Compute the vector of weighted operand deltas (unsquared).
@@ -538,147 +811,15 @@ class BatchedRayEvaluator:
         for each operand. This is the residual vector **r** needed by
         least-squares algorithms such as Levenberg-Marquardt.
 
-        Trace jobs are executed one at a time and operand values are
-        extracted immediately after each trace, before the next trace
+        All ray operands of one (optic, wavelength) share one trace; operand
+        values are extracted right after each trace, before the next trace
         overwrites the shared ``surface_group`` state.
         """
-        self._ensure_plan_current()
-
-        num_operands = len(self.problem.operands)
-
-        # Use a list to hold the computed tensor node for EACH operand.
-        # This avoids PyTorch in-place modification errors, allowing us
-        # to safely use be.stack() at the end to fuse the graph.
-        computed_residuals = [None] * num_operands
-
-        # --- 1. Process Batched Ray Traces (Vectorized) ---
-        for _job_idx, job in enumerate(self._generic_jobs):
-            sg = self._safe_execute(job)
-
-            if sg is None:
-                continue
-
-            op_indices = job.operand_indices
-
-            # Map operand types to surface_group tensor attributes
-            attr_map = {
-                "real_x_intercept": "x",
-                "real_y_intercept": "y",
-                "real_z_intercept": "z",
-                "real_L": "L",
-                "real_M": "M",
-                "real_N": "N",
-            }
-
-            # Only equality operands have targets for vectorized subtraction.
-            # Bounded operands use the scalar delta helper below.
-            for op_type, attr in attr_map.items():
-                mask = [
-                    self.problem.operands[i].operand_type == op_type
-                    and self.problem.operands[i].target is not None
-                    for i in op_indices
-                ]
-                if not any(mask):
-                    continue
-
-                matching_op_indices = [
-                    op_indices[idx] for idx, is_match in enumerate(mask) if is_match
-                ]
-                ray_indices = [idx for idx, is_match in enumerate(mask) if is_match]
-                surfs = [
-                    self.problem.operands[i].input_data["surface_number"]
-                    for i in matching_op_indices
-                ]
-
-                # THE VECTORIZED EXTRACTION —
-                # Pulls all needed ray data in ONE clean autograd operation
-                data_tensor = getattr(sg, attr)
-                extracted_vals = data_tensor[surfs, ray_indices]
-
-                # Vectorized target and weight arrays
-                targets = be.array(
-                    [self.problem.operands[i].target for i in matching_op_indices]
-                )
-                weights = be.array(
-                    [
-                        self.problem.operands[i].effective_weight()
-                        for i in matching_op_indices
-                    ]
-                )
-
-                # Compute all deltas for this group simultaneously
-                deltas = weights * (extracted_vals - targets)
-
-                # Assign the resulting scalar tensors to our list
-                for local_idx, global_op_idx in enumerate(matching_op_indices):
-                    computed_residuals[global_op_idx] = deltas[local_idx]
-
-            # Handle bounded and non-vectorizable generic operands (AOI, local
-            # coordinates) via the shared target/bounds delta helper.
-            for local_idx, global_op_idx in enumerate(op_indices):
-                if computed_residuals[global_op_idx] is not None:
-                    continue  # Already processed vectorially above
-
-                operand = self.problem.operands[global_op_idx]
-                val = _extract_value_generic(
-                    operand.operand_type, sg, operand.input_data, local_idx
-                )
-                delta = self._compute_delta(operand, val)
-                ew = operand.effective_weight()
-                if ew == 0.0:
-                    computed_residuals[global_op_idx] = be.array(0.0)
-                else:
-                    computed_residuals[global_op_idx] = ew * delta
-
-        # --- 2. Process Distribution Jobs ---
-        for job_idx, job in enumerate(self._distribution_jobs):
-            sg = self._safe_execute(job)
-            for i in range(num_operands):
-                plan_type, pj, _ = self._operand_plan[i]
-                if plan_type == "distribution" and pj == job_idx:
-                    operand = self.problem.operands[i]
-                    if sg is not None:
-                        val = _extract_rms_spot(sg, operand.input_data)
-                    else:
-                        metric_fn = operand_registry.get(operand.operand_type)
-                        val = metric_fn(**operand.input_data)
-
-                    delta = self._compute_delta(operand, val)
-                    ew = operand.effective_weight()
-                    if ew == 0.0:
-                        computed_residuals[i] = be.array(0.0)
-                    else:
-                        computed_residuals[i] = ew * delta
-
-        # --- 3. Process Direct Jobs ---
-        for i in range(num_operands):
-            if computed_residuals[i] is not None:
-                continue
-            plan_type, _, _ = self._operand_plan[i]
-            if plan_type == "direct":
-                operand = self.problem.operands[i]
-                ew = operand.effective_weight()
-                if ew == 0.0:
-                    computed_residuals[i] = be.array(0.0)
-                    continue
-                metric_fn = operand_registry.get(operand.operand_type)
-                val = metric_fn(**operand.input_data)
-
-                delta = self._compute_delta(operand, val)
-                computed_residuals[i] = ew * delta
-
-        # --- Final Graph Assembly ---
-        for i, res in enumerate(computed_residuals):
-            if res is None:
-                raise RuntimeError(
-                    f"Operand {i} ({self.problem.operands[i].operand_type}) "
-                    "was not evaluated"
-                )
-
-        if not computed_residuals:
+        with _epoch.evaluation_epoch(self._optics):
+            residuals = self._residuals(include_zero=True)
+        if residuals is None:
             return be.array([])
-
-        return be.stack(computed_residuals)
+        return residuals
 
     def sum_squared(self):
         """Compute the sum of squared weighted deltas.
@@ -686,7 +827,8 @@ class BatchedRayEvaluator:
         This is the batched equivalent of
         ``OptimizationProblem.sum_squared()``.
         """
-        return be.sum(self.fun_array())
+        with _epoch.evaluation_epoch(self._optics):
+            return be.sum(self.fun_array())
 
     # ------------------------------------------------------------------
     # Helpers
