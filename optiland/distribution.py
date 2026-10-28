@@ -273,6 +273,16 @@ class GaussianQuadrature(BaseDistribution):
     quadrature over the unit disk. The total number of points is `num_rings *
     num_spokes`.
 
+    Rings are Gauss-Legendre nodes in rho^2 (Forbes, 1988) and the arms are
+    equally spaced in angle. Registered as ``"gaussian_quad"`` in
+    :func:`create_distribution`.
+
+    Args:
+        half_pupil: If True, keep only the x >= 0 half of the pupil. Weights of
+            off-axis arms are doubled so that they still sum to 1.0. Valid only
+            for integrands even in x, i.e. an optic and field symmetric about
+            the y-z plane.
+
     Attributes:
         x: Array of x-coordinates of the generated points.
         y: Array of y-coordinates of the generated points.
@@ -283,6 +293,11 @@ class GaussianQuadrature(BaseDistribution):
             1957), pp. 66-73
     """
 
+    def __init__(self, half_pupil: bool = False):
+        super().__init__()
+        self.half_pupil = half_pupil
+        self.weights: BEArray = be.empty(0)
+
     def generate_points(self, num_rings: int, num_spokes: int | None = None):
         """Generate radially symmetric points.
 
@@ -292,6 +307,10 @@ class GaussianQuadrature(BaseDistribution):
                 None, the number of spokes is `4 * (num_rings + 1)`. In that
                 case, the integration over the unit disk is exact for
                 polynomials of degree `num_rings` in x and y.
+
+        Raises:
+            ValueError: If `num_rings` or `num_spokes` is < 1, or if
+                `half_pupil` is set and the number of spokes is odd.
         """
         from scipy.special import roots_legendre
 
@@ -311,8 +330,21 @@ class GaussianQuadrature(BaseDistribution):
         self.weights = be.tile(wi, k + 1)
 
         ri, theta_i = be.meshgrid(ri, theta_i)
-        self.x = (ri * be.cos(theta_i)).flatten()
-        self.y = (ri * be.sin(theta_i)).flatten()
+        x = (ri * be.cos(theta_i)).flatten()
+        y = (ri * be.sin(theta_i)).flatten()
+
+        if self.half_pupil:
+            if (k + 1) % 2:
+                raise ValueError("half_pupil requires an even number of spokes")
+            weights = self.weights
+            on_axis = be.abs(x) <= 1e-12
+            keep = (x > 1e-12) | on_axis
+            weights = be.where(on_axis, weights, 2.0 * weights)
+            x, y, weights = x[keep], y[keep], weights[keep]
+            self.weights = weights
+
+        self.x = x
+        self.y = y
 
 
 class RingDistribution(BaseDistribution):
@@ -398,6 +430,7 @@ def create_distribution(distribution_type: DistributionType) -> BaseDistribution
         "cross": CrossDistribution,
         "ring": RingDistribution,
         "sobol": SobolDistribution,
+        "gaussian_quad": GaussianQuadrature,
     }
 
     if distribution_type not in distribution_classes:

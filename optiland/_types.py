@@ -58,6 +58,7 @@ DistributionType = Literal[
     "cross",
     "ring",
     "sobol",
+    "gaussian_quad",
 ]
 ApertureType = Literal["EPD", "imageFNO", "objectNA", "float_by_stop_size"]
 Fields = Literal["all"] | Sequence[tuple[float, float]]

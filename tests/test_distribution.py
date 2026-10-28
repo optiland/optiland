@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import matplotlib.pyplot as plt
 import pytest
 from matplotlib.axes import Axes
@@ -209,3 +211,55 @@ def test_sobol_distribution(set_test_backend, num_points):
     assert_allclose(d.x, x)
     assert_allclose(d.y, y)
     assert be.all(d.x**2 + d.y**2 <= 1.0 + 1e-7)
+
+
+def _disk_moment(a, b):
+    """Exact mean of x^a y^b over the unit disk."""
+    if a % 2 or b % 2:
+        return 0.0
+    return (
+        2
+        * math.gamma((a + 1) / 2)
+        * math.gamma((b + 1) / 2)
+        / ((a + b + 2) * math.gamma((a + b) / 2 + 1))
+        / math.pi
+    )
+
+
+def test_gaussian_quad_registered(set_test_backend):
+    d = distribution.create_distribution("gaussian_quad")
+    assert isinstance(d, distribution.GaussianQuadrature)
+    d.generate_points(3)
+    assert d.x.shape == d.y.shape == d.weights.shape
+    assert_allclose(d.weights.sum(), 1.0)
+
+
+@pytest.mark.parametrize("num_rings", [1, 2, 3, 4, 5, 6])
+def test_gaussian_quad_polynomial_moments_exact(set_test_backend, num_rings):
+    d = distribution.create_distribution("gaussian_quad")
+    d.generate_points(num_rings)
+    for degree in range(4 * num_rings):
+        for a in range(degree + 1):
+            b = degree - a
+            got = (d.x**a * d.y**b * d.weights).sum()
+            assert_allclose(got, _disk_moment(a, b), atol=1e-12)
+
+
+@pytest.mark.parametrize("num_rings", [2, 4])
+def test_gaussian_quad_half_pupil(set_test_backend, num_rings):
+    full = distribution.GaussianQuadrature()
+    full.generate_points(num_rings)
+    half = distribution.GaussianQuadrature(half_pupil=True)
+    half.generate_points(num_rings)
+    assert half.x.shape[0] < full.x.shape[0]
+    assert be.all(half.x >= -1e-12)
+    assert_allclose(half.weights.sum(), 1.0)
+    for a, b in [(0, 0), (2, 0), (2, 2), (0, 4), (4, 2)]:
+        got = (half.x**a * half.y**b * half.weights).sum()
+        assert_allclose(got, _disk_moment(a, b), atol=1e-12)
+
+
+def test_gaussian_quad_half_pupil_odd_spokes_error(set_test_backend):
+    d = distribution.GaussianQuadrature(half_pupil=True)
+    with pytest.raises(ValueError):
+        d.generate_points(2, num_spokes=5)
