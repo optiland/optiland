@@ -10,9 +10,29 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
+from optiland._epoch import epoch_memo
+from optiland.paraxial_path import paraxial_seed_key
+
 if TYPE_CHECKING:
     from optiland._types import ScalarOrArray
     from optiland.paraxial import Paraxial
+
+
+def _resolve_wavelength(aperture: BaseSystemAperture, arguments: dict) -> None:
+    """Key ``wavelength=None`` as the primary wavelength, plus the seed scope."""
+    if "paraxial" in arguments:
+        optic = arguments["paraxial"].optic
+    else:
+        optic = arguments["optic"]
+    if arguments["wavelength"] is None:
+        arguments["wavelength"] = optic.primary_wavelength
+    arguments["<seed>"] = paraxial_seed_key(optic.surfaces)
+
+
+# Memo for aperture quantities derived from paraxial state. The paraxial
+# engine (or optic) is keyed by identity, since an aperture object may be
+# shared between optics; the default wavelength by the value it stands for.
+aperture_memo = epoch_memo(resolve=_resolve_wavelength)
 
 
 class BaseSystemAperture(ABC):

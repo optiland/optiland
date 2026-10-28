@@ -118,6 +118,78 @@ def test_epoch_material_evaluations_bounded(name):
     assert counts["trace"] == EXPECTED[name]["trace"]
 
 
+# Paraxial solves of one residual evaluation inside an epoch: f2 (the focal
+# length operand, and the EPD of an F-number aperture) and, where the stop is
+# not surface 1, the entrance pupil location (ray aiming), each solved once.
+EXPECTED_EPOCH_PARAXIAL = {
+    "cooke": 2,
+    "double_gauss": 2,
+    "freeform": 1,
+    "scaling_10": 1,
+}
+
+PARAXIAL_QUANTITIES = (
+    "f1",
+    "f2",
+    "EPL",
+    "XPL",
+    "EPD",
+    "XPD",
+    "FNO",
+    "marginal_ray",
+    "chief_ray",
+    "entrance_pupil_axial_position",
+)
+
+
+@pytest.mark.parametrize("name", sorted(EXPECTED_EPOCH_PARAXIAL))
+def test_epoch_one_paraxial_solve_per_quantity(set_test_backend, name):
+    _, problem = PROBLEMS[name]()
+    problem.sum_squared()  # warm caches
+    problem.update_optics()
+    with _instrument.counting() as counts, _epoch.evaluation_epoch():
+        problem.residual_vector()
+    assert counts["paraxial_trace"] == EXPECTED_EPOCH_PARAXIAL[name]
+    assert counts["trace"] == EXPECTED[name]["trace"]
+
+
+@pytest.mark.parametrize("name", ["cooke", "double_gauss", "freeform"])
+def test_epoch_paraxial_quantities_solved_once(set_test_backend, name):
+    # One trace each for f1, f2, EPL, XPL and the marginal ray, and three for
+    # the chief ray (unit forward, unit reverse, scaled). Every other quantity
+    # derives from these. EPL needs no trace when the stop is surface 1.
+    optic, _ = PROBLEMS[name]()
+    paraxial = optic.paraxial
+    with _epoch.evaluation_epoch():
+        with _instrument.counting() as first:
+            for quantity in PARAXIAL_QUANTITIES:
+                getattr(paraxial, quantity)()
+        with _instrument.counting() as again:
+            for _ in range(3):
+                for quantity in PARAXIAL_QUANTITIES:
+                    getattr(paraxial, quantity)()
+    assert first["paraxial_trace"] == (8 if optic.surfaces.stop_index != 1 else 7)
+    assert again["paraxial_trace"] == 0
+
+
+def test_epoch_aperture_solved_once_per_wavelength(set_test_backend):
+    # A float-by-stop aperture traces one paraxial ray per wavelength; the
+    # default wavelength is the primary one and shares its entry.
+    from optiland.samples.objectives import CookeTriplet
+
+    optic = CookeTriplet()
+    optic.set_aperture(aperture_type="float_by_stop_size", value=10.0)
+    wavelengths = optic.wavelengths.get_wavelengths()
+    with _instrument.counting() as counts, _epoch.evaluation_epoch():
+        for _ in range(3):
+            for wavelength in wavelengths:
+                optic.aperture.compute_epd(optic.paraxial, wavelength)
+            optic.aperture.compute_epd(optic.paraxial)
+            optic.paraxial.EPD()
+    assert len(wavelengths) == 3
+    assert counts["paraxial_trace"] == len(wavelengths)
+
+
 def test_epoch_does_not_change_residuals(set_test_backend):
     import numpy as np
 

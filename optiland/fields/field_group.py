@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import optiland.backend as be
+from optiland._epoch import epoch_memo
 from optiland.fields.field import Field
 from optiland.fields.field_types import BaseFieldDefinition
 
@@ -72,16 +73,19 @@ class FieldGroup:
         return be.array([field.y for field in self.fields])
 
     @property
+    @epoch_memo()
     def max_x_field(self):
         """float: Maximum field value in the x-direction."""
         return be.max(self.x_fields)
 
     @property
+    @epoch_memo()
     def max_y_field(self):
         """float: Maximum field value in the y-direction."""
         return be.max(self.y_fields)
 
     @property
+    @epoch_memo()
     def max_field(self):
         """float: Maximum radial field value."""
         if not self.fields:

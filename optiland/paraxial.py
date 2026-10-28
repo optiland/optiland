@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING
 import optiland.backend as be
 from optiland import _instrument
 from optiland._deprecation import deprecated
+from optiland._epoch import epoch_memo
+from optiland.paraxial_path import paraxial_seed_key
 from optiland.raytrace.paraxial_ray_tracer import ParaxialRayTracer
 
 if TYPE_CHECKING:
@@ -30,6 +32,29 @@ if TYPE_CHECKING:
     from optiland.optic import Optic
     from optiland.paraxial_path import ParaxialPath
     from optiland.surfaces import SurfaceGroup
+
+
+def _resolve_seed(paraxial: Paraxial, arguments: dict) -> None:
+    """Add the paraxial seed scope, which may turn a raise into a warning."""
+    arguments["<seed>"] = paraxial_seed_key(paraxial.surfaces)
+
+
+def _resolve_path(paraxial: Paraxial, arguments: dict) -> None:
+    """Key ``path=None`` as the path the call would build, plus the seed scope.
+
+    Inside an epoch ``build_paraxial_path`` is memoized, so this is the one
+    path of the epoch, and ``EPL()`` and ``EPL(path=...)`` share an entry.
+    """
+    if arguments["path"] is None:
+        arguments["path"] = paraxial.surfaces.build_paraxial_path()
+    _resolve_seed(paraxial, arguments)
+
+
+# Memo for first-order quantities. Their remaining inputs (primary wavelength,
+# aperture, field definition, object and geometry) are optic state, frozen
+# inside an epoch.
+_memo = epoch_memo(resolve=_resolve_seed)
+_path_memo = epoch_memo(resolve=_resolve_path)
 
 
 class Paraxial:
@@ -61,6 +86,7 @@ class Paraxial:
         """SurfaceGroup: the surface group of the optical system."""
         return self.optic.surfaces
 
+    @_memo
     def f1(self) -> ScalarOrArray:
         """Calculate the front effective focal length (f1).
 
@@ -78,6 +104,7 @@ class Paraxial:
         f1 = y[0] / u[-1]
         return f1[0]
 
+    @_memo
     def f2(self) -> ScalarOrArray:
         """Calculate the back effective focal length (f2).
 
@@ -270,6 +297,7 @@ class Paraxial:
         """
         return self.F2() - self.f1()
 
+    @_path_memo
     def EPL(self, path: ParaxialPath | None = None) -> ScalarOrArray:
         """Calculate the entrance pupil location (EPL).
 
@@ -315,6 +343,7 @@ class Paraxial:
         loc_relative = y[-1] / u[-1]
         return loc_relative[0]
 
+    @_path_memo
     def entrance_pupil_axial_position(
         self, path: ParaxialPath | None = None
     ) -> ScalarOrArray:
@@ -399,6 +428,7 @@ class Paraxial:
         xpl = self.XPL(path=path)
         return path.point_from_axial_offset(-1, xpl, side="incoming")
 
+    @_memo
     def EPD(self) -> ScalarOrArray:
         """Calculate the entrance pupil diameter (EPD).
 
@@ -416,6 +446,7 @@ class Paraxial:
         wavelength = self.optic.primary_wavelength
         return self.optic.aperture.compute_epd(self, wavelength)
 
+    @_path_memo
     def XPL(self, path: ParaxialPath | None = None) -> ScalarOrArray:
         """Calculate the exit pupil location (XPL).
 
@@ -437,6 +468,7 @@ class Paraxial:
         loc_relative = -y[-1] / u[-1]
         return loc_relative[0]
 
+    @_memo
     def XPD(self) -> ScalarOrArray:
         """Calculate the exit pupil diameter (XPD).
 
@@ -456,6 +488,7 @@ class Paraxial:
         yxp = yi + ui * xpl
         return 2 * yxp[0]
 
+    @_memo
     def FNO(self) -> ScalarOrArray:
         """Calculate the image-space F-number (FNO).
 
@@ -504,6 +537,7 @@ class Paraxial:
         inv = yb[1] * n[1] * ua[1] - ya[1] * n[1] * ub[1]
         return inv[0]
 
+    @_memo
     def marginal_ray(self) -> tuple[BEArray, BEArray]:
         """Calculates the marginal ray heights and angles at each surface.
 
@@ -540,6 +574,7 @@ class Paraxial:
         wavelength = self.optic.primary_wavelength
         return self.trace_generic(ya, ua, obj_z, wavelength, path=path)
 
+    @_memo
     def chief_ray(self) -> tuple[BEArray, BEArray]:
         """Calculates the chief ray heights and angles at each surface.
 

@@ -17,6 +17,7 @@ from functools import cached_property
 from typing import TYPE_CHECKING
 
 import optiland.backend as be
+from optiland._epoch import epoch_memo
 from optiland.coatings import BaseCoatingPolarized
 from optiland.paraxial_path import (
     ParaxialPath,
@@ -237,6 +238,7 @@ class SurfaceGroup:
             [surf.intensity for surf in self.surfaces if be.size(surf.intensity) > 0]
         )
 
+    @epoch_memo()
     def build_paraxial_path(self) -> ParaxialPath:
         """Build the shared folded-path metadata for the current geometry.
 
@@ -246,7 +248,8 @@ class SurfaceGroup:
         frames, directions and parity in each consumer.
 
         In a :func:`~optiland.paraxial_path.shared_path_scope` for this
-        group, all calls return the same path.
+        group, all calls return the same path, and so do all calls inside an
+        evaluation epoch (:mod:`optiland._epoch`), where geometry is frozen.
         """
         path = shared_path(self, lambda: build_paraxial_path(list(self.surfaces)))
         if path is not None:
@@ -387,6 +390,7 @@ class SurfaceGroup:
         return be.array(values)
 
     @property
+    @epoch_memo()
     def stop_index(self):
         """int: the index of the aperture stop surface"""
         for index, surface in enumerate(self.surfaces):

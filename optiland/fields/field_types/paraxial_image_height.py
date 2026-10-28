@@ -6,6 +6,8 @@ Kramer Harrison, 2025
 from __future__ import annotations
 
 import optiland.backend as be
+from optiland._epoch import epoch_memo
+from optiland.paraxial_path import resolve_optic_seed
 from optiland.utils import globalize_coordinates
 
 from .base import BaseFieldDefinition
@@ -129,6 +131,7 @@ class ParaxialImageHeightField(BaseFieldDefinition):
         max_image_height = optic.fields.max_y_field
         return max_image_height / y_img_unit
 
+    @epoch_memo(resolve=resolve_optic_seed)
     def _get_starting_z_offset(self, optic):
         """Calculate the starting ray z-coordinate offset for systems with an
         object at infinity. This is relative to the first surface of the optic.
@@ -147,6 +150,8 @@ class ParaxialImageHeightField(BaseFieldDefinition):
         offset = optic.paraxial.EPD()
         return offset - be.min(z)
 
+    # The trace may warn instead of raise inside a paraxial seed scope.
+    @epoch_memo(resolve=resolve_optic_seed)
     def _trace_unit_chief_ray(self, optic, plane="image"):
         stop_idx = optic.surfaces.stop_index
         num_surf = optic.surfaces.num_surfaces

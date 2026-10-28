@@ -47,6 +47,8 @@ from dataclasses import dataclass
 from typing import Any
 
 import optiland.backend as be
+from optiland._epoch import epoch_memo
+from optiland.paraxial_path import resolve_optic_seed
 from optiland.utils import (
     RCOND_EPS_MULTIPLIER,
     globalize_coordinates,
@@ -155,6 +157,7 @@ class RealImageHeightField(BaseFieldDefinition):
         max_field = optic.fields.max_field
         return max_field * Hx, max_field * Hy
 
+    @epoch_memo(resolve=resolve_optic_seed)
     def _paraxial_scales(self, optic):
         """Paraxial ``(image-height, object-unit)`` scales of a unit chief ray.
 
@@ -764,6 +767,7 @@ class RealImageHeightField(BaseFieldDefinition):
             optic, y_obj_unit, u_obj_unit, y_img_unit
         )
 
+    @epoch_memo(resolve=resolve_optic_seed)
     def _get_starting_z_offset(self, optic):
         z = optic.surfaces.positions[1:-1]
         offset = optic.paraxial.EPD()

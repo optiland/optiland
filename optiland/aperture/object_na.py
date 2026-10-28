@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import optiland.backend as be
-from optiland.aperture.base import BaseSystemAperture
+from optiland.aperture.base import BaseSystemAperture, aperture_memo
 
 if TYPE_CHECKING:
     from optiland._types import BEArray, ScalarOrArray
@@ -49,6 +49,7 @@ class ObjectNAAperture(BaseSystemAperture):
     def is_scalable(self) -> bool:
         return False
 
+    @aperture_memo
     def object_space_sine(
         self, optic: Optic, wavelength: float | None = None
     ) -> BEArray:
@@ -111,6 +112,7 @@ class ObjectNAAperture(BaseSystemAperture):
         sine = na / index
         return sine if be.is_torch_tensor(sine) else be.asarray(sine, dtype=sine.dtype)
 
+    @aperture_memo
     def compute_epd(self, paraxial: Paraxial, wavelength: float | None = None) -> float:
         """Compute EPD from object-space NA.
 
