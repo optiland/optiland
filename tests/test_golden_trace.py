@@ -26,7 +26,9 @@ import pytest
 
 import optiland.backend as be
 from benchmarks.optimization.problems import PROBLEMS
+from optiland import _epoch
 
+from .golden import snapshot
 from .golden.regenerate import FIXTURES_DIR
 from .golden.snapshot import GOLDEN_PROBLEMS, compute_snapshot
 
@@ -82,12 +84,10 @@ def _optical_path_waves(problem_name: str, wavelength: float) -> float:
     return float(positions.max() - positions.min()) * 1e3 / wavelength
 
 
-@pytest.mark.parametrize("problem_name", GOLDEN_PROBLEMS)
-def test_golden_trace(problem_name):
-    be.set_backend("numpy")
+def _assert_matches_fixture(problem_name: str, actual: dict) -> None:
+    """Compare a computed snapshot with its committed fixture."""
     path = FIXTURES_DIR / f"{problem_name}.json"
     expected = json.loads(path.read_text(encoding="utf-8"))
-    actual = compute_snapshot(problem_name)
 
     opd_expected = expected.pop("opd")
     opd_actual = actual.pop("opd")
@@ -102,6 +102,27 @@ def test_golden_trace(problem_name):
             f"{problem_name}.opd.{wavelength}",
             atol,
         )
+
+
+@pytest.mark.parametrize("problem_name", GOLDEN_PROBLEMS)
+def test_golden_trace(problem_name):
+    be.set_backend("numpy")
+    _assert_matches_fixture(problem_name, compute_snapshot(problem_name))
+
+
+@pytest.mark.parametrize("problem_name", GOLDEN_PROBLEMS)
+def test_golden_trace_inside_epoch(problem_name, monkeypatch):
+    # Per-epoch memos (materials, aim solutions, ...) must not move the trace.
+    be.set_backend("numpy")
+    monkeypatch.setenv(_epoch.CHECK_ENV, "1")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        built = PROBLEMS[problem_name]()
+    monkeypatch.setitem(snapshot.PROBLEMS, problem_name, lambda: built)
+    with _epoch.evaluation_epoch([built[0]]) as epoch:
+        actual = compute_snapshot(problem_name)
+    assert epoch.hits > 0
+    _assert_matches_fixture(problem_name, actual)
 
 
 def test_opd_allowance_stays_tight():
