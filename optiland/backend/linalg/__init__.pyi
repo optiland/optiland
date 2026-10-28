@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 
 from numpy.typing import ArrayLike
 
@@ -19,6 +19,10 @@ def svd(
     a: BEArrayT, full_matrices: bool = True
 ) -> tuple[BEArrayT, BEArrayT, BEArrayT]: ...
 def eig(a: BEArrayT) -> tuple[BEArrayT, BEArrayT]: ...
+def qr(
+    a: BEArrayT, mode: Literal["reduced", "complete"] = "reduced"
+) -> tuple[BEArrayT, BEArrayT]: ...
+def cholesky(a: BEArrayT) -> BEArrayT: ...
 
 # ---------------------------------------------------------------------------
 # Solvers
