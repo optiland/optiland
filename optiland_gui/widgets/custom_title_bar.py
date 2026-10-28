@@ -36,7 +36,7 @@ class CustomTitleBar(QWidget):
 
     Hosts the application name label, the main menu bar, quick-access tool
     buttons (settings, GitHub, help), and custom-styled minimize, maximize,
-    and close buttons.  Window dragging is implemented via mouse event handlers.
+    and close buttons. The frameless window owns title dragging.
 
     Signals:
         minimize_requested: Emitted when the minimize button is clicked.
@@ -66,14 +66,13 @@ class CustomTitleBar(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setAutoFillBackground(True)
 
-        self._mouse_move_offset = None
-
         layout = QHBoxLayout(self)
         layout.setContentsMargins(10, 0, 5, 0)
         layout.setSpacing(10)
 
         self.title_label = QLabel("Optiland")
         self.title_label.setObjectName("TitleBarOptilandLabel")
+        self.title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.title_label.setSizePolicy(
             QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred
         )
@@ -120,12 +119,14 @@ class CustomTitleBar(QWidget):
 
         layout.addStretch(1)
 
-        self.project_label = QLabel("Current Project: UnnamedProject.opds")
+        self.project_label = QLabel()
         self.project_label.setObjectName("TitleBarProjectLabel")
+        self.project_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.project_label.setSizePolicy(
-            QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Preferred
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
         )
-        layout.addWidget(self.project_label)
+        self.set_project_name("")
+        layout.addWidget(self.project_label, 1)
 
         layout.addSpacerItem(
             QSpacerItem(20, 0, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
@@ -180,6 +181,7 @@ class CustomTitleBar(QWidget):
         if not name:
             name = "UnnamedProject.opds"
         self.project_label.setText(f"Current Project: {name}")
+        self.project_label.setToolTip(name)
 
     def update_maximize_button_state(self, is_maximized: bool) -> None:
         """Update the visual state and tooltip of the maximize/restore button.
@@ -195,33 +197,20 @@ class CustomTitleBar(QWidget):
         )
 
     def mousePressEvent(self, event) -> None:  # noqa: ANN001
-        """Begin a window drag on left-button press."""
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._mouse_move_offset = (
-                event.globalPosition().toPoint()
-                - self.window().frameGeometry().topLeft()
-            )
-        super().mousePressEvent(event)
+        """Pass background presses to the frame's single gesture controller."""
+        event.ignore()
 
     def mouseMoveEvent(self, event) -> None:  # noqa: ANN001
-        """Move the window while the left button is held."""
-        if (
-            self._mouse_move_offset is not None
-            and event.buttons() == Qt.MouseButton.LeftButton
-        ):
-            new_window_pos = event.globalPosition().toPoint() - self._mouse_move_offset
-            self.window().move(new_window_pos)
-        super().mouseMoveEvent(event)
+        """Pass movement to the frame without a second position update."""
+        event.ignore()
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: ANN001
-        """End the window drag on mouse release."""
-        self._mouse_move_offset = None
-        super().mouseReleaseEvent(event)
+        """Let the frame finish or snap its gesture."""
+        event.ignore()
 
     def mouseDoubleClickEvent(self, event) -> None:  # noqa: ANN001
-        """Toggle maximize/restore on double-click."""
-        if event.button() == Qt.LeftButton:
-            self.maximize_restore_requested.emit()
+        """Let the frame own title double-clicks along with its other gestures."""
+        event.ignore()
 
     def _open_github_url(self) -> None:
         """Open the Optiland GitHub repository in the default browser."""
