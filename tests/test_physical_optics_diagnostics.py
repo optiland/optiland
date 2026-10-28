@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import warnings
 from dataclasses import FrozenInstanceError
 
@@ -145,7 +146,8 @@ def test_warning_is_optional_and_strict(set_test_backend, warn, threshold):
     if caught:
         assert caught[0].category is RuntimeWarning
         assert "periodic FFT" in str(caught[0].message)
-        assert caught[0].filename == __file__
+        # normcase: Windows may report the drive letter in either case
+        assert os.path.normcase(caught[0].filename) == os.path.normcase(__file__)
 
 
 def test_diagnostic_does_not_mutate_propagated_field(set_test_backend):
