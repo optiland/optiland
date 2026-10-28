@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
 )
 
 from .config import DEFAULT_TAB_POSITION
+from .widgets.spinbox_hit_areas import DoubleSpinBox, SpinBox
 
 if TYPE_CHECKING:
     from .optiland_connector import OptilandConnector
@@ -99,7 +100,7 @@ class AddVariableDialog(QDialog):
         layout.addLayout(self.bottom_form)
 
         # Surface number (always required for variables)
-        self.spnSurface = QSpinBox(self)
+        self.spnSurface = SpinBox(self)
         self.spnSurface.setRange(0, 9999)
         self.spnSurface.setValue(self._suggested_surface)
         self.top_form.addRow("Surface #:", self.spnSurface)
@@ -166,13 +167,13 @@ class AddVariableDialog(QDialog):
         w_type = info.get("type", "int")
 
         if w_type == "int":
-            w = QSpinBox()
+            w = SpinBox()
             w.setRange(info.get("min", 0), info.get("max", 1000000))
             w.setValue(info.get("default", 0))
             return w
 
         if w_type == "float":
-            w = QDoubleSpinBox()
+            w = DoubleSpinBox()
             w.setRange(info.get("min", -1e9), info.get("max", 1e9))
             w.setDecimals(info.get("decimals", 4))
             w.setValue(info.get("default", 0.0))
@@ -288,12 +289,12 @@ class AddOperandDialog(QDialog):
         self.top_form.addRow("Type:", self.cmbType)
 
         # Target / Weight (static)
-        self.spnTarget = QDoubleSpinBox(self)
+        self.spnTarget = DoubleSpinBox(self)
         self.spnTarget.setDecimals(6)
         self.spnTarget.setRange(-1e9, 1e9)
         self.spnTarget.setValue(0.0)
 
-        self.spnWeight = QDoubleSpinBox(self)
+        self.spnWeight = DoubleSpinBox(self)
         self.spnWeight.setDecimals(4)
         self.spnWeight.setRange(0.0, 1e9)
         self.spnWeight.setValue(1.0)
@@ -382,7 +383,7 @@ class AddOperandDialog(QDialog):
         w_type = info.get("type", "int")
 
         if w_type == "int":
-            w = QSpinBox()
+            w = SpinBox()
             w.setRange(info.get("min", 0), info.get("max", 9999))
 
             default = info.get("default", 1)
@@ -396,7 +397,7 @@ class AddOperandDialog(QDialog):
             return w
 
         if w_type == "float":
-            w = QDoubleSpinBox()
+            w = DoubleSpinBox()
             if name in ["Hx", "Hy", "Px", "Py"]:
                 w.setRange(-1.0, 1.0)
             else:
@@ -426,8 +427,8 @@ class AddOperandDialog(QDialog):
             h_layout = QHBoxLayout(container)
             h_layout.setContentsMargins(0, 0, 0, 0)
 
-            w1 = QDoubleSpinBox()
-            w2 = QDoubleSpinBox()
+            w1 = DoubleSpinBox()
+            w2 = DoubleSpinBox()
 
             if "coords" in name.lower():
                 w1.setRange(-1.0, 1.0)
@@ -579,7 +580,7 @@ class AutoGenerateOperandsDialog(QDialog):
         params_group = QGroupBox("Parameters")
         self.form_layout = QFormLayout(params_group)
 
-        self.spnRays = QSpinBox()
+        self.spnRays = SpinBox()
         self.spnRays.setRange(1, 100)
         self.spnRays.setValue(3)
         self.form_layout.addRow("Number of Rays:", self.spnRays)
@@ -587,13 +588,13 @@ class AutoGenerateOperandsDialog(QDialog):
         self.cmbDist = QComboBox()
         self.form_layout.addRow("Distribution:", self.cmbDist)
 
-        self.spnTarget = QDoubleSpinBox()
+        self.spnTarget = DoubleSpinBox()
         self.spnTarget.setDecimals(6)
         self.spnTarget.setRange(-1e9, 1e9)
         self.spnTarget.setValue(0.0)
         self.form_layout.addRow("Target:", self.spnTarget)
 
-        self.spnWeight = QDoubleSpinBox()
+        self.spnWeight = DoubleSpinBox()
         self.spnWeight.setDecimals(4)
         self.spnWeight.setRange(0.0, 1e9)
         self.spnWeight.setValue(1.0)
@@ -892,7 +893,7 @@ class OptimizationPanel(QWidget):
         layout.addWidget(self.chkLiveVars, 0, 1)
 
         frequency_label = QLabel("Frequency:")
-        self.spnFrequency = QSpinBox()
+        self.spnFrequency = SpinBox()
         self.spnFrequency.setRange(1, 1000)
         self.spnFrequency.setValue(10)
         self.spnFrequency.setSuffix(" evals")
@@ -931,13 +932,13 @@ class OptimizationPanel(QWidget):
         w_type = info.get("type", "float")
 
         if w_type == "int":
-            w = QSpinBox()
+            w = SpinBox()
             w.setRange(0, 1000000)
             w.setValue(info.get("default", 1000))
             return w
 
         if w_type == "float":
-            w = QDoubleSpinBox()
+            w = DoubleSpinBox()
             w.setRange(0, 1e9)
             w.setDecimals(info.get("decimals", 4))
             w.setValue(info.get("default", 0.001))

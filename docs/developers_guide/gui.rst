@@ -50,6 +50,18 @@ The `OptilandConnector` is a vital QObject that acts as a bridge between the GUI
 Core Panels
 ~~~~~~~~~~~~~~
 
+Numeric controls use ``SpinBox`` and ``DoubleSpinBox`` from
+``widgets/spinbox_hit_areas.py``. These Qt subclasses keep their embedded text
+editor outside the native arrow rectangles, including the inclusive-edge
+overlap in Qt 6.12 stylesheet geometry. Use them when creating controls
+dynamically as well as during panel construction. Each guard observes only its
+editor and is destroyed with it; replacing the editor installs a new guard.
+For native numeric editors returned by a Qt item delegate, call
+``protect_spinbox_editor`` in the delegate's ``createEditor`` hook, as the lens
+table does. This requires no application-wide event filter or widget-tree scan.
+Use ``isinstance`` when dispatching on Qt widget types so these subclasses keep
+the same settings and signal behavior as native controls.
+
 These are the primary QDockWidget or QWidget instances that provide specific functionalities:
 
 *   **Lens Editor (`lens_editor.py`)**:

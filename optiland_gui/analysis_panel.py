@@ -76,6 +76,7 @@ from . import gui_plot_utils
 from .services.analysis_plots import draw_analysis_plot
 from .services.job_records import BackendConfig
 from .widgets.retained_analysis_canvas import RetainedAnalysisCanvas
+from .widgets.spinbox_hit_areas import DoubleSpinBox, SpinBox
 
 if TYPE_CHECKING:
     from .optiland_connector import OptilandConnector
@@ -578,7 +579,7 @@ class AnalysisPanel(QWidget):
     def _create_spinbox_for_parameter(self, param_name, default_value, annotation):
         """Creates and configures a QSpinBox or QDoubleSpinBox."""
         if annotation is int:
-            widget = QSpinBox()
+            widget = SpinBox()
             ranges = {
                 "num_rays": (1, 10000000),
                 "num_points": (1, 10000000),
@@ -595,7 +596,7 @@ class AnalysisPanel(QWidget):
             widget.setSingleStep(step_v)
             widget.setValue(int(default_value) if default_value is not None else 0)
         else:  # float
-            widget = QDoubleSpinBox()
+            widget = DoubleSpinBox()
             widget.setDecimals(4)
 
             # Normalized coordinate ranges
@@ -962,7 +963,14 @@ class AnalysisPanel(QWidget):
         }
 
         # Get the correct handler function for the widget's type
-        handler = handler_map.get(type(widget))
+        handler = next(
+            (
+                handler
+                for kind, handler in handler_map.items()
+                if isinstance(widget, kind)
+            ),
+            None,
+        )
 
         # If a handler is found, call it with the required arguments
         if handler:
