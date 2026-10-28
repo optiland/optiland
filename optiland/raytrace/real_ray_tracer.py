@@ -15,10 +15,13 @@ import optiland.backend as be
 from optiland.distribution import create_distribution
 from optiland.rays import PolarizedRays, RayGenerator
 from optiland.raytrace.base import BaseRayTracer
+from optiland.raytrace.partial_trace import partial_trace_start
+from optiland.raytrace.snapshot import TraceSnapshot, capture_rays
 
 if TYPE_CHECKING:
     from optiland._types import DistributionType
     from optiland.distribution import BaseDistribution
+    from optiland.rays import RealRays
 
 
 class RealRayTracer(BaseRayTracer):
@@ -197,6 +200,126 @@ class RealRayTracer(BaseRayTracer):
             )
 
         return rays
+
+    def partial_trace_start(self, variable) -> int | None:
+        """Surface index where a trace may resume after ``variable`` changes.
+
+        Conservative: an index is returned only when every surface before it,
+        the launched rays and the ray aiming are provably unaffected by the
+        variable; otherwise None, meaning a full trace. See
+        :func:`optiland.raytrace.partial_trace.partial_trace_start`.
+
+        Args:
+            variable: An optimization ``Variable`` (or its behavior object).
+
+        Returns:
+            The surface index to resume from with :meth:`_trace_from`, or None.
+        """
+        return partial_trace_start(self.optic, variable)
+
+    def _trace(
+        self,
+        Hx,
+        Hy,
+        Px,
+        Py,
+        wavelength,
+        record: bool = True,
+    ) -> tuple[RealRays, TraceSnapshot]:
+        """Trace generic rays and snapshot the ray state before each surface.
+
+        Private (opt v2 PR3.1). Traces exactly as :meth:`trace_generic` does,
+        with the same returned rays and recorded surface data, and also
+        returns a :class:`TraceSnapshot` that :meth:`_trace_from` resumes.
+
+        Args:
+            Hx (float or numpy.ndarray): The normalized x field coordinate.
+            Hy (float or numpy.ndarray): The normalized y field coordinate.
+            Px (float or numpy.ndarray): The normalized x pupil coordinate.
+            Py (float or numpy.ndarray): The normalized y pupil coordinate.
+            wavelength (float): The wavelength of the rays.
+            record (bool, optional): Whether to store per-surface snapshots of
+                the traced rays on the surfaces. Defaults to True.
+
+        Returns:
+            The traced rays and the snapshot of the ray state before each
+            surface.
+        """
+        self._validate_normalized_coordinates(Hx, Hy, "field")
+        self._validate_normalized_coordinates(Px, Py, "pupil")
+
+        with be.no_grad_unless_enabled():
+            Hx, Hy, Px, Py = self._validate_array_size(Hx, Hy, Px, Py)
+
+            rays = self.ray_generator.generate_rays(Hx, Hy, Px, Py, wavelength)
+            surfaces = self.optic.surfaces.surfaces
+            self.optic.surfaces.reset()
+            states = []
+            for surface in surfaces:
+                states.append(capture_rays(rays))
+                surface.trace(rays, record=record)
+
+            self._propagate_to_image(rays)
+
+        return rays, TraceSnapshot(tuple(states), tuple(surfaces))
+
+    def _trace_from(
+        self, k: int, snapshot: TraceSnapshot, record: bool = True
+    ) -> RealRays:
+        """Resume a snapshot trace at surface ``k``.
+
+        Private (opt v2 PR3.1). Starts from the ray state stored before
+        surface ``k`` and traces surfaces ``k`` to the image, writing their
+        surface data exactly as a full trace would. Surfaces before ``k`` keep
+        their recorded data. The result equals a full trace only when nothing
+        before surface ``k`` changed since the snapshot was taken, which
+        :meth:`partial_trace_start` decides. The snapshot is not modified, so
+        it can be resumed any number of times.
+
+        Args:
+            k: The surface index to resume at.
+            snapshot: A snapshot from :meth:`_trace` on this optic.
+            record (bool, optional): Whether to store per-surface snapshots of
+                the traced rays on the surfaces. Defaults to True.
+
+        Returns:
+            The traced rays.
+
+        Raises:
+            ValueError: If the optic's surfaces are not the ones recorded.
+            IndexError: If ``k`` is not a recorded surface index.
+        """
+        surfaces = self.optic.surfaces.surfaces
+        if not snapshot.matches(surfaces):
+            raise ValueError(
+                "The snapshot was recorded on a different surface list; take a "
+                "new snapshot after adding, removing or replacing surfaces."
+            )
+        if not 0 <= k < len(snapshot):
+            raise IndexError(
+                f"Cannot resume at surface {k}: the snapshot holds surfaces "
+                f"0 to {len(snapshot) - 1}."
+            )
+
+        with be.no_grad_unless_enabled():
+            rays = snapshot.state_before(k)
+            for surface in surfaces[k:]:
+                surface.trace(rays, record=record)
+
+            self._propagate_to_image(rays)
+
+        return rays
+
+    def _propagate_to_image(self, rays: RealRays) -> None:
+        """Propagate rays by the thickness after the last surface.
+
+        Args:
+            rays: The rays traced through every surface.
+        """
+        last_surface = self.optic.surfaces[-1]
+        last_surface.material_post.propagation_model.propagate(
+            rays, last_surface.thickness
+        )
 
     def _validate_normalized_coordinates(self, x, y, coord_type="field"):
         """Validate that normalized coordinates are within the range (-1, 1).
