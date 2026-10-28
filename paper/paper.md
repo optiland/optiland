@@ -50,13 +50,14 @@ The field of optical design has long been dominated by commercial software tools
 While other Python optical libraries exist, they target different scopes or architectures. **Prysm** [@dube2019prysm] focuses largely on physical optics and diffraction, a domain distinct from the geometrical lens design and optimization core of Optiland. **RayOptics** [@RayOptics] offers geometrical ray tracing but relies on standard CPU-based execution. 
 
 **Build vs. Contribute Justification**
+
 We determined that contributing to RayOptics was not feasible, as its architecture differs fundamentally from the vector-native approach required for high-performance differentiable programming. Retrofitting that codebase to support GPU acceleration and gradient tracking would have effectively required a total rewrite. Consequently, Optiland was built from the ground up to be tensor-compatible by default, ensuring it can serve both as a professional engineering tool and a differentiable layer in deep learning pipelines.
 
 # Software Design
 
 Optiland’s architectural goals are two-fold: to provide a robust, professional-grade environment for standard optical engineering while simultaneously enabling seamless integration with neural networks. To achieve this, the software is built on a modular, object-oriented framework. Optical components, fields, and wavelengths are strictly decoupled, ensuring that the codebase is intuitive for engineers to use and easy for developers to extend.
 
-To support its hybrid application in classical design and AI research, Optiland utilizes a backend abstraction layer. This allows the same high-level API to dispatch calculations to either a **NumPy** backend (for broad compatibility and standard CPU workflows) or a **PyTorch** backend (for GPU acceleration and automatic differentiation). At the time of development, PyTorch was chosen over alternatives such as JAX or TensorFlow due to its mature dynamic autograd engine, robust hardware acceleration support, and ubiquitous adoption across the broader research and computer vision communities. Nonethless, the backend abstraction layer does not preclude additional backends from later being added under the same API.
+To support its hybrid application in classical design and AI research, Optiland utilizes a backend abstraction layer. This allows the same high-level API to dispatch calculations to either a **NumPy** backend (for broad compatibility and standard CPU workflows) or a **PyTorch** backend (for GPU acceleration and automatic differentiation). At the time of development, PyTorch was chosen over alternatives such as JAX or TensorFlow due to its mature dynamic autograd engine, robust hardware acceleration support, and ubiquitous adoption across the broader research and computer vision communities. Nonetheless, the backend abstraction layer does not preclude additional backends from later being added under the same API.
 
 # Functionalities
 
@@ -73,7 +74,7 @@ Optiland supports a wide range of design, analysis, and optimization tasks, maki
 
 ## Performance and benchmarking
 
-To illustrate the performance gain using GPU acceleration, we benchmarked ray tracing through a Cooke triplet lens and measured throughput in terms of ray–surface interactions per second. Benchmarks were run on a system with an Intel Core i7-12700H CPU and an NVIDIA RTX 3070 GPU, with results shown in \autoref{tbl:benchmark}. Each configuration traces a fixed random distribution of 10 million rays (20 million for the float32 GPU configuration) through the lens once; reported figures are a single `trace()` measurement, not an average. We observed run-to-run spread of up to several tens of percent on the CPU configurations, so absolute throughput should be treated as illustrative rather than precise. The benchmark script is provided at `benchmarks/sequential/cooke_triplet.py` in the main Optiland repository so readers can reproduce or repeat these measurements on their own hardware.
+To illustrate the performance gain from GPU acceleration, we benchmarked ray tracing through a Cooke triplet lens and measured throughput in terms of ray--surface interactions per second. Benchmarks were run on a system with an Intel Core i7-12700H CPU and an NVIDIA RTX 3070 GPU, with results shown in \autoref{tbl:benchmark}. Each configuration traces a fixed random distribution of 10 million rays (20 million for the float32 GPU configuration) through the lens once; reported figures are a single `trace()` measurement, not an average. We observed run-to-run spread of up to several tens of percent on the CPU configurations, so absolute throughput should be treated as illustrative rather than precise. The benchmark script is provided at `benchmarks/sequential/cooke_triplet.py` in the main Optiland repository so readers can reproduce or repeat these measurements on their own hardware.
 
 | Backend Configuration | RMSE vs NumPy float64 (m) |Throughput (ray-surfaces/s) | Relative Speedup |
 | :--- | :--- | :--- | :--- |
@@ -98,9 +99,9 @@ Optiland bridges the gap between optical engineering and machine learning, enabl
 
 # Figures
 
-![An example of a complex, multi-element UV photolithography lens modeled and rendered in Optiland. Based on U.S. Patent #5,831,776. Different colored rays represent different fields.](figures/litho_lens.svg)
+![An example of a complex, multi-element UV photolithography lens modeled and rendered in Optiland. Based on U.S. Patent #5,831,776. Differently colored rays represent different fields.](figures/litho_lens.svg)
 
-![A model of a folded Czerny-Turner spectrometer. Different colored rays represent different wavelengths.](figures/czerny_turner.svg){height="750px"}
+![A model of a folded Czerny--Turner spectrometer. Differently colored rays represent different wavelengths.](figures/czerny_turner.svg){height="750px"}
 
 # AI usage disclosure
 
@@ -108,7 +109,7 @@ Optiland bridges the gap between optical engineering and machine learning, enabl
 The core architecture, design philosophy, and fundamental algorithms of Optiland were established beginning in 2017, predating the widespread availability of modern generative AI. The authors maintain sole responsibility for all architectural decisions, scientific validity, and the logical structure of the codebase. All AI-generated outputs were treated as raw suggestions and were manually reviewed, tested, and validated by the authors prior to inclusion.
 
 **Tool Usage:**
-During the recent preparation of this submission and the refinement of the codebase (2023-2025), the authors utilized GitHub Copilot, ChatGPT (versions up to 5), Google Gemini (versions up to 2.5), and Google Jules (via Gemini 2.5) to assist with auxiliary tasks.
+During the recent preparation of this submission and the refinement of the codebase (2023--2025), the authors utilized GitHub Copilot, ChatGPT (versions up to 5), Google Gemini (versions up to 2.5), and Google Jules (via Gemini 2.5) to assist with auxiliary tasks.
 
 **Nature and Scope of Assistance:**
 
