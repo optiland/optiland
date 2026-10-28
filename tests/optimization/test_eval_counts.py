@@ -22,17 +22,19 @@ pytestmark = pytest.mark.filterwarnings("ignore")
 # ``optic.trace_generic`` inside an evaluation epoch. Material evaluations
 # depend on the backend (epoch memo hits on wavelength arrays differ), so they
 # are pinned per backend; all other counts are identical on numpy and torch.
+# The epoch also memoizes paraxial solves, so paraxial traces equal the
+# per-epoch counts in ``EXPECTED_EPOCH_PARAXIAL``.
 EXPECTED = {
     "cooke": {
         "trace": 0,
         "trace_generic": 3,
-        "paraxial_trace": 10,
+        "paraxial_trace": 2,
         "material_n": {"numpy": 32, "torch": 71},
     },
     "double_gauss": {
         "trace": 0,
         "trace_generic": 3,
-        "paraxial_trace": 19,
+        "paraxial_trace": 2,
         "material_n": {"numpy": 52, "torch": 121},
     },
     "freeform": {
