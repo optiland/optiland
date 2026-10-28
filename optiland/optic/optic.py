@@ -25,6 +25,7 @@ import warnings
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Literal
 
+from optiland import _instrument
 from optiland._deprecation import deprecated
 from optiland.aberrations import Aberrations
 from optiland.aperture import BaseSystemAperture, make_system_aperture
@@ -833,6 +834,7 @@ class Optic:
             pupil point for every field point; ``len(rays.x)`` gives the count.
 
         """
+        _instrument.count("trace")
         return self.ray_tracer.trace(
             Hx,
             Hy,
@@ -868,6 +870,7 @@ class Optic:
             RealRays: A `RealRays` object containing the traced rays.
 
         """
+        _instrument.count("trace_generic")
         return self.ray_tracer.trace_generic(
             Hx, Hy, Px, Py, wavelength, retain_launch=retain_launch
         )

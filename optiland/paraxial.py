@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import optiland.backend as be
+from optiland import _instrument
 from optiland._deprecation import deprecated
 from optiland.raytrace.paraxial_ray_tracer import ParaxialRayTracer
 
@@ -635,6 +636,7 @@ class Paraxial:
                 - y_ray: Heights of the traced ray at each surface.
                 - u_ray: Slopes of the traced ray after each surface.
         """
+        _instrument.count("paraxial_trace")
         return self._ray_tracer.trace(Hy, Py, wavelength)
 
     def ray_transfer_matrix(
@@ -829,4 +831,5 @@ class Paraxial:
                 and slope(s) of the rays at each surface interface after tracing.
 
         """
+        _instrument.count("paraxial_trace")
         return self._ray_tracer.trace_generic(y, u, z, wavelength, reverse, skip, path)

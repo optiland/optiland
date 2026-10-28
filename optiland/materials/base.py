@@ -17,6 +17,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 
 import optiland.backend as be
+from optiland import _instrument
 from optiland._suggest import options_hint
 from optiland.propagation.base import BasePropagationModel
 from optiland.propagation.homogeneous import HomogeneousPropagation
@@ -198,7 +199,7 @@ class BaseMaterial(ABC):
         """
         # Lists and tuples have no shape/dtype attributes. Normalize only the
         # key input so nested and flat sequences cannot share a fingerprint.
-        if isinstance(value, (list, tuple)):
+        if isinstance(value, list | tuple):
             value = np.asarray(value)
         scalar = _uniform_scalar(value)
         if scalar is not None:
@@ -249,7 +250,7 @@ class BaseMaterial(ABC):
         """Fingerprint numerical state; unsupported or trainable data disables reuse."""
         if cls._requires_grad(value):
             return None
-        if isinstance(value, (tuple, list)):
+        if isinstance(value, tuple | list):
             items = []
             for item in value:
                 key = cls._state_key(item)
@@ -257,7 +258,7 @@ class BaseMaterial(ABC):
                     return None
                 items.append(key)
             return tuple(items)
-        if isinstance(value, (str, int, float, bool, type(None))):
+        if isinstance(value, str | int | float | bool | type(None)):
             return (type(value), value)
         if isinstance(value, np.ndarray) or (
             torch is not None and isinstance(value, torch.Tensor)
@@ -407,6 +408,7 @@ class BaseMaterial(ABC):
         Returns:
             float | be.ndarray: The refractive index at the given wavelength(s).
         """
+        _instrument.count("material_n")
         return self._evaluate_property("n", wavelength, **kwargs)
 
     def k(self, wavelength: float | be.ndarray, **kwargs) -> float | be.ndarray:
