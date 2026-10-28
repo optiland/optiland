@@ -17,7 +17,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 
 import optiland.backend as be
-from optiland import _instrument
+from optiland import _epoch, _instrument
 from optiland._suggest import options_hint
 from optiland.propagation.base import BasePropagationModel
 from optiland.propagation.homogeneous import HomogeneousPropagation
@@ -397,6 +397,77 @@ class BaseMaterial(ABC):
         result = cache[cache_key]
         return self._broadcast_like(result, wavelength) if uniform else result
 
+    @staticmethod
+    def _epoch_key(wavelength, kwargs: dict) -> tuple | None:
+        """Cheap memo key valid only inside an evaluation epoch, or None.
+
+        Arrays are keyed by identity and shape (the epoch keeps them alive),
+        scalars by type and value. Trainable wavelengths and unhashable kwargs
+        return None and take the regular path.
+        """
+        if BaseMaterial._requires_grad(wavelength):
+            return None
+        wavelength_key = _epoch.array_key(wavelength)
+        if wavelength_key is None:
+            wavelength_key = (type(wavelength), wavelength)
+        key = (wavelength_key, tuple(sorted(kwargs.items())))
+        try:
+            hash(key)
+        except TypeError:
+            return None
+        return key
+
+    def _epoch_property(self, property_name: str, wavelength, kwargs: dict):
+        """Evaluate n/k, memoized per wavelength inside an evaluation epoch.
+
+        Inside an epoch the optic state is frozen by contract, so the result
+        is reused without building ``_state_key`` or content cache keys.
+        Outside an epoch this is exactly the regular cached evaluation.
+        """
+        epoch = _epoch.current()
+        key = None if epoch is None else self._epoch_key(wavelength, kwargs)
+        if key is None:
+            return self._counted_property(property_name, wavelength, kwargs)
+        return epoch.get_or_compute(
+            self,
+            (property_name, key),
+            lambda: self._epoch_by_value(epoch, property_name, wavelength, kwargs),
+            keep=(wavelength,),
+        )
+
+    def _epoch_by_value(self, epoch, property_name: str, wavelength, kwargs: dict):
+        """Second memo level: share one result between equal constant arrays.
+
+        Every trace builds a fresh wavelength array, so identity keys miss once
+        per trace. A constant array is keyed by its value, dtype and device
+        instead, evaluated once at a 1-element view and broadcast, exactly as
+        the regular cache does for constant arrays.
+        """
+        scalar = None
+        if getattr(wavelength, "shape", None) is not None and all(
+            value is None or np.isscalar(value) for value in kwargs.values()
+        ):
+            scalar = _uniform_scalar(wavelength)
+        if scalar is None:
+            return self._counted_property(property_name, wavelength, kwargs)
+        query = self._uniform_representative(wavelength)
+        result = epoch.get_or_compute(
+            self,
+            (
+                property_name,
+                _array_uniform_key(query, scalar),
+                tuple(sorted(kwargs.items())),
+            ),
+            lambda: self._counted_property(property_name, query, kwargs),
+        )
+        return self._broadcast_like(result, wavelength)
+
+    def _counted_property(self, property_name: str, wavelength, kwargs: dict):
+        """Run the regular evaluation path, counting refractive-index lookups."""
+        if property_name == "n":
+            _instrument.count("material_n")
+        return self._evaluate_property(property_name, wavelength, **kwargs)
+
     def n(self, wavelength: float | be.ndarray, **kwargs) -> float | be.ndarray:
         """Calculates the refractive index at a given wavelength with caching.
 
@@ -408,8 +479,7 @@ class BaseMaterial(ABC):
         Returns:
             float | be.ndarray: The refractive index at the given wavelength(s).
         """
-        _instrument.count("material_n")
-        return self._evaluate_property("n", wavelength, **kwargs)
+        return self._epoch_property("n", wavelength, kwargs)
 
     def k(self, wavelength: float | be.ndarray, **kwargs) -> float | be.ndarray:
         """Calculates the extinction coefficient at a given wavelength with caching.
@@ -422,7 +492,7 @@ class BaseMaterial(ABC):
         Returns:
             float | be.ndarray: The extinction coefficient at the given wavelength(s).
         """
-        return self._evaluate_property("k", wavelength, **kwargs)
+        return self._epoch_property("k", wavelength, kwargs)
 
     @abstractmethod
     def _calculate_n(

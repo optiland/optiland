@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import numpy as np
 
 import optiland.backend as be
+from optiland import _epoch
 from scipy import optimize
 
 from ..live_plotter import LiveOptimizationPlotter
@@ -42,6 +43,9 @@ class LeastSquares(OptimizerGeneric):
         variables as provided by the SciPy optimizer. These are typically scaled values
         if variable scaling is active.
 
+        The residuals are read inside one evaluation epoch, so per-design work
+        such as material indices is computed once per evaluation.
+
         Residuals are ``effective_weight * delta`` per operand. SciPy cannot accept
         non-finite values, so non-finite rows are replaced by a penalty scaled to the
         last finite residual norm; a failed call yields a full penalty vector.
@@ -53,9 +57,14 @@ class LeastSquares(OptimizerGeneric):
                 optiland_var_wrapper.update(x_numpy_variables_from_scipy[i])
 
             self.problem.update_optics()
-            residuals = np.asarray(
-                be.to_numpy(self.problem.residual_vector()), dtype=float
-            ).reshape(-1)
+            # Optic state is frozen from here until the residuals are read
+            optics = {var.optic for var in self.problem.variables}
+            with _epoch.evaluation_epoch(optics):
+                residuals = np.asarray(
+                    be.to_numpy(self.problem.residual_vector()), dtype=float
+                ).reshape(-1)
+        except _epoch.EpochViolationError:
+            raise  # debug guard: a contract breach is a bug, not a bad design
         except Exception:
             # e.g. critical ray failure: no usable rows at all
             self._last_finite = False

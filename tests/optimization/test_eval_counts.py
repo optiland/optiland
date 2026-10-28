@@ -13,7 +13,7 @@ import pytest
 
 import optiland.backend as be
 from benchmarks.optimization.problems import PROBLEMS
-from optiland import _instrument
+from optiland import _epoch, _instrument
 
 pytestmark = pytest.mark.filterwarnings("ignore")
 
@@ -85,6 +85,47 @@ def test_fd_jacobian_cost_is_linear_in_variables(set_test_backend):
             x[j] += 1e-6
             optimizer._compute_residuals_vector(x)
     assert jac["trace"] == (len(x0) + 1) * one["trace"]
+
+
+def _epoch_evaluation_counts(problem) -> dict[str, int]:
+    """Counts of one ``LeastSquares`` residual evaluation, which opens an epoch.
+
+    Variable writes and ``update_optics`` run before the epoch opens, so only
+    the residual read is counted.
+    """
+    from optiland.optimization import LeastSquares
+
+    optimizer = LeastSquares(problem)
+    x0 = be.to_numpy([var.value for var in problem.variables]).astype(float)
+    optimizer._compute_residuals_vector(x0)  # warm caches
+    problem.update_optics()
+    with _instrument.counting() as counts, _epoch.evaluation_epoch():
+        problem.residual_vector()
+    return dict(counts)
+
+
+@pytest.mark.parametrize("name", sorted(EXPECTED))
+def test_epoch_material_evaluations_bounded(name):
+    # Numpy backend. One evaluation per (material, wavelength) for the ray
+    # bundles, plus one per material for the scalar paraxial primary-wavelength
+    # query (scalars and arrays are memoized apart to keep result types).
+    optic, problem = PROBLEMS[name]()
+    materials = {id(s.material_post) for s in optic.surfaces}
+    num_wavelengths = len(optic.wavelengths.get_wavelengths())
+    counts = _epoch_evaluation_counts(problem)
+    assert counts["material_n"] <= len(materials) * (num_wavelengths + 1)
+    assert counts["material_n"] < EXPECTED[name]["material_n"]
+    assert counts["trace"] == EXPECTED[name]["trace"]
+
+
+def test_epoch_does_not_change_residuals(set_test_backend):
+    import numpy as np
+
+    _, problem = PROBLEMS["double_gauss"]()
+    without = be.to_numpy(problem.residual_vector())
+    with _epoch.evaluation_epoch():
+        within = be.to_numpy(problem.residual_vector())
+    np.testing.assert_array_equal(within, without)
 
 
 def test_counting_is_off_by_default():

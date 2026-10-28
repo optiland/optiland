@@ -11,7 +11,9 @@ Events:
     ``trace_generic``: :meth:`Optic.trace_generic` calls.
     ``paraxial_trace``: :meth:`Paraxial.trace` and :meth:`Paraxial.trace_generic`
         calls.
-    ``material_n``: :meth:`BaseMaterial.n` calls.
+    ``material_n``: :meth:`BaseMaterial.n` calls that run the regular
+        evaluation path. Calls answered by an evaluation-epoch memo
+        (:mod:`optiland._epoch`) are not counted.
 
 Kramer Harrison, 2026
 """
