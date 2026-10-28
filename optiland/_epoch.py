@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import functools
 import hashlib
+import inspect
 import json
 import os
 from contextlib import contextmanager
@@ -203,16 +204,51 @@ def array_key(value: Any) -> tuple | None:
     )
 
 
+_VALUE_TYPES = (type(None), bool, int, float, complex, str, bytes, np.generic)
+
+
+def numeric_context() -> tuple:
+    """Hidden inputs of every memoized call: backend, precision and grad mode.
+
+    These are global settings, not optic state, so the epoch contract does not
+    freeze them. A value computed under ``torch.no_grad`` carries no graph and
+    must not be reused where gradients are recorded, and vice versa.
+    """
+    import optiland.backend as be
+
+    backend = be.get_backend()
+    grad = None
+    if backend == "torch":
+        import torch
+
+        grad = torch.is_grad_enabled()
+    return (backend, str(be.get_precision()), grad)
+
+
 def _default_key(args: tuple, kwargs: dict) -> tuple[Hashable, tuple]:
-    """Key positional and keyword args; arrays by identity, kept alive."""
+    """Key positional and keyword args, keeping identity-keyed objects alive.
+
+    Scalars and strings key by value, tuples element-wise and arrays by
+    :func:`array_key`. Lists, dicts and sets stay unhashable, so the call
+    passes through. Any other object keys by identity: its state is frozen
+    inside an epoch, and identity avoids value equality on, for example,
+    dataclasses holding arrays.
+    """
     keep = []
 
     def one(value: Any) -> Hashable:
+        if isinstance(value, _VALUE_TYPES):
+            return value
+        if isinstance(value, tuple):
+            return tuple(one(item) for item in value)
         key = array_key(value)
-        if key is None:
+        if key is not None:
+            keep.append(value)
+            return key
+        if isinstance(value, list | dict | set):
             return value
         keep.append(value)
-        return key
+        return ("object-id", id(value))
 
     key = (
         tuple(one(arg) for arg in args),
@@ -221,16 +257,50 @@ def _default_key(args: tuple, kwargs: dict) -> tuple[Hashable, tuple]:
     return key, tuple(keep)
 
 
+def _bound_arguments(
+    signature: inspect.Signature, self: Any, args: tuple, kwargs: dict
+) -> dict[str, Any]:
+    """All arguments of a call by name, defaults applied, ``self`` excluded.
+
+    Positional and keyword spellings of the same call therefore share a key.
+    """
+    bound = signature.bind(self, *args, **kwargs)
+    bound.apply_defaults()
+    arguments = {}
+    for index, (name, value) in enumerate(bound.arguments.items()):
+        if index == 0:
+            continue
+        kind = signature.parameters[name].kind
+        if kind is inspect.Parameter.VAR_KEYWORD:
+            arguments.update(value)
+        else:
+            arguments[name] = value
+    return arguments
+
+
 def epoch_memo(
     key_fn: Callable[..., Hashable] | None = None,
+    *,
+    resolve: Callable[[Any, dict[str, Any]], None] | None = None,
 ) -> Callable[[Callable[..., T]], Callable[..., T]]:
     """Method decorator: memoize per epoch, passthrough outside one.
 
+    The key always holds the method's qualified name and
+    :func:`numeric_context`.
+
     Args:
         key_fn: Optional ``key_fn(*args, **kwargs)`` returning a hashable key
-            for the call (``self`` excluded). By default arguments are used
-            as-is, with arrays keyed by identity, shape and ``requires_grad``.
+            for the call (``self`` excluded). By default every argument is
+            keyed by name with defaults applied (see :func:`_default_key`).
             A custom ``key_fn`` must not key on the ``id`` of temporaries.
+        resolve: Optional ``resolve(self, arguments)`` that edits the
+            ``arguments`` dict in place before it is keyed. It replaces
+            defaults standing for optic state (``wavelength=None`` meaning the
+            primary wavelength, say), so equal calls share a key, and adds
+            hidden inputs, such as a context variable that changes the result,
+            under names that are not identifiers (``"<name>"``). Only the key
+            changes: the method still runs with the caller's arguments.
+            Ignored with a custom ``key_fn``.
 
     Returns:
         The decorator.
@@ -238,6 +308,7 @@ def epoch_memo(
 
     def decorator(method: Callable[..., T]) -> Callable[..., T]:
         qualname = method.__qualname__
+        signature = inspect.signature(method)
 
         @functools.wraps(method)
         def wrapper(self: Any, *args: Any, **kwargs: Any) -> T:
@@ -245,7 +316,13 @@ def epoch_memo(
             if epoch is None:
                 return method(self, *args, **kwargs)
             if key_fn is None:
-                key, keep = _default_key(args, kwargs)
+                try:
+                    arguments = _bound_arguments(signature, self, args, kwargs)
+                except TypeError:  # bad call: let the method raise its error
+                    return method(self, *args, **kwargs)
+                if resolve is not None:
+                    resolve(self, arguments)
+                key, keep = _default_key((), arguments)
             else:
                 key, keep = key_fn(*args, **kwargs), ()
             try:
@@ -254,7 +331,7 @@ def epoch_memo(
                 return method(self, *args, **kwargs)
             return epoch.get_or_compute(
                 self,
-                (qualname, key),
+                (qualname, numeric_context(), key),
                 lambda: method(self, *args, **kwargs),
                 keep=keep,
             )

@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import optiland.backend as be
-from optiland.aperture.base import BaseSystemAperture
+from optiland.aperture.base import BaseSystemAperture, aperture_memo
 
 if TYPE_CHECKING:
     from optiland.paraxial import Paraxial
@@ -45,6 +45,7 @@ class ImageFNOAperture(BaseSystemAperture):
     def is_scalable(self) -> bool:
         return False
 
+    @aperture_memo
     def compute_epd(self, paraxial: Paraxial, wavelength: float | None = None) -> float:
         """Compute EPD as ``|f2| / FNO``.
 

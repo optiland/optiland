@@ -38,7 +38,10 @@ import numpy as np
 import optiland.backend as be
 
 if TYPE_CHECKING:
+    from typing import Any
+
     from optiland._types import BEArray, ScalarOrArray
+    from optiland.surfaces import SurfaceGroup
 
 # A direction this close to an axis is treated as on that axis. This is the
 # float64 intent; use angular_tolerance() for a dtype-aware value.
@@ -103,6 +106,36 @@ def paraxial_seed_scope():
 def in_paraxial_seed_scope() -> bool:
     """Whether a paraxial seed scope is currently active."""
     return _SEED_SCOPE.get()
+
+
+def paraxial_seed_key(surface_group: SurfaceGroup) -> bool | None:
+    """The seed scope as a hidden memo input, or None where it is moot.
+
+    The scope changes a first-order result only where
+    :meth:`ParaxialPath.require_scalar_paraxial` would raise outside it: on a
+    path with a diagnostic outside :data:`APPROXIMATE_DIAGNOSTIC_CODES`.
+    Elsewhere values inside and outside the scope are identical, so memoized
+    quantities (:mod:`optiland._epoch`) share one entry.
+
+    Args:
+        surface_group: The surface group whose path decides.
+    """
+    try:
+        diagnostics = surface_group.build_paraxial_path().diagnostics
+    except Exception:
+        return in_paraxial_seed_scope()
+    if all(d.code in APPROXIMATE_DIAGNOSTIC_CODES for d in diagnostics):
+        return None
+    return in_paraxial_seed_scope()
+
+
+def resolve_optic_seed(owner: Any, arguments: dict[str, Any]) -> None:
+    """``epoch_memo`` resolver adding the seed scope of an ``optic`` argument.
+
+    For memoized methods taking the optic as their first argument (field
+    definitions, for one); see :func:`paraxial_seed_key`.
+    """
+    arguments["<seed>"] = paraxial_seed_key(arguments["optic"].surfaces)
 
 
 # While set, SurfaceGroup.build_paraxial_path returns one path for each

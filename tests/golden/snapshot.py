@@ -10,6 +10,7 @@ Kramer Harrison, 2026
 
 from __future__ import annotations
 
+import contextlib
 import warnings
 from typing import Any
 
@@ -17,6 +18,7 @@ import numpy as np
 
 import optiland.backend as be
 from benchmarks.optimization.problems import PROBLEMS
+from optiland import _epoch
 from optiland.wavefront.opd import OPD
 
 # One optic per benchmark problem; the scaling probe is represented by its
@@ -97,11 +99,13 @@ def _paraxial(optic: Any) -> dict[str, float]:
     }
 
 
-def compute_snapshot(problem_name: str) -> dict[str, Any]:
+def compute_snapshot(problem_name: str, *, in_epoch: bool = False) -> dict[str, Any]:
     """Compute the golden snapshot of one benchmark optic (numpy backend).
 
     Args:
         problem_name: A key of :data:`GOLDEN_PROBLEMS`.
+        in_epoch: If True, build the optic first and compute the whole snapshot
+            inside one evaluation epoch, so memoized quantities are reused.
 
     Returns:
         A JSON-serialisable dict.
@@ -109,10 +113,19 @@ def compute_snapshot(problem_name: str) -> dict[str, Any]:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         optic, _ = PROBLEMS[problem_name]()
-        wavelengths = _wavelengths(optic)
-        return {
-            "wavelengths": wavelengths,
-            "paraxial": _paraxial(optic),
-            "rays": {str(wl): _rays(optic, wl) for wl in wavelengths},
-            "opd": {str(wl): _opd(optic, wl) for wl in wavelengths},
-        }
+        scope = (
+            _epoch.evaluation_epoch((optic,)) if in_epoch else contextlib.nullcontext()
+        )
+        with scope:
+            return _snapshot(optic)
+
+
+def _snapshot(optic: Any) -> dict[str, Any]:
+    """Snapshot of a built optic; see :func:`compute_snapshot`."""
+    wavelengths = _wavelengths(optic)
+    return {
+        "wavelengths": wavelengths,
+        "paraxial": _paraxial(optic),
+        "rays": {str(wl): _rays(optic, wl) for wl in wavelengths},
+        "opd": {str(wl): _opd(optic, wl) for wl in wavelengths},
+    }
