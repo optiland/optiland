@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import math
 import warnings
 from typing import TYPE_CHECKING, Any, Literal
+
+import numpy as np
 
 import optiland.backend as be
 from scipy import optimize
@@ -22,6 +25,15 @@ class LeastSquares(OptimizerGeneric):
 
     def __init__(self, problem: OptimizationProblem):
         super().__init__(problem)
+        self._f_last = 0.0
+        self._best_x: np.ndarray | None = None
+        self._best_f = float("inf")
+        self._last_finite = True
+
+    def _penalty_vector(self, num_rows: int) -> np.ndarray:
+        """Scale-aware stand-in for rows that could not be evaluated."""
+        penalty = 10.0 * max(self._f_last, 1.0) / math.sqrt(max(num_rows, 1))
+        return np.full(num_rows, penalty)
 
     def _compute_residuals_vector(self, x_numpy_variables_from_scipy):
         """
@@ -29,39 +41,38 @@ class LeastSquares(OptimizerGeneric):
         'x_numpy_variables_from_scipy' contains the current values of the optimization
         variables as provided by the SciPy optimizer. These are typically scaled values
         if variable scaling is active.
+
+        Residuals are ``effective_weight * delta`` per operand. SciPy cannot accept
+        non-finite values, so non-finite rows are replaced by a penalty scaled to the
+        last finite residual norm; a failed call yields a full penalty vector.
         """
-
-        for i, optiland_var_wrapper in enumerate(self.problem.variables):
-            optiland_var_wrapper.update(x_numpy_variables_from_scipy[i])
-
-        self.problem.update_optics()
+        num_operands = len(self.problem.operands)
 
         try:
-            residuals_backend_array = be.array(
-                [op.fun() for op in self.problem.operands]
-            )
+            for i, optiland_var_wrapper in enumerate(self.problem.variables):
+                optiland_var_wrapper.update(x_numpy_variables_from_scipy[i])
 
-            # Handle cases where ray tracing might fail and produce NaNs
-            if be.any(be.isnan(residuals_backend_array)):
-                num_operands = len(self.problem.operands)
-                # Return a vector of large constant values to penalize this region
-                # The magnitude should be large enough to indicate a poor solution.
-                error_value = be.sqrt(1e10 / num_operands if num_operands > 0 else 1e10)
-                return be.to_numpy(be.full(num_operands, error_value))
-
-            return be.to_numpy(
-                residuals_backend_array
-            )  # Convert to NumPy array for SciPy
-
+            self.problem.update_optics()
+            residuals = np.asarray(
+                be.to_numpy(self.problem.residual_vector()), dtype=float
+            ).reshape(-1)
         except Exception:
-            # Catch any other exceptions during optical calculation
-            # (e.g., critical ray failure)
-            # This is a general fallback; more specific error handling
-            # might be beneficial.
-            num_operands = len(self.problem.operands)
-            error_value = be.sqrt(1e10 / num_operands if num_operands > 0 else 1e10)
-            # Return a vector of large constant values
-            return be.to_numpy(be.full(num_operands, error_value))
+            # e.g. critical ray failure: no usable rows at all
+            self._last_finite = False
+            return self._penalty_vector(num_operands)
+
+        finite = np.isfinite(residuals)
+        self._last_finite = bool(finite.all())
+        if self._last_finite:
+            norm = float(np.linalg.norm(residuals))
+            self._f_last = norm
+            if norm < self._best_f:
+                self._best_f = norm
+                self._best_x = np.array(x_numpy_variables_from_scipy, dtype=float)
+            return residuals
+
+        # Keep finite rows so the Jacobian stays informative
+        return np.where(finite, residuals, self._penalty_vector(residuals.size))
 
     def optimize(
         self,
@@ -174,6 +185,12 @@ class LeastSquares(OptimizerGeneric):
 
         scipy_verbose_level = 1 if disp else 0
 
+        # Seed F_last and the best finite point from x0
+        self._f_last = 0.0
+        self._best_x = None
+        self._best_f = float("inf")
+        self._compute_residuals_vector(x0_numpy)
+
         live_plotter: LiveOptimizationPlotter | None = None
         if plot:
             live_plotter = LiveOptimizationPlotter(self)
@@ -204,8 +221,12 @@ class LeastSquares(OptimizerGeneric):
                 **least_squares_kwargs,
             )
 
+        x_final = result.x
+        self._compute_residuals_vector(x_final)
+        if not self._last_finite and self._best_x is not None:
+            x_final = self._best_x
         for i, optiland_var_wrapper in enumerate(self.problem.variables):
-            optiland_var_wrapper.update(result.x[i])
+            optiland_var_wrapper.update(x_final[i])
         self.problem.update_optics()  # Final update to the optical system
 
         if live_plotter is not None:
