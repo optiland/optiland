@@ -7,6 +7,7 @@ Physical Optics
    :maxdepth: 1
 
    Gaussian beam propagation example <../examples/gaussian_beam_propagation>
+   Radiometry and Pyxel handoff <../examples/pyxel_radiometry>
 
 Boundary occupancy diagnostic
 -----------------------------
@@ -47,3 +48,9 @@ being studied, and check grid convergence separately.
    :members:
    :undoc-members:
    :show-inheritance:
+
+Radiometric calibration and detector sampling
+---------------------------------------------
+
+.. automodule:: optiland.physical_optics.radiometry
+   :members: field_to_irradiance, irradiance_to_photon_rate, normalized_psf
