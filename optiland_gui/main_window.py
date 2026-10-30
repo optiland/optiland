@@ -268,6 +268,18 @@ class MainWindow(FramelessWindow):
         self.toast_manager = ToastManager(self)
         # Expose on connector so services can call it
         self.connector.toast_manager = self.toast_manager
+        from optiland_gui.widgets.file_operation_status import FileOperationStatus
+
+        self.file_operation_status = FileOperationStatus(
+            self.connector.file_operations, self
+        )
+        self.statusBar().addWidget(self.file_operation_status, 1)
+        self.connector.file_operations.completed.connect(
+            self._update_project_name_in_title_bar
+        )
+        self.connector.file_operations.candidate_conflict.connect(
+            self._resolve_file_candidate
+        )
 
         # Logging handler: route Python WARNING+ to toasts
         self._gui_log_handler = _log_handler.install(self.toast_manager)
@@ -517,6 +529,8 @@ class MainWindow(FramelessWindow):
     @Slot()
     def open_system_action(self) -> None:
         """Slot for the *Open System* action — shows a file chooser dialog."""
+        if not self._confirm_discard_changes():
+            return
         filepath, _ = QFileDialog.getOpenFileName(
             self,
             "Open Optiland System",
@@ -524,7 +538,7 @@ class MainWindow(FramelessWindow):
             "Optiland JSON Files (*.json);;Zemax Files (*.zmx);;All Files (*)",
         )
         if filepath:
-            self.connector.load_optic_from_file(filepath)
+            self.connector.file_operations.request_load(filepath)
             self._update_project_name_in_title_bar()
             logger.debug("Open System action triggered: %s", filepath)
 
@@ -589,7 +603,7 @@ class MainWindow(FramelessWindow):
             "Zemax Files (*.zmx);;All Files (*)",
         )
         if filepath:
-            self.connector.import_zemax(filepath)
+            self.connector.file_operations.request_load(filepath, "zemax")
             self._update_project_name_in_title_bar()
 
     @Slot()
@@ -604,7 +618,7 @@ class MainWindow(FramelessWindow):
             "CODE V Files (*.seq);;All Files (*)",
         )
         if filepath:
-            self.connector.import_codev(filepath)
+            self.connector.file_operations.request_load(filepath, "codev")
             self._update_project_name_in_title_bar()
 
     @Slot()
@@ -921,3 +935,19 @@ class MainWindow(FramelessWindow):
                 self.toast_manager.notify(msg, "error")
             else:
                 QMessageBox.critical(self, "Sample Load Error", msg)
+
+    @Slot(str, str)
+    def _resolve_file_candidate(self, identifier, path):
+        token = self.connector.document_state.edit_token
+        reply = QMessageBox.question(
+            self,
+            "Document changed while opening",
+            f"The file is ready: {path}\n"
+            "The current document changed while it was loading. "
+            "Replace the current document with this loaded candidate?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        self.connector.file_operations.resolve_candidate(
+            identifier, reply == QMessageBox.StandardButton.Yes, token
+        )
