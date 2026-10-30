@@ -2,12 +2,14 @@
 
 :class:`LevenbergController` owns the damped least-squares linear algebra and
 the damping state of the native DLS core (opt v2 PR4.2). With the merit
-``F = sum(r ** 2)``, ``g = J^T r`` and ``A = J^T J`` formed once per outer
-iteration, each trial step solves::
+``F = sum(r ** 2)``, ``g = J^T r`` and ``A = J^T J``, each trial step solves::
 
     (A + lambda D^2) dx = -g
 
-by Cholesky (``scipy.linalg.cho_factor``). The damping ``lambda`` is set by a
+through one SVD of the scaled Jacobian ``J D^-1`` per outer iteration (as
+SciPy ``trf`` does), not through ``A``: forming ``A`` squares the condition
+number, and lens and NIST Jacobians with columns ten decades apart then lose
+their small modes to round-off. The damping ``lambda`` is set by a
 trust region, as in MINPACK's ``lmder`` and SciPy's ``trf``: the controller
 keeps a radius ``Delta`` and picks the smallest ``lambda >= 0`` whose step
 satisfies ``||D dx|| <= Delta`` (Moré-Hebden Newton iteration on the secular
@@ -34,7 +36,6 @@ Kramer Harrison, 2026
 from __future__ import annotations
 
 import numpy as np
-import scipy.linalg
 
 _EPS = float(np.finfo(float).eps)
 
@@ -49,8 +50,8 @@ _GROW_FACTOR = 2.0
 _ON_BOUNDARY = 0.95
 
 # Secular-equation iteration: relative tolerance on ||D dx|| and iterations.
-_RADIUS_RTOL = 0.1
-_MAX_LAMBDA_ITER = 30
+_RADIUS_RTOL = 0.01
+_MAX_LAMBDA_ITER = 10
 
 
 class LevenbergController:
@@ -92,6 +93,8 @@ class LevenbergController:
         self.radius: float | None = None
         self.lam = 0.0
         self.on_boundary = False
+        self._svd_key: tuple | None = None
+        self._svd_cache: tuple | None = None
 
     def rescale(self, J: np.ndarray) -> np.ndarray:
         """Update the scaling from the Jacobian (monotone for Moré)."""
@@ -111,99 +114,99 @@ class LevenbergController:
         return self.radius
 
     def solve(
-        self, A: np.ndarray, g: np.ndarray, free: np.ndarray | None = None
+        self, J: np.ndarray, r: np.ndarray, free: np.ndarray | None = None
     ) -> np.ndarray:
         """Damped step ``dx`` with ``||D dx|| <= Delta`` at the current radius.
 
         Args:
-            A: ``J^T J``.
-            g: ``J^T r``.
+            J: The Jacobian, shape ``(m, n)``.
+            r: The residuals, shape ``(m,)``.
             free: Optional boolean mask of the variables to solve for; the
                 others (held at an active bound) get a zero step.
 
         Returns:
             The step ``dx``; :attr:`lam` holds its damping.
         """
-        if free is not None and not np.all(free):
-            dx = np.zeros_like(g)
-            if np.any(free):
-                d_full = self.d
-                self.d = d_full[free]
-                try:
-                    dx[free] = self.solve(A[np.ix_(free, free)], g[free])
-                finally:
-                    self.d = d_full
-            return dx
-        return self._trust_region_step(A, g)
-
-    def _damped(self, A: np.ndarray, g: np.ndarray, lam: float) -> tuple:
-        """Cholesky solve at ``lam``: ``(dx, factor)`` or None if not SPD."""
-        M = A + lam * np.diag(self.d**2)
-        try:
-            factor = scipy.linalg.cho_factor(M, check_finite=False)
-        except (np.linalg.LinAlgError, ValueError):
-            return None
-        dx = scipy.linalg.cho_solve(factor, -g, check_finite=False)
-        return (dx, factor) if np.all(np.isfinite(dx)) else None
-
-    def _trust_region_step(self, A: np.ndarray, g: np.ndarray) -> np.ndarray:
-        """Moré-Hebden iteration for ``||D dx(lambda)|| = Delta``."""
-        delta = self.radius
-        d = self.d
-        # Gauss-Newton step when it is defined and inside the region.
-        gn = self._damped(A, g, 0.0)
-        if gn is not None and np.linalg.norm(d * gn[0]) <= (1 + _RADIUS_RTOL) * delta:
-            self.lam, self.on_boundary = 0.0, False
-            return gn[0]
-
-        # Bracket: phi(lam) = ||D dx|| - Delta decreases in lam; the steepest
-        # descent bound ||D^-1 g|| / Delta overshoots it.
-        upper = float(np.linalg.norm(g / d)) / delta
-        lower = 0.0
-        lam = min(max(self.lam, _EPS * upper), upper) if upper > 0 else 0.0
-        best = None
-        for _ in range(_MAX_LAMBDA_ITER):
-            if not lower < lam < upper or lam <= 0:
-                lam = max(np.sqrt(max(lower, _EPS * upper) * upper), _EPS * upper)
-            solved = self._damped(A, g, lam)
-            if solved is None:  # not positive definite yet: more damping
-                lower = lam
-                lam = 2.0 * lam
-                continue
-            dx, factor = solved
-            q = d * dx
-            norm_q = float(np.linalg.norm(q))
-            best = (dx, lam)
-            if abs(norm_q - delta) <= _RADIUS_RTOL * delta:
-                break
-            if norm_q > delta:
-                lower = lam
-            else:
-                upper = lam
-            # Newton step on 1/||D dx|| - 1/Delta (Moré 1978).
-            w = scipy.linalg.solve_triangular(
-                factor[0], d * q, trans="T", lower=factor[1], check_finite=False
-            )
-            norm_w2 = float(w @ w)
-            if norm_w2 <= 0:
-                lam = 0.5 * (lower + upper)
-                continue
-            lam = lam + (norm_q / delta - 1.0) * norm_q**2 / norm_w2
-        if best is None:  # pathological A: least squares at the upper bound
-            lam = max(upper, 1.0)
-            M = A + lam * np.diag(d**2)
-            best = (np.linalg.lstsq(M, -g, rcond=None)[0], lam)
-        dx, self.lam = best
-        self.on_boundary = True
+        if free is None or np.all(free):
+            return self._trust_region_step(J, r, self.d)
+        dx = np.zeros(J.shape[1])
+        if np.any(free):
+            dx[free] = self._trust_region_step(J[:, free], r, self.d[free])
         return dx
 
+    def _trust_region_step(
+        self, J: np.ndarray, r: np.ndarray, d: np.ndarray
+    ) -> np.ndarray:
+        """Solve ``||D dx(lambda)|| = Delta`` on the SVD of ``J D^-1``.
+
+        With ``J D^-1 = U diag(s) V^T`` and ``u = U^T r``, the scaled step is
+        ``D dx = -V z`` with ``z_i = s_i u_i / (s_i^2 + lambda)``, so each trial
+        ``lambda`` costs O(n^2). Follows SciPy's ``solve_lsq_trust_region``:
+        the Gauss-Newton step only for full column rank, otherwise the
+        boundary solution, scaled onto the boundary exactly.
+        """
+        delta = self.radius
+        s, V, u = self._svd(J, r, d)
+        c = s * u
+        # Gauss-Newton only for full column rank (SciPy trf): with fewer
+        # residuals than variables the minimum-norm step is too aggressive.
+        m, n = J.shape
+        full_rank = m >= n and s.size > 0 and s[-1] > _EPS * m * s[0]
+        if full_rank:
+            z = u / s
+            if np.linalg.norm(z) <= delta:
+                self.lam, self.on_boundary = 0.0, False
+                return -(V @ z) / d
+
+        # ||D dx|| decreases in lambda; ||D^-1 g|| / Delta overshoots the root.
+        lower, upper = 0.0, float(np.linalg.norm(c)) / delta
+        if upper == 0.0:  # zero gradient: nothing to gain
+            self.lam, self.on_boundary = 0.0, False
+            return np.zeros(J.shape[1])
+        lam = self.lam if 0.0 < self.lam < upper else 1e-3 * upper
+        for _ in range(_MAX_LAMBDA_ITER):
+            if not lower <= lam <= upper:
+                lam = max(1e-3 * upper, np.sqrt(lower * upper))
+            den = s**2 + lam
+            z = c / den
+            size = float(np.linalg.norm(z))
+            if size < delta:
+                upper = lam
+            # Newton step on 1/||D dx|| - 1/Delta (Moré 1978).
+            slope = float(np.sum(z**2 / den))
+            if not slope > 0:
+                break
+            ratio = (size - delta) * size / slope
+            lower = max(lower, lam + ratio)  # Newton from below never overshoots
+            lam = lam + ratio * size / delta
+            if abs(size - delta) < _RADIUS_RTOL * delta:
+                break
+        z = c / (s**2 + lam)
+        size = float(np.linalg.norm(z))
+        if size > 0:
+            z = z * (delta / size)  # land exactly on the boundary
+        self.lam, self.on_boundary = lam, True
+        return -(V @ z) / d
+
+    def _svd(self, J: np.ndarray, r: np.ndarray, d: np.ndarray) -> tuple:
+        """Thin SVD of ``J D^-1`` cached per ``(J, D)``: ``s, V, U^T r``."""
+        key = (id(J), d.tobytes())
+        if self._svd_key != key:
+            U, s, Vt = np.linalg.svd(J / d, full_matrices=False)
+            self._svd_cache = (U, s, Vt.T, J)  # keep J alive for its id
+            self._svd_key = key
+        U, s, V, _ = self._svd_cache
+        return s, V, U.T @ r
+
     @staticmethod
-    def model_reduction(dx: np.ndarray, g: np.ndarray, A: np.ndarray) -> float:
+    def model_reduction(dx: np.ndarray, J: np.ndarray, r: np.ndarray) -> float:
         """Reduction of ``F`` predicted by the linear model for a step ``dx``.
 
-        ``||r||^2 - ||r + J dx||^2``, in the units of ``F`` (no 1/2).
+        ``||r||^2 - ||r + J dx||^2``, in the units of ``F`` (no 1/2), computed
+        without forming ``J^T J``.
         """
-        return float(-(2.0 * g @ dx + dx @ A @ dx))
+        Jdx = J @ dx
+        return float(-(2.0 * (r @ Jdx) + Jdx @ Jdx))
 
     def update(self, rho: float, dx: np.ndarray) -> None:
         """Update the radius after a trial with gain ratio ``rho``.

@@ -314,13 +314,14 @@ class LeastSquares(OptimizerGeneric):
 
 
 # Jacobian update of method_choice="dls". "exact" is the default because gated
-# Broyden ("auto") regresses on the validation suite
-# (tests/optimization/validation/): with x_scale=1 it ends 2.1% above SciPy
-# "trf" on the Cooke triplet, outside the 1% bar. Both modes reach every
-# certified analytic/NIST minimum.
+# Broyden ("auto") regresses on the benchmarks: both modes reach every
+# certified analytic/NIST minimum and stay within 1% of SciPy "trf" on the
+# fast lens set (tests/optimization/validation/), but on the freeform
+# benchmark "auto" ends at merit 4.49 versus 2.08 for "exact" after the same
+# 100n residual evaluations.
 DLS_JACOBIAN_UPDATE = "exact"
 
 # Damping scale of method_choice="dls" when x_scale is None: fixed unit scale,
 # SciPy "trf"'s default. Moré scaling (x_scale="jac") stalls on the Double
-# Gauss benchmark at ~3x trf's merit, as SciPy "trf" itself does with "jac".
+# Gauss benchmark at ~2x trf's merit, as SciPy "trf" itself does with "jac".
 DLS_X_SCALE: float | str = 1.0

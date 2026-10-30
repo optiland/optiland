@@ -8,9 +8,11 @@ Per outer iteration ``k``:
 1. ``r = residuals(x)`` and ``J = jacobian(x, r0=r)``, or a Broyden update.
 2. Column scaling ``D`` (monotone): Moré (``x_scale="jac"``) or fixed
    relative weights ``1 / x_scale``.
-3. ``g = J^T r`` and ``A = J^T J`` formed once.
-4. Inner damping loop with no Jacobian work: Cholesky of ``A + lambda D^2``
-   with ``lambda`` set by a trust radius (MINPACK / SciPy ``trf`` rules, see
+3. ``g = J^T r`` and one SVD of ``J D^-1`` per outer iteration. ``J^T J``
+   is never formed: it squares the condition number.
+4. Inner damping loop with no Jacobian work: the damped step
+   ``(J^T J + lambda D^2) dx = -g`` from the SVD, with ``lambda`` set by a
+   trust radius (MINPACK / SciPy ``trf`` rules, see
    :class:`~optiland.optimization.control.levenberg.LevenbergController`),
    trial ``r_t = residuals(x + dx)``. A trial is accepted when it lowers the
    merit; a non-finite trial is rejected and shrinks the radius.
@@ -183,11 +185,11 @@ def dls(
     nit = 0
     status: int | None = None
 
-    def build(J: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def build(J: np.ndarray) -> np.ndarray:
         controller.rescale(J)
-        return J.T @ r, J.T @ J
+        return J.T @ r
 
-    g, A = build(J)
+    g = build(J)
     controller.init_radius(x)
     while status is None:
         # Only an exact Jacobian may certify a stationary point.
@@ -202,13 +204,13 @@ def dls(
                 break
             # Variables at a bound that the gradient pushes outward stay put.
             held = ((x <= lower) & (g > 0)) | ((x >= upper) & (g < 0))
-            dx = controller.solve(A, g, free=~held)
+            dx = controller.solve(J, r, free=~held)
             x_t = np.clip(x + dx, lower, upper)
             dx = x_t - x
             if not np.any(dx):
                 status = 3  # the bounds or round-off block every move
                 break
-            predicted = controller.model_reduction(dx, g, A)
+            predicted = controller.model_reduction(dx, J, r)
             r_t = counter.residuals(x_t)
             F_t = float(r_t @ r_t) if np.all(np.isfinite(r_t)) else np.inf
             accepted = F_t < F
@@ -216,7 +218,7 @@ def dls(
                 # A stale Broyden J may be the reason: refresh before shrinking.
                 J = counter.jacobian(x, r)
                 fresh, consecutive_broyden = True, 0
-                g, A = build(J)
+                g = build(J)
                 continue
             if not np.isfinite(F_t):
                 rho = -np.inf
@@ -275,7 +277,7 @@ def dls(
         else:
             J = counter.jacobian(x, r)
             fresh, consecutive_broyden = True, 0
-        g, A = build(J)
+        g = build(J)
 
     evaluator.write_x(x)
     g = J.T @ r

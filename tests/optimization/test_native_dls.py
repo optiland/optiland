@@ -63,9 +63,8 @@ def test_step_inside_region_is_gauss_newton():
     rng = np.random.default_rng(0)
     J = rng.normal(size=(6, 3))
     r = rng.normal(size=6)
-    g, A = J.T @ r, J.T @ J
     c = _controller(J, radius=1e6)
-    dx = c.solve(A, g)
+    dx = c.solve(J, r)
     np.testing.assert_allclose(dx, np.linalg.lstsq(J, -r, rcond=None)[0], atol=1e-10)
     assert c.lam == 0.0
     assert not c.on_boundary
@@ -78,13 +77,16 @@ def test_step_on_boundary_solves_damped_equations(scaling):
     r = rng.normal(size=4)
     g, A = J.T @ r, J.T @ J
     c = _controller(J, radius=0.05, scaling=scaling)
-    dx = c.solve(A, g)
+    dx = c.solve(J, r)
     assert c.on_boundary and c.lam > 0
-    assert np.linalg.norm(c.d * dx) == pytest.approx(0.05, rel=0.1)
-    np.testing.assert_allclose((A + c.lam * np.diag(c.d**2)) @ dx, -g, atol=1e-10)
+    assert np.linalg.norm(c.d * dx) == pytest.approx(0.05, rel=1e-12)
+    # The damped solution at the returned lambda, scaled onto the boundary
+    # (within the 1% secular-equation tolerance).
+    damped = np.linalg.solve(A + c.lam * np.diag(c.d**2), -g)
+    np.testing.assert_allclose(dx, damped, rtol=0.02, atol=0.02 * np.abs(damped).max())
     # The model reduction is in units of sum(r^2) and positive for the step.
     model = r @ r - np.sum((r + J @ dx) ** 2)
-    assert c.model_reduction(dx, g, A) == pytest.approx(model, rel=1e-10)
+    assert c.model_reduction(dx, J, r) == pytest.approx(model, rel=1e-10)
     assert model > 0
 
 
@@ -109,13 +111,21 @@ def test_init_radius_and_collapse():
     assert c.collapsed(np.ones(2))
 
 
-def test_singular_system_falls_back():
-    c = LevenbergController(d_min=0.0)
-    c.d = np.array([1.0, 1.0])
+def test_rank_deficient_and_ill_conditioned_steps():
+    # A zero Jacobian gives a zero step; columns 1e8 apart keep the small mode
+    # (forming J^T J would square the 1e8 condition number past round-off).
+    c = LevenbergController(scaling="fixed")
+    c.rescale(np.zeros((2, 2)))
     c.radius = 1.0
-    dx = c.solve(np.zeros((2, 2)), np.array([1.0, 0.0]))
-    assert np.all(np.isfinite(dx))
-    assert np.linalg.norm(dx) == pytest.approx(1.0, rel=0.1)
+    np.testing.assert_array_equal(c.solve(np.zeros((2, 2)), np.ones(2)), 0.0)
+
+    J = np.array([[1e4, 0.0], [0.0, 1e-4], [1e4, 1e-4]])
+    x_true = np.array([1.0, 3.0])
+    r = -J @ x_true
+    c = LevenbergController(scaling="fixed")
+    c.rescale(J)
+    c.radius = 1e6
+    np.testing.assert_allclose(c.solve(J, r), x_true, rtol=1e-8)
 
 
 # ---------------------------------------------------------------------------
