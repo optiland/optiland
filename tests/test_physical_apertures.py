@@ -19,6 +19,7 @@ from optiland.physical_apertures import (
     PolygonAperture,
     RadialAperture,
     RectangularAperture,
+    SpiderAperture,
     UnionAperture,
 )
 from optiland.physical_apertures.radial import configure_aperture
@@ -359,6 +360,70 @@ class TestEllipticalAperture:
         assert isinstance(fig, Figure)
         assert isinstance(ax, Axes)
         plt.close(fig)
+
+
+class TestSpiderAperture:
+    def setup_method(self, set_test_backend):
+        self.aperture = SpiderAperture(width=2, num_arms=3)
+
+    def test_clip(self, set_test_backend):
+        # On the +x arm, beside it, opposite it, between two arms, and on the
+        # arm at 120 degrees.
+        rays = RealRays(
+            [5, 5, -5, 2, -2.5],
+            [0.9, 1.1, 0, 2, 4.33],
+            [0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0],
+            [1, 1, 1, 1, 1],
+            [1, 1, 1, 1, 1],
+            [1, 1, 1, 1, 1],
+        )
+        self.aperture.clip(rays)
+        assert be.all(rays.i == be.array([0, 1, 1, 1, 0]))
+
+    def test_offset(self, set_test_backend):
+        aperture = SpiderAperture(width=2, num_arms=3, offset_x=3, offset_y=0)
+        inside = aperture.contains(be.array([0.0, 3.0, 1.5]), be.array([0.0, 0.0, 0.0]))
+        assert be.all(inside == be.array([True, False, True]))
+
+    def test_no_outer_limit(self, set_test_backend):
+        inside = self.aperture.contains(be.array([0.0, 1e6]), be.array([1e6, 0.0]))
+        assert be.all(inside == be.array([True, False]))
+
+    def test_needs_an_arm(self, set_test_backend):
+        with pytest.raises(ValueError):
+            SpiderAperture(width=1, num_arms=0)
+
+    def test_scale(self, set_test_backend):
+        aperture = SpiderAperture(width=2, num_arms=4, offset_x=1, offset_y=-1)
+        aperture.scale(2)
+        assert (aperture.width, aperture.num_arms) == (4, 4)
+        assert (aperture.offset_x, aperture.offset_y) == (2, -2)
+
+    def test_to_dict(self, set_test_backend):
+        assert self.aperture.to_dict() == {
+            "type": "SpiderAperture",
+            "width": 2,
+            "num_arms": 3,
+            "offset_x": 0,
+            "offset_y": 0,
+        }
+
+    def test_from_dict(self, set_test_backend):
+        data = {
+            "type": "SpiderAperture",
+            "width": 0.5,
+            "num_arms": 4,
+            "offset_x": 1,
+            "offset_y": 2,
+        }
+        aperture = BaseAperture.from_dict(data)
+        assert isinstance(aperture, SpiderAperture)
+        assert aperture.to_dict() == data
+
+    def test_extent(self, set_test_backend):
+        assert self.aperture.extent == (-be.inf, be.inf, -be.inf, be.inf)
 
 
 class TestPolygonAperture:

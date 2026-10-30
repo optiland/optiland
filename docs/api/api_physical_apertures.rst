@@ -18,6 +18,7 @@ physical aperture that is circular with a hole in the center (i.e., `RadialApert
    physical_apertures.offset_radial
    physical_apertures.polygon
    physical_apertures.rotated
+   physical_apertures.spider
    physical_apertures.unclipped
 
 Transforms and drawing boundaries
@@ -52,3 +53,14 @@ For example, this rectangle is rotated around its displaced centroid::
        RectangularAperture(2, 6, 1, 3), math.pi / 2, center_x=4, center_y=2
    )
    # aperture.extent is approximately (3, 5, 0, 4).
+
+Spiders
+-------
+
+``SpiderAperture`` blocks the rays that fall on the vanes of a telescope's
+spider: ``num_arms`` straight arms of full width ``width``, running outward
+from a common centre at equal angles, the first along the surface's positive
+x-axis. Every other ray passes, with no outer limit, so a spider is usually
+paired with a separate aperture or obscuration elsewhere in the system. The
+optional ``offset_x`` and ``offset_y`` move the centre. The Zemax reader builds
+it from ``SPID`` and ``OBDC``, and the writer emits them back.

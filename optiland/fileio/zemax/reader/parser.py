@@ -33,6 +33,7 @@ from optiland.physical_apertures import (
     OffsetRadialAperture,
     RadialAperture,
     RectangularAperture,
+    SpiderAperture,
     UnionAperture,
 )
 
@@ -110,7 +111,7 @@ class ZemaxDataParser:
             "SQOB": self._read_rectangular_obscuration,
             "ELAP": self._read_elliptical_aperture,
             "ELOB": self._read_elliptical_obscuration,
-            "SPID": self._read_unsupported_aperture,
+            "SPID": self._read_spider,
             "USAP": self._read_unsupported_aperture,
             "OBDC": self._read_aperture_decenter,
         }
@@ -556,6 +557,12 @@ class ZemaxDataParser:
             "elliptical_obscuration", float(data[1]), float(data[2])
         )
 
+    def _read_spider(self, data: list[str]) -> None:
+        # SPID <width> <arms> <pickup>: blocks rays on the arms, half-lines of
+        # the full width given from the centre, the first along local +x;
+        # everything else passes, with no outer limit.
+        self._set_aperture_shape("spider", float(data[1]), float(data[2]))
+
     def _set_aperture_shape(self, kind: str, first: float, second: float) -> None:
         self._current_aperture_shape = (kind, first, second)
         self._current_surf_data["aperture"] = self._build_aperture()
@@ -573,6 +580,8 @@ class ZemaxDataParser:
                 return outside
             return UnionAperture(self._make_circular_aperture(0.0, r_min), outside)
         offset_x, offset_y = self._current_aperture_offset
+        if kind == "spider":
+            return SpiderAperture(first, round(second), offset_x, offset_y)
         if kind.startswith("rectangular"):
             shape = RectangularAperture(
                 x_min=offset_x - first,
@@ -662,7 +671,7 @@ class ZemaxDataParser:
         OpticStudio vignettes rays at a user-fixed ("U") semi-diameter even
         when the surface has no explicit aperture, so such a surface gets a
         circular aperture of that radius. Any surface aperture, including
-        types not imported yet (SPID, USAP), replaces that
+        types not imported yet (USAP), replaces that
         clip. Automatic semi-diameters never clip.
         """
         if self._current_surf < 0:

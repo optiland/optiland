@@ -19,6 +19,7 @@ from optiland.physical_apertures import (
     OffsetRadialAperture,
     RadialAperture,
     RectangularAperture,
+    SpiderAperture,
     UnionAperture,
 )
 
@@ -301,7 +302,10 @@ class ZemaxFileEncoder:
             return
         obscuration = _obscuration(clap)
         shape = _shape(clap)
-        if shape is not None:
+        if type(clap) is SpiderAperture:
+            lines.append(f"  SPID {_fmt(float(clap.width))} {clap.num_arms}")
+            _encode_offset(lines, (float(clap.offset_x), float(clap.offset_y)))
+        elif shape is not None:
             keyword, x_half, y_half, offset = shape
             lines.append(f"  {keyword} {_fmt(x_half)} {_fmt(y_half)}")
             _encode_offset(lines, offset)
