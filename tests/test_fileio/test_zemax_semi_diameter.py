@@ -142,6 +142,112 @@ class TestRefractive:
         assert optic.surfaces[2].aperture is None
 
 
+def _lens(tmp_path, stop_diam: str, *surfaces: str):
+    """A stop in air, then the given surfaces from number 2; the collimated beam
+    has radius 10. The last surface given is followed by the image."""
+    stop = _surf(
+        1, "STOP", "TYPE STANDARD", 'CURV 0.0 0 0 0 0 ""', "DISZ 10", stop_diam
+    )
+    image = _surf(len(surfaces) + 2, "TYPE STANDARD", 'CURV 0.0 0 0 0 0 ""', "DISZ 0")
+    return load_zemax_file(
+        _write(tmp_path, "lens", "ENPD 20", _object(), stop, *surfaces, image)
+    )
+
+
+def _plane(index: int, diam: str, *extra: str, thickness: float = 10) -> str:
+    return _surf(
+        index,
+        "TYPE STANDARD",
+        'CURV 0.0 0 0 0 0 ""',
+        f"DISZ {thickness}",
+        *extra,
+        diam,
+    )
+
+
+_BK7 = "GLAS N-BK7 0 0 1.5168 64.17 0 0 0 0 0 0"
+_F2 = "GLAS F2 0 0 1.62 36.37 0 0 0 0 0 0"
+
+
+class TestAirOnBothSides:
+    """A fixed semi-diameter is the edge of a lens or a mirror.
+
+    In OpticStudio it clips on a lens face, a cemented interface and a mirror,
+    but not on a surface with air on both sides: a stop, a dummy surface, or
+    the image.
+    """
+
+    def test_stop_in_air_does_not_clip(self, tmp_path, set_test_backend):
+        optic = _lens(tmp_path, 'DIAM 5 1 0 0 1 ""', _plane(2, 'DIAM 12 0 0 0 1 ""'))
+        assert optic.surfaces[1].aperture is None
+        assert _passes(optic, py=0.8)
+
+    def test_dummy_surface_in_air_does_not_clip(self, tmp_path, set_test_backend):
+        optic = _lens(tmp_path, 'DIAM 10 0 0 0 1 ""', _plane(2, 'DIAM 2 1 0 0 1 ""'))
+        assert optic.surfaces[2].aperture is None
+        assert _passes(optic, py=0.8)
+
+    def test_lens_faces_and_cemented_interface_clip(self, tmp_path, set_test_backend):
+        # A flat cemented doublet in the collimated beam: BK7, then F2.
+        diam = 'DIAM 5 1 0 0 1 ""'
+        for clipped in (2, 3, 4):
+            surfaces = [
+                _plane(2, 'DIAM 12 0 0 0 1 ""', _BK7, thickness=5),
+                _plane(3, 'DIAM 12 0 0 0 1 ""', _F2, thickness=2),
+                _plane(4, 'DIAM 12 0 0 0 1 ""'),
+            ]
+            surfaces[clipped - 2] = surfaces[clipped - 2].replace(
+                'DIAM 12 0 0 0 1 ""', diam
+            )
+            optic = _lens(tmp_path, 'DIAM 10 0 0 0 1 ""', *surfaces)
+            assert type(optic.surfaces[clipped].aperture) is RadialAperture
+            assert _passes(optic, py=0.45)
+            assert not _passes(optic, py=0.55)
+
+    def test_dummy_surface_after_a_mirror_does_not_clip(
+        self, tmp_path, set_test_backend
+    ):
+        mirror = _surf(
+            2,
+            "TYPE STANDARD",
+            'CURV -0.005 0 0 0 0 ""',
+            "DISZ -50",
+            "GLAS MIRROR 0 0 1.5 40 0 0 0 0 0 0",
+            'DIAM 12 0 0 0 1 ""',
+        )
+        optic = _lens(
+            tmp_path,
+            'DIAM 10 0 0 0 1 ""',
+            mirror,
+            _plane(3, 'DIAM 1 1 0 0 1 ""', thickness=-10),
+        )
+        assert type(optic.surfaces[2].aperture) is not RadialAperture
+        assert optic.surfaces[3].aperture is None
+        assert _passes(optic, py=0.8)
+
+    def test_image_surface_does_not_clip(self, tmp_path, set_test_backend):
+        path = _write(
+            tmp_path,
+            "image",
+            "ENPD 20",
+            _object(),
+            _surf(
+                1,
+                "STOP",
+                "TYPE STANDARD",
+                'CURV 0.0 0 0 0 0 ""',
+                "DISZ 10",
+                'DIAM 10 0 0 0 1 ""',
+            ),
+            _surf(
+                2, "TYPE STANDARD", 'CURV 0.0 0 0 0 0 ""', "DISZ 0", 'DIAM 1 1 0 0 1 ""'
+            ),
+        )
+        optic = load_zemax_file(path)
+        assert optic.surfaces[2].aperture is None
+        assert _passes(optic, py=0.8)
+
+
 def _round_trip(optic, tmp_path):
     """Write ``optic`` after setting its semi-apertures, then read it back.
 
