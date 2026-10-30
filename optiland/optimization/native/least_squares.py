@@ -29,17 +29,21 @@ Per outer iteration ``k``:
    (SciPy ``ftol`` semantics), scaled gradient below ``gtol``, step below
    ``xtol``, the residual-evaluation budget ``max_nfev`` (Jacobian columns
    included, decision V17), or a collapsed trust region (``success=False``).
+   On top of these, a user ``stop`` criterion and ``cancel_token`` are
+   checked after every accepted step (experimental).
+8. Observers (experimental) get ``on_start``, ``on_step`` after every
+   accepted step and ``on_end``. The state's gradient and Jacobian are those
+   of the last Jacobian evaluation: at ``on_step`` they lag ``x`` by one
+   accepted step, because the run may end before the next Jacobian is paid for.
 
 Kramer Harrison, 2026
 """
 
 from __future__ import annotations
 
-import inspect
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from scipy.optimize import OptimizeResult
 
 import optiland.backend as be
 from optiland.optimization.control.levenberg import LevenbergController
@@ -48,6 +52,10 @@ from optiland.optimization.failure import (
     describe_rows,
     failing_rows,
 )
+from optiland.optimization.observers.callback import CallbackObserver
+from optiland.optimization.observers.cancel import with_cancel
+from optiland.optimization.observers.history import find_history
+from optiland.optimization.state import OptimizationResult, OptimizationState
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -55,6 +63,9 @@ if TYPE_CHECKING:
     from numpy.typing import ArrayLike
 
     from optiland.optimization.evaluators.base import Evaluator
+    from optiland.optimization.observers.base import Observer
+    from optiland.optimization.observers.cancel import CancelToken
+    from optiland.optimization.stopping.base import StoppingCriterion
 
 #: Accepted values of ``jacobian_update``.
 JACOBIAN_UPDATES: tuple[str, ...] = ("auto", "exact", "broyden")
@@ -68,6 +79,7 @@ FTOL_MIN_RHO = 0.25
 
 STATUS_MESSAGES = {
     -3: "The trust region collapsed: no step reduces the merit.",
+    -4: "Stopped by a stopping criterion.",
     -2: "Stopped by the callback.",
     0: "The maximum number of residual evaluations is exceeded.",
     1: "`gtol` termination condition is satisfied.",
@@ -79,15 +91,6 @@ STATUS_MESSAGES = {
 
 def _np(value: Any) -> np.ndarray:
     return np.asarray(be.to_numpy(value), dtype=float)
-
-
-def _callback_wants_result(callback: Callable) -> bool:
-    """SciPy convention: a sole parameter named ``intermediate_result``."""
-    try:
-        params = list(inspect.signature(callback).parameters)
-    except (TypeError, ValueError):
-        return False
-    return params == ["intermediate_result"]
 
 
 def dls(
@@ -102,7 +105,10 @@ def dls(
     jacobian_update: str = "exact",
     x_scale: ArrayLike | float | str = 1.0,
     callback: Callable | None = None,
-) -> OptimizeResult:
+    stop: StoppingCriterion | None = None,
+    observers: list[Observer] | None = None,
+    cancel_token: CancelToken | None = None,
+) -> OptimizationResult:
     """Minimize ``sum(r(x) ** 2)`` by damped least squares.
 
     Args:
@@ -126,12 +132,22 @@ def dls(
         callback: Called after every accepted step, as ``callback(x)`` or,
             when its only parameter is ``intermediate_result``, with an
             ``OptimizeResult``. Raising ``StopIteration`` stops the run.
+            Equivalent to attaching a
+            :class:`~optiland.optimization.observers.callback.CallbackObserver`.
+        stop: Extra stopping criterion, checked after every accepted step on
+            top of ``ftol``/``xtol``/``gtol``/``max_nfev`` (experimental).
+        observers: Observers notified of the run (experimental).
+        cancel_token: Stops the run cleanly at the next accepted step once
+            cancelled (experimental).
 
     Returns:
-        A ``scipy.optimize.OptimizeResult`` with ``x``, ``fun`` (residuals),
+        An :class:`~optiland.optimization.state.OptimizationResult` (a
+        ``scipy.optimize.OptimizeResult``) with ``x``, ``fun`` (residuals),
         ``cost`` (``0.5 * sum(r ** 2)``, SciPy's convention), ``jac``,
         ``grad``, ``optimality``, ``nfev``, ``njev``, ``nit``, ``status``,
-        ``message`` and ``success``. The evaluator's optic is left at ``x``.
+        ``message``, ``success``, ``stop_reason``, ``n_evals`` and ``history``
+        (None without a ``HistoryObserver``). The evaluator's optic is left at
+        ``x``.
 
     Raises:
         ConfigurationError: If ``jacobian_update`` is unknown, or the
@@ -153,7 +169,10 @@ def dls(
     )
     if max_nfev is None:
         max_nfev = 100 * max(n, 1)
-    wants_result = callback is not None and _callback_wants_result(callback)
+    observer_list = list(observers or [])
+    if callback is not None:
+        observer_list.append(CallbackObserver(callback))
+    criterion = with_cancel(stop, cancel_token)
 
     counter = _Counter(evaluator)
     if isinstance(x_scale, str):
@@ -191,6 +210,20 @@ def dls(
 
     g = build(J)
     controller.init_radius(x)
+    state = OptimizationState(
+        x=x.copy(),
+        value=F,
+        residuals=r.copy(),
+        gradient=g.copy(),
+        jacobian=J,
+        n_evals=counter.nfev,
+        grad_norm=float(np.linalg.norm(g)),
+    )
+    stop_reason: str | None = None
+    for observer in observer_list:
+        observer.on_start(state)
+    if criterion is not None:
+        criterion.reset(state)
     while status is None:
         # Only an exact Jacobian may certify a stationary point.
         if F == 0.0 or (fresh and _scaled_gradient(J, r, g) <= gtol):
@@ -242,20 +275,21 @@ def dls(
         small_f = dF < ftol * F and rho > FTOL_MIN_RHO
         small_x = np.linalg.norm(dx) <= xtol * (xtol + np.linalg.norm(x))
         dr = r_t - r
+        step_norm = float(np.linalg.norm(dx))
         x, r, F = x_t, r_t, F_t
 
-        if callback is not None:
-            try:
-                if wants_result:
-                    callback(
-                        intermediate_result=OptimizeResult(
-                            x=x.copy(), fun=r.copy(), cost=0.5 * F, nit=nit
-                        )
-                    )
-                else:
-                    callback(x.copy())
-            except StopIteration:
-                status = -2
+        state.x, state.value, state.residuals = x.copy(), F, r.copy()
+        state.iteration, state.n_evals, state.step_norm = nit, counter.nfev, step_norm
+        try:
+            for observer in observer_list:
+                observer.on_step(state)
+        except StopIteration:
+            status = -2
+            break
+        if criterion is not None:
+            stopped, stop_reason = criterion.should_stop(state)
+            if stopped:
+                status = -4
                 break
 
         if small_f or small_x:
@@ -278,10 +312,19 @@ def dls(
             J = counter.jacobian(x, r)
             fresh, consecutive_broyden = True, 0
         g = build(J)
+        state.gradient, state.jacobian = g.copy(), J
+        state.grad_norm = float(np.linalg.norm(g))
 
     evaluator.write_x(x)
     g = J.T @ r
-    return OptimizeResult(
+    message = STATUS_MESSAGES[status]
+    if status == -4 and stop_reason:
+        message = f"{message[:-1]}: {stop_reason}."
+    state.x, state.value, state.residuals = x.copy(), F, r.copy()
+    state.gradient, state.jacobian = g, J
+    state.grad_norm = float(np.linalg.norm(g))
+    state.n_evals, state.stop_reason = counter.nfev, message
+    result = OptimizationResult(
         x=x,
         fun=r,
         cost=0.5 * F,
@@ -293,9 +336,15 @@ def dls(
         njev=counter.njev,
         nit=nit,
         status=status,
-        message=STATUS_MESSAGES[status],
+        message=message,
         success=status > 0,
+        stop_reason=message,
+        n_evals=counter.nfev,
+        history=find_history(observer_list),
     )
+    for observer in observer_list:
+        observer.on_end(state, result)
+    return result
 
 
 def _scaled_gradient(J: np.ndarray, r: np.ndarray, g: np.ndarray) -> float:

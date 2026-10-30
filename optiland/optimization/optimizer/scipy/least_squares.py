@@ -269,24 +269,21 @@ class LeastSquares(OptimizerGeneric):
         """
         from optiland.optimization.evaluators import FiniteDiffEvaluator
         from optiland.optimization.native import dls
-        from optiland.optimization.native.least_squares import _callback_wants_result
+        from optiland.optimization.observers.callback import CallbackObserver
 
         evaluator = FiniteDiffEvaluator(self.problem)
-        wants_result = callback is not None and _callback_wants_result(callback)
 
         live_plotter: LiveOptimizationPlotter | None = None
         if plot:
             live_plotter = LiveOptimizationPlotter(self)
             live_plotter.initialize()
 
-        def _wrapped_callback(intermediate_result: optimize.OptimizeResult) -> None:
-            if callback is not None:
-                if wants_result:
-                    callback(intermediate_result=intermediate_result)
-                else:
-                    callback(intermediate_result.x)
-            if live_plotter is not None:
-                live_plotter.update()
+        # The user callback and the live plot are observers of the run.
+        observers: list[Any] = []
+        if callback is not None:
+            observers.append(CallbackObserver(callback))
+        if live_plotter is not None:
+            observers.append(_PlotObserver(live_plotter))
 
         initial_cost = 0.5 * float(be.to_numpy(self.problem.sum_squared()))
         with warnings.catch_warnings():
@@ -297,7 +294,7 @@ class LeastSquares(OptimizerGeneric):
                 ftol=tol,
                 x_scale=DLS_X_SCALE if x_scale is None else x_scale,
                 jacobian_update=DLS_JACOBIAN_UPDATE,
-                callback=_wrapped_callback,
+                observers=observers,
             )
 
         # dls leaves the optics at result.x
@@ -311,6 +308,22 @@ class LeastSquares(OptimizerGeneric):
             live_plotter.update()
             live_plotter.finalize()
         return result
+
+
+class _PlotObserver:
+    """Refreshes a live plot after every accepted step."""
+
+    def __init__(self, plotter: LiveOptimizationPlotter) -> None:
+        self._plotter = plotter
+
+    def on_start(self, state: Any) -> None:
+        pass
+
+    def on_step(self, state: Any) -> None:
+        self._plotter.update()
+
+    def on_end(self, state: Any, result: Any) -> None:
+        pass
 
 
 # Jacobian update of method_choice="dls". "exact" is the default because gated

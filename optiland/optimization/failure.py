@@ -21,6 +21,7 @@ Kramer Harrison, 2026
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -30,6 +31,10 @@ if TYPE_CHECKING:
 
 #: Valid ``on_failure`` policies of the native evaluators.
 FAILURE_MODES: tuple[str, ...] = ("reject", "raise")
+
+#: Scale of the stand-in value SciPy adapters use for a failed evaluation,
+#: relative to the last finite residual norm (floored at 1).
+PENALTY_FACTOR = 10.0
 
 
 class ConfigurationError(ValueError):
@@ -109,3 +114,32 @@ def check_initial_point(problem: OptimizationProblem, residuals: Any) -> None:
             "Cannot optimize from an untraceable design: the starting point "
             f"has non-finite residuals for operand(s) {describe_rows(problem, rows)}."
         )
+
+
+def penalty_residual(reference_norm: float, n: int) -> float:
+    """Per-row stand-in residual for rows that could not be evaluated.
+
+    Scaled to the last finite residual norm (the PR1.1 rule of the legacy
+    ``LeastSquares``), never a hardcoded constant.
+
+    Args:
+        reference_norm: The last finite residual norm.
+        n: Number of residual rows.
+
+    Returns:
+        ``PENALTY_FACTOR * max(reference_norm, 1) / sqrt(n)``.
+    """
+    return PENALTY_FACTOR * max(float(reference_norm), 1.0) / math.sqrt(max(n, 1))
+
+
+def penalty_merit(reference_norm: float) -> float:
+    """Stand-in merit for a failed evaluation: the squared penalty norm.
+
+    Args:
+        reference_norm: The last finite residual norm.
+
+    Returns:
+        ``(PENALTY_FACTOR * max(reference_norm, 1)) ** 2``, the sum of squares
+        of the :func:`penalty_residual` rows.
+    """
+    return (PENALTY_FACTOR * max(float(reference_norm), 1.0)) ** 2

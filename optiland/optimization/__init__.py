@@ -13,6 +13,24 @@ from .variable import (
 )
 from .operand import ParaxialOperand, AberrationOperand, RayOperand, Operand
 from .problem import OptimizationProblem
+from .api import minimize
+from .state import OptimizationResult
+from .failure import ConfigurationError
+from .observers import (
+    CancelToken,
+    CheckpointObserver,
+    ConsoleObserver,
+    HistoryObserver,
+    Observer,
+)
+from .stopping import (
+    CostTolerance,
+    GradNormTolerance,
+    MaxEvals,
+    MaxIter,
+    StepStall,
+    StoppingCriterion,
+)
 from .optimizer.scipy import (
     OptimizerGeneric,
     LeastSquares,
