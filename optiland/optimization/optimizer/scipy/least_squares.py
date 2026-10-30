@@ -105,6 +105,11 @@ class LeastSquares(OptimizerGeneric):
                                    change in the sum of squares). Defaults to 1e-3.
             callback (callable, optional): Called after each optimization iteration.
             method_choice (str, optional): Method for scipy.optimize.least_squares.
+                                         'dls': Optiland's native damped least
+                                         squares (experimental; supports
+                                         bounds; maxiter counts residual
+                                         evaluations including Jacobian
+                                         columns).
                                          'lm': Levenberg-Marquardt (DLS,
                                          does not support bounds).
                                          'trf': Trust Region Reflective
@@ -137,6 +142,9 @@ class LeastSquares(OptimizerGeneric):
         num_residuals = len(self.problem.operands)
         num_variables = len(x0_numpy)
         original_method_choice = method_choice  # Store for warning message
+
+        if method_choice == "dls":
+            return self._optimize_dls(maxiter, disp, plot, tol, callback, x_scale)
 
         # Validate and adjust method_choice
         if method_choice == "lm":
@@ -243,3 +251,76 @@ class LeastSquares(OptimizerGeneric):
             live_plotter.finalize()
 
         return result
+
+    def _optimize_dls(
+        self,
+        maxiter: int | None,
+        disp: bool,
+        plot: bool,
+        tol: float,
+        callback: Any,
+        x_scale: ArrayLike | float | Literal["jac"] | None,
+    ) -> optimize.OptimizeResult:
+        """Run the native damped least-squares core (``method_choice="dls"``).
+
+        Residuals are ``effective_weight * delta`` from a finite-difference
+        evaluator with partial-trace Jacobians; variable bounds are honored.
+        ``maxiter`` caps residual evaluations, Jacobian columns included.
+        """
+        from optiland.optimization.evaluators import FiniteDiffEvaluator
+        from optiland.optimization.native import dls
+        from optiland.optimization.native.least_squares import _callback_wants_result
+
+        evaluator = FiniteDiffEvaluator(self.problem)
+        wants_result = callback is not None and _callback_wants_result(callback)
+
+        live_plotter: LiveOptimizationPlotter | None = None
+        if plot:
+            live_plotter = LiveOptimizationPlotter(self)
+            live_plotter.initialize()
+
+        def _wrapped_callback(intermediate_result: optimize.OptimizeResult) -> None:
+            if callback is not None:
+                if wants_result:
+                    callback(intermediate_result=intermediate_result)
+                else:
+                    callback(intermediate_result.x)
+            if live_plotter is not None:
+                live_plotter.update()
+
+        initial_cost = 0.5 * float(be.to_numpy(self.problem.sum_squared()))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            result = dls(
+                evaluator,
+                max_nfev=maxiter,
+                ftol=tol,
+                x_scale=DLS_X_SCALE if x_scale is None else x_scale,
+                jacobian_update=DLS_JACOBIAN_UPDATE,
+                callback=_wrapped_callback,
+            )
+
+        # dls leaves the optics at result.x
+        if disp:
+            print(
+                f"{result.message}\nFunction evaluations {result.nfev}, initial "
+                f"cost {initial_cost:.4e}, final cost {result.cost:.4e}, "
+                f"first-order optimality {result.optimality:.2e}."
+            )
+        if live_plotter is not None:
+            live_plotter.update()
+            live_plotter.finalize()
+        return result
+
+
+# Jacobian update of method_choice="dls". "exact" is the default because gated
+# Broyden ("auto") regresses on the validation suite
+# (tests/optimization/validation/): with x_scale=1 it ends 2.1% above SciPy
+# "trf" on the Cooke triplet, outside the 1% bar. Both modes reach every
+# certified analytic/NIST minimum.
+DLS_JACOBIAN_UPDATE = "exact"
+
+# Damping scale of method_choice="dls" when x_scale is None: fixed unit scale,
+# SciPy "trf"'s default. Moré scaling (x_scale="jac") stalls on the Double
+# Gauss benchmark at ~3x trf's merit, as SciPy "trf" itself does with "jac".
+DLS_X_SCALE: float | str = 1.0

@@ -96,6 +96,28 @@ class EvaluationEpoch:
         self._memo[memo_key] = (owner, keep, value)
         return value
 
+    def adopt(self, other: EvaluationEpoch, select: Callable[[Hashable], bool]) -> int:
+        """Copy selected entries of another epoch into this one.
+
+        Private support for the finite-difference evaluator's frozen ray
+        aiming (opt v2 PR4.1), which reuses the baseline aim solutions while
+        it evaluates Jacobian columns. Entries already present are kept.
+
+        Args:
+            other: The epoch to copy from.
+            select: Called with each entry's key (without the owner id);
+                entries for which it returns True are copied.
+
+        Returns:
+            The number of entries copied.
+        """
+        copied = 0
+        for memo_key, entry in other._memo.items():
+            if memo_key not in self._memo and select(memo_key[1]):
+                self._memo[memo_key] = entry
+                copied += 1
+        return copied
+
 
 _current: ContextVar[EvaluationEpoch | None] = ContextVar(
     "optiland_evaluation_epoch", default=None
@@ -154,12 +176,17 @@ def fingerprint(optic: Any) -> str:
 
 
 @contextmanager
-def evaluation_epoch(optics: Iterable[Any] = ()) -> Iterator[EvaluationEpoch]:
+def evaluation_epoch(
+    optics: Iterable[Any] = (), *, epoch: EvaluationEpoch | None = None
+) -> Iterator[EvaluationEpoch]:
     """Open an epoch; nested calls reuse the outer epoch.
 
     Args:
         optics: Optics whose state the epoch freezes. Used only by the
             ``OPTILAND_EPOCH_CHECK`` debug guard.
+        epoch: A fresh epoch to open instead of a new empty one, for an
+            evaluator that seeds it first (see :meth:`EvaluationEpoch.adopt`).
+            Ignored when an outer epoch is already open.
 
     Yields:
         The active epoch.
@@ -176,7 +203,8 @@ def evaluation_epoch(optics: Iterable[Any] = ()) -> Iterator[EvaluationEpoch]:
     check = check_enabled()
     optics = tuple(optics)
     before = [fingerprint(optic) for optic in optics] if check else []
-    epoch = EvaluationEpoch()
+    if epoch is None:
+        epoch = EvaluationEpoch()
     token = _current.set(epoch)
     try:
         yield epoch

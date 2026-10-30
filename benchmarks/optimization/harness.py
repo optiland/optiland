@@ -44,6 +44,7 @@ def _run_scipy(method_choice: str) -> Callable[[OptimizationProblem, int], objec
 METHODS: dict[str, Callable[[OptimizationProblem, int], object]] = {
     "scipy_lm": _run_scipy("lm"),
     "scipy_trf": _run_scipy("trf"),
+    "dls": _run_scipy("dls"),
 }
 
 

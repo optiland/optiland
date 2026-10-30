@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 import optiland.backend as be
 from optiland.distribution import create_distribution
 from optiland.rays import PolarizedRays, RayGenerator
+from optiland.raytrace import _resume
 from optiland.raytrace.base import BaseRayTracer
 from optiland.raytrace.partial_trace import partial_trace_start
 from optiland.raytrace.snapshot import TraceSnapshot, capture_rays
@@ -182,6 +183,13 @@ class RealRayTracer(BaseRayTracer):
         """
         self._validate_normalized_coordinates(Hx, Hy, "field")
         self._validate_normalized_coordinates(Px, Py, "pupil")
+
+        # Partial-trace finite differences record or resume this trace.
+        hook = _resume.active()
+        if hook is not None and not retain_launch:
+            rays = hook.trace_generic(self, Hx, Hy, Px, Py, wavelength, record)
+            if rays is not None:
+                return rays
 
         with be.no_grad_unless_enabled():
             # Vignetting is applied once, in RayGenerator.generate_rays.

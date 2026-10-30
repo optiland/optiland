@@ -31,6 +31,10 @@ if TYPE_CHECKING:
 # (paraxial seeds, wrapped aimers) pass through, so only entry calls memoize.
 _aiming: ContextVar[bool] = ContextVar("optiland_ray_aiming_active", default=False)
 
+# First element of every aim memo key, so an evaluator can select the aim
+# entries of an epoch (frozen aiming during finite differences, opt v2 PR4.1).
+AIM_MEMO_TAG = "BaseRayAimer.aim_rays"
+
 
 class _UnkeyableError(Exception):
     """Raised when an ``aim_rays`` input has no epoch memo key."""
@@ -131,7 +135,7 @@ def _epoch_memoized(aim_rays: Callable[..., Any]) -> Callable[..., Any]:
         keep: list = []
         try:
             key = (
-                "BaseRayAimer.aim_rays",
+                AIM_MEMO_TAG,
                 _input_key(fields, keep),
                 _input_key(wavelengths, keep),
                 _input_key(pupil_coords, keep),
