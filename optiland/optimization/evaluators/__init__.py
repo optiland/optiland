@@ -14,6 +14,7 @@ from typing import Any
 from .aim import AimPolicy, ExactAim, FrozenAim, resolve_aim_policy
 from .base import (
     Evaluator,
+    SupportsConstraints,
     SupportsJacobian,
     SupportsResiduals,
     SupportsValue,
@@ -28,6 +29,7 @@ __all__ = [
     "ExactAim",
     "FiniteDiffEvaluator",
     "FrozenAim",
+    "SupportsConstraints",
     "SupportsJacobian",
     "SupportsResiduals",
     "SupportsValue",

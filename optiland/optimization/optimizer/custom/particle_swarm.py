@@ -8,6 +8,7 @@ import numpy as np
 from scipy import optimize
 
 import optiland.backend as be
+from optiland.optimization.failure import reject_hard_constraints
 
 from ..scipy.base import OptimizerGeneric
 
@@ -119,6 +120,7 @@ class ParticleSwarm(OptimizerGeneric):
             especially with dimensionality, variable scaling,
             noise in the merit function, and tight or active bounds.
         """
+        reject_hard_constraints(self.problem, type(self).__name__)
         x0_backend = [var.value for var in self.problem.variables]
         self._x.append(x0_backend)
         x0 = np.asarray(be.to_numpy(x0_backend), dtype=float)

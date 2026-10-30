@@ -472,6 +472,13 @@ class BatchedRayEvaluator:
     # Analysis
     # ------------------------------------------------------------------
 
+    def _all_operands(self) -> list[Any]:
+        """The merit operands followed by one target operand per constraint row.
+
+        Constraint rows are planned with the merit so they share its bundles.
+        """
+        return [*self.problem.operands, *self.problem.constraints.row_operands]
+
     def _analyze(self):
         """Analyse the problem and create batching plan."""
         self._bundles = []
@@ -487,7 +494,7 @@ class BatchedRayEvaluator:
                 self._bundles.append(_BundleJob(optic, wavelength))
             return bundle_index[key]
 
-        for i, operand in enumerate(self.problem.operands):
+        for i, operand in enumerate(self._all_operands()):
             op_type = operand.operand_type
             data = operand.input_data
             if data and data.get("optic") is not None:
@@ -543,7 +550,7 @@ class BatchedRayEvaluator:
     def _build_index_arrays(self) -> None:
         """Precompute per-bundle index arrays of the single-ray operands."""
         self._attr_groups = []
-        operands = self.problem.operands
+        operands = self._all_operands()
         for job in self._bundles:
             groups: dict[str, tuple[list, list, list]] = {}
             for ray_idx, i in enumerate(job.operand_indices):
@@ -581,7 +588,7 @@ class BatchedRayEvaluator:
 
     def _ensure_plan_current(self) -> None:
         """Rebuild the plan when the problem size or a wavelength set changed."""
-        if len(self._operand_plan) != len(self.problem.operands) or (
+        if len(self._operand_plan) != len(self._all_operands()) or (
             self._all_optics
             and self._current_wavelength_signature() != self._wavelength_signature
         ):
@@ -629,38 +636,45 @@ class BatchedRayEvaluator:
     # Evaluation
     # ------------------------------------------------------------------
 
-    def _evaluate_direct_operands(self, raw_values: list[Any]) -> None:
+    def _evaluate_direct_operands(
+        self, raw_values: list[Any], weights: list[float] | None = None
+    ) -> None:
         """Populate values for non-ray operands evaluated directly."""
-        num_operands = len(self.problem.operands)
-        for i in range(num_operands):
+        for i, operand in enumerate(self._all_operands()):
             if raw_values[i] is not None:
                 continue
             plan_type, _, _ = self._operand_plan[i]
             if plan_type == "direct":
-                operand = self.problem.operands[i]
                 # Match OptimizationProblem.fun_array semantics: zero-effective-
                 # weight operands are excluded and should not be evaluated.
-                if operand.effective_weight() == 0.0:
+                weight = operand.effective_weight() if weights is None else weights[i]
+                if weight == 0.0:
                     continue
                 metric_fn = operand_registry.get(operand.operand_type)
                 if metric_fn is None:
                     raise ValueError(f"Unknown operand type: {operand.operand_type}")
                 raw_values[i] = metric_fn(**operand.input_data)
 
-    def _residuals(self, include_zero: bool):
+    def _residuals(self, include_zero: bool, constraints: bool = False):
         """Residuals ``effective_weight * delta`` of the operands, in order.
 
         Args:
             include_zero: Keep zero-effective-weight operands as exact zeros
                 (``residual_vector``) instead of dropping them
                 (``fun_array``).
+            constraints: Append the unsigned constraint rows.
 
         Returns:
             A 1-D array, or None when no operand contributes.
         """
         self._ensure_plan_current()
-        operands = list(self.problem.operands)
+        operands = self._all_operands()
         weights = [operand.effective_weight() for operand in operands]
+        count = len(operands)
+        if not constraints:
+            # Constraint rays stay in the bundles but nothing reads them.
+            count = len(self.problem.operands)
+            weights[count:] = [0.0] * (len(operands) - count)
         raw_values: list[Any] = [None] * len(operands)
         covered = [False] * len(operands)
         chunks: list[tuple[list[int], Any]] = []
@@ -724,9 +738,9 @@ class BatchedRayEvaluator:
             raw_values[i] = _extract_rms_spot(xs, ys, data, primary_index)
 
         # --- 3. Direct operands ---
-        self._evaluate_direct_operands(raw_values)
+        self._evaluate_direct_operands(raw_values, weights)
 
-        return self._assemble(raw_values, chunks, covered, weights, include_zero)
+        return self._assemble(raw_values, chunks, covered, weights, include_zero, count)
 
     def _assemble(
         self,
@@ -735,13 +749,14 @@ class BatchedRayEvaluator:
         covered: list[bool],
         weights: list[float],
         include_zero: bool,
+        count: int | None = None,
     ):
         """Join vectorized and scalar residuals into one vector in operand order.
 
         Returns:
             A 1-D array, or None when no operand contributes.
         """
-        operands = self.problem.operands
+        operands = self._all_operands()[:count]
         eq_idx, eq_values, eq_targets = [], [], []
         other_idx, other_residuals = [], []
         zero_idx = []
@@ -820,6 +835,19 @@ class BatchedRayEvaluator:
         if residuals is None:
             return be.array([])
         return residuals
+
+    def residuals_and_constraints(self):
+        """Residuals followed by signed constraint rows, from one evaluation.
+
+        Same epoch and same bundles for both. A constraint row is
+        ``sign * effective_weight * (value - limit)``.
+        """
+        with _epoch.evaluation_epoch(self._optics):
+            values = self._residuals(include_zero=True, constraints=True)
+        if values is None:
+            return be.array([])
+        signs = [1.0] * len(self.problem.operands) + self.problem.constraints.signs
+        return values * be.array(signs)
 
     def sum_squared(self):
         """Compute the sum of squared weighted deltas.

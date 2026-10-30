@@ -9,6 +9,7 @@ import numpy as np
 from scipy import optimize
 
 import optiland.backend as be
+from optiland.optimization.failure import reject_hard_constraints
 
 from ..scipy.base import OptimizerGeneric
 
@@ -68,6 +69,7 @@ class CMAES(OptimizerGeneric):
             ValueError: If an algorithm parameter, bound, or current variable
                 value is invalid.
         """
+        reject_hard_constraints(self.problem, type(self).__name__)
         x0_backend = [variable.value for variable in self.problem.variables]
         x0 = np.asarray(be.to_numpy(x0_backend), dtype=float)
         lower, upper = self._validate_bounds(x0)

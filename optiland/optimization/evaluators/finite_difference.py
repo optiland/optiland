@@ -4,6 +4,8 @@ The CPU evaluator of the native optimizers (opt v2 PR4.1). Each design
 evaluation writes ``x`` into the variables, updates the optics, opens one
 evaluation epoch and reads ``problem.residual_vector()``, so residuals are
 ``effective_weight * delta`` (decision V7) and the merit is ``sum(r ** 2)``.
+Hard-constraint rows are read in the same evaluation, and their Jacobian comes
+from the same columns, so constraints add no design evaluations.
 
 Jacobians use forward differences by default (``scheme="central"`` opt-in)
 with the step ``h_i = rel_step * max(|x_i|, typical_i)``, floored at
@@ -67,7 +69,7 @@ _BASELINE_CACHE_SIZE = 2
 
 @dataclass
 class _Baseline:
-    """One remembered baseline evaluation."""
+    """One remembered baseline evaluation: residuals, then constraint rows."""
 
     r: np.ndarray
     epoch: _epoch.EvaluationEpoch
@@ -139,6 +141,7 @@ class FiniteDiffEvaluator:
         self._optics = tuple({id(v.optic): v.optic for v in problem.variables}.values())
         self._m: int | None = None
         self._baselines: OrderedDict[bytes, _Baseline] = OrderedDict()
+        self._constraint_jac: tuple[bytes, np.ndarray] | None = None
         self._partial = (
             partial_trace
             and self.backend == "numpy"
@@ -148,6 +151,16 @@ class FiniteDiffEvaluator:
     # ------------------------------------------------------------------
     # Variables
     # ------------------------------------------------------------------
+
+    @property
+    def n_constraints(self) -> int:
+        """Number of hard-constraint rows."""
+        return self.problem.constraints.n_rows
+
+    def constraint_rows(self) -> tuple[np.ndarray, np.ndarray, list[str]]:
+        """Equality mask, tolerances and labels of the constraint rows."""
+        constraints = self.problem.constraints
+        return constraints.equality_mask, constraints.tols, constraints.labels
 
     def read_x(self) -> np.ndarray:
         """Return the current scaled variable values as a float array."""
@@ -202,7 +215,39 @@ class FiniteDiffEvaluator:
         r = self._evaluate(x, epoch, hook)
         # Snapshots stay valid even when some rows failed: they key on traces.
         self._remember(x, _Baseline(r, epoch, store))
-        return r
+        return self._merit_rows(r)
+
+    def constraints(self, x: ArrayLike) -> np.ndarray:
+        """Return the signed constraint rows at ``x`` (``NaN`` on failure).
+
+        Reads the evaluation made by :meth:`residuals` at ``x`` when it is
+        remembered, else makes it.
+        """
+        x = np.asarray(x, dtype=float)
+        baseline = self._baselines.get(x.tobytes())
+        if baseline is None:
+            self.residuals(x)
+            baseline = self._baselines[x.tobytes()]
+        return baseline.r[baseline.r.size - self.n_constraints :]
+
+    def constraint_jacobian(self, x: ArrayLike) -> np.ndarray:
+        """Jacobian of the constraint rows at ``x``, shape ``(c, n)``.
+
+        Reads the columns of the last :meth:`jacobian` at ``x`` when it is the
+        same point, else computes them.
+        """
+        x = np.asarray(x, dtype=float)
+        if not self.n_constraints:
+            return np.zeros((0, self.n_vars))
+        key = x.tobytes()
+        if self._constraint_jac is None or self._constraint_jac[0] != key:
+            self.jacobian(x)
+        return self._constraint_jac[1]
+
+    def _merit_rows(self, values: np.ndarray) -> np.ndarray:
+        """Drop the constraint rows of one evaluation."""
+        n = self.n_constraints
+        return values[: values.size - n] if n else values
 
     def value(self, x: ArrayLike) -> float:
         """Return the merit ``sum(r ** 2)`` at ``x`` (``nan`` on failure)."""
@@ -226,7 +271,11 @@ class FiniteDiffEvaluator:
                 _epoch.evaluation_epoch(self._optics, epoch=epoch),
                 hook or nullcontext(),
             ):
-                r = self.problem.residual_vector()
+                r = (
+                    self.problem.residuals_and_constraints()
+                    if self.n_constraints
+                    else self.problem.residual_vector()
+                )
             r = np.asarray(be.to_numpy(r), dtype=float).reshape(-1)
         except _epoch.EpochViolationError:
             raise  # debug guard: a contract breach is a bug, not a bad design
@@ -246,7 +295,9 @@ class FiniteDiffEvaluator:
         return r
 
     def _num_rows(self) -> int:
-        return self._m if self._m is not None else max(len(self.problem.operands), 1)
+        if self._m is not None:
+            return self._m
+        return max(len(self.problem.operands), 1) + self.n_constraints
 
     def _remember(self, x: np.ndarray, baseline: _Baseline) -> None:
         key = x.tobytes()
@@ -267,7 +318,8 @@ class FiniteDiffEvaluator:
             r0: Residuals already computed at ``x``. When given, the baseline
                 is not evaluated again; it is re-evaluated only when partial
                 trace or frozen aiming needs the baseline's trace snapshots or
-                aim solutions and they are no longer remembered.
+                aim solutions and they are no longer remembered, or constraint
+                rows need their baseline.
 
         Returns:
             An ``(m, n)`` array. Entries that cannot be differenced (failed
@@ -281,11 +333,16 @@ class FiniteDiffEvaluator:
         x = np.asarray(x, dtype=float)
         self.njev += 1
         baseline = self._baselines.get(x.tobytes())
-        needs_baseline = self._partial or self.aim_policy.needs_baseline
+        needs_baseline = (
+            self._partial or self.aim_policy.needs_baseline or self.n_constraints > 0
+        )
         if baseline is None and (r0 is None or needs_baseline):
             self.residuals(x)
             baseline = self._baselines[x.tobytes()]
-        r0 = baseline.r if r0 is None else np.asarray(r0, dtype=float).reshape(-1)
+        if r0 is None or self.n_constraints:
+            r0 = baseline.r
+        else:
+            r0 = np.asarray(r0, dtype=float).reshape(-1)
 
         self.write_x(x)  # eligibility is decided at the baseline state
         starts = self.partial_trace_starts() if self._partial else [None] * self.n_vars
@@ -303,7 +360,10 @@ class FiniteDiffEvaluator:
             )
 
         self.write_x(x)  # leave the optics at x
-        return J
+        if not self.n_constraints:
+            return J
+        self._constraint_jac = (x.tobytes(), J[r0.size - self.n_constraints :])
+        return J[: r0.size - self.n_constraints]
 
     def _steps(self, x: np.ndarray) -> np.ndarray:
         h = self.rel_step * np.maximum(np.abs(x), self.typical_x)

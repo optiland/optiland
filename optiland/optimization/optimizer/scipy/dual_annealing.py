@@ -6,6 +6,7 @@ import warnings
 from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
+from optiland.optimization.failure import reject_hard_constraints
 from scipy import optimize
 
 from ..live_plotter import LiveOptimizationPlotter
@@ -50,6 +51,7 @@ class DualAnnealing(OptimizerGeneric):
             result: The result of the optimization.
 
         """
+        reject_hard_constraints(self.problem, type(self).__name__)
         # Get initial values in backend format
         x0_backend = [var.value for var in self.problem.variables]
         self._x.append(x0_backend)  # Store backend values

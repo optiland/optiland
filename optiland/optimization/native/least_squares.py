@@ -16,9 +16,12 @@ Per outer iteration ``k``:
    :class:`~optiland.optimization.control.levenberg.LevenbergController`),
    trial ``r_t = residuals(x + dx)``. A trial is accepted when it lowers the
    merit; a non-finite trial is rejected and shrinks the radius.
-5. Bounds: variables at a bound that the gradient pushes outward are held,
-   and the trial point is projected to the box *before* it is evaluated, so
-   the optic and the residuals always belong to the projected point.
+5. Bounds and hard constraints (PR7.3): with either present,
+   :class:`~optiland.optimization.control.kkt.KKTController` takes over the
+   step. A bound is a linear inequality row, so the active set holds it and a
+   trial point stays inside the box. Trials are then accepted on the exact
+   penalty merit, and a run that ends infeasible reports ``success=False``
+   after damped restoration, with a per-row report.
 6. Gated Broyden (``jacobian_update``): ``"exact"`` recomputes ``J`` after
    every accepted step. ``"broyden"`` applies the rank-one update
    ``J += ((dr - J dx) dx^T) / (dx^T dx)`` after every accepted step.
@@ -46,6 +49,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 import optiland.backend as be
+from optiland.optimization.constraint.constraint import row_violations
+from optiland.optimization.control.kkt import KKTController
 from optiland.optimization.control.levenberg import LevenbergController
 from optiland.optimization.failure import (
     ConfigurationError,
@@ -77,7 +82,16 @@ BROYDEN_MAX_CONSECUTIVE = 2
 # Gain ratio above which a small merit decrease counts as converged (SciPy).
 FTOL_MIN_RHO = 0.25
 
+# Gain ratio below which a trial that raised the violation gets a correction.
+CORRECTION_MAX_RHO = 0.75
+
+# Restoration: steps per attempt, attempts per run, and backtracking fractions.
+MAX_RESTORATION_STEPS = 8
+MAX_RESTORATIONS = 3
+RESTORATION_FRACTIONS = (1.0, 0.5, 0.25, 0.125)
+
 STATUS_MESSAGES = {
+    -5: "The hard constraints could not be satisfied.",
     -3: "The trust region collapsed: no step reduces the merit.",
     -4: "Stopped by a stopping criterion.",
     -2: "Stopped by the callback.",
@@ -114,6 +128,9 @@ def dls(
     Args:
         evaluator: Supplies ``residuals``, ``jacobian(x, r0)``, ``write_x``
             and ``n_vars``; its ``nfev`` counter (if any) drives ``max_nfev``.
+            One with ``n_constraints > 0`` also supplies the hard-constraint
+            rows (see
+            :class:`~optiland.optimization.evaluators.SupportsConstraints`).
         x0: Starting point. Defaults to ``evaluator.read_x()``.
         bounds: ``(lower, upper)`` arrays; ``±inf`` for no bound. Defaults to
             ``evaluator.bounds()`` when available, else unbounded.
@@ -145,9 +162,11 @@ def dls(
         ``scipy.optimize.OptimizeResult``) with ``x``, ``fun`` (residuals),
         ``cost`` (``0.5 * sum(r ** 2)``, SciPy's convention), ``jac``,
         ``grad``, ``optimality``, ``nfev``, ``njev``, ``nit``, ``status``,
-        ``message``, ``success``, ``stop_reason``, ``n_evals`` and ``history``
-        (None without a ``HistoryObserver``). The evaluator's optic is left at
-        ``x``.
+        ``message``, ``success``, ``stop_reason``, ``n_evals``, ``history``
+        (None without a ``HistoryObserver``), ``multipliers``, ``active_set``,
+        ``max_constraint_violation`` and ``constraint_report``. The evaluator's
+        optic is left at ``x``. A run that ends with a violated hard
+        constraint has ``success=False``.
 
     Raises:
         ConfigurationError: If ``jacobian_update`` is unknown, or the
@@ -175,21 +194,26 @@ def dls(
     criterion = with_cancel(stop, cancel_token)
 
     counter = _Counter(evaluator)
+    scaling: dict[str, Any] = {}
     if isinstance(x_scale, str):
         if x_scale != "jac":
             raise ConfigurationError(
                 f"Unknown x_scale {x_scale!r}; use 'jac' or numbers."
             )
-        controller = LevenbergController()
     else:
         scale = np.broadcast_to(np.asarray(x_scale, dtype=float), (n,))
         if not np.all(np.isfinite(scale) & (scale > 0)):
             raise ConfigurationError("x_scale must be positive and finite.")
-        controller = LevenbergController(scaling="fixed", weights=1.0 / scale)
+        scaling = {"scaling": "fixed", "weights": 1.0 / scale}
+    if counter.n_constraints or np.any(np.isfinite(lower) | np.isfinite(upper)):
+        controller = KKTController(*counter.constraint_rows(), lower, upper, **scaling)
+    else:
+        controller = LevenbergController(**scaling)
 
     x = np.clip(x, lower, upper)
     r = counter.residuals(x)
-    rows = failing_rows(r)
+    s = counter.constraints(x)
+    rows = failing_rows(np.concatenate([r, s]))
     if rows.size:
         problem = getattr(evaluator, "problem", None)
         names = describe_rows(problem, rows) if problem is not None else str(list(rows))
@@ -199,13 +223,16 @@ def dls(
         )
     F = float(r @ r)
     J = counter.jacobian(x, r)
+    A = counter.constraint_jacobian(x)
     fresh = True
     consecutive_broyden = 0
     nit = 0
     status: int | None = None
+    restorations = 0
 
     def build(J: np.ndarray) -> np.ndarray:
         controller.rescale(J)
+        controller.linearize(x, J, r, s, A)
         return J.T @ r
 
     g = build(J)
@@ -226,7 +253,10 @@ def dls(
         criterion.reset(state)
     while status is None:
         # Only an exact Jacobian may certify a stationary point.
-        if F == 0.0 or (fresh and _scaled_gradient(J, r, g) <= gtol):
+        if controller.feasible(s) and (
+            F == 0.0
+            or (fresh and _scaled_gradient(J, r, controller.stationarity(g)) <= gtol)
+        ):
             status = 1
             break
 
@@ -235,9 +265,8 @@ def dls(
             if counter.nfev >= max_nfev:
                 status = 0
                 break
-            # Variables at a bound that the gradient pushes outward stay put.
-            held = ((x <= lower) & (g > 0)) | ((x >= upper) & (g < 0))
-            dx = controller.solve(J, r, free=~held)
+            dx = controller.solve(J, r)
+            # The rows already hold every bound: this clip only trims round-off.
             x_t = np.clip(x + dx, lower, upper)
             dx = x_t - x
             if not np.any(dx):
@@ -245,20 +274,43 @@ def dls(
                 break
             predicted = controller.model_reduction(dx, J, r)
             r_t = counter.residuals(x_t)
-            F_t = float(r_t @ r_t) if np.all(np.isfinite(r_t)) else np.inf
-            accepted = F_t < F
-            if not accepted and not fresh:
-                # A stale Broyden J may be the reason: refresh before shrinking.
-                J = counter.jacobian(x, r)
-                fresh, consecutive_broyden = True, 0
-                g = build(J)
-                continue
+            s_t = counter.constraints(x_t)
+            finite = np.all(np.isfinite(r_t)) and np.all(np.isfinite(s_t))
+            F_t = float(r_t @ r_t) if finite else np.inf
+            phi = controller.merit(F, s)
+            phi_t = controller.merit(F_t, s_t)
             if not np.isfinite(F_t):
                 rho = -np.inf
             elif predicted > 0:
-                rho = (F - F_t) / predicted
+                rho = (phi - phi_t) / predicted
             else:
-                rho = 1.0 if accepted else -np.inf
+                rho = 1.0 if phi_t < phi else -np.inf
+            if np.isfinite(F_t) and rho < CORRECTION_MAX_RHO:
+                dx_c = controller.second_order_step(dx, s_t)
+                if dx_c is not None:
+                    x_c = np.clip(x + dx_c, lower, upper)
+                    r_c = counter.residuals(x_c)
+                    s_c = counter.constraints(x_c)
+                    finite = np.all(np.isfinite(r_c)) and np.all(np.isfinite(s_c))
+                    F_c = float(r_c @ r_c) if finite else np.inf
+                    phi = controller.merit(F, s)  # the correction may raise sigma
+                    phi_t = controller.merit(F_t, s_t)
+                    phi_c = controller.merit(F_c, s_c)
+                    if phi_c < phi_t:
+                        x_t, dx, r_t, s_t, F_t = x_c, x_c - x, r_c, s_c, F_c
+                        phi_t = phi_c
+                    predicted = controller.model_reduction(dx, J, r)
+                    rho = (phi - phi_t) / predicted if predicted > 0 else -np.inf
+            accepted = phi_t < phi
+            if not accepted and not fresh:
+                # A stale Broyden J may be the reason: refresh before shrinking.
+                J = counter.jacobian(x, r)
+                A = counter.constraint_jacobian(x)
+                fresh, consecutive_broyden = True, 0
+                g = build(J)
+                continue
+            if accepted and predicted <= 0:
+                rho = 1.0
             controller.update(rho, dx)
             if accepted:
                 break
@@ -266,17 +318,35 @@ def dls(
                 status = -3
                 break
         if status is not None:
+            # A blocked or collapsed step does not end an infeasible run yet.
+            stuck = status in (3, -3) and not controller.feasible(s)
+            if stuck and restorations < MAX_RESTORATIONS and counter.nfev < max_nfev:
+                restorations += 1
+                restored = _restore(
+                    counter, controller, x, r, s, lower, upper, max_nfev
+                )
+                if restored is not None:
+                    x, r, s = restored
+                    F = float(r @ r)
+                    J = counter.jacobian(x, r)
+                    A = counter.constraint_jacobian(x)
+                    fresh, consecutive_broyden = True, 0
+                    g = build(J)
+                    controller.init_radius(x)
+                    status = None
+                    continue
             break
 
         # Accepted step.
         nit += 1
-        dF = F - F_t
+        dF = phi - phi_t
         # SciPy ftol semantics: a small decrease counts only on a good model fit
-        small_f = dF < ftol * F and rho > FTOL_MIN_RHO
+        small_f = dF < ftol * phi and rho > FTOL_MIN_RHO
         small_x = np.linalg.norm(dx) <= xtol * (xtol + np.linalg.norm(x))
         dr = r_t - r
+        ds = s_t - s
         step_norm = float(np.linalg.norm(dx))
-        x, r, F = x_t, r_t, F_t
+        x, r, s, F = x_t, r_t, s_t, F_t
 
         state.x, state.value, state.residuals = x.copy(), F, r.copy()
         state.iteration, state.n_evals, state.step_norm = nit, counter.nfev, step_norm
@@ -293,8 +363,20 @@ def dls(
                 break
 
         if small_f or small_x:
-            status = 4 if (small_f and small_x) else (2 if small_f else 3)
-            break
+            # Converged but for the rows: restore them instead of stepping on.
+            infeasible = not controller.feasible(s)
+            if infeasible and restorations < MAX_RESTORATIONS:
+                restorations += 1
+                restored = _restore(
+                    counter, controller, x, r, s, lower, upper, max_nfev
+                )
+                if restored is not None:
+                    x, r, s = restored
+                    F = float(r @ r)
+                    infeasible = False
+            if not infeasible:
+                status = 4 if (small_f and small_x) else (2 if small_f else 3)
+                break
         if counter.nfev >= max_nfev:
             status = 0
             break
@@ -306,10 +388,12 @@ def dls(
         )
         if use_broyden:
             J = J + np.outer(dr - J @ dx, dx) / float(dx @ dx)
+            A = A + np.outer(ds - A @ dx, dx) / float(dx @ dx)
             fresh = False
             consecutive_broyden += 1
         else:
             J = counter.jacobian(x, r)
+            A = counter.constraint_jacobian(x)
             fresh, consecutive_broyden = True, 0
         g = build(J)
         state.gradient, state.jacobian = g.copy(), J
@@ -317,7 +401,16 @@ def dls(
 
     evaluator.write_x(x)
     g = J.T @ r
+    if status > 0 and not controller.feasible(s):
+        status = -5
+    diagnostics = controller.diagnostics(s)
     message = STATUS_MESSAGES[status]
+    if status == -5:
+        worst = max(diagnostics["constraint_report"], key=lambda row: row["violation"])
+        message = (
+            f"{message[:-1]}: largest violation {worst['violation']:.3e} "
+            f"at {worst['label']}."
+        )
     if status == -4 and stop_reason:
         message = f"{message[:-1]}: {stop_reason}."
     state.x, state.value, state.residuals = x.copy(), F, r.copy()
@@ -341,6 +434,7 @@ def dls(
         stop_reason=message,
         n_evals=counter.nfev,
         history=find_history(observer_list),
+        **diagnostics,
     )
     for observer in observer_list:
         observer.on_end(state, result)
@@ -358,12 +452,56 @@ def _scaled_gradient(J: np.ndarray, r: np.ndarray, g: np.ndarray) -> float:
     return float(np.max(cos)) if cos.size else 0.0
 
 
+def _restore(
+    counter: _Counter,
+    controller: KKTController,
+    x: np.ndarray,
+    r: np.ndarray,
+    s: np.ndarray,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    max_nfev: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+    """Damped feasibility restoration: lower the violation, ignoring the merit.
+
+    Each step is a backtracked correction of the violated rows.
+
+    Returns:
+        The feasible ``(x, r, s)``, or None if the rows could not be met.
+    """
+    equality = controller.equality
+
+    def violation(values: np.ndarray) -> float:
+        return float(np.sum(row_violations(equality, values)))
+
+    for _ in range(MAX_RESTORATION_STEPS):
+        if counter.nfev >= max_nfev:
+            return None
+        J = counter.jacobian(x, r)
+        controller.linearize(x, J, r, s, counter.constraint_jacobian(x))
+        dx = controller.restoration_step()
+        for fraction in RESTORATION_FRACTIONS:
+            x_t = np.clip(x + fraction * dx, lower, upper)
+            r_t = counter.residuals(x_t)
+            s_t = counter.constraints(x_t)
+            finite = np.all(np.isfinite(r_t)) and np.all(np.isfinite(s_t))
+            if finite and violation(s_t) < violation(s):
+                x, r, s = x_t, r_t, s_t
+                break
+        else:
+            return None
+        if controller.feasible(s):
+            return x, r, s
+    return None
+
+
 class _Counter:
     """Residual/Jacobian calls with evaluation counts.
 
     Uses the evaluator's own ``nfev``/``njev`` when it keeps them (finite
     differences count every column); otherwise counts one evaluation per
     residual call and ``n`` per Jacobian, matching forward differences.
+    Constraint rows share those evaluations and are not counted again.
     """
 
     def __init__(self, evaluator: Evaluator) -> None:
@@ -372,6 +510,25 @@ class _Counter:
         self._start = (evaluator.nfev, evaluator.njev) if self._own else (0, 0)
         self._nfev = 0
         self._njev = 0
+        self.n_constraints = int(getattr(evaluator, "n_constraints", 0))
+
+    def constraint_rows(self) -> tuple[np.ndarray, np.ndarray, list[str]]:
+        """Equality mask, tolerances and labels of the constraint rows."""
+        if not self.n_constraints:
+            return np.zeros(0, dtype=bool), np.zeros(0), []
+        return self.evaluator.constraint_rows()
+
+    def constraints(self, x: np.ndarray) -> np.ndarray:
+        if not self.n_constraints:
+            return np.zeros(0)
+        return _np(self.evaluator.constraints(x)).reshape(-1)
+
+    def constraint_jacobian(self, x: np.ndarray) -> np.ndarray:
+        n = int(self.evaluator.n_vars)
+        if not self.n_constraints:
+            return np.zeros((0, n))
+        A = _np(self.evaluator.constraint_jacobian(x)).reshape(self.n_constraints, n)
+        return np.where(np.isfinite(A), A, 0.0)
 
     @property
     def nfev(self) -> int:
@@ -392,6 +549,7 @@ class _Counter:
     def jacobian(self, x: np.ndarray, r: np.ndarray) -> np.ndarray:
         self._njev += 1
         self._nfev += int(self.evaluator.n_vars)
-        J = _np(self.evaluator.jacobian(x, r0=r)).reshape(r.size, -1)
+        n = int(self.evaluator.n_vars)
+        J = _np(self.evaluator.jacobian(x, r0=r)).reshape(r.size, n)
         # Entries an evaluator could not difference carry no information.
         return np.where(np.isfinite(J), J, 0.0)

@@ -12,6 +12,7 @@ from .variable import (
     Variable,
 )
 from .operand import ParaxialOperand, AberrationOperand, RayOperand, Operand
+from .constraint import Constraint, ConstraintManager
 from .problem import OptimizationProblem
 from .api import minimize
 from .state import OptimizationResult

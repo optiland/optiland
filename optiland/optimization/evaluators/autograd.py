@@ -5,7 +5,8 @@ verified *stateful* mode only: the parameters are pushed into the surfaces via
 :class:`~optiland.optimization.evaluators._param_sync.TorchParameterSync`,
 then ``problem.residual_vector()`` is evaluated through the regular trace
 pipeline inside one evaluation epoch. Residuals are ``effective_weight *
-delta`` (decision V7).
+delta`` (decision V7). Hard-constraint rows follow the residuals in the same
+forward pass.
 
 The Jacobian is built row by row with ``torch.autograd.grad``: ``m`` backward
 passes over one forward pass. Functional and compiled modes are left to a
@@ -20,6 +21,8 @@ Kramer Harrison, 2026
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+
+import numpy as np
 
 import optiland.backend as be
 from optiland import _epoch
@@ -80,6 +83,17 @@ class AutogradEvaluator:
         self.njev = 0
         self._sync = TorchParameterSync(problem)
         self._optics = tuple({id(v.optic): v.optic for v in problem.variables}.values())
+        self._constraint_cache: dict[str, tuple[bytes, Any]] = {}
+
+    @property
+    def n_constraints(self) -> int:
+        """Number of hard-constraint rows."""
+        return self.problem.constraints.n_rows
+
+    def constraint_rows(self) -> tuple[Any, Any, list[str]]:
+        """Equality mask, tolerances and labels of the constraint rows."""
+        constraints = self.problem.constraints
+        return constraints.equality_mask, constraints.tols, constraints.labels
 
     @property
     def params(self) -> list[Any]:
@@ -97,8 +111,6 @@ class AutogradEvaluator:
 
     def bounds(self) -> tuple[Any, Any]:
         """Lower and upper bounds of the scaled variables as numpy arrays."""
-        import numpy as np
-
         lower = np.full(self.n_vars, -np.inf)
         upper = np.full(self.n_vars, np.inf)
         for i, var in enumerate(self.problem.variables):
@@ -110,19 +122,23 @@ class AutogradEvaluator:
         return lower, upper
 
     def _forward(self, x: Any) -> Any:
-        """Residuals at ``x`` with the graph to the parameters attached."""
+        """Residuals, then constraint rows, with the graph attached."""
         self.nfev += 1
         try:
             with be.grad_mode.temporary_enable():
                 self.write_x(x)
                 with _epoch.evaluation_epoch(self._optics):
-                    r = be.ravel(self.problem.residual_vector())
+                    r = be.ravel(
+                        self.problem.residuals_and_constraints()
+                        if self.n_constraints
+                        else self.problem.residual_vector()
+                    )
         except _epoch.EpochViolationError:
             raise
         except Exception as exc:
             if self.on_failure == "raise":
                 raise OptimizationFailure(f"Design evaluation failed: {exc}") from exc
-            m = max(len(self.problem.operands), 1)
+            m = max(len(self.problem.operands), 1) + self.n_constraints
             return torch.full((m,), float("nan"), dtype=self.params[0].dtype)
         if self.on_failure == "raise":
             rows = failing_rows(be.to_numpy(r.detach()))
@@ -133,9 +149,45 @@ class AutogradEvaluator:
                 )
         return r
 
+    @staticmethod
+    def _key(x: Any) -> bytes:
+        return np.asarray(be.to_numpy(x), dtype=float).tobytes()
+
+    def _merit_rows(self, values: Any) -> Any:
+        """Drop the constraint rows of one forward pass."""
+        return values[: values.shape[0] - self.n_constraints]
+
     def residuals(self, x: Any) -> Any:
         """Return the residuals at ``x`` as a detached tensor (``NaN`` on failure)."""
-        return self._forward(x).detach()
+        values = self._forward(x).detach()
+        if self.n_constraints:
+            rows = values[values.shape[0] - self.n_constraints :]
+            self._constraint_cache["values"] = (self._key(x), rows)
+        return self._merit_rows(values)
+
+    def constraints(self, x: Any) -> Any:
+        """Return the signed constraint rows at ``x`` as a detached tensor.
+
+        Reads the forward pass of :meth:`residuals` at ``x`` when it was the
+        last one, else runs one.
+        """
+        cached = self._constraint_cache.get("values")
+        if cached is None or cached[0] != self._key(x):
+            self.residuals(x)
+            cached = self._constraint_cache["values"]
+        return cached[1]
+
+    def constraint_jacobian(self, x: Any) -> Any:
+        """Jacobian of the constraint rows at ``x``, shape ``(c, n)``.
+
+        Reads the rows of the last :meth:`jacobian` at ``x`` when it is the
+        same point, else computes them.
+        """
+        cached = self._constraint_cache.get("jacobian")
+        if cached is None or cached[0] != self._key(x):
+            self.jacobian(x)
+            cached = self._constraint_cache["jacobian"]
+        return cached[1]
 
     def value(self, x: Any) -> Any:
         """Return the merit ``sum(r ** 2)`` at ``x`` as a detached 0-d tensor."""
@@ -168,13 +220,18 @@ class AutogradEvaluator:
                 )
             )
         J = torch.stack(rows) if rows else torch.zeros((0, len(params)))
-        return torch.nan_to_num(J, nan=0.0, posinf=0.0, neginf=0.0)
+        J = torch.nan_to_num(J, nan=0.0, posinf=0.0, neginf=0.0)
+        if not self.n_constraints:
+            return J
+        constraint_rows = J[J.shape[0] - self.n_constraints :]
+        self._constraint_cache["jacobian"] = (self._key(x), constraint_rows)
+        return self._merit_rows(J)
 
     def gradient(self, x: Any) -> Any:
         """Merit gradient ``d(sum r^2)/dx`` by one backward pass."""
         for param in self.params:
             param.grad = None
-        r = self._forward(x)
+        r = self._merit_rows(self._forward(x))
         loss = torch.sum(r * r)
         loss.backward()
         return torch.stack(

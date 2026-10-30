@@ -10,6 +10,7 @@ import numpy as np
 
 import optiland.backend as be
 from optiland import _epoch
+from optiland.optimization.failure import reject_hard_constraints
 from scipy import optimize
 
 from ..live_plotter import LiveOptimizationPlotter
@@ -109,7 +110,8 @@ class LeastSquares(OptimizerGeneric):
                                          squares (experimental; supports
                                          bounds; maxiter counts residual
                                          evaluations including Jacobian
-                                         columns).
+                                         columns). The only choice that
+                                         enforces hard constraints.
                                          'lm': Levenberg-Marquardt (DLS,
                                          does not support bounds).
                                          'trf': Trust Region Reflective
@@ -125,7 +127,13 @@ class LeastSquares(OptimizerGeneric):
 
         Returns:
             OptimizeResult: The SciPy optimization result.
+
+        Raises:
+            ConfigurationError: If the problem has hard constraints and
+                ``method_choice`` is not ``"dls"``.
         """
+        if method_choice != "dls":
+            reject_hard_constraints(self.problem, f"LeastSquares({method_choice!r})")
 
         x0_scaled_values = [var.value for var in self.problem.variables]
         self._x.append(list(x0_scaled_values))
@@ -264,7 +272,8 @@ class LeastSquares(OptimizerGeneric):
         """Run the native damped least-squares core (``method_choice="dls"``).
 
         Residuals are ``effective_weight * delta`` from a finite-difference
-        evaluator with partial-trace Jacobians; variable bounds are honored.
+        evaluator with partial-trace Jacobians; variable bounds and hard
+        constraints are honored.
         ``maxiter`` caps residual evaluations, Jacobian columns included.
         """
         from optiland.optimization.evaluators import FiniteDiffEvaluator

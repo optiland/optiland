@@ -96,6 +96,41 @@ class LevenbergController:
         self._svd_key: tuple | None = None
         self._svd_cache: tuple | None = None
 
+    def linearize(
+        self,
+        x: np.ndarray,
+        J: np.ndarray,
+        r: np.ndarray,
+        s: np.ndarray,
+        A: np.ndarray,
+    ) -> None:
+        """Hook for constraint rows ``s`` with Jacobian ``A``; none here."""
+
+    def feasible(self, s: np.ndarray) -> bool:
+        """Whether the rows ``s`` hold; there are none here."""
+        return True
+
+    def merit(self, F: float, s: np.ndarray) -> float:
+        """The merit that accepts trial steps: ``F`` itself here."""
+        return F
+
+    def stationarity(self, g: np.ndarray) -> np.ndarray:
+        """The gradient that certifies a stationary point: ``g`` itself here."""
+        return g
+
+    def second_order_step(self, dx: np.ndarray, s_t: np.ndarray) -> np.ndarray | None:
+        """A curvature correction of the trial ``dx``; there are no rows here."""
+        return None
+
+    def diagnostics(self, s: np.ndarray) -> dict:
+        """Constraint fields of the result: empty here."""
+        return {
+            "multipliers": {},
+            "active_set": [],
+            "max_constraint_violation": 0.0,
+            "constraint_report": [],
+        }
+
     def rescale(self, J: np.ndarray) -> np.ndarray:
         """Update the scaling from the Jacobian (monotone for Moré)."""
         norms = np.linalg.norm(J, axis=0)

@@ -77,8 +77,8 @@ def failing_rows(residuals: Any) -> np.ndarray:
 def describe_rows(problem: OptimizationProblem, rows: Any) -> str:
     """Name the operands behind residual rows, for error messages.
 
-    Rows follow ``OptimizationProblem.residual_vector``: one row per operand,
-    in order.
+    Rows follow ``OptimizationProblem.residuals_and_constraints``: one row per
+    operand, in order, then the constraint rows.
 
     Args:
         problem: The optimization problem.
@@ -87,7 +87,7 @@ def describe_rows(problem: OptimizationProblem, rows: Any) -> str:
     Returns:
         A comma-separated list such as ``"#3 rms_spot_size, #4 f2"``.
     """
-    operands = list(problem.operands)
+    operands = [*problem.operands, *problem.constraints.row_operands]
     names = []
     for row in rows:
         row = int(row)
@@ -113,6 +113,25 @@ def check_initial_point(problem: OptimizationProblem, residuals: Any) -> None:
         raise ConfigurationError(
             "Cannot optimize from an untraceable design: the starting point "
             f"has non-finite residuals for operand(s) {describe_rows(problem, rows)}."
+        )
+
+
+def reject_hard_constraints(problem: OptimizationProblem, solver: str) -> None:
+    """Raise when a solver that ignores hard constraints meets one.
+
+    Args:
+        problem: The optimization problem.
+        solver: The solver's name, for the message.
+
+    Raises:
+        ConfigurationError: If the problem has hard constraints.
+    """
+    if len(getattr(problem, "constraints", ())):
+        raise ConfigurationError(
+            f"{solver} does not support hard constraints. Use minimize(problem, "
+            "method='dls') or LeastSquares.optimize(method_choice='dls'), or "
+            "express the limits as penalty operands with add_operand(min_val=..., "
+            "max_val=...), which work with every optimizer."
         )
 
 

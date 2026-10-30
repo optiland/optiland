@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 import optiland.backend as be
+from optiland.optimization.constraint import ConstraintManager
 from optiland.optimization.operand import OperandManager
 from optiland.optimization.variable import VariableManager
 
@@ -30,11 +31,15 @@ class OptimizationProblem:
     Attributes:
         operands (list): List of operands in the merit function.
         variables (list): List of variables in the merit function.
+        constraints (ConstraintManager): Hard constraints (experimental).
         initial_value (float): Initial value of the merit function.
 
     Methods:
         add_operand: Add an operand to the merit function.
         add_variable: Add a variable to the merit function.
+        add_constraint: Add a hard constraint (experimental).
+        clear_constraints: Remove all hard constraints (experimental).
+        constraint_info: Print the hard constraints (experimental).
         fun_array: Array of operand weighted deltas squared, where the delta
             is the difference between the current and target value.
         sum_squared: Sum of squared operand weighted deltas.
@@ -57,6 +62,7 @@ class OptimizationProblem:
         """
         self.operands = OperandManager()
         self.variables = VariableManager()
+        self.constraints = ConstraintManager()
         self.initial_value = 0.0
         self._batched_evaluator: BatchedRayEvaluator | None = None
 
@@ -125,6 +131,52 @@ class OptimizationProblem:
     def add_variable(self, optic, variable_type, scaler: Scaler = None, **kwargs):
         """Add a variable to the merit function"""
         self.variables.add(optic, variable_type, scaler=scaler, **kwargs)
+
+    def add_constraint(
+        self,
+        operand_type=None,
+        target=None,
+        min_val=None,
+        max_val=None,
+        weight=1,
+        input_data=None,
+        tol=1e-8,
+    ):
+        """Add a hard constraint. *Experimental.*
+
+        Uses the operand spec of :meth:`add_operand`: ``target`` makes an
+        equality, ``min_val`` and/or ``max_val`` an inequality. A constraint
+        is not a merit term: it stays out of ``fun_array``, ``residual_vector``
+        and ``sum_squared``. Only the native damped least squares enforces
+        constraints; the other optimizers raise ``ConfigurationError``.
+
+        Args:
+            operand_type: Registered operand name.
+            target: Equality target.
+            min_val: Lower bound of the operand value.
+            max_val: Upper bound of the operand value.
+            weight: Positive scale of the rows, ``effective_weight * delta``.
+            input_data: Operand input data.
+            tol: Feasibility tolerance of each row, in row units.
+
+        Returns:
+            The new :class:`~optiland.optimization.constraint.Constraint`.
+
+        Raises:
+            ConfigurationError: If the specification is invalid.
+        """
+        constraint = self.constraints.add(
+            operand_type, target, min_val, max_val, weight, input_data, tol
+        )
+        if self._batched_evaluator is not None:
+            self._batched_evaluator.refresh()
+        return constraint
+
+    def clear_constraints(self):
+        """Remove all hard constraints. *Experimental.*"""
+        self.constraints.clear()
+        if self._batched_evaluator is not None:
+            self._batched_evaluator.refresh()
 
     def clear_operands(self):
         """Clear all operands from the merit function"""
@@ -201,6 +253,35 @@ class OptimizationProblem:
         if not terms:
             return be.array([])
         return be.stack(terms)
+
+    def constraint_vector(self):
+        """Signed constraint rows at the current state. *Experimental.*
+
+        Each row is ``effective_weight * delta``, signed so that an equality
+        is feasible at 0 and an inequality at ``<= 0``.
+
+        Returns:
+            be.ndarray: A 1-D array with one entry per row.
+        """
+        if self._batched_evaluator is not None:
+            full = self._batched_evaluator.residuals_and_constraints()
+            return full[len(self.operands) :]
+        return self.constraints.vector()
+
+    def residuals_and_constraints(self):
+        """Residuals followed by constraint rows, from one evaluation.
+
+        With batching, constraint rows share the merit's ray bundles.
+        *Experimental.*
+
+        Returns:
+            be.ndarray: :meth:`residual_vector` then :meth:`constraint_vector`.
+        """
+        if self._batched_evaluator is not None:
+            return self._batched_evaluator.residuals_and_constraints()
+        return be.concatenate(
+            [be.ravel(self.residual_vector()), be.ravel(self.constraints.vector())]
+        )
 
     def sum_squared(self):
         """Calculate the sum of squared operand weighted deltas.
@@ -284,6 +365,23 @@ class OptimizationProblem:
             "Max. Bound": [self._to_item(var.max_val) for var in self.variables],
         }
 
+        df = pd.DataFrame(data)
+        print(df.to_markdown(headers="keys", tablefmt="fancy_outline"))
+
+    def constraint_info(self):
+        """Print the hard constraint rows at the current state. *Experimental.*"""
+        rows = self.constraints.rows
+        report = self.constraints.report(self.constraint_vector())
+        data = {
+            "Constraint": [item["label"] for item in report],
+            "Kind": [item["kind"] for item in report],
+            "Eff. Weight": [
+                self._to_item(row.operand.effective_weight()) for row in rows
+            ],
+            "Residual": [f"{item['residual']:+.3e}" for item in report],
+            "Violation": [f"{item['violation']:.3e}" for item in report],
+            "Feasible": [item["feasible"] for item in report],
+        }
         df = pd.DataFrame(data)
         print(df.to_markdown(headers="keys", tablefmt="fancy_outline"))
 
@@ -371,3 +469,5 @@ class OptimizationProblem:
         self.merit_info()
         self.operand_info()
         self.variable_info()
+        if len(self.constraints):
+            self.constraint_info()

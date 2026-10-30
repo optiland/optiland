@@ -11,7 +11,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from optiland.optimization.failure import ConfigurationError, normalize_failure_mode
+from optiland.optimization.failure import (
+    ConfigurationError,
+    normalize_failure_mode,
+    reject_hard_constraints,
+)
 from optiland.optimization.managed import (
     SCIPY_LOCAL_METHODS,
     TORCH_METHODS,
@@ -98,16 +102,21 @@ def minimize(
         ``OptimizeResult`` with ``x`` (scaled variables), ``fun`` (final
         merit), ``success``, ``message``, ``nfev``, ``nit``, plus
         ``stop_reason``, ``n_evals``, ``history`` (None without a
-        ``HistoryObserver``) and ``method`` (the resolved method).
+        ``HistoryObserver``) and ``method`` (the resolved method). ``"dls"``
+        also reports ``multipliers``, ``active_set``,
+        ``max_constraint_violation`` and ``constraint_report``.
 
     Raises:
         ConfigurationError: For an unknown method or option, a problem
-            without variables, or a starting design with non-finite residuals.
+            without variables, a starting design with non-finite residuals,
+            or hard constraints with a method other than ``"dls"``.
     """
     resolved = _resolve_method(method, problem)
     _validate_options(resolved, options)
     if not problem.variables:
         raise ConfigurationError("The problem has no variables.")
+    if resolved != "dls":
+        reject_hard_constraints(problem, f"Method {resolved!r}")
     if maxiter is not None and maxiter < 1:
         raise ConfigurationError(f"maxiter must be positive, got {maxiter}.")
     if not tol > 0:
