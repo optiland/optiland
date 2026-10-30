@@ -33,7 +33,7 @@ bibliography: paper.bib
 
 # Summary
 
-**Optiland** [@optiland-zenodo-2025] is an open-source optical design package written in Python. It offers a comprehensive platform for the design, analysis, and optimization of complex optical systems, catering to a wide audience from professional engineers and researchers to students and educators. Optiland handles a broad range of optical systems, from classical refractive and reflective designs to advanced freeform and computational optics.
+Optiland [@optiland-zenodo-2025] is an open-source optical design package written in Python. It offers a comprehensive platform for the design, analysis, and optimization of complex optical systems, catering to a wide audience from professional engineers and researchers to students and educators. Optiland handles a broad range of optical systems, from classical refractive and reflective designs to advanced freeform and computational optics.
 
 Core features include sequential ray tracing, a rich library of surface types (spherical, aspheric, freeform), optimization and tolerancing support, and a suite of analysis tools for evaluating optical performance (e.g., spot diagrams, wavefront analysis, modulation transfer function). A key feature of Optiland is its dual-backend architecture, which allows users to switch between a NumPy [@harris2020array] backend for fast CPU computations and a PyTorch [@NEURIPS2019_9015] backend for GPU acceleration and automatic differentiation. This enables the integration of Optiland with machine learning workflows and gradient-based optimization, as all calculations are differentiable. Optiland also includes a graphical user interface (GUI) for interactive design and analysis.
 
@@ -47,7 +47,7 @@ Optiland addresses the need for a comprehensive open-source optical design packa
 
 The field of optical design has long been dominated by commercial software tools such as OpticStudio [@zemax] and CODE V [@codev]. While powerful, these proprietary tools often carry high license costs that create significant barriers for students, educators, and researchers. Furthermore, integrating these closed-source tools into modern deep-learning pipelines is often cumbersome, typically relying on slow external APIs that break the gradient chain required for backpropagation.
 
-While other Python optical libraries exist, they target different scopes or architectures. **Prysm** [@dube2019prysm] focuses largely on physical optics and diffraction, a domain distinct from the geometrical lens design and optimization core of Optiland. **RayOptics** [@RayOptics] offers geometrical ray tracing but relies on standard CPU-based execution. 
+While other Python optical libraries exist, they target different scopes or architectures. Prysm [@dube2019prysm] focuses largely on physical optics and diffraction, a domain distinct from the geometrical lens design and optimization core of Optiland. RayOptics [@RayOptics] offers geometrical ray tracing but relies on standard CPU-based execution. 
 
 **Build vs. Contribute Justification**
 
@@ -57,7 +57,7 @@ We determined that contributing to RayOptics was not feasible, as its architectu
 
 Optiland’s architectural goals are two-fold: to provide a robust, professional-grade environment for standard optical engineering while simultaneously enabling seamless integration with neural networks. To achieve this, the software is built on a modular, object-oriented framework. Optical components, fields, and wavelengths are strictly decoupled, ensuring that the codebase is intuitive for engineers to use and easy for developers to extend.
 
-To support its hybrid application in classical design and AI research, Optiland utilizes a backend abstraction layer. This allows the same high-level API to dispatch calculations to either a **NumPy** backend (for broad compatibility and standard CPU workflows) or a **PyTorch** backend (for GPU acceleration and automatic differentiation). At the time of development, PyTorch was chosen over alternatives such as JAX or TensorFlow due to its mature dynamic autograd engine, robust hardware acceleration support, and ubiquitous adoption across the broader research and computer vision communities. Nonetheless, the backend abstraction layer does not preclude additional backends from later being added under the same API.
+To support its hybrid application in classical design and AI research, Optiland utilizes a backend abstraction layer. This allows the same high-level API to dispatch calculations to either a NumPy backend (for broad compatibility and standard CPU workflows) or a PyTorch backend (for GPU acceleration and automatic differentiation). At the time of development, PyTorch was chosen over alternatives such as JAX or TensorFlow due to its mature dynamic autograd engine, robust hardware acceleration support, and ubiquitous adoption across the broader research and computer vision communities. Nonetheless, the backend abstraction layer does not preclude additional backends from later being added under the same API.
 
 # Functionalities
 
