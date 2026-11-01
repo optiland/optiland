@@ -212,6 +212,10 @@ class OpticViewer(BaseViewer2D):
             if surfaces
             else be.to_numpy(self.rays.r_extent)[start_idx:]
         )
+        # A schematic marker (image plane without a finite aperture) carries no
+        # information about where the rays land, so add the traced ray extent.
+        if any(s.extent_source == "schematic" for s in surfaces):
+            r_extent = np.append(r_extent, float(be.to_numpy(self.rays.r_extent)[-1]))
 
         # A tilted image marker can extend past the first/last vertex along Z.
         # Include its transformed outline, without tracing any additional rays.
