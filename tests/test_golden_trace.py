@@ -1,4 +1,4 @@
-"""Golden-equivalence test for the benchmark optics (decision V22).
+"""Golden-equivalence test for the benchmark optics.
 
 Real-ray coordinates, direction cosines, OPD and first-order values must match
 the committed fixtures to 1e-12 relative (numpy backend) before and after every
@@ -132,7 +132,7 @@ def test_opd_allowance_stays_tight():
         assert atol < 1e-8, problem_name
 
 
-# Super-bundle precondition (opt v2 PR2.4): one ``trace_generic`` over the
+# Super-bundle precondition: one ``trace_generic`` over the
 # concatenated (H, P) of several distribution traces, with single generic rays
 # in front as the batched evaluator lays them out, must reproduce each
 # ``trace`` and each single-ray ``trace_generic``, field vignetting included.

@@ -4,7 +4,7 @@ Metrics per (problem, method): single merit-evaluation time, forward-FD
 Jacobian time, time to converge, iterations, residual evaluations, trace
 calls, final merit and crash/NaN count. Counts come from
 :mod:`optiland._instrument`; timings are wall-clock minima and are meant for
-local before/after comparison only, never for CI assertions (decision V15).
+local before/after comparison only, never for CI assertions.
 
 Kramer Harrison, 2026
 """

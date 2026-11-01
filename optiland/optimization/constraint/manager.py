@@ -5,7 +5,7 @@ mirroring :class:`~optiland.optimization.operand.OperandManager`. The manager
 only holds data and evaluates rows on request; solving is the job of the
 native DLS (:mod:`optiland.optimization.control.kkt`).
 
-Experimental: part of the opt v2 facade, subject to change until M10.
+Experimental: part of the optimization facade, subject to change.
 
 Kramer Harrison, 2026
 """

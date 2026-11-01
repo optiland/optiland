@@ -1,6 +1,6 @@
 """Evaluators: residuals and Jacobians of an optimization problem at ``x``.
 
-Private building blocks of the native optimizers (opt v2 M4). Optimizers
+Private building blocks of the native optimizers. Optimizers
 depend on the protocols in :mod:`.base`; :class:`FiniteDiffEvaluator` is the
 numpy path and :class:`AutogradEvaluator` the torch autograd path.
 

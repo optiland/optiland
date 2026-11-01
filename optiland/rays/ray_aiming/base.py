@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 _aiming: ContextVar[bool] = ContextVar("optiland_ray_aiming_active", default=False)
 
 # First element of every aim memo key, so an evaluator can select the aim
-# entries of an epoch (frozen aiming during finite differences, opt v2 PR4.1).
+# entries of an epoch (frozen aiming during finite differences).
 AIM_MEMO_TAG = "BaseRayAimer.aim_rays"
 
 

@@ -1,4 +1,4 @@
-"""Hard constraints of an optimization problem (opt v2 M7). *Experimental.*
+"""Hard constraints of an optimization problem. *Experimental.*
 
 Declare them with ``OptimizationProblem.add_constraint(...)``.
 

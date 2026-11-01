@@ -1,4 +1,4 @@
-"""Eligibility rules of ``partial_trace_start`` (opt v2 PR3.1).
+"""Eligibility rules of ``partial_trace_start``.
 
 One group of tests per rule. The base case is the Cooke triplet benchmark:
 EPD aperture, angle field, paraxial aiming, stop at surface 4, so a radius on

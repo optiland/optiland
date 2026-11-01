@@ -1,4 +1,4 @@
-"""Native optimizer cores (opt v2 M4). Private until the facade lands.
+"""Native optimizer cores. Private until the facade lands.
 
 Kramer Harrison, 2026
 """

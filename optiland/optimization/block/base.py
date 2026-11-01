@@ -1,8 +1,8 @@
 """Residual Blocks
 
 A :class:`ResidualBlock` returns many residual rows from one vectorized call,
-for per-ray merit terms where one ``Operand`` per row would be too slow
-(decision V16). Rows are already weighted, so they enter the merit as they
+for per-ray merit terms where one ``Operand`` per row would be too slow.
+Rows are already weighted, so they enter the merit as they
 are: ``sum_squared = sum(operand rows ** 2) + sum(block rows ** 2)``.
 
 A block declares its rays as :class:`BundleRequest` objects. The batched
@@ -10,12 +10,12 @@ evaluator merges them into the per-wavelength super-bundles, so block rays share
 one trace with the ray operands; without batching each request is traced on its
 own. Either way the block reads its rays from a :class:`BlockContext`.
 
-Ray-set re-validation (decision V12): native drivers call :meth:`~ResidualBlock.
+Ray-set re-validation: native drivers call :meth:`~ResidualBlock.
 drop_rows` on rows whose rays failed. A dropped row is exactly 0 until
 :meth:`~ResidualBlock.restore_rows`, at the end of the run, so the row count
 never changes.
 
-Experimental: part of the opt v2 facade, subject to change until M10.
+Experimental: part of the optimization facade, subject to change.
 
 Kramer Harrison, 2026
 """
@@ -164,7 +164,7 @@ class ResidualBlock(ABC):
     def evaluate(self, context: BlockContext) -> BEArray:
         """Return :meth:`residuals` with dropped rows at 0, never raising.
 
-        An exception inside the block yields ``NaN`` rows (opt v2 Section 8.4).
+        An exception inside the block yields ``NaN`` rows.
 
         Args:
             context: The traced rays of this evaluation.

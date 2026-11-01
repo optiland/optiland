@@ -1,4 +1,4 @@
-"""Stopping criteria, observers and CancelToken (opt v2 PR5.1).
+"""Stopping criteria, observers and CancelToken.
 
 Kramer Harrison, 2026
 """

@@ -5,12 +5,12 @@ verified *stateful* mode only: the parameters are pushed into the surfaces via
 :class:`~optiland.optimization.evaluators._param_sync.TorchParameterSync`,
 then ``problem.residual_vector()`` is evaluated through the regular trace
 pipeline inside one evaluation epoch. Residuals are ``effective_weight *
-delta`` (decision V7). Hard-constraint rows follow the residuals in the same
+delta``. Hard-constraint rows follow the residuals in the same
 forward pass.
 
 The Jacobian is built row by row with ``torch.autograd.grad``: ``m`` backward
 passes over one forward pass. Functional and compiled modes are left to a
-future spec.
+future release.
 
 Failures follow :mod:`optiland.optimization.failure`: failed rows are ``NaN``,
 or :class:`OptimizationFailure` is raised with ``on_failure="raise"``.

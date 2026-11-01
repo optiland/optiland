@@ -1,4 +1,4 @@
-"""Per-epoch memo of aim solutions in ``BaseRayAimer`` (opt v2 PR2.3)."""
+"""Per-epoch memo of aim solutions in ``BaseRayAimer``."""
 
 from __future__ import annotations
 

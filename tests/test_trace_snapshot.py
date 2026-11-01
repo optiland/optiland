@@ -1,7 +1,7 @@
-"""Trace snapshot / resume golden tests (opt v2 PR3.1).
+"""Trace snapshot / resume golden tests.
 
 A trace resumed at the surface returned by ``partial_trace_start`` must equal a
-full trace at 1e-12 (decision V22) for every eligible variable type on every
+full trace at 1e-12 for every eligible variable type on every
 benchmark optic. Each optic is first brought into the eligible configuration
 (object-side aperture, upstream-only aiming) where it is not already, so every
 variable type its surfaces support is exercised after the stop.

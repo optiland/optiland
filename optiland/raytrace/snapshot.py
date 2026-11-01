@@ -5,7 +5,7 @@ system. A :class:`TraceSnapshot` stores the ray state *before* each surface of
 one trace, so a later trace whose changes are confined to surface ``k`` and
 beyond can restart at ``k`` from the stored state instead of from the object.
 
-The snapshot is private API (opt v2 PR3.1). It is meant for the
+The snapshot is private API. It is meant for the
 finite-difference evaluator, which decides where a trace may resume with
 :func:`optiland.raytrace.partial_trace.partial_trace_start`.
 

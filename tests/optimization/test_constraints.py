@@ -1,4 +1,4 @@
-"""Hard-constraint data model (opt v2 PR7.2).
+"""Hard-constraint data model.
 
 Kramer Harrison, 2026
 """

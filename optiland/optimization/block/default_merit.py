@@ -2,7 +2,7 @@
 
 One :class:`~optiland.optimization.block.base.ResidualBlock` holding a classical
 default merit: per-ray residuals on a ``"gaussian_quad"`` pupil at every selected
-field and wavelength (opt v2 PR8.3). With the quadrature weight ``q`` of each ray,
+field and wavelength. With the quadrature weight ``q`` of each ray,
 
 * ``kind="spot"`` gives the transverse ``dx`` and ``dy`` on the image surface, and
 * ``kind="wavefront"`` gives the OPD in waves,
@@ -21,7 +21,7 @@ piston removed on a sphere centered on the centroid. Both spheres run through
 the exit pupil, unlike ``CentroidStrategy``, which sizes its sphere from the
 total optical path; on the Cooke triplet that shifts the merit by about 0.1%.
 
-Experimental: part of the opt v2 facade, subject to change until M10.
+Experimental: part of the optimization facade, subject to change.
 
 Kramer Harrison, 2026
 """

@@ -386,7 +386,7 @@ class OptimizationProblem:
     def drop_block_rows(self, rows: Sequence[int] | np.ndarray) -> int:
         """Drop rows of residual blocks from the ray set. *Experimental.*
 
-        For native drivers, ray-set re-validation (decision V12). Operand rows
+        For native drivers, ray-set re-validation. Operand rows
         are never dropped, and neither are a block's last rows.
 
         Args:

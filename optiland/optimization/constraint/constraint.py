@@ -4,7 +4,7 @@ A :class:`Constraint` uses the spec of an operand (``operand_type``,
 ``input_data``, ``target`` / ``min_val`` / ``max_val``, ``weight``), but it is
 a **hard** condition enforced by the native DLS, not a merit term.
 
-Residuals follow decision V7, ``effective_weight * delta``. Each constraint
+Residuals are ``effective_weight * delta``. Each constraint
 expands to one or two signed rows, each backed by an :class:`Operand` whose
 target is the limit, so a row's value comes from the same evaluation as the
 merit:
@@ -16,7 +16,7 @@ merit:
 A row whose effective weight is zero (a zero-weight field or wavelength) is
 exactly 0 and constrains nothing.
 
-Experimental: part of the opt v2 facade, subject to change until M10.
+Experimental: part of the optimization facade, subject to change.
 
 Kramer Harrison, 2026
 """

@@ -236,7 +236,7 @@ class RealRayTracer(BaseRayTracer):
     ) -> tuple[RealRays, TraceSnapshot]:
         """Trace generic rays and snapshot the ray state before each surface.
 
-        Private (opt v2 PR3.1). Traces exactly as :meth:`trace_generic` does,
+        Private. Traces exactly as :meth:`trace_generic` does,
         with the same returned rays and recorded surface data, and also
         returns a :class:`TraceSnapshot` that :meth:`_trace_from` resumes.
 
@@ -276,7 +276,7 @@ class RealRayTracer(BaseRayTracer):
     ) -> RealRays:
         """Resume a snapshot trace at surface ``k``.
 
-        Private (opt v2 PR3.1). Starts from the ray state stored before
+        Private. Starts from the ray state stored before
         surface ``k`` and traces surfaces ``k`` to the image, writing their
         surface data exactly as a full trace would. Surfaces before ``k`` keep
         their recorded data. The result equals a full trace only when nothing

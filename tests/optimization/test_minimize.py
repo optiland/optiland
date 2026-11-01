@@ -1,4 +1,4 @@
-"""``minimize()`` facade and OptimizationResult (opt v2 PR5.2).
+"""``minimize()`` facade and OptimizationResult.
 
 Kramer Harrison, 2026
 """

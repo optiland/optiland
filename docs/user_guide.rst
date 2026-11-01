@@ -46,6 +46,13 @@ optical system, plus the reference pages you will keep coming back to.
       A task-shaped index mapping concrete questions to the example that
       answers each one.
 
+   .. grid-item-card:: Optimization Guide
+      :link: optimization_guide
+      :link-type: doc
+
+      Pick an optimizer, run it with ``minimize()``, follow and cancel a run,
+      and keep it fast.
+
    .. grid-item-card:: Cheat Sheet
       :link: cheat_sheet
       :link-type: doc
@@ -74,6 +81,8 @@ optical system, plus the reference pages you will keep coming back to.
    quickstart
    conventions
    how_do_i
+   optimization_guide
+   optimization_merit_constraints
    cheat_sheet
    glossary
    gui_quickstart

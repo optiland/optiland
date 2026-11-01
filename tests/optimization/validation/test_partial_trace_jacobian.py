@@ -1,8 +1,8 @@
-"""Partial-trace Jacobians equal full Jacobians (opt v2 PR4.1 / PR4.3).
+"""Partial-trace Jacobians equal full Jacobians.
 
 Each benchmark optic is brought into the partial-trace eligible configuration
 (object-side aperture, upstream-only aiming). The resumed traces are bitwise
-equal to full traces (PR3.1), so the Jacobians must agree far below the
+equal to full traces, so the Jacobians must agree far below the
 finite-difference noise level, at the start and at a moved design.
 
 Kramer Harrison, 2026

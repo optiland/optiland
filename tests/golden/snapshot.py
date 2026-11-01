@@ -2,8 +2,8 @@
 
 The snapshot records real-ray coordinates, direction cosines, OPD and
 first-order values at fixed samples for two wavelengths. Engine PRs of the
-optimization v2 program must leave it unchanged (decision V22); the fixtures
-are regenerated only through ``tests/golden/regenerate.py``.
+optimization program must leave it unchanged; the fixtures are regenerated
+only through ``tests/golden/regenerate.py``.
 
 Kramer Harrison, 2026
 """

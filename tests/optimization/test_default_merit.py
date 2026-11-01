@@ -1,4 +1,4 @@
-"""Default merit block (opt v2 PR8.3).
+"""Default merit block.
 
 The quadrature estimate is checked against a dense pupil computed through the
 public analysis path, independent of the block: an equal-area midpoint rule, so

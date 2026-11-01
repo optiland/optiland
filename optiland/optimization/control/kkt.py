@@ -2,7 +2,7 @@
 
 :class:`KKTController` extends the trust-region damping of
 :class:`~optiland.optimization.control.levenberg.LevenbergController` to hard
-constraints and variable bounds (opt v2 PR7.3). All of them are inequality or
+constraints and variable bounds. All of them are inequality or
 equality rows ``s(x)`` with Jacobian ``A``: a bound is the linear row
 ``lower - x <= 0`` or ``x - upper <= 0``. Each trial step solves the QP::
 

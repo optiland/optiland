@@ -1,6 +1,6 @@
 """ConsoleObserver: progress lines on stdout.
 
-Experimental: part of the opt v2 facade, subject to change until M10.
+Experimental: part of the optimization facade, subject to change.
 
 Kramer Harrison, 2026
 """

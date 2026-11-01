@@ -39,10 +39,9 @@ if TYPE_CHECKING:
 class ProblemEvaluation:
     """Residuals and merit of a problem at ``x``, for SciPy.
 
-    Residuals are ``effective_weight * delta`` (decision V7). SciPy cannot
-    consume ``NaN``: a failed evaluation becomes a scale-aware penalty (the
-    PR1.1 rule), or raises :class:`OptimizationFailure` with
-    ``on_failure="raise"``.
+    Residuals are ``effective_weight * delta``. SciPy cannot
+    consume ``NaN``: a failed evaluation becomes a scale-aware penalty, or
+    raises :class:`OptimizationFailure` with ``on_failure="raise"``.
 
     Args:
         problem: The optimization problem.

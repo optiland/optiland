@@ -1,4 +1,4 @@
-"""Step control for the native optimizers (opt v2 M4). Private.
+"""Step control for the native optimizers. Private.
 
 Kramer Harrison, 2026
 """

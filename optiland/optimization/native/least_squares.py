@@ -1,6 +1,6 @@
 """Native Damped Least Squares
 
-The native Levenberg-Marquardt (DLS) core of opt v2 (PR4.2). Private for now:
+The native Levenberg-Marquardt (DLS) core. Private for now:
 it is reached through ``LeastSquares.optimize(method_choice="dls")``.
 
 Per outer iteration ``k``:
@@ -16,7 +16,7 @@ Per outer iteration ``k``:
    :class:`~optiland.optimization.control.levenberg.LevenbergController`),
    trial ``r_t = residuals(x + dx)``. A trial is accepted when it lowers the
    merit; a non-finite trial is rejected and shrinks the radius.
-5. Bounds and hard constraints (PR7.3): with either present,
+5. Bounds and hard constraints: with either present,
    :class:`~optiland.optimization.control.kkt.KKTController` takes over the
    step. A bound is a linear inequality row, so the active set holds it and a
    trial point stays inside the box. Trials are then accepted on the exact
@@ -31,14 +31,14 @@ Per outer iteration ``k``:
 7. Stopping: relative merit decrease below ``ftol`` over an accepted step
    (SciPy ``ftol`` semantics), scaled gradient below ``gtol``, step below
    ``xtol``, the residual-evaluation budget ``max_nfev`` (Jacobian columns
-   included, decision V17), or a collapsed trust region (``success=False``).
+   included), or a collapsed trust region (``success=False``).
    On top of these, a user ``stop`` criterion and ``cancel_token`` are
    checked after every accepted step (experimental).
 8. Observers (experimental) get ``on_start``, ``on_step`` after every
    accepted step and ``on_end``. The state's gradient and Jacobian are those
    of the last Jacobian evaluation: at ``on_step`` they lag ``x`` by one
    accepted step, because the run may end before the next Jacobian is paid for.
-9. Ray-set re-validation (decision V12): the ray set is fixed within an outer
+9. Ray-set re-validation: the ray set is fixed within an outer
    iteration, and any non-finite row rejects a trial. Between iterations, rows
    of residual blocks that failed at the current point are dropped for the rest
    of the run, with one summarizing warning: at the start, and when the trust

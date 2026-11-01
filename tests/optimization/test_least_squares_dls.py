@@ -1,4 +1,4 @@
-"""``LeastSquares.optimize(method_choice="dls")`` (opt v2 PR4.3).
+"""``LeastSquares.optimize(method_choice="dls")``.
 
 Kramer Harrison, 2026
 """

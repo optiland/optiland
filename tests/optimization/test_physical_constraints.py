@@ -1,4 +1,4 @@
-"""Opt-in physical thickness limits (opt v2 PR8.4, decision V13).
+"""Opt-in physical thickness limits.
 
 Kramer Harrison, 2026
 """

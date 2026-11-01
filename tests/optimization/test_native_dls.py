@@ -1,4 +1,4 @@
-"""Native LM / DLS core tests (opt v2 PR4.2).
+"""Native LM / DLS core tests.
 
 Kramer Harrison, 2026
 """

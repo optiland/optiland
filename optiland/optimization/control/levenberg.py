@@ -1,7 +1,7 @@
 """Levenberg-Marquardt Damping Control
 
 :class:`LevenbergController` owns the damped least-squares linear algebra and
-the damping state of the native DLS core (opt v2 PR4.2). With the merit
+the damping state of the native DLS core. With the merit
 ``F = sum(r ** 2)``, ``g = J^T r`` and ``A = J^T J``, each trial step solves::
 
     (A + lambda D^2) dx = -g
