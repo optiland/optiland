@@ -9,8 +9,9 @@ requires real rays with the same optic and wavelength into one super-bundle:
 single-ray operands and the pupil samples of all ``rms_spot_size`` operands are
 traced together in one ``optic.trace_generic`` call, and each operand reads its
 slice of the shared result. ``wavelength="all"`` spot operands are split into
-one sub-job per wavelength, merged into the matching bundles. Each evaluation
-runs inside one evaluation epoch, so per-design work is done once.
+one sub-job per wavelength, merged into the matching bundles. The rays of
+residual blocks join the same bundles. Each evaluation runs inside one
+evaluation epoch, so per-design work is done once.
 
 This approach works with both NumPy and PyTorch backends and preserves
 automatic differentiation (autograd) by indexing directly into the traced
@@ -21,11 +22,13 @@ Kramer Harrison, 2025
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
 from optiland import _epoch
 from optiland.distribution import create_distribution
+from optiland.optimization.block.base import BlockContext, evaluate_blocks
 from optiland.optimization.operand.operand import operand_registry
 from optiland.optimization.operand.ray import _angle_of_incidence
 
@@ -134,7 +137,7 @@ class _BundleJob:
     Part 0 holds the single rays of the single-ray operands, in registration
     order, so a single ray's index in the bundle is its index in
     ``ray_params``. Part ``k >= 1`` holds the pupil samples of
-    ``segments[k - 1]``.
+    ``segments[k - 1]``, which may belong to spot operands or residual blocks.
     """
 
     __slots__ = (
@@ -144,6 +147,7 @@ class _BundleJob:
         "operand_indices",
         "segments",
         "offsets",
+        "block_attrs",
         "_segment_index",
     )
 
@@ -155,6 +159,7 @@ class _BundleJob:
         self.segments: list[_PupilSegment] = []
         # part -> (first ray, end ray) of the last execution
         self.offsets: dict[int, tuple[int, int]] = {}
+        self.block_attrs: set[str] = set()
         self._segment_index: dict[tuple, int] = {}
 
     def add_operand(self, operand_idx: int, Hx: float, Hy: float, Px: float, Py: float):
@@ -170,6 +175,11 @@ class _BundleJob:
             self._segment_index[key] = len(self.segments)
             self.segments.append(_PupilSegment(Hx, Hy, num_rays, distribution))
         return self._segment_index[key]
+
+    @property
+    def segment_attrs(self) -> tuple[str, ...]:
+        """Ray attributes read from the pupil segments after later traces."""
+        return tuple(dict.fromkeys((*_SPOT_ATTRS, *sorted(self.block_attrs))))
 
     @property
     def parts(self) -> list[int]:
@@ -466,6 +476,10 @@ class BatchedRayEvaluator:
         self._all_optics: tuple = ()
         self._wavelength_signature: tuple = ()
 
+        # Per block request key: (bundle index, part), and the blocks planned
+        self._block_reads: dict[Any, tuple[int, int]] = {}
+        self._block_ids: tuple[int, ...] = ()
+
         self._analyze()
 
     # ------------------------------------------------------------------
@@ -542,6 +556,20 @@ class BatchedRayEvaluator:
                 # Non-ray operand (paraxial, aberration, lens, etc.)
                 self._operand_plan.append(("direct", None, None))
 
+        self._block_reads = {}
+        self._block_ids = self._current_block_ids()
+        for block in self.problem.residual_blocks:
+            for request in block.trace_requests():
+                optics.setdefault(id(request.optic), request.optic)
+                b = bundle_for(request.optic, request.wavelength)
+                job = self._bundles[b]
+                pupil = SimpleNamespace(x=request.Px, y=request.Py)
+                s = job.add_segment(
+                    request.key, request.Hx, request.Hy, request.size, pupil
+                )
+                job.block_attrs.update(request.attrs)
+                self._block_reads[request.key] = (b, s + 1)
+
         self._optics = tuple(optics.values())
         self._all_optics = tuple(all_optics.values())
         self._wavelength_signature = self._current_wavelength_signature()
@@ -563,6 +591,9 @@ class BatchedRayEvaluator:
                 surfs.append(operand.input_data["surface_number"])
                 rays.append(ray_idx)
             self._attr_groups.append(groups)
+
+    def _current_block_ids(self) -> tuple[int, ...]:
+        return tuple(id(block) for block in self.problem.residual_blocks)
 
     def _current_wavelength_signature(self) -> tuple:
         """Wavelength sets of the optics with ``wavelength="all"`` operands."""
@@ -588,9 +619,13 @@ class BatchedRayEvaluator:
 
     def _ensure_plan_current(self) -> None:
         """Rebuild the plan when the problem size or a wavelength set changed."""
-        if len(self._operand_plan) != len(self._all_operands()) or (
-            self._all_optics
-            and self._current_wavelength_signature() != self._wavelength_signature
+        if (
+            len(self._operand_plan) != len(self._all_operands())
+            or self._block_ids != self._current_block_ids()
+            or (
+                self._all_optics
+                and self._current_wavelength_signature() != self._wavelength_signature
+            )
         ):
             self._analyze()
 
@@ -608,13 +643,13 @@ class BatchedRayEvaluator:
         A bundle that fails as a whole is retraced part by part, so only the
         parts that fail on their own are missing from the result.
 
-        Single rays are read before the next bundle is traced; spot data is
-        read after all bundles, so it is prefetched here.
+        Single rays are read before the next bundle is traced; spot and block
+        data is read after all bundles, so it is prefetched here.
         """
         parts = job.parts
         surface_group = self._safe_execute(job)
         if surface_group is not None:
-            view = _TraceView(surface_group, _SPOT_ATTRS if job.segments else ())
+            view = _TraceView(surface_group, job.segment_attrs if job.segments else ())
             # Part 0 (the single rays) always starts the bundle
             return {
                 part: (view, *job.offsets.get(part, (0, len(job.ray_params))))
@@ -627,7 +662,7 @@ class BatchedRayEvaluator:
                 surface_group = self._safe_execute(_BundlePart(job, part))
                 if surface_group is not None:
                     # Later parts overwrite the surface group: read now
-                    prefetch = _RAY_ATTRS if part == 0 else _SPOT_ATTRS
+                    prefetch = _RAY_ATTRS if part == 0 else job.segment_attrs
                     view = _TraceView(surface_group, prefetch)
                     reads[part] = (view, *job.offsets[part])
         return reads
@@ -656,7 +691,8 @@ class BatchedRayEvaluator:
                 raw_values[i] = metric_fn(**operand.input_data)
 
     def _residuals(self, include_zero: bool, constraints: bool = False):
-        """Residuals ``effective_weight * delta`` of the operands, in order.
+        """Residuals ``effective_weight * delta`` of the operands, in order,
+        then the rows of the residual blocks.
 
         Args:
             include_zero: Keep zero-effective-weight operands as exact zeros
@@ -740,7 +776,22 @@ class BatchedRayEvaluator:
         # --- 3. Direct operands ---
         self._evaluate_direct_operands(raw_values, weights)
 
-        return self._assemble(raw_values, chunks, covered, weights, include_zero, count)
+        rows = self._assemble(raw_values, chunks, covered, weights, include_zero, count)
+        return self._with_blocks(rows, traced, constraints)
+
+    def _with_blocks(self, rows: Any, traced: list[dict], constraints: bool) -> Any:
+        """Insert the block rows after the merit operands, before any constraint."""
+        blocks = self.problem.residual_blocks
+        if not blocks:
+            return rows
+        reads = {
+            key: traced[b].get(part) for key, (b, part) in self._block_reads.items()
+        }
+        block_rows = evaluate_blocks(blocks, BlockContext(reads))
+        if rows is None:
+            return block_rows
+        stop = rows.shape[0] - (self.problem.constraints.n_rows if constraints else 0)
+        return be.concatenate([rows[:stop], block_rows, rows[stop:]])
 
     def _assemble(
         self,
@@ -846,7 +897,7 @@ class BatchedRayEvaluator:
             values = self._residuals(include_zero=True, constraints=True)
         if values is None:
             return be.array([])
-        signs = [1.0] * len(self.problem.operands) + self.problem.constraints.signs
+        signs = [1.0] * self.problem.num_residuals + self.problem.constraints.signs
         return values * be.array(signs)
 
     def sum_squared(self):

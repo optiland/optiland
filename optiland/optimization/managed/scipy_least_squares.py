@@ -73,7 +73,7 @@ def run_scipy_least_squares(
     initial = evaluation.check_start(x0)
     lower, upper = evaluation.bounds()
     bounded = bool(np.any(np.isfinite(lower)) or np.any(np.isfinite(upper)))
-    if method_choice == "lm" and (bounded or len(problem.operands) < x0.size):
+    if method_choice == "lm" and (bounded or problem.num_residuals < x0.size):
         method_choice = "trf"
     if method_choice == "lm":
         bounds = (-np.inf, np.inf)

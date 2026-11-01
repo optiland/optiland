@@ -38,12 +38,21 @@ Per outer iteration ``k``:
    accepted step and ``on_end``. The state's gradient and Jacobian are those
    of the last Jacobian evaluation: at ``on_step`` they lag ``x`` by one
    accepted step, because the run may end before the next Jacobian is paid for.
+9. Ray-set re-validation (decision V12): the ray set is fixed within an outer
+   iteration, and any non-finite row rejects a trial. Between iterations, rows
+   of residual blocks that failed at the current point are dropped for the rest
+   of the run, with one summarizing warning: at the start, and when the trust
+   region collapses because the same block rows failed in every trial. Plain
+   operands are never dropped, and a block whose rows all fail at the start
+   still raises ``ConfigurationError``.
 
 Kramer Harrison, 2026
 """
 
 from __future__ import annotations
 
+import functools
+import warnings
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -107,6 +116,24 @@ def _np(value: Any) -> np.ndarray:
     return np.asarray(be.to_numpy(value), dtype=float)
 
 
+def _restores_ray_set(run: Callable) -> Callable:
+    """Bring back rows dropped by re-validation when the run ends, however."""
+
+    @functools.wraps(run)
+    def wrapper(evaluator: Evaluator, *args: Any, **kwargs: Any) -> OptimizationResult:
+        try:
+            return run(evaluator, *args, **kwargs)
+        finally:
+            restore = getattr(
+                getattr(evaluator, "problem", None), "restore_block_rows", None
+            )
+            if restore is not None:
+                restore()
+
+    return wrapper
+
+
+@_restores_ray_set
 def dls(
     evaluator: Evaluator,
     x0: ArrayLike | None = None,
@@ -166,7 +193,8 @@ def dls(
         (None without a ``HistoryObserver``), ``multipliers``, ``active_set``,
         ``max_constraint_violation`` and ``constraint_report``. The evaluator's
         optic is left at ``x``. A run that ends with a violated hard
-        constraint has ``success=False``.
+        constraint has ``success=False``. Rows dropped by ray-set re-validation
+        count 0 in ``fun`` and ``cost``, and come back after the run.
 
     Raises:
         ConfigurationError: If ``jacobian_update`` is unknown, or the
@@ -214,6 +242,10 @@ def dls(
     r = counter.residuals(x)
     s = counter.constraints(x)
     rows = failing_rows(np.concatenate([r, s]))
+    if counter.drop_rows(rows):
+        r = counter.residuals(x)
+        s = counter.constraints(x)
+        rows = failing_rows(np.concatenate([r, s]))
     if rows.size:
         problem = getattr(evaluator, "problem", None)
         names = describe_rows(problem, rows) if problem is not None else str(list(rows))
@@ -261,6 +293,7 @@ def dls(
             break
 
         # Inner damping loop: no Jacobian work except a stale-J refresh.
+        failed: np.ndarray | None = None
         while True:
             if counter.nfev >= max_nfev:
                 status = 0
@@ -302,6 +335,8 @@ def dls(
                     predicted = controller.model_reduction(dx, J, r)
                     rho = (phi - phi_t) / predicted if predicted > 0 else -np.inf
             accepted = phi_t < phi
+            if not accepted:
+                failed = counter.failed_rows(r_t, s_t, failed)
             if not accepted and not fresh:
                 # A stale Broyden J may be the reason: refresh before shrinking.
                 J = counter.jacobian(x, r)
@@ -318,6 +353,23 @@ def dls(
                 status = -3
                 break
         if status is not None:
+            # A ray that fails in every trial must not end the run: re-validate.
+            if (
+                status == -3
+                and failed is not None
+                and counter.nfev < max_nfev
+                and counter.drop_rows(failed)
+            ):
+                r = counter.residuals(x)
+                s = counter.constraints(x)
+                F = float(r @ r)
+                J = counter.jacobian(x, r)
+                A = counter.constraint_jacobian(x)
+                fresh, consecutive_broyden = True, 0
+                g = build(J)
+                controller.init_radius(x)
+                status = None
+                continue
             # A blocked or collapsed step does not end an infeasible run yet.
             stuck = status in (3, -3) and not controller.feasible(s)
             if stuck and restorations < MAX_RESTORATIONS and counter.nfev < max_nfev:
@@ -400,6 +452,8 @@ def dls(
         state.grad_norm = float(np.linalg.norm(g))
 
     evaluator.write_x(x)
+    if counter.dropped:
+        warnings.warn(counter.drop_summary(), stacklevel=3)
     g = J.T @ r
     if status > 0 and not controller.feasible(s):
         status = -5
@@ -511,6 +565,54 @@ class _Counter:
         self._nfev = 0
         self._njev = 0
         self.n_constraints = int(getattr(evaluator, "n_constraints", 0))
+        self._problem = getattr(evaluator, "problem", None)
+        spans = getattr(self._problem, "block_spans", list)()
+        self._spans = spans
+        self._block_rows = (
+            np.concatenate([np.arange(a, b) for a, b, _ in spans])
+            if spans
+            else np.zeros(0, dtype=int)
+        )
+        self.dropped = 0
+
+    def _only_block_rows(self, rows: np.ndarray) -> bool:
+        return rows.size > 0 and bool(np.isin(rows, self._block_rows).all())
+
+    def failed_rows(
+        self, r: np.ndarray, s: np.ndarray, previous: np.ndarray | None
+    ) -> np.ndarray | None:
+        """Block rows that failed in every rejected trial so far.
+
+        Args:
+            r: Residuals of the rejected trial.
+            s: Constraint rows of the rejected trial.
+            previous: The result for the earlier trials, None at the first.
+
+        Returns:
+            The rows. Empty once a trial rules them out: a finite trial, or a
+            failure that reaches other rows, which dropping cannot cure.
+        """
+        rows = failing_rows(np.concatenate([r, s]))
+        if not self._only_block_rows(rows):
+            return np.zeros(0, dtype=int)
+        return rows if previous is None else np.intersect1d(previous, rows)
+
+    def drop_rows(self, rows: np.ndarray) -> int:
+        """Drop ``rows`` if all are block rows; return how many were dropped."""
+        if not self._only_block_rows(rows):
+            return 0
+        dropped = self._problem.drop_block_rows(rows)
+        self.dropped += dropped
+        return dropped
+
+    def drop_summary(self) -> str:
+        """One message with the counts of dropped rows, block by block."""
+        counts = ", ".join(
+            f"{block.dropped_rows.size} of {b - a} rows of {type(block).__name__}"
+            for a, b, block in self._spans
+            if block.dropped_rows.size
+        )
+        return f"Rays failed; dropped from the merit for this run: {counts}."
 
     def constraint_rows(self) -> tuple[np.ndarray, np.ndarray, list[str]]:
         """Equality mask, tolerances and labels of the constraint rows."""

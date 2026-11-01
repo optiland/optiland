@@ -138,7 +138,7 @@ class AutogradEvaluator:
         except Exception as exc:
             if self.on_failure == "raise":
                 raise OptimizationFailure(f"Design evaluation failed: {exc}") from exc
-            m = max(len(self.problem.operands), 1) + self.n_constraints
+            m = max(self.problem.num_residuals, 1) + self.n_constraints
             return torch.full((m,), float("nan"), dtype=self.params[0].dtype)
         if self.on_failure == "raise":
             rows = failing_rows(be.to_numpy(r.detach()))

@@ -13,14 +13,30 @@ from __future__ import annotations
 import warnings
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pandas as pd
 
 import optiland.backend as be
+from optiland.optimization.block import (
+    DefaultMeritBlock,
+    ResidualBlock,
+    direct_context,
+    evaluate_blocks,
+)
 from optiland.optimization.constraint import ConstraintManager
+from optiland.optimization.constraint.physical import (
+    PHYSICAL_MODES,
+    ThicknessLimits,
+    thickness_specs,
+)
+from optiland.optimization.failure import ConfigurationError
 from optiland.optimization.operand import OperandManager
 from optiland.optimization.variable import VariableManager
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from optiland.optic.optic import Optic
     from optiland.optimization.batched_evaluator import BatchedRayEvaluator
     from optiland.optimization.scaling.base import Scaler
 
@@ -32,6 +48,7 @@ class OptimizationProblem:
         operands (list): List of operands in the merit function.
         variables (list): List of variables in the merit function.
         constraints (ConstraintManager): Hard constraints (experimental).
+        residual_blocks (list): Residual blocks of the merit (experimental).
         initial_value (float): Initial value of the merit function.
 
     Methods:
@@ -40,9 +57,15 @@ class OptimizationProblem:
         add_constraint: Add a hard constraint (experimental).
         clear_constraints: Remove all hard constraints (experimental).
         constraint_info: Print the hard constraints (experimental).
+        add_residual_block: Add a residual block to the merit (experimental).
+        clear_residual_blocks: Remove all residual blocks (experimental).
+        add_default_merit: Add a per-ray default merit (experimental).
+        add_physical_constraints: Add thickness limits (experimental).
+        block_info: Print the residual blocks (experimental).
         fun_array: Array of operand weighted deltas squared, where the delta
-            is the difference between the current and target value.
-        sum_squared: Sum of squared operand weighted deltas.
+            is the difference between the current and target value, then the
+            squared rows of the residual blocks.
+        sum_squared: Sum of squared operand weighted deltas and block rows.
         rss: Root Sum of Squares (RSS) of the current merit function.
         operand_info: Print information about the operands in the merit
             function.
@@ -63,6 +86,7 @@ class OptimizationProblem:
         self.operands = OperandManager()
         self.variables = VariableManager()
         self.constraints = ConstraintManager()
+        self.residual_blocks: list[ResidualBlock] = []
         self.initial_value = 0.0
         self._batched_evaluator: BatchedRayEvaluator | None = None
 
@@ -178,6 +202,215 @@ class OptimizationProblem:
         if self._batched_evaluator is not None:
             self._batched_evaluator.refresh()
 
+    def add_residual_block(self, block: ResidualBlock) -> ResidualBlock:
+        """Add a residual block to the merit. *Experimental.*
+
+        The block's rows follow the operands in ``residual_vector``,
+        ``fun_array`` and ``sum_squared``, so every optimizer sees them. With
+        batching, its rays share the operands' bundles.
+
+        Args:
+            block: The block.
+
+        Returns:
+            The block.
+
+        Raises:
+            ConfigurationError: If ``block`` is not a ``ResidualBlock``.
+        """
+        if not isinstance(block, ResidualBlock):
+            raise ConfigurationError(f"Expected a ResidualBlock, got {block!r}.")
+        self.initial_value = 0.0
+        self.residual_blocks.append(block)
+        if self._batched_evaluator is not None:
+            self._batched_evaluator.refresh()
+        return block
+
+    def clear_residual_blocks(self):
+        """Remove all residual blocks from the merit. *Experimental.*"""
+        self.initial_value = 0.0
+        self.residual_blocks = []
+        if self._batched_evaluator is not None:
+            self._batched_evaluator.refresh()
+
+    def add_default_merit(
+        self,
+        optic: Optic,
+        kind: str = "spot",
+        rings: int = 3,
+        arms: int = 6,
+        reference: str = "centroid",
+        fields: str | Sequence[int] = "all",
+        wavelengths: str | Sequence[int] = "all",
+        weight: float = 1.0,
+    ) -> DefaultMeritBlock:
+        """Add a per-ray default merit on a Gaussian pupil. *Experimental.*
+
+        Adds one :class:`~optiland.optimization.block.DefaultMeritBlock`, no
+        operands. Each residual is transverse (``dx``, ``dy``) or OPD per ray,
+        times ``sqrt(quadrature_w * field_w * wavelength_w) * weight``, so
+        ``sum(r ** 2)`` estimates the weighted RMS squared.
+
+        Args:
+            optic: The optic.
+            kind: ``"spot"`` or ``"wavefront"``.
+            rings: Quadrature rings.
+            arms: Quadrature arms.
+            reference: ``"centroid"`` or ``"chief"``.
+            fields: ``"all"`` or field indices.
+            wavelengths: ``"all"`` or wavelength indices.
+            weight: Scale of every row.
+
+        Returns:
+            The new block.
+
+        Raises:
+            ConfigurationError: If an argument is invalid.
+        """
+        block = DefaultMeritBlock(
+            optic, kind, rings, arms, reference, fields, wavelengths, weight
+        )
+        return self.add_residual_block(block)
+
+    def add_physical_constraints(
+        self,
+        optic: Optic,
+        min_center_glass: float | None = None,
+        min_edge_glass: float | None = None,
+        min_center_air: float | None = None,
+        min_edge_air: float | None = None,
+        max_center: float | None = None,
+        *,
+        max_center_glass: float | None = None,
+        max_center_air: float | None = None,
+        max_edge_glass: float | None = None,
+        max_edge_air: float | None = None,
+        mode: str = "constraint",
+        weight: float = 1.0,
+        tol: float = 1e-8,
+    ) -> list:
+        """Add thickness limits between lens surfaces. *Experimental.*
+
+        Opt-in: Optiland never applies these limits by itself. A limit left as
+        None is not applied. The gaps from the object and to the image are not
+        limited. Limits are magnitudes, also after a mirror.
+
+        With ``mode="constraint"`` the limits are hard constraints, which only
+        the native damped least squares enforces. With ``mode="penalty"`` they
+        are merit operands with ``min_val``/``max_val``, ``center_thickness``
+        and ``edge_thickness``, which work with every optimizer but may be
+        violated at the optimum.
+
+        Args:
+            optic: The optic.
+            min_center_glass: Smallest center thickness in glass.
+            min_edge_glass: Smallest edge thickness in glass.
+            min_center_air: Smallest center thickness in air.
+            min_edge_air: Smallest edge thickness in air.
+            max_center: Largest center thickness in glass and air, unless
+                ``max_center_glass`` or ``max_center_air`` is given.
+            max_center_glass: Largest center thickness in glass.
+            max_center_air: Largest center thickness in air.
+            max_edge_glass: Largest edge thickness in glass.
+            max_edge_air: Largest edge thickness in air.
+            mode: ``"constraint"`` or ``"penalty"``.
+            weight: Weight of each row or operand.
+            tol: Feasibility tolerance of each row, for ``"constraint"``.
+
+        Returns:
+            The new :class:`~optiland.optimization.constraint.Constraint` or
+            :class:`~optiland.optimization.operand.Operand` objects.
+
+        Raises:
+            ConfigurationError: If ``mode`` is unknown, no limit is set or the
+                limits are inconsistent.
+        """
+        if mode not in PHYSICAL_MODES:
+            raise ConfigurationError(
+                f"Unknown mode {mode!r}; expected one of {list(PHYSICAL_MODES)}."
+            )
+        specs = thickness_specs(
+            optic,
+            ThicknessLimits(
+                min_center_glass,
+                max_center if max_center_glass is None else max_center_glass,
+                min_edge_glass,
+                max_edge_glass,
+            ),
+            ThicknessLimits(
+                min_center_air,
+                max_center if max_center_air is None else max_center_air,
+                min_edge_air,
+                max_edge_air,
+            ),
+        )
+        added = []
+        for operand_type, min_val, max_val, input_data in specs:
+            if mode == "constraint":
+                added.append(
+                    self.add_constraint(
+                        operand_type,
+                        min_val=min_val,
+                        max_val=max_val,
+                        weight=weight,
+                        input_data=input_data,
+                        tol=tol,
+                    )
+                )
+            else:
+                self.add_operand(
+                    operand_type,
+                    min_val=min_val,
+                    max_val=max_val,
+                    weight=weight,
+                    input_data=input_data,
+                )
+                added.append(self.operands.operands[-1])
+        return added
+
+    @property
+    def num_residuals(self) -> int:
+        """Length of :meth:`residual_vector`: operands plus block rows."""
+        return len(self.operands) + sum(b.size() for b in self.residual_blocks)
+
+    def block_spans(self) -> list[tuple[int, int, ResidualBlock]]:
+        """``(first row, end row, block)`` of each block in the residual vector."""
+        spans = []
+        start = len(self.operands)
+        for block in self.residual_blocks:
+            stop = start + block.size()
+            spans.append((start, stop, block))
+            start = stop
+        return spans
+
+    def drop_block_rows(self, rows: Sequence[int] | np.ndarray) -> int:
+        """Drop rows of residual blocks from the ray set. *Experimental.*
+
+        For native drivers, ray-set re-validation (decision V12). Operand rows
+        are never dropped, and neither are a block's last rows.
+
+        Args:
+            rows: Indices into the residual vector.
+
+        Returns:
+            The number of rows dropped.
+        """
+        rows = np.asarray(rows, dtype=int)
+        dropped = 0
+        for start, stop, block in self.block_spans():
+            new = np.setdiff1d(
+                rows[(rows >= start) & (rows < stop)] - start, block.dropped_rows
+            )
+            if new.size and new.size + block.dropped_rows.size < stop - start:
+                block.drop_rows(new)
+                dropped += new.size
+        return dropped
+
+    def restore_block_rows(self) -> None:
+        """Bring back all dropped block rows. *Experimental.*"""
+        for block in self.residual_blocks:
+            block.restore_rows()
+
     def clear_operands(self):
         """Clear all operands from the merit function"""
         self.initial_value = 0.0
@@ -206,9 +439,11 @@ class OptimizationProblem:
         :class:`~optiland.optimization.batched_evaluator.BatchedRayEvaluator`
         which minimises redundant ray traces.
 
+        Residual block rows follow the operands, squared.
+
         Returns:
             be.ndarray: 1-D array of per-operand contribution values. Returns
-            ``[0.0]`` when there are no active operands.
+            ``[0.0]`` when there are no active operands or block rows.
         """
         if self._batched_evaluator is not None:
             return self._batched_evaluator.fun_array()
@@ -219,9 +454,17 @@ class OptimizationProblem:
             if ew == 0.0:
                 continue
             terms.append((ew * op.delta()) ** 2)
+        if self.residual_blocks:
+            rows = self._direct_block_rows() ** 2
+            return be.concatenate([be.stack(terms), rows]) if terms else rows
         if not terms:
             return be.array([0.0])
         return be.stack(terms)
+
+    def _direct_block_rows(self):
+        """Block rows from one trace per request, for unbatched evaluation."""
+        context = direct_context(self.residual_blocks)
+        return evaluate_blocks(self.residual_blocks, context)
 
     def residual_vector(self):
         """Vector of weighted operand deltas (unsquared).
@@ -234,12 +477,14 @@ class OptimizationProblem:
         Unlike :meth:`fun_array`, the values are *not* squared, so the
         merit function equals ``sum(residual_vector() ** 2)``.
 
+        Residual block rows follow the operands, already weighted.
+
         When batching is enabled, delegates to the
         :class:`~optiland.optimization.batched_evaluator.BatchedRayEvaluator`
         which minimises redundant ray traces.
 
         Returns:
-            be.ndarray: A 1-D array of length ``len(self.operands)``.
+            be.ndarray: A 1-D array of length :attr:`num_residuals`.
         """
         if self._batched_evaluator is not None:
             return self._batched_evaluator.residual_vector()
@@ -250,6 +495,9 @@ class OptimizationProblem:
                 terms.append(be.array(0.0))
             else:
                 terms.append(ew * op.delta())
+        if self.residual_blocks:
+            rows = self._direct_block_rows()
+            return be.concatenate([be.stack(terms), rows]) if terms else rows
         if not terms:
             return be.array([])
         return be.stack(terms)
@@ -265,7 +513,7 @@ class OptimizationProblem:
         """
         if self._batched_evaluator is not None:
             full = self._batched_evaluator.residuals_and_constraints()
-            return full[len(self.operands) :]
+            return full[self.num_residuals :]
         return self.constraints.vector()
 
     def residuals_and_constraints(self):
@@ -342,6 +590,7 @@ class OptimizationProblem:
                 contrib_values.append((be.array(ew) * op.delta()) ** 2)
 
         total = sum(self._to_item(v) for v in contrib_values)
+        total += sum(self._block_merits())
 
         if total == 0.0:
             df["Contrib. [%]"] = 0.0
@@ -383,6 +632,33 @@ class OptimizationProblem:
             "Feasible": [item["feasible"] for item in report],
         }
         df = pd.DataFrame(data)
+        print(df.to_markdown(headers="keys", tablefmt="fancy_outline"))
+
+    def _block_merits(self) -> list[float]:
+        """Sum of the squared rows of each block."""
+        spans = self.block_spans()
+        if not spans:
+            return []
+        r = self.residual_vector()
+        return [self._to_item(be.sum(r[a:b] ** 2)) for a, b, _ in spans]
+
+    def block_info(self):
+        """Print one summary row per residual block. *Experimental.*"""
+        merits = self._block_merits()
+        total = self._to_item(self.sum_squared())
+        rows = []
+        for (start, stop, block), merit in zip(self.block_spans(), merits, strict=True):
+            rows.append(
+                {
+                    "Block": type(block).__name__,
+                    **block.describe(),
+                    "Rows": stop - start,
+                    "Dropped": block.dropped_rows.size,
+                    "Merit": f"{merit:.6g}",
+                    "Contrib. [%]": round(merit / total * 100, 2) if total else 0.0,
+                }
+            )
+        df = pd.DataFrame(rows).fillna("")
         print(df.to_markdown(headers="keys", tablefmt="fancy_outline"))
 
     def merit_info(self):
@@ -468,6 +744,8 @@ class OptimizationProblem:
         """Print information about the optimization problem."""
         self.merit_info()
         self.operand_info()
+        if self.residual_blocks:
+            self.block_info()
         self.variable_info()
         if len(self.constraints):
             self.constraint_info()

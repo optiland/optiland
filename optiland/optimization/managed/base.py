@@ -65,7 +65,7 @@ class ProblemEvaluation:
         self.best_x: np.ndarray | None = None
         self.best_merit = math.inf
         self._optics = tuple({id(v.optic): v.optic for v in problem.variables}.values())
-        self._n_rows = max(len(problem.operands), 1)
+        self._n_rows = max(problem.num_residuals, 1)
         self._ref_norm = 0.0
         self._recent: dict[bytes, float] = {}
 

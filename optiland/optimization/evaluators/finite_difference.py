@@ -297,7 +297,7 @@ class FiniteDiffEvaluator:
     def _num_rows(self) -> int:
         if self._m is not None:
             return self._m
-        return max(len(self.problem.operands), 1) + self.n_constraints
+        return max(self.problem.num_residuals, 1) + self.n_constraints
 
     def _remember(self, x: np.ndarray, baseline: _Baseline) -> None:
         key = x.tobytes()

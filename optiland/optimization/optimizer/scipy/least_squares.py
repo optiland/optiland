@@ -51,7 +51,7 @@ class LeastSquares(OptimizerGeneric):
         non-finite values, so non-finite rows are replaced by a penalty scaled to the
         last finite residual norm; a failed call yields a full penalty vector.
         """
-        num_operands = len(self.problem.operands)
+        num_operands = self.problem.num_residuals
 
         try:
             for i, optiland_var_wrapper in enumerate(self.problem.variables):
@@ -147,7 +147,7 @@ class LeastSquares(OptimizerGeneric):
             [b[1] if b[1] is not None else be.inf for b in current_bounds_scaled]
         )
 
-        num_residuals = len(self.problem.operands)
+        num_residuals = self.problem.num_residuals
         num_variables = len(x0_numpy)
         original_method_choice = method_choice  # Store for warning message
 
