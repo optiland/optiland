@@ -78,21 +78,31 @@ def describe_rows(problem: OptimizationProblem, rows: Any) -> str:
     """Name the operands behind residual rows, for error messages.
 
     Rows follow ``OptimizationProblem.residuals_and_constraints``: one row per
-    operand, in order, then the constraint rows.
+    operand, in order, then the residual blocks, then the constraint rows.
 
     Args:
         problem: The optimization problem.
         rows: Residual row indices.
 
     Returns:
-        A comma-separated list such as ``"#3 rms_spot_size, #4 f2"``.
+        A comma-separated list such as ``"#3 rms_spot_size, #4 f2"``. Rows of a
+        block read ``"#5 DefaultMeritBlock[2]"``, with the block's own row index.
     """
-    operands = [*problem.operands, *problem.constraints.row_operands]
+    operands = list(problem.operands)
+    spans = problem.block_spans()
+    constraints = problem.constraints.row_operands
+    first_constraint = problem.num_residuals
     names = []
     for row in rows:
         row = int(row)
-        if row < len(operands):
+        span = next((s for s in spans if s[0] <= row < s[1]), None)
+        if span is not None:
+            names.append(f"#{row} {type(span[2]).__name__}[{row - span[0]}]")
+        elif row < len(operands):
             names.append(f"#{row} {operands[row].operand_type}")
+        elif first_constraint <= row < first_constraint + len(constraints):
+            operand = constraints[row - first_constraint]
+            names.append(f"#{row} {operand.operand_type}")
         else:
             names.append(f"#{row}")
     return ", ".join(names)

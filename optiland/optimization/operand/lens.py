@@ -16,9 +16,24 @@ class LensOperand:
     calculations on an optic
 
     Methods:
+        center_thickness: Calculates the thickness between two surfaces on
+                          axis. note that this can be in glass or air.
         edge_thickness: Calculates the edge thickness between two surfaces.
                         note that this can be in glass or air.
     """
+
+    @staticmethod
+    def center_thickness(optic, surface_number):
+        """Calculates the center thickness between two surfaces.
+
+        Args:
+            optic: The optic object.
+            surface_number: The number of the first surface.
+
+        Returns:
+            The center thickness between the two surfaces.
+        """
+        return be.ravel(optic.surfaces.get_thickness(surface_number))[0]
 
     @staticmethod
     def edge_thickness(optic, surface_number):

@@ -80,6 +80,7 @@ METRIC_DICT = {
     "real_N": RayOperand.N,
     "rms_spot_size": RayOperand.rms_spot_size,
     "OPD_difference": RayOperand.OPD_difference,
+    "center_thickness": LensOperand.center_thickness,
     "edge_thickness": LensOperand.edge_thickness,
     "AOI": RayOperand.AOI,
 }

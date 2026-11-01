@@ -13,6 +13,7 @@ from .variable import (
 )
 from .operand import ParaxialOperand, AberrationOperand, RayOperand, Operand
 from .constraint import Constraint, ConstraintManager
+from .block import BlockContext, BundleRequest, DefaultMeritBlock, ResidualBlock
 from .problem import OptimizationProblem
 from .api import minimize
 from .state import OptimizationResult
