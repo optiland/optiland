@@ -1,7 +1,7 @@
 """Physical Thickness Limits
 
 Turns manufacturing limits on center and edge thickness into operand specs for
-``OptimizationProblem.add_physical_constraints`` (opt v2 PR8.4, decision V13).
+``OptimizationProblem.add_physical_constraints``.
 The helper is opt-in: nothing here runs unless the user asks for it.
 
 A gap is the space between two consecutive lens surfaces, so the object and
@@ -9,7 +9,7 @@ image gaps are left out. A gap is air when its index is within 0.01 of 1. Limits
 are magnitudes: after a mirror, where thickness is negative, they are mirrored
 to the negative side.
 
-Experimental: part of the opt v2 facade, subject to change until M10.
+Experimental: part of the optimization facade, subject to change.
 
 Kramer Harrison, 2026
 """

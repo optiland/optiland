@@ -1,9 +1,9 @@
 """Finite-Difference Evaluator
 
-The CPU evaluator of the native optimizers (opt v2 PR4.1). Each design
+The CPU evaluator of the native optimizers. Each design
 evaluation writes ``x`` into the variables, updates the optics, opens one
 evaluation epoch and reads ``problem.residual_vector()``, so residuals are
-``effective_weight * delta`` (decision V7) and the merit is ``sum(r ** 2)``.
+``effective_weight * delta`` and the merit is ``sum(r ** 2)``.
 Hard-constraint rows are read in the same evaluation, and their Jacobian comes
 from the same columns, so constraints add no design evaluations.
 
@@ -19,7 +19,7 @@ interior. Three things keep a Jacobian cheap:
   resumes every real-ray trace at ``s`` from the baseline evaluation's
   snapshots. Non-trace operands are recomputed normally. Columns are grouped
   by ``s``.
-* **Aim policy** (decision V14): ``aim_policy="exact"`` re-aims per column;
+* **Aim policy**: ``aim_policy="exact"`` re-aims per column;
   ``"frozen"`` reuses the baseline aim solutions (see
   :mod:`optiland.optimization.evaluators.aim`).
 

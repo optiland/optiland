@@ -1,7 +1,7 @@
 """Built-in stopping criteria.
 
 Compose with ``|`` (either) and ``&`` (both, latching). Experimental: part of
-the opt v2 facade, subject to change until M10.
+the optimization facade, subject to change.
 
 Kramer Harrison, 2026
 """

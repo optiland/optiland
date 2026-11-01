@@ -1,6 +1,6 @@
 """Facade: ``optiland.optimization.minimize()``
 
-Experimental (opt v2 M5, public until M10). One entry point over the native
+Experimental. One entry point over the native
 damped least squares and the SciPy local solvers. The legacy optimizer classes
 are unchanged.
 

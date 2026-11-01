@@ -1,4 +1,4 @@
-"""Hard constraints and the KKT controller of native DLS (opt v2 PR7.3).
+"""Hard constraints and the KKT controller of native DLS.
 
 Known-KKT problems first: linear residuals and linear rows, whose solution and
 multipliers are known in closed form, through a minimal analytic evaluator.

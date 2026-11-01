@@ -1,4 +1,4 @@
-"""Residual blocks and ray-set re-validation (opt v2 PR8.1, decision V12).
+"""Residual blocks and ray-set re-validation.
 
 Kramer Harrison, 2026
 """

@@ -4,8 +4,11 @@ Optimization
 ============
 
 Optiland supports optimization through different backends.
-The **NumPy backend** relies on SciPy optimizers, while the **Torch backend**
-uses PyTorch's native optimization tools.
+The **NumPy backend** relies on Optiland's native damped least squares and on
+SciPy optimizers, while the **Torch backend** uses PyTorch's native
+optimization tools. Which one to use, and how to run and cancel it, is
+explained in the :doc:`../optimization_guide`; one-call merit functions and hard
+constraints are in :doc:`../optimization_merit_constraints`.
 
 NumPy (SciPy) Optimization
 --------------------------

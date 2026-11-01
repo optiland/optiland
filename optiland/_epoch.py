@@ -100,7 +100,7 @@ class EvaluationEpoch:
         """Copy selected entries of another epoch into this one.
 
         Private support for the finite-difference evaluator's frozen ray
-        aiming (opt v2 PR4.1), which reuses the baseline aim solutions while
+        aiming, which reuses the baseline aim solutions while
         it evaluates Jacobian columns. Entries already present are kept.
 
         Args:

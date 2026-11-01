@@ -1,7 +1,7 @@
 """SciPy local minimizers behind ``minimize()``.
 
 Private core: calls ``scipy.optimize.minimize`` directly on the scalar merit
-``sum(r ** 2)``, with the scale-aware failure penalty of PR1.1. Observers and
+``sum(r ** 2)``, with the scale-aware failure penalty. Observers and
 stopping criteria run from the SciPy callback.
 
 Kramer Harrison, 2026

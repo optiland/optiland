@@ -3,7 +3,7 @@
 The per-iteration state shared by the native optimizers, stopping criteria and
 observers, and the result returned by the native cores and ``minimize()``.
 
-Experimental: part of the opt v2 facade, subject to change until M10.
+Experimental: part of the optimization facade, subject to change.
 
 Kramer Harrison, 2026
 """

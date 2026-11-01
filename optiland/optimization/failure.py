@@ -1,7 +1,6 @@
 """Failure Policy Module
 
-The shared non-finite / trace-failure policy of the optimization evaluators
-(opt v2 Section 8.4):
+The shared non-finite / trace-failure policy of the optimization evaluators:
 
 * A ray failure or an exception inside one design evaluation yields ``NaN`` in
   the affected residual rows, never an exception out of the evaluator. The
@@ -13,8 +12,7 @@ The shared non-finite / trace-failure policy of the optimization evaluators
 * A non-finite *initial* point raises :class:`ConfigurationError` naming the
   failing operands: an untraceable design cannot be optimized.
 
-SciPy adapters cannot consume ``NaN`` and keep their scale-aware penalty
-(opt v2 PR1.1).
+SciPy adapters cannot consume ``NaN`` and keep their scale-aware penalty.
 
 Kramer Harrison, 2026
 """
@@ -148,7 +146,7 @@ def reject_hard_constraints(problem: OptimizationProblem, solver: str) -> None:
 def penalty_residual(reference_norm: float, n: int) -> float:
     """Per-row stand-in residual for rows that could not be evaluated.
 
-    Scaled to the last finite residual norm (the PR1.1 rule of the legacy
+    Scaled to the last finite residual norm (the rule of the legacy
     ``LeastSquares``), never a hardcoded constant.
 
     Args:

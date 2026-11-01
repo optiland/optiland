@@ -1,4 +1,4 @@
-"""Benchmark problems for the optimization v2 program (decision V26).
+"""Benchmark problems for the optimization speed and robustness work.
 
 Each public function returns ``(optic, problem)`` with a fully populated
 :class:`~optiland.optimization.OptimizationProblem`. All construction is
@@ -84,7 +84,7 @@ def cooke() -> tuple[Optic, OptimizationProblem]:
 
 
 def double_gauss() -> tuple[Optic, OptimizationProblem]:
-    """Double Gauss: radii + thicknesses, RMS spot 3F x 3W + EFL (Section 1)."""
+    """Double Gauss: radii + thicknesses, RMS spot 3F x 3W + EFL."""
     optic = DoubleGauss()
     problem = OptimizationProblem()
     _add_spot_operands(problem, optic, FIELDS_3, WAVELENGTHS)

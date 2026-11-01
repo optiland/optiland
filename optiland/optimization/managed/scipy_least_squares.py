@@ -1,8 +1,8 @@
 """SciPy ``least_squares`` behind ``minimize(method="least_squares")``.
 
 Private core: calls ``scipy.optimize.least_squares`` directly on the residuals
-``effective_weight * delta`` (decision V7), with the scale-aware failure
-penalty of PR1.1. SciPy offers no per-iteration callback here, so observers
+``effective_weight * delta``, with the scale-aware failure
+penalty. SciPy offers no per-iteration callback here, so observers
 receive ``on_start`` and ``on_end`` only; a cancel token is honored at the
 next residual evaluation.
 

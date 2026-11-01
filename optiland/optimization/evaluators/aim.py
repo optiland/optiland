@@ -1,6 +1,6 @@
 """Ray-Aiming Policies for Finite Differences
 
-Decision V14: how ray aiming behaves while a finite-difference evaluator
+How ray aiming behaves while a finite-difference evaluator
 computes Jacobian columns.
 
 * :class:`ExactAim` (default) re-aims every column. The evaluation epoch keeps

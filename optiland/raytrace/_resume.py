@@ -1,6 +1,6 @@
 """Trace Resume Hook Module
 
-Private support for partial-trace finite differences (opt v2 PR4.1). The
+Private support for partial-trace finite differences. The
 finite-difference evaluator evaluates the baseline design inside
 :func:`recording`, which makes every :meth:`RealRayTracer.trace_generic` call
 store a :class:`~optiland.raytrace.snapshot.TraceSnapshot` and the recorded

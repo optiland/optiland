@@ -1,4 +1,4 @@
-"""Evaluator layer tests (opt v2 PR4.1).
+"""Evaluator layer tests.
 
 Kramer Harrison, 2026
 """
@@ -84,7 +84,7 @@ def test_protocols(set_test_backend):
 
 def test_residuals_are_effective_weight_times_delta(set_test_backend):
     optic, problem = _simple_problem()
-    optic.wavelengths.wavelengths[0].weight = 0.25  # V7: field/wl weights count
+    optic.wavelengths.wavelengths[0].weight = 0.25  # field/wl weights count
     ev = FiniteDiffEvaluator(problem)
     x = ev.read_x()
     r = ev.residuals(x)
@@ -202,7 +202,7 @@ def test_partial_trace_jacobian_matches_full(set_test_backend, name):
     x = full.read_x()
     J_full = full.jacobian(x)
     J_part = part.jacobian(x)
-    # Resumed traces are bitwise equal to full ones (PR3.1), so the Jacobians
+    # Resumed traces are bitwise equal to full ones, so the Jacobians
     # agree far below finite-difference noise.
     np.testing.assert_allclose(J_part, J_full, rtol=1e-10, atol=1e-12)
     if be.get_backend() == "numpy":
@@ -288,7 +288,7 @@ def test_frozen_aim_jacobian_close_to_exact(set_test_backend):
 
 
 # ---------------------------------------------------------------------------
-# Failure policy (Section 8.4)
+# Failure policy
 # ---------------------------------------------------------------------------
 
 

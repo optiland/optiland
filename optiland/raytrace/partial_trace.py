@@ -1,7 +1,7 @@
 """Partial Trace Eligibility Module
 
 Decides where a real-ray trace may resume after one optimization variable
-changes (opt v2 PR3.1). A resumed trace starts from the ray state recorded
+changes. A resumed trace starts from the ray state recorded
 before surface ``s`` (see :mod:`optiland.raytrace.snapshot`), so it equals a
 full trace only when the variable leaves everything before ``s`` untouched:
 the surfaces, the launched rays and the ray aiming.
