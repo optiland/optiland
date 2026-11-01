@@ -280,3 +280,20 @@ def test_nonimage_invalid_sample_extent_is_zero(set_test_backend):
     component = Surface2D(_optic().surfaces[1], be.nan)
     assert component.extent == 0
     assert component.extent_source == "ray_samples"
+
+
+def test_default_limits_contain_all_drawn_rays_at_schematic_image(set_test_backend):
+    from optiland.samples.objectives import CookeTriplet
+
+    fig, ax, _ = OpticViewer(CookeTriplet()).view(show=False)
+    try:
+        x_lo, x_hi = ax.get_xlim()
+        y_lo, y_hi = ax.get_ylim()
+        for line in ax.lines:
+            x = np.asarray(line.get_xdata(), dtype=float)
+            y = np.asarray(line.get_ydata(), dtype=float)
+            drawn = (x >= x_lo) & (x <= x_hi)
+            assert np.all(y[drawn] <= y_hi)
+            assert np.all(y[drawn] >= y_lo)
+    finally:
+        plt.close(fig)
