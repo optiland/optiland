@@ -52,9 +52,9 @@ Choosing and constructing a material
      - ``MaterialFactory``, ``MaterialCatalog.get``, named-glass file readers,
        glass selection and user code.
    * - ``DataMaterial``
-     - Owns an immutable, spatially uniform sampled or analytic definition and
-       optional independent extinction table. Requires no file, catalog or
-       registration. Native JSON
+     - Owns an immutable, spatially uniform sampled or analytic definition,
+       optional extinction or internal-transmission data, and optional thermal
+       data. Requires no file, catalog or registration. Native JSON
        contains the complete optical definition and copied metadata.
      - ``from_samples``, ``from_coefficients`` or a native definition dictionary;
        OSLO sampled-index input and explicit material overrides. Used by the
@@ -98,8 +98,9 @@ Owned data and persistence
    assert restored.definition == measured.definition
 
 The ``definition`` contains a ``dispersion`` tagged as ``tabulated`` or
-``formula``, an optional ``extinction`` tagged as ``tabulated_k``, and reserved
-``thermal: null``. Formula identifiers are ``formula 1`` through ``formula 9``,
+``formula``, optional ``extinction`` tagged as ``tabulated_k`` or
+``internal_transmittance``, and optional ``thermal`` data. Formula identifiers
+are ``formula 1`` through ``formula 9``,
 using the existing refractiveindex.info conventions. A formula remains analytic;
 it is never replaced with fitted or sampled indices. Negative finite indices
 are permitted in the generic material interface. Import/export adapters enforce
@@ -126,9 +127,10 @@ Choosing a table bounds policy
 ``DataMaterial`` accepts a keyword-only ``bounds="raise"`` or ``bounds="clamp"``
 on its constructor and both factories. ``MaterialFile`` and its catalog wrapper
 ``Material`` expose the same option with ``"clamp"`` as their existing default.
-The option applies to every tabulated property of the material, with each n/k
-table using its own wavelength interval. It does not change the stored samples
-or the support reported by ``spectral_range``.
+The option applies to linearly interpolated n/k curves, with each curve using its
+own wavelength interval. Internal-transmission tables retain their separate,
+strict range contract. The option does not change stored samples or the support
+reported by ``spectral_range``.
 
 .. code-block:: python
 
@@ -169,6 +171,43 @@ choice. Its writer rejects clamped ``DataMaterial`` objects before replacing the
 destination; use native JSON to retain the policy. Catalog-name exports in
 external formats retain the destination program's evaluation conventions.
 
+Thermal and internal-transmission definitions
+---------------------------------------------
+
+``thermal`` uses ``kind`` (``schott``, ``constant`` or ``corning``),
+``coefficients`` and ``reference_temperature_c``. The coefficient counts are
+six, one and four respectively. Material evaluation accepts ``temperature`` in
+Celsius and ``pressure`` in atmospheres; pressure defaults to 1 when temperature
+is supplied. Missing thermal data or temperature leaves the reference model
+unchanged. Global environment pressure uses pascals and is not passed through
+implicitly. Invalid temperatures, pressures and nonfinite predictions fail.
+
+Schott coefficients describe absolute index change; the evaluator converts
+between catalog-relative and absolute index using the existing catalog air
+convention and evaluates dispersion at the reference-relative wavelength.
+Constant and Corning coefficients describe relative dn/dT in index units/K;
+Corning's slope is ``C0 + C1/lambda**2 + C2/lambda**4 + C3/lambda**6``.
+File adapters must convert coefficient units and supply their source's reference
+temperature explicitly. Parsing, catalog selection and provenance belong to the
+adapter; the material owns only the optical definition.
+
+``internal_transmittance`` uses ``wavelengths_um``, ``values``, ``thickness_mm``
+and ``interpolation: "local_quadratic"``. At least three distinct wavelengths and
+transmission in [0, 1] are required. Evaluate a quadratic through the three nearest
+samples, breaking ties toward the shorter wavelength, before converting with
+``k = -log(T) * wavelength_um / (4*pi*thickness_mm*1000)``. A zero sample stays
+in native data and can be evaluated by ``internal_transmittance``; its k query
+fails because no finite k represents zero transmission. Transparent tables stay
+exactly transparent. Out-of-range queries and unphysical interpolants fail.
+There is no clipping or invented transmission floor.
+
+``internal_transmittance(wavelength, thickness_mm)`` excludes interface losses.
+It scales a transmission table by Beer's law or converts a measured k table
+using its own independent support. It returns one for zero thickness. The
+shared helpers preserve wavelength gradients; imported model parameters remain
+immutable. Numerical parity with OSLO's interpolation boundaries has not been
+established; the chosen stencil has independent analytic tests.
+
 Shared implementation ownership
 -------------------------------
 
@@ -182,6 +221,13 @@ Shared implementation ownership
 * ``spectral.py`` owns finite sample validation and linear interpolation, with
   an explicit bounds policy chosen by the caller. It preserves the constant
   single-sample behavior required by existing YAML data.
+  It also owns local-quadratic transmission interpolation and Beer conversions.
+* ``thermal.py`` adapts catalog air units and owns thermal algebra. Both the owned
+  material and the existing YAML adapter call its Schott correction; adapters
+  retain their own activation/bounds policies. The air adapter converts atm to Pa
+  and calls the independently corrected Kohlrausch implementation directly.
+  There is one air equation, with no dependence on the environment dispatcher's
+  selected model or implicit global settings.
 * ``definition.py`` owns private immutable records and native definition
   validation/encoding. It contains no file access, backend arrays or cache.
 * ``rii.py`` decodes YAML spectral blocks to plain intermediate records.
@@ -223,7 +269,7 @@ Runtime and persistence callers
    * - OSLO reader/writer
      - Reader constructs sampled ``DataMaterial`` when distinct saved indices
        are present. Writer preserves homogeneous positive n tables with no
-       extinction; other owned definitions require native JSON. The label is
+       extinction or thermal data; other owned definitions require native JSON. The label is
        never interpreted as a catalog reference.
    * - Zemax and CODE V writers
      - Reject ``DataMaterial`` before opening the destination. An n/Abbe fit or
@@ -236,9 +282,8 @@ Runtime and persistence callers
        requested and known limits and requires an explicit range if none are
        known. It plots in µm and converts to host arrays only at the display boundary.
 
-Adding catalog transmission/thermal data or new file encodings requires a
-separate feature with its own physical validation and persistence tests. Material
-temperature/pressure keywords are not automatically connected to the global
+New file encodings require a separate feature with their physical validation and
+persistence tests. Material temperature/pressure keywords are not connected to the global
 ``Optic`` environment; that caller-level change is outside this material rework.
 
 Extending material models
