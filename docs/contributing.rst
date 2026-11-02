@@ -13,7 +13,7 @@ How to Contribute
 -----------------
 
 1. **Start with an issue for anything non-trivial.** For new features, behavior changes, or anything larger than roughly 100 lines, check whether there's already an open issue. If not, please open one first so scope can be agreed before you write code. This also helps others know what's in progress and avoids duplicating effort. Typo fixes, documentation tweaks, and small obvious bug fixes can go straight to a pull request.
-2. **Ask to be assigned before you start.** Comment on the issue to say you'd like to work on it, and wait until a maintainer assigns it to you before opening a pull request. Pull requests for issues that are unassigned, or assigned to someone else, may be closed. This keeps two people from solving the same issue and gives us a chance to point you at the right approach early.
+2. **Claim the issue before you start.** Comment on the issue to say you'd like to work on it. A maintainer will usually assign it to you. If nobody else has claimed it and you haven't heard back within 3 days, go ahead: your comment counts as the claim. Claims with no visible progress for 30 days may be released to others. Pull requests for an issue someone else already claimed may be closed. This keeps two people from solving the same issue and gives us a chance to point you at the right approach early.
 3. **Fork** the repository on GitHub.
 4. **Clone** your forked repository locally.
 5. **Create** a new branch for your feature or bugfix.
@@ -100,7 +100,7 @@ Task Workflow and Coordination
 We use a lightweight workflow to help contributors collaborate smoothly and avoid duplicated effort:
 
 - **Each task should have an issue** on GitHub. If you're working on something new, check for an existing issue or `open a new one <https://github.com/optiland/optiland/issues>`_. This keeps the project transparent and easier to coordinate.
-- **Leave a comment on the issue** if you plan to work on it, and wait to be assigned before opening a pull request.
+- **Leave a comment on the issue** if you plan to work on it, so others know it is claimed.
 - **Progress is tracked using GitHub Projects (kanban).** Issues are moved across columns such as "To Do", "In Progress", and "In Review". You can view the board here: `Optiland GitHub Project <https://github.com/users/HarrisonKramer/projects/1>`_. If you don’t have permission to move cards, maintainers will update them based on issue comments.
 - **Milestones help plan releases.** Larger features and grouped improvements may be linked to a milestone. If you're contributing to a milestone, try to complete the work in time — but there's no strict deadline.
 
