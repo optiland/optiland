@@ -818,6 +818,7 @@ class OptimizationPanel(QWidget):
         btn_layout.addWidget(self.btnRefreshOperands)
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
+        layout.addWidget(self._build_default_merit_widget())
 
         progress_layout = QHBoxLayout()
         self.lblOperandStatus = QLabel("Operand values need refresh")
@@ -833,6 +834,51 @@ class OptimizationPanel(QWidget):
         layout.addLayout(progress_layout)
 
         return w
+
+    def _build_default_merit_widget(self) -> QGroupBox:
+        """Build the optional default merit (per-ray spot or wavefront) group."""
+        group = QGroupBox("Default Merit (experimental)")
+        group.setCheckable(True)
+        group.setChecked(False)
+        group.setToolTip(
+            "Add a per-ray RMS spot or wavefront merit over all fields and "
+            "wavelengths, on top of the operands above."
+        )
+        layout = QGridLayout(group)
+        self.cmbDefaultMeritKind = QComboBox()
+        self.cmbDefaultMeritKind.addItems(["spot", "wavefront"])
+        self.cmbDefaultMeritReference = QComboBox()
+        self.cmbDefaultMeritReference.addItems(["centroid", "chief"])
+        self.spnDefaultMeritRings = QSpinBox()
+        self.spnDefaultMeritRings.setRange(1, 20)
+        self.spnDefaultMeritRings.setValue(3)
+        self.spnDefaultMeritArms = QSpinBox()
+        self.spnDefaultMeritArms.setRange(1, 36)
+        self.spnDefaultMeritArms.setValue(6)
+        for index, (label, widget) in enumerate(
+            (
+                ("Kind:", self.cmbDefaultMeritKind),
+                ("Reference:", self.cmbDefaultMeritReference),
+                ("Rings:", self.spnDefaultMeritRings),
+                ("Arms:", self.spnDefaultMeritArms),
+            )
+        ):
+            row, column = divmod(index, 2)
+            layout.addWidget(QLabel(label), row, 2 * column)
+            layout.addWidget(widget, row, 2 * column + 1)
+        self.grpDefaultMerit = group
+        return group
+
+    def _collect_default_merit_options(self) -> dict | None:
+        """Return the default merit settings, or ``None`` when it is off."""
+        if not self.grpDefaultMerit.isChecked():
+            return None
+        return {
+            "kind": self.cmbDefaultMeritKind.currentText(),
+            "reference": self.cmbDefaultMeritReference.currentText(),
+            "rings": self.spnDefaultMeritRings.value(),
+            "arms": self.spnDefaultMeritArms.value(),
+        }
 
     def _build_optimizer_tab(self) -> QWidget:
         """Build the Optimizer tab with algorithm selector and dynamic settings."""
@@ -1315,10 +1361,12 @@ class OptimizationPanel(QWidget):
                 return
 
         optimizer_kwargs = self._collect_optimizer_kwargs()
-        self.connector._optimization_service.preview_options = {
+        service = self.connector._optimization_service
+        service.preview_options = {
             "enabled": self.chkLiveViz.isChecked(),
             "frequency": self.spnFrequency.value(),
         }
+        service.default_merit_options = self._collect_default_merit_options()
         self._preview_context = {
             "document_id": self.connector.document_state.token.document_id,
             "surface_identities": tuple(self.connector.get_optic().surfaces),
