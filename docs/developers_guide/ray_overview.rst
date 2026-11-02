@@ -124,6 +124,24 @@ Directly assigning ``rays.i`` changes only the current evaluation. Custom scalar
 loss models should call ``attenuate`` so subsequent field/state evaluation keeps
 their losses. This does not change Jones matrices into intensity coefficients.
 
+Interaction update order
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+A surface interaction records the normalized incoming direction in
+``L0/M0/N0``, assigns and normalizes the outgoing ``L/M/N``, then applies
+scattering and the coating. The coating transports the field through that bend;
+without a coating, the interaction calls ``rays.update()`` itself. Each bend
+must update the field exactly once. ``_L0/_M0/_N0`` retain the original launch
+direction and must not be overwritten with a subsequent surface's direction.
+
+``ThinLensInteractionModel`` follows this same sequence. It refreshes the
+incident direction at every lens, so a first polarized thin lens and chained
+lenses work without missing or stale incident-direction data. The outgoing
+direction is established before scalar or Jones coating evaluation. Scattering
+acts on that outgoing direction and is no longer overwritten by the lens.
+An infinite focal length is a zero-power lens: it contributes no lens phase
+and preserves the incoming optical path, including for a reflective surface.
+
 Changes to existing results
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
