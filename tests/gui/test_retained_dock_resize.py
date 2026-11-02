@@ -406,7 +406,8 @@ def test_export_restores_current_onscreen_renderer_after_export_canvas(
     ratio = canvas.device_pixel_ratio
     assert canvas.figure.dpi == 100 * ratio
     assert canvas.get_width_height(physical=True) == (
-        round(810 * ratio), round(540 * ratio)
+        round(810 * ratio),
+        round(540 * ratio),
     )
     final_image = hashlib.sha256(canvas.buffer_rgba()).digest()
     canvas.draw()
