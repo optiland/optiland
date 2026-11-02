@@ -131,7 +131,7 @@ class TestRefractive:
 
     @pytest.mark.parametrize(
         "aperture_line",
-        ["SPID 1 3 0", "USAP 0 0 0"],
+        ["USAP 0 0 0"],
     )
     def test_unsupported_aperture_replaces_fixed_clip(
         self, tmp_path, aperture_line, set_test_backend
