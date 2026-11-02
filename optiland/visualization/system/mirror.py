@@ -29,6 +29,8 @@ if TYPE_CHECKING:
 class Mirror2D(Surface2D):
     """Draw a reflective surface and its optional mechanical backing in 2D."""
 
+    component_kind = "mirror"
+
     def __init__(
         self, surface: Any, ray_extent: float, *, backing_sign: float = 1.0
     ) -> None:
@@ -86,6 +88,7 @@ class Mirror2D(Surface2D):
             if theme:
                 facecolor = theme.parameters.get("lens.color", facecolor)
                 edgecolor = theme.parameters.get("axes.edgecolor", edgecolor)
+            facecolor = self.face_color() or facecolor
             start = None
             for index in range(len(finite) + 1):
                 if index < len(finite) and bool(finite[index]):
@@ -121,6 +124,8 @@ class Mirror3D(Surface3D):
         extent: Local radial drawing extent in millimeters.
         backing_sign: Sign of incoming travel along the local surface axis.
     """
+
+    component_kind = "mirror"
 
     def __init__(
         self, surface: Any, extent: float, *, backing_sign: float = 1.0
@@ -251,7 +256,8 @@ class Mirror3D(Surface3D):
             actor (vtkActor): The actor representing the mirror surface.
 
         """
-        actor.GetProperty().SetColor(1, 1, 1)
+        override = self.face_color()
+        actor.GetProperty().SetColor(*(override[:3] if override else (1, 1, 1)))
         actor.GetProperty().SetAmbient(0.3)
         actor.GetProperty().SetDiffuse(0.1)
         actor.GetProperty().SetSpecular(1.0)

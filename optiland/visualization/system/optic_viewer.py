@@ -16,6 +16,7 @@ import numpy as np
 
 import optiland.backend as be
 from optiland.visualization.base import BaseViewer2D
+from optiland.visualization.coloring.scale import collect_scales
 from optiland.visualization.system.interaction import InteractionManager
 from optiland.visualization.system.lens import Lens2D
 from optiland.visualization.system.rays import Rays2D
@@ -67,6 +68,10 @@ class OpticViewer(BaseViewer2D):
         ax=None,
         theme=None,
         show=True,
+        *,
+        component_colorizer=None,
+        ray_colorizer=None,
+        show_colorbar=True,
     ):
         """Visualizes the optical system.
 
@@ -96,6 +101,13 @@ class OpticViewer(BaseViewer2D):
             show (bool, optional): If True (default), calls plt.show(). Set
                 False for headless use (e.g. saving to file, CI environments)
                 or when embedding in an existing figure via ``ax``.
+            component_colorizer (ComponentColorizer, optional): Strategy that
+                colors lens elements, mirrors and surfaces. Defaults to None,
+                which keeps the theme colors.
+            ray_colorizer (RayColorizer, optional): Strategy that colors rays.
+                Defaults to None, which keeps the default ray colors.
+            show_colorbar (bool, optional): If True (default), shows a colorbar
+                for each colorizer that provides a scale.
 
         """
         if projection not in ["XY", "XZ", "YZ"]:
@@ -115,6 +127,8 @@ class OpticViewer(BaseViewer2D):
 
         interaction_manager = InteractionManager(fig, ax, self.optic, tooltip_format)
 
+        if ray_colorizer is not None:
+            ray_colorizer.prepare(self.optic)
         ray_artists = self.rays.plot(
             ax,
             fields=fields,
@@ -125,12 +139,17 @@ class OpticViewer(BaseViewer2D):
             theme=theme,
             projection=projection,
             hide_vignetted=hide_vignetted,
+            _ray_colorizer=ray_colorizer,
         )
         for artist, ray_bundle in ray_artists.items():
             interaction_manager.register_artist(artist, ray_bundle)
 
         system_artists = self.system.plot(
-            ax, theme=theme, projection=projection, show_apertures=show_apertures
+            ax,
+            theme=theme,
+            projection=projection,
+            show_apertures=show_apertures,
+            _component_colorizer=component_colorizer,
         )
         for artist, surface in system_artists.items():
             interaction_manager.register_artist(artist, surface)
@@ -142,6 +161,10 @@ class OpticViewer(BaseViewer2D):
             ylim = ylim or auto_ylim
 
         self._apply_axes_style(ax, projection, theme, title=title, xlim=xlim, ylim=ylim)
+
+        if show_colorbar:
+            for scale in collect_scales(component_colorizer, ray_colorizer):
+                scale.add_colorbar(fig, ax)
 
         if show and not is_gui_embedding:
             import matplotlib.pyplot as plt
