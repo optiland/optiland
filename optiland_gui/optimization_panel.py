@@ -793,9 +793,17 @@ class OptimizationPanel(QWidget):
         layout.setSpacing(4)
 
         self.tblOperands = QTableWidget()
-        self.tblOperands.setColumnCount(6)
+        self.tblOperands.setColumnCount(7)
         self.tblOperands.setHorizontalHeaderLabels(
-            ["Category", "Type", "Current Value", "Target", "Weight", "Parameters"]
+            [
+                "Category",
+                "Type",
+                "Current Value",
+                "Target",
+                "Weight",
+                "Parameters",
+                "% of Merit",
+            ]
         )
         self.tblOperands.setColumnWidth(2, 220)
         self.tblOperands.horizontalHeader().setStretchLastSection(True)
@@ -818,7 +826,6 @@ class OptimizationPanel(QWidget):
         btn_layout.addWidget(self.btnRefreshOperands)
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
-        layout.addWidget(self._build_default_merit_widget())
 
         progress_layout = QHBoxLayout()
         self.lblOperandStatus = QLabel("Operand values need refresh")
@@ -834,51 +841,6 @@ class OptimizationPanel(QWidget):
         layout.addLayout(progress_layout)
 
         return w
-
-    def _build_default_merit_widget(self) -> QGroupBox:
-        """Build the optional default merit (per-ray spot or wavefront) group."""
-        group = QGroupBox("Default Merit (experimental)")
-        group.setCheckable(True)
-        group.setChecked(False)
-        group.setToolTip(
-            "Add a per-ray RMS spot or wavefront merit over all fields and "
-            "wavelengths, on top of the operands above."
-        )
-        layout = QGridLayout(group)
-        self.cmbDefaultMeritKind = QComboBox()
-        self.cmbDefaultMeritKind.addItems(["spot", "wavefront"])
-        self.cmbDefaultMeritReference = QComboBox()
-        self.cmbDefaultMeritReference.addItems(["centroid", "chief"])
-        self.spnDefaultMeritRings = QSpinBox()
-        self.spnDefaultMeritRings.setRange(1, 20)
-        self.spnDefaultMeritRings.setValue(3)
-        self.spnDefaultMeritArms = QSpinBox()
-        self.spnDefaultMeritArms.setRange(1, 36)
-        self.spnDefaultMeritArms.setValue(6)
-        for index, (label, widget) in enumerate(
-            (
-                ("Kind:", self.cmbDefaultMeritKind),
-                ("Reference:", self.cmbDefaultMeritReference),
-                ("Rings:", self.spnDefaultMeritRings),
-                ("Arms:", self.spnDefaultMeritArms),
-            )
-        ):
-            row, column = divmod(index, 2)
-            layout.addWidget(QLabel(label), row, 2 * column)
-            layout.addWidget(widget, row, 2 * column + 1)
-        self.grpDefaultMerit = group
-        return group
-
-    def _collect_default_merit_options(self) -> dict | None:
-        """Return the default merit settings, or ``None`` when it is off."""
-        if not self.grpDefaultMerit.isChecked():
-            return None
-        return {
-            "kind": self.cmbDefaultMeritKind.currentText(),
-            "reference": self.cmbDefaultMeritReference.currentText(),
-            "rings": self.spnDefaultMeritRings.value(),
-            "arms": self.spnDefaultMeritArms.value(),
-        }
 
     def _build_optimizer_tab(self) -> QWidget:
         """Build the Optimizer tab with algorithm selector and dynamic settings."""
@@ -1231,6 +1193,7 @@ class OptimizationPanel(QWidget):
             params = od.get("input_data", {})
             param_str = ", ".join(f"{k}={v}" for k, v in params.items())
             self.tblOperands.setItem(i, 5, QTableWidgetItem(param_str))
+            self.tblOperands.setItem(i, 6, QTableWidgetItem("—"))
         self._operand_previews.refresh()
         self._queue_operand_rows(list(range(len(operands))))
 
@@ -1280,6 +1243,14 @@ class OptimizationPanel(QWidget):
                     if state in {"pending", "stale"}
                     else "Current optical revision"
                 )
+            )
+            share = row.get("share")
+            share_item = self.tblOperands.item(index, 6)
+            if share_item is None:
+                share_item = QTableWidgetItem()
+                self.tblOperands.setItem(index, 6, share_item)
+            share_item.setText(
+                f"{share:.2f}" if share is not None and state == "current" else "—"
             )
         if self._operand_rows_pending:
             self._operand_install_timer.start(0)
@@ -1361,12 +1332,10 @@ class OptimizationPanel(QWidget):
                 return
 
         optimizer_kwargs = self._collect_optimizer_kwargs()
-        service = self.connector._optimization_service
-        service.preview_options = {
+        self.connector._optimization_service.preview_options = {
             "enabled": self.chkLiveViz.isChecked(),
             "frequency": self.spnFrequency.value(),
         }
-        service.default_merit_options = self._collect_default_merit_options()
         self._preview_context = {
             "document_id": self.connector.document_state.token.document_id,
             "surface_identities": tuple(self.connector.get_optic().surfaces),

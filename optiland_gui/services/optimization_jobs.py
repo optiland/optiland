@@ -195,23 +195,13 @@ def operand_arguments(optic, definition, operand_metadata):
     return values
 
 
-def build_problem(
+def add_operands(
+    problem: OptimizationProblem,
     optic: Optic,
-    variables: list[dict],
     operands: list[dict],
     operand_metadata: dict,
-    default_merit: dict | None = None,
-) -> OptimizationProblem:
-    """Fail setup explicitly instead of silently optimizing an incomplete problem.
-
-    ``default_merit``, when given, holds the keyword arguments of
-    ``OptimizationProblem.add_default_merit``, the optic excluded.
-    """
-    problem = OptimizationProblem()
-    for definition in variables:
-        problem.add_variable(
-            optic, definition["type"], **variable_arguments(optic, definition)
-        )
+) -> None:
+    """Add operand definitions to a problem, in list order."""
     for definition in operands:
         problem.add_operand(
             operand_type=definition["type"],
@@ -221,13 +211,20 @@ def build_problem(
             weight=definition.get("weight", 1.0),
             input_data=operand_arguments(optic, definition, operand_metadata),
         )
-    if default_merit is not None:
-        problem.add_default_merit(optic, **default_merit)
-    if not len(problem.variables) or not problem.num_residuals:
-        raise ValueError(
-            "Optimization needs at least one variable and one operand "
-            "or the default merit."
+
+
+def build_problem(
+    optic: Optic, variables: list[dict], operands: list[dict], operand_metadata: dict
+) -> OptimizationProblem:
+    """Fail setup explicitly instead of silently optimizing an incomplete problem."""
+    problem = OptimizationProblem()
+    for definition in variables:
+        problem.add_variable(
+            optic, definition["type"], **variable_arguments(optic, definition)
         )
+    add_operands(problem, optic, operands, operand_metadata)
+    if not len(problem.variables) or not len(problem.operands):
+        raise ValueError("Optimization needs at least one variable and one operand.")
     return problem
 
 
@@ -247,7 +244,6 @@ def optimize(
         parameters["variables"],
         parameters["operands"],
         parameters["operand_metadata"],
-        parameters.get("default_merit"),
     )
     original_update = problem.update_optics
 

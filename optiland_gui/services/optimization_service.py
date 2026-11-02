@@ -235,9 +235,6 @@ class OptimizationService(QObject):
         self._preview: CandidatePreview | None = None
         self._callbacks = (None, None, None)
         self.preview_options = {"enabled": False, "frequency": 10}
-        # Keyword arguments of OptimizationProblem.add_default_merit, the optic
-        # excluded; None leaves the merit to the operands.
-        self.default_merit_options: dict | None = None
         jobs = connector.calculation_jobs
         jobs.progress.connect(self._on_progress)
         jobs.finished.connect(self._on_finished)
@@ -745,11 +742,12 @@ class OptimizationService(QObject):
 
         from .optimization_jobs import DampedLeastSquares
 
+        # The first entry is the panel's default selection.
         local: list[tuple[str, type, str]] = [
+            ("Damped Least Squares (native)", DampedLeastSquares, "none"),
             ("Generic (scipy.minimize)", OptimizerGeneric, "none"),
             ("Least Squares", LeastSquares, "none"),
             ("Orthogonal Descent", OrthogonalDescent, "none"),
-            ("Damped Least Squares (native)", DampedLeastSquares, "none"),
         ]
 
         global_: list[tuple[str, type, str]] = [
@@ -881,7 +879,6 @@ class OptimizationService(QObject):
                     ),
                     "optimizer_kwargs": optimizer_kwargs,
                     "preview": self.preview_options,
-                    "default_merit": self.default_merit_options,
                 },
                 cancel_on_document_change=False,
                 context={"edit_token": self._connector.document_state.edit_token},

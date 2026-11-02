@@ -98,6 +98,7 @@ def test_solver_success_does_not_accept_ignored_variable_bounds(minimal_optic):
         ("Local", 0),
         ("Local", 1),
         ("Local", 2),
+        ("Local", 3),
         ("Global", 0),
         ("Global", 1),
         ("Global", 2),
@@ -411,31 +412,6 @@ def test_progress_is_throttled_to_ten_hertz(minimal_optic, monkeypatch):
     assert len(times) < 1 + 7
 
 
-def test_default_merit_alone_defines_the_problem(minimal_optic):
-    from optiland_gui.services.optimization_jobs import DampedLeastSquares
-
-    options = parameters(DampedLeastSquares, {"maxiter": 100})
-    options["variables"] = [{"surface_number": 2, "type": "thickness"}]
-    options["operands"] = []
-    options["default_merit"] = {"kind": "spot", "rings": 2, "arms": 4}
-    result = optimize(
-        OpticSnapshot.capture(minimal_optic),
-        options,
-        lambda *args, **kwargs: None,
-        threading.Event(),
-    )
-    assert result["final_merit"] < result["initial_merit"]
-
-    options["default_merit"] = None
-    with pytest.raises(ValueError, match="default merit"):
-        optimize(
-            OpticSnapshot.capture(minimal_optic),
-            options,
-            lambda *args, **kwargs: None,
-            threading.Event(),
-        )
-
-
 def test_step_applies_x_to_gui_copy_not_live_document(qapp, owned_service):
     from types import SimpleNamespace
 
@@ -469,25 +445,32 @@ def test_step_applies_x_to_gui_copy_not_live_document(qapp, owned_service):
     service._request = None
 
 
-def test_panel_exposes_native_dls_and_default_merit(qapp, owned_service):
+def test_panel_shows_each_operands_share_of_the_merit(qapp, owned_service):
+    from optiland_gui.optimization_panel import OptimizationPanel
+
+    connector, _service = owned_service
+    panel = OptimizationPanel(connector)
+    assert panel.tblOperands.horizontalHeaderItem(6).text() == "% of Merit"
+    row = panel._operand_previews.rows[0]
+    row.update(value=50.0, error="", state="current", share=42.0)
+    panel._queue_operand_rows([0])
+    panel._install_operand_rows()
+    assert panel.tblOperands.item(0, 6).text() == "42.00"
+    row.update(state="stale")
+    panel._queue_operand_rows([0])
+    panel._install_operand_rows()
+    assert panel.tblOperands.item(0, 6).text() == "—"
+    panel.close()
+
+
+def test_panel_selects_native_dls_by_default(qapp, owned_service):
     from optiland_gui.optimization_panel import OptimizationPanel
     from optiland_gui.services.optimization_jobs import DampedLeastSquares
 
     connector, _service = owned_service
     panel = OptimizationPanel(connector)
-    index = panel.cmbAlgorithm.findData(DampedLeastSquares)
-    assert index >= 0
-    panel.cmbAlgorithm.setCurrentIndex(index)
+    assert panel.cmbAlgorithm.currentData() is DampedLeastSquares
     assert set(panel._collect_optimizer_kwargs()) == {"maxiter", "tol", "scheme"}
-    assert panel._collect_default_merit_options() is None
-    panel.grpDefaultMerit.setChecked(True)
-    panel.cmbDefaultMeritKind.setCurrentText("wavefront")
-    assert panel._collect_default_merit_options() == {
-        "kind": "wavefront",
-        "reference": "centroid",
-        "rings": 3,
-        "arms": 6,
-    }
     panel.close()
 
 

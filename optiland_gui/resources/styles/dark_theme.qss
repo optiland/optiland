@@ -807,3 +807,29 @@ QCheckBox::indicator:disabled {
 QCheckBox::indicator:checked:disabled, QCheckBox::indicator:indeterminate:disabled {
     background-color: #474B52;
 }
+/* Radio indicators match the checkbox; the native one is invisible here. */
+QRadioButton::indicator {
+    width: 16px;
+    height: 16px;
+    border: 1px solid #9AA7B5;
+    border-radius: 9px;
+    background-color: #2E2E2E;
+}
+QRadioButton::indicator:checked {
+    border-color: #007ACC;
+    background-color: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
+        stop:0 #FFFFFF, stop:0.35 #FFFFFF, stop:0.45 #007ACC, stop:1 #007ACC);
+}
+QRadioButton::indicator:hover, QRadioButton::indicator:pressed {
+    border-color: #64B5F6;
+}
+QRadioButton:disabled {
+    color: #9AA0A8;
+}
+QRadioButton::indicator:disabled {
+    border-color: #9AA0A8;
+}
+QRadioButton::indicator:checked:disabled {
+    background-color: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
+        stop:0 #9AA0A8, stop:0.35 #9AA0A8, stop:0.45 #474B52, stop:1 #474B52);
+}
