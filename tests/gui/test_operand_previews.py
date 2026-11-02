@@ -97,7 +97,9 @@ def test_worker_matches_owned_reference_once_per_operand(minimal_optic, monkeypa
     result = prepare_operand_values(
         snapshot, parameters(definitions), lambda *a, **kw: None, threading.Event()
     )
-    assert len(calls) == 1
+    # Once for the row value. The merit for the shares adds the optimizer's
+    # own two: the default target (none was set) and the batched residual.
+    assert len(calls) == 3
     assert calls[0] is not minimal_optic
     assert result["rows"][0]["value"] == 12.5
     reference = snapshot.restore()
@@ -127,6 +129,26 @@ def test_worker_reports_each_error_and_continues(minimal_optic):
     assert "Select one positive wavelength" in result["rows"][1]["error"]
     assert result["rows"][2]["value"] == 50.0
     assert messages[-1]["details"]["rows"] == result["rows"]
+    # The merit is undefined while any operand fails.
+    assert all("share" not in row for row in result["rows"])
+
+
+def test_worker_reports_each_operands_share_of_the_merit(minimal_optic):
+    result = prepare_operand_values(
+        OpticSnapshot.capture(minimal_optic),
+        parameters(
+            [
+                {"type": "total_track", "target": 47.0, "weight": 1.0},
+                {"type": "total_track", "target": 50.0, "weight": 1.0},
+                {"type": "total_track", "target": 44.0, "weight": 0.5},
+            ]
+        ),
+        lambda *a, **kw: None,
+        threading.Event(),
+    )
+    # Residuals 3, 0 and 0.5 * 6 = 3: squared 9, 0 and 9.
+    shares = [row["share"] for row in result["rows"]]
+    assert shares == pytest.approx([50.0, 0.0, 50.0])
 
 
 def test_worker_cancels_between_rows_without_extra_evaluation(
@@ -402,6 +424,7 @@ def test_panel_keeps_selection_and_only_changes_value_cells(
             qapp, lambda: panel.tblOperands.item(1, 2).text() == "Error", timeout=25
         )
         assert "invalid" in panel.tblOperands.item(1, 2).toolTip()
+        assert panel.tblOperands.item(0, 6).text() == "—"
         assert "1 failed" in panel.lblOperandStatus.text()
         assert panel.tblOperands.item(0, 3) is target_item
         assert panel.tblOperands.currentRow() == 1
