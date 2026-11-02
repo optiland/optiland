@@ -65,6 +65,7 @@ if TYPE_CHECKING:
     from optiland.sequences.sequenced_optic import SequencedOptic
     from optiland.sequences.steps import RawStep
     from optiland.surfaces.standard_surface import Surface
+    from optiland.visualization.coloring import ComponentColorizer, RayColorizer
 
 
 class Optic:
@@ -640,6 +641,10 @@ class Optic:
         projection: Literal["XY", "XZ", "YZ"] = "YZ",
         ax: Axes | None = None,
         show: bool = True,
+        *,
+        component_colorizer: ComponentColorizer | None = None,
+        ray_colorizer: RayColorizer | None = None,
+        show_colorbar: bool = True,
     ) -> tuple[Figure, Axes]:
         """Draw a 2D representation of the optical system.
 
@@ -674,6 +679,13 @@ class Optic:
             show (bool, optional): If True (default), calls plt.show(). Set
                 False for headless use (e.g. saving to file, CI environments)
                 or when embedding in an existing figure via ``ax``.
+            component_colorizer (ComponentColorizer, optional): Strategy that
+                colors lens elements, mirrors and surfaces. Defaults to None,
+                which keeps the theme colors.
+            ray_colorizer (RayColorizer, optional): Strategy that colors rays.
+                Defaults to None, which keeps the default ray colors.
+            show_colorbar (bool, optional): If True (default), shows a colorbar
+                for each colorizer that provides a scale.
 
         Returns:
             tuple[Figure, Axes]: A tuple containing the matplotlib Figure and
@@ -698,6 +710,9 @@ class Optic:
             projection=projection,
             ax=ax,
             show=show,
+            component_colorizer=component_colorizer,
+            ray_colorizer=ray_colorizer,
+            show_colorbar=show_colorbar,
         )
         return fig, ax
 
@@ -711,6 +726,10 @@ class Optic:
         dark_mode: bool = False,
         reference: ReferenceRay | None = None,
         hide_vignetted: bool = False,
+        *,
+        component_colorizer: ComponentColorizer | None = None,
+        ray_colorizer: RayColorizer | None = None,
+        show_colorbar: bool = True,
     ):
         """Draw a 3D representation of the optical system.
 
@@ -732,6 +751,13 @@ class Optic:
                 plot, e.g., 'chief' or 'marginal'. Defaults to None.
             hide_vignetted (bool, optional): If True, rays that vignette at any
                 surface are not shown. Defaults to False.
+            component_colorizer (ComponentColorizer, optional): Strategy that
+                colors lens elements, mirrors and surfaces. Defaults to None,
+                which keeps the theme colors.
+            ray_colorizer (RayColorizer, optional): Strategy that colors rays.
+                Defaults to None, which keeps the default ray colors.
+            show_colorbar (bool, optional): If True (default), shows a colorbar
+                for each colorizer that provides a scale.
 
         """
         from optiland.visualization import OpticViewer3D
@@ -746,6 +772,9 @@ class Optic:
             dark_mode=dark_mode,
             reference=reference,
             hide_vignetted=hide_vignetted,
+            component_colorizer=component_colorizer,
+            ray_colorizer=ray_colorizer,
+            show_colorbar=show_colorbar,
         )
 
     def info(self):

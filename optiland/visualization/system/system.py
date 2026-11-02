@@ -11,12 +11,15 @@ import warnings
 from typing import TYPE_CHECKING
 
 import optiland.backend as be
+from optiland.visualization.coloring.components import ComponentRef
+from optiland.visualization.system.face_color import FaceColored
 from optiland.visualization.system.lens import Lens2D, Lens3D
 from optiland.visualization.system.mirror import Mirror2D, Mirror3D
 from optiland.visualization.system.surface import Surface2D, Surface3D
 from optiland.visualization.system.utils import transform
 
 if TYPE_CHECKING:
+    from optiland.visualization.coloring.components import ComponentColorizer
     from optiland.visualization.component_renderer import ComponentRenderer
 
 # Registry for user-defined ComponentRenderer extensions.
@@ -119,11 +122,24 @@ class OpticalSystem:
             )
         _CUSTOM_RENDERER_REGISTRY[component_type] = renderer
 
-    def plot(self, ax, theme=None, projection="YZ", show_apertures=True):
+    def plot(
+        self,
+        ax,
+        theme=None,
+        projection="YZ",
+        show_apertures=True,
+        *,
+        _component_colorizer: ComponentColorizer | None = None,
+    ):
         """Plots the components of the optical system on the given
         axis (or renderer for 3D plotting).
+
+        The private ``_component_colorizer`` is supplied by the viewers; without
+        it every component keeps its default color.
         """
         self._identify_components()
+        if _component_colorizer is not None:
+            self._apply_component_colors(_component_colorizer)
         artists = {}
         for component in self.components:
             component_artists = component.plot(ax, theme=theme, projection=projection)
@@ -185,6 +201,26 @@ class OpticalSystem:
         # add final lens, if any
         if lens_surfaces:
             self._add_component("lens", lens_surfaces)
+
+    def _apply_component_colors(self, colorizer: ComponentColorizer) -> None:
+        """Resolve each colorable component's colors with the colorizer."""
+        index_of = {id(surf): k for k, surf in enumerate(self.optic.surfaces)}
+        refs_by_component = {
+            component: [
+                ComponentRef(
+                    component.component_kind,
+                    tuple(index_of[id(surf)] for surf in element),
+                )
+                for element in component.element_surfaces()
+            ]
+            for component in self.components
+            if isinstance(component, FaceColored)
+        }
+        colorizer.prepare(
+            self.optic, [ref for refs in refs_by_component.values() for ref in refs]
+        )
+        for component, refs in refs_by_component.items():
+            component.face_colors = tuple(colorizer.color_for(ref) for ref in refs)
 
     def _add_mirror_component(
         self, surf, extent, lens_surfaces: list, backing_sign: float = 1.0
