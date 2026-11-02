@@ -149,9 +149,9 @@ class TestRoundTrip:
     @pytest.mark.parametrize(
         "lines,written",
         [
-            (("SPID 2 3 0",), {"SPID": [2, 3]}),
-            (("SPID 2 3 0", "OBDC 3 0"), {"SPID": [2, 3], "OBDC": [3, 0]}),
-            (("SPID 0.5 4 0", "OBDC -1 2"), {"SPID": [0.5, 4], "OBDC": [-1, 2]}),
+            (("SPID 2 3 0",), {"SPID": [2, 3, 0]}),
+            (("SPID 2 3 0", "OBDC 3 0"), {"SPID": [2, 3, 0], "OBDC": [3, 0]}),
+            (("SPID 0.5 4 0", "OBDC -1 2"), {"SPID": [0.5, 4, 0], "OBDC": [-1, 2]}),
         ],
     )
     def test_written_back(self, tmp_path, lines, written, set_test_backend):
@@ -162,7 +162,8 @@ class TestRoundTrip:
         for line in out.read_text(encoding="utf-8").splitlines():
             tokens = line.split()
             if tokens and tokens[0] in ("SPID", "OBDC", "CLAP", "OBSC"):
-                records[tokens[0]] = [float(t) for t in tokens[1:3]]
+                fields = tokens[1:4] if tokens[0] == "SPID" else tokens[1:3]
+                records[tokens[0]] = [float(t) for t in fields]
         assert records == written
         reloaded = load_zemax_file(str(out))
         before = optic.surfaces[2].aperture.to_dict()

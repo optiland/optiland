@@ -303,7 +303,8 @@ class ZemaxFileEncoder:
         obscuration = _obscuration(clap)
         shape = _shape(clap)
         if type(clap) is SpiderAperture:
-            lines.append(f"  SPID {_fmt(float(clap.width))} {clap.num_arms}")
+            # The last field is the pickup surface: 0, none, as OpticStudio writes it.
+            lines.append(f"  SPID {_fmt(float(clap.width))} {clap.num_arms} 0")
             _encode_offset(lines, (float(clap.offset_x), float(clap.offset_y)))
         elif shape is not None:
             keyword, x_half, y_half, offset = shape
