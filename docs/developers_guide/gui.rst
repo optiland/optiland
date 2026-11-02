@@ -22,6 +22,16 @@ Core Architecture
 
 The GUI's architecture revolves around a main window that hosts several dockable panels, each dedicated to a specific aspect of optical design or analysis. The `OptilandConnector` class serves as a crucial intermediary, linking these GUI components to the underlying `Optic` object from the Optiland backend.
 
+Command Palette Activation
+--------------------------
+
+The palette consumes Return and keypad Enter in event filters installed only
+on its search field and result list. This prevents a search field's
+``returnPressed`` signal and a propagated key event from executing the same
+command twice. Escape and Up/Down share that local routing; other keys remain
+with the focused Qt widget. Held Enter keys do not dispatch commands, and stale
+activation notifications are ignored once the palette starts closing.
+
 Key Components
 --------------
 
