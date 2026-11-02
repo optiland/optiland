@@ -1,219 +1,468 @@
-"""
-Provides a frameless window base class for the Optiland GUI.
+"""Frameless main-window gestures with native window-manager handoff.
 
-This module defines `FramelessWindow`, a QMainWindow subclass that implements
-custom window decorations, including a custom title bar and logic for resizing,
-moving, and snapping the window (AeroSnap-like behavior).
-
-Author: Manuel Fragata Mendes, 2025
-Refactored by: Jules, 2025
+Qt owns supported system moves/resizes. The fallback owns one captured gesture,
+uses logical coordinates, and respects the window's live layout constraints.
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QPoint, QRect, Qt
-from PySide6.QtWidgets import QApplication, QMainWindow
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt
+from PySide6.QtGui import QGuiApplication, QKeyEvent, QMouseEvent, QScreen
+from PySide6.QtWidgets import (
+    QAbstractButton,
+    QApplication,
+    QMainWindow,
+    QMenuBar,
+    QWidget,
+)
+
+_EDGES = {
+    "top_left": Qt.Edge.TopEdge | Qt.Edge.LeftEdge,
+    "top": Qt.Edge.TopEdge,
+    "top_right": Qt.Edge.TopEdge | Qt.Edge.RightEdge,
+    "left": Qt.Edge.LeftEdge,
+    "right": Qt.Edge.RightEdge,
+    "bottom_left": Qt.Edge.BottomEdge | Qt.Edge.LeftEdge,
+    "bottom": Qt.Edge.BottomEdge,
+    "bottom_right": Qt.Edge.BottomEdge | Qt.Edge.RightEdge,
+}
+_CURSORS = {
+    "top_left": Qt.CursorShape.SizeFDiagCursor,
+    "bottom_right": Qt.CursorShape.SizeFDiagCursor,
+    "top_right": Qt.CursorShape.SizeBDiagCursor,
+    "bottom_left": Qt.CursorShape.SizeBDiagCursor,
+    "top": Qt.CursorShape.SizeVerCursor,
+    "bottom": Qt.CursorShape.SizeVerCursor,
+    "left": Qt.CursorShape.SizeHorCursor,
+    "right": Qt.CursorShape.SizeHorCursor,
+}
 
 
 class FramelessWindow(QMainWindow):
-    """A base class for creating a frameless main window with custom controls.
-
-    This class handles the logic for moving, resizing, and snapping the window,
-    which is necessary when using the `Qt.FramelessWindowHint`. It also provides
-    hooks for a custom title bar.
-    """
+    """One gesture owner for the main frame, independent of panel docking."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
         self.setMouseTracking(True)
-
         self.grip_size = 8
+        self.custom_title_bar_widget = None
         self.is_resizing = False
         self.resize_area = None
         self.is_moving = False
         self.drag_position = QPoint()
         self.start_geometry = None
         self.start_pos = None
+        self._gesture = None
+        self._was_maximized = False
+        self._normal_geometry = None
+        self._restoring = False
+        self._observing_gesture = False
+        self._owns_mouse_grab = False
+        self._gesture_serial = 0
+        self._grips = {}
+        for area in _EDGES:
+            grip = QWidget(self)
+            grip.setObjectName(f"FrameGrip_{area}")
+            grip.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+            grip.setMouseTracking(True)
+            grip.setCursor(_CURSORS[area])
+            self._grips[area] = grip
 
-        # This attribute should be set by the subclass
-        self.custom_title_bar_widget = None
-
-    def mousePressEvent(self, event: QEvent):
-        """Handle mouse press events for window dragging and resizing."""
-        if event.button() == Qt.LeftButton:
-            cursor_pos = event.position().toPoint()
-            self.resize_area = self._get_resize_area(cursor_pos)
-
-            if self.resize_area:
-                self.is_resizing = True
-            elif self.custom_title_bar_widget:
-                titlebar_rect = self.custom_title_bar_widget.rect()
-                global_pos = self.custom_title_bar_widget.mapToGlobal(QPoint(0, 0))
-                window_pos = self.mapFromGlobal(global_pos)
-                titlebar_rect.moveTo(window_pos)
-
-                if titlebar_rect.contains(cursor_pos) and not self.isMaximized():
-                    self.is_moving = True
-                    self.drag_position = (
-                        event.globalPosition().toPoint()
-                        - self.frameGeometry().topLeft()
-                    )
-
-            self.start_geometry = self.geometry()
-            self.start_pos = event.globalPosition().toPoint()
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event: QEvent):
-        """Handle mouse move events for window dragging, resizing, and AeroSnap."""
-        cursor_pos = event.position().toPoint()
-        global_pos = event.globalPosition().toPoint()
-
-        self.updateCursorShape(cursor_pos)
-
-        if self.is_resizing and not self.isMaximized():
-            diff = global_pos - self.start_pos
-            new_geometry = QRect(self.start_geometry)
-
-            if self.resize_area in ["top_left", "top", "top_right"]:
-                new_geometry.setTop(self.start_geometry.top() + diff.y())
-            if self.resize_area in ["bottom_left", "bottom", "bottom_right"]:
-                new_geometry.setBottom(self.start_geometry.bottom() + diff.y())
-            if self.resize_area in ["top_left", "left", "bottom_left"]:
-                new_geometry.setLeft(self.start_geometry.left() + diff.x())
-            if self.resize_area in ["top_right", "right", "bottom_right"]:
-                new_geometry.setRight(self.start_geometry.right() + diff.x())
-
-            if (
-                new_geometry.width() >= self.minimumWidth()
-                and new_geometry.height() >= self.minimumHeight()
-            ):
-                self.setGeometry(new_geometry)
-
-        elif self.is_moving and not self.isMaximized():
-            self.move(global_pos - self.drag_position)
-
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event: QEvent):
-        """Handle mouse release events and implement AeroSnap actions."""
-        if event.button() == Qt.LeftButton:
-            if self.is_moving and not self.isMaximized():
-                screen = self.screen()
-                if not screen:
-                    screen = QApplication.primaryScreen()
-                screen_geometry = screen.availableGeometry()
-                global_pos = event.globalPosition().toPoint()
-
-                at_top_edge = global_pos.y() <= screen_geometry.top() + 5
-                at_left_edge = global_pos.x() <= screen_geometry.left() + 5
-                at_right_edge = global_pos.x() >= screen_geometry.right() - 5
-
-                if at_top_edge:
-                    self.showMaximized()
-                elif at_left_edge:
-                    self.showNormal()
-                    new_geometry = QRect(
-                        screen_geometry.left(),
-                        screen_geometry.top(),
-                        screen_geometry.width() // 2,
-                        screen_geometry.height(),
-                    )
-                    self.setGeometry(new_geometry)
-                elif at_right_edge:
-                    self.showNormal()
-                    new_geometry = QRect(
-                        screen_geometry.left() + screen_geometry.width() // 2,
-                        screen_geometry.top(),
-                        screen_geometry.width() // 2,
-                        screen_geometry.height(),
-                    )
-                    self.setGeometry(new_geometry)
-
-            self.is_moving = False
-            self.is_resizing = False
-            self.setCursor(Qt.ArrowCursor)
-        super().mouseReleaseEvent(event)
-
-    def _get_resize_area(self, pos: QPoint) -> str | None:
-        """Determines which resize area the mouse cursor is in."""
-        rect = self.rect()
-        grip = self.grip_size
-
-        if QRect(0, 0, grip, grip).contains(pos):
-            return "top_left"
-        if QRect(rect.width() - grip, 0, grip, grip).contains(pos):
-            return "top_right"
-        if QRect(0, rect.height() - grip, grip, grip).contains(pos):
-            return "bottom_left"
-        if QRect(rect.width() - grip, rect.height() - grip, grip, grip).contains(pos):
-            return "bottom_right"
-        if QRect(grip, 0, rect.width() - 2 * grip, grip).contains(pos):
-            return "top"
-        if QRect(0, grip, grip, rect.height() - 2 * grip).contains(pos):
-            return "left"
-        if QRect(rect.width() - grip, grip, grip, rect.height() - 2 * grip).contains(
-            pos
-        ):
-            return "right"
-        if QRect(grip, rect.height() - grip, rect.width() - 2 * grip, grip).contains(
-            pos
-        ):
-            return "bottom"
-        return None
-
-    def updateCursorShape(self, pos: QPoint):
-        """Update the cursor shape based on the mouse position."""
-        if self.isMaximized():
-            self.setCursor(Qt.ArrowCursor)
+    def _observe_gesture(self, enabled: bool) -> None:
+        """Observe application input only while Python owns a gesture."""
+        if enabled == self._observing_gesture:
             return
-
-        resize_area = self._get_resize_area(pos)
-
-        if resize_area in ("top_left", "bottom_right"):
-            self.setCursor(Qt.SizeFDiagCursor)
-        elif resize_area in ("top_right", "bottom_left"):
-            self.setCursor(Qt.SizeBDiagCursor)
-        elif resize_area in ("top", "bottom"):
-            self.setCursor(Qt.SizeVerCursor)
-        elif resize_area in ("left", "right"):
-            self.setCursor(Qt.SizeHorCursor)
+        self._observing_gesture = enabled
+        app = QApplication.instance()
+        if enabled:
+            app.installEventFilter(self)
         else:
-            self.setCursor(Qt.ArrowCursor)
+            app.removeEventFilter(self)
 
-    def keyPressEvent(self, event: QEvent):
-        """Handle key events for window management shortcuts."""
-        if event.modifiers() & Qt.ControlModifier:
-            screen = self.screen()
-            if not screen:
-                screen = QApplication.primaryScreen()
-            screen_geometry = screen.availableGeometry()
+    def event(self, event: QEvent) -> bool:
+        """Keep frame lifecycle local, including close overrides in subclasses."""
+        if hasattr(self, "_grips"):
+            kind = event.type()
+            if kind == QEvent.Type.ChildPolished:
+                child = event.child()
+                if isinstance(child, QWidget) and child not in self._grips.values():
+                    child.installEventFilter(self)
+            if (
+                kind
+                in (
+                    QEvent.Type.Close,
+                    QEvent.Type.Hide,
+                    QEvent.Type.WindowDeactivate,
+                    QEvent.Type.UngrabMouse,
+                    QEvent.Type.WindowStateChange,
+                )
+                and not self._restoring
+            ):
+                self._finish_gesture()
+            if kind in (
+                QEvent.Type.Show,
+                QEvent.Type.LayoutRequest,
+                QEvent.Type.WindowStateChange,
+            ):
+                self._update_grips()
+        return super().event(event)
 
-            if event.key() == Qt.Key_Left:
-                self.showNormal()
-                self.setGeometry(
-                    QRect(
-                        screen_geometry.left(),
-                        screen_geometry.top(),
-                        screen_geometry.width() // 2,
-                        screen_geometry.height(),
-                    )
-                )
-            elif event.key() == Qt.Key_Right:
-                self.showNormal()
-                self.setGeometry(
-                    QRect(
-                        screen_geometry.left() + screen_geometry.width() // 2,
-                        screen_geometry.top(),
-                        screen_geometry.width() // 2,
-                        screen_geometry.height(),
-                    )
-                )
-            elif event.key() == Qt.Key_Up:
-                self.showMaximized()
-            elif event.key() == Qt.Key_Down:
-                if self.isMaximized():
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        """Accept only frame-edge or title-background presses propagated to us."""
+        if event.button() == Qt.MouseButton.LeftButton and self._press(event):
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        """Toggle the main title once without intercepting dock or editor input."""
+        if event.button() == Qt.MouseButton.LeftButton and self._is_title_position(
+            self.mapFromGlobal(event.globalPosition().toPoint())
+        ):
+            self._finish_gesture()
+            self.custom_title_bar_widget.maximize_restore_requested.emit()
+            event.accept()
+        else:
+            super().mouseDoubleClickEvent(event)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        """Restore legacy window commands after focused widgets handle input."""
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier and event.key() in (
+            Qt.Key.Key_Left,
+            Qt.Key.Key_Right,
+            Qt.Key.Key_Up,
+            Qt.Key.Key_Down,
+        ):
+            if self._gesture in ("native_move", "native_resize"):
+                event.ignore()
+                return
+            self._finish_gesture(cancel=True)
+            screen = self.screen() or QGuiApplication.primaryScreen()
+            if screen is not None:
+                if event.key() in (Qt.Key.Key_Left, Qt.Key.Key_Right):
+                    self._place_on_side(screen, right=event.key() == Qt.Key.Key_Right)
+                elif event.key() == Qt.Key.Key_Up:
+                    self.showMaximized()
+                elif self.isMaximized():
                     self.showNormal()
                 else:
                     self.showMinimized()
-        super().keyPressEvent(event)
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
+    def _size_limits(self):
+        minimum = self.minimumSize().expandedTo(self.minimumSizeHint())
+        maximum = self.maximumSize()
+        # A contradictory layout hint must not override an explicit maximum.
+        minimum.setWidth(min(minimum.width(), maximum.width()))
+        minimum.setHeight(min(minimum.height(), maximum.height()))
+        return minimum, maximum
+
+    def _area_rects(self):
+        grip, width, height = self.grip_size, self.width(), self.height()
+        return {
+            "top_left": QRect(0, 0, grip, grip),
+            "top": QRect(grip, 0, max(0, width - 2 * grip), grip),
+            "top_right": QRect(width - grip, 0, grip, grip),
+            "left": QRect(0, grip, grip, max(0, height - 2 * grip)),
+            "right": QRect(width - grip, grip, grip, max(0, height - 2 * grip)),
+            "bottom_left": QRect(0, height - grip, grip, grip),
+            "bottom": QRect(grip, height - grip, max(0, width - 2 * grip), grip),
+            "bottom_right": QRect(width - grip, height - grip, grip, grip),
+        }
+
+    def _resize_edges(self, area):
+        if self.isMaximized() or self.isFullScreen():
+            return Qt.Edge(0)
+        edges = _EDGES[area]
+        minimum, maximum = self._size_limits()
+        if minimum.width() >= maximum.width():
+            edges &= ~(Qt.Edge.LeftEdge | Qt.Edge.RightEdge)
+        if minimum.height() >= maximum.height():
+            edges &= ~(Qt.Edge.TopEdge | Qt.Edge.BottomEdge)
+        return edges
+
+    def _update_grips(self):
+        for area, rectangle in self._area_rects().items():
+            grip = self._grips[area]
+            grip.setGeometry(rectangle)
+            edges = self._resize_edges(area)
+            grip.setVisible(bool(edges))
+            if edges:
+                actual_area = next(
+                    key for key, value in _EDGES.items() if value == edges
+                )
+                grip.setCursor(_CURSORS[actual_area])
+                grip.raise_()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "_grips"):
+            self._update_grips()
+
+    def _get_resize_area(self, pos: QPoint) -> str | None:
+        for area, rectangle in self._area_rects().items():
+            if rectangle.contains(pos):
+                edges = self._resize_edges(area)
+                return next(
+                    (key for key, value in _EDGES.items() if value == edges), None
+                )
+        return None
+
+    def updateCursorShape(self, pos: QPoint):
+        """Keep the public frame cursor helper aligned with enabled grips."""
+        self.setCursor(
+            _CURSORS.get(self._get_resize_area(pos), Qt.CursorShape.ArrowCursor)
+        )
+
+    def _is_title_position(self, pos):
+        title = self.custom_title_bar_widget
+        if title is None or not title.isVisible():
+            return False
+        local = title.mapFrom(self, pos)
+        if not title.rect().contains(local):
+            return False
+        child = self.childAt(pos)
+        while child is not None and child is not title:
+            if (
+                isinstance(child, (QAbstractButton, QMenuBar))
+                or child.focusPolicy() != Qt.FocusPolicy.NoFocus
+            ):
+                return False
+            child = child.parentWidget()
+        return child is title
+
+    def _start_system_move(self):
+        handle = self.windowHandle()
+        return handle is not None and handle.startSystemMove()
+
+    def _start_system_resize(self, edges):
+        handle = self.windowHandle()
+        return handle is not None and handle.startSystemResize(edges)
+
+    def _finish_gesture(self, *, cancel=False):
+        previous = self._gesture
+        original = self.start_geometry
+        maximized = self._was_maximized
+        normal = self._normal_geometry
+        self._gesture = None
+        self._gesture_serial += 1
+        self._observe_gesture(False)
+        self.start_pos = None
+        self.start_geometry = None
+        self._normal_geometry = None
+        self.resize_area = None
+        self.is_moving = False
+        self.is_resizing = False
+        captured = self._owns_mouse_grab
+        self._owns_mouse_grab = False
+        if captured and QWidget.mouseGrabber() is self:
+            self.releaseMouse()
+        self.unsetCursor()
+        if cancel and previous in ("move", "resize"):
+            if maximized:
+                self.setGeometry(normal)
+                self.showMaximized()
+            else:
+                self.setGeometry(original)
+
+    def _press(self, event):
+        if not self.isVisible() or self.isFullScreen():
+            return False
+        pos = self.mapFromGlobal(event.globalPosition().toPoint())
+        area = self._get_resize_area(pos)
+        if area is None and not self._is_title_position(pos):
+            return False
+        self._finish_gesture()
+        self.start_pos = event.globalPosition().toPoint()
+        self.start_geometry = self.geometry()
+        self._was_maximized = self.isMaximized()
+        self._normal_geometry = self.normalGeometry() if self._was_maximized else None
+        self.drag_position = self.start_pos - self.pos()
+        if area:
+            self.resize_area = area
+            self.is_resizing = True
+            self._handoff("resize")
+        else:
+            self._gesture = "pending_move"
+            self._observe_gesture(True)
+        return True
+
+    def _handoff(self, operation: str) -> None:
+        """Retire local tracking on native acceptance; capture only on refusal."""
+        self._gesture = f"native_{operation}"
+        serial = self._gesture_serial
+        self._observe_gesture(False)
+        accepted = (
+            self._start_system_move()
+            if operation == "move"
+            else self._start_system_resize(_EDGES[self.resize_area])
+        )
+        if serial != self._gesture_serial:
+            return
+        if accepted:
+            self._finish_gesture()
+        else:
+            self._gesture = operation
+            self._observe_gesture(True)
+            if operation == "resize":
+                self.setCursor(_CURSORS[self.resize_area])
+            self._owns_mouse_grab = True
+            self.grabMouse()
+
+    def _begin_move(self, global_pos):
+        if self._was_maximized:
+            ratio = self.drag_position.x() / max(1, self.width())
+            vertical_offset = self.drag_position.y()
+            normal = self._normal_geometry
+            self._restoring = True
+            self.showNormal()
+            self.setGeometry(normal)
+            self.drag_position = QPoint(round(ratio * self.width()), vertical_offset)
+            self.move(global_pos - self.drag_position)
+            self._restoring = False
+        self.is_moving = True
+        self._handoff("move")
+
+    def _resize_fallback(self, global_pos):
+        difference = global_pos - self.start_pos
+        rectangle = QRect(self.start_geometry)
+        edges = _EDGES[self.resize_area]
+        minimum, maximum = self._size_limits()
+        if edges & (Qt.Edge.LeftEdge | Qt.Edge.RightEdge):
+            direction = -1 if edges & Qt.Edge.LeftEdge else 1
+            width = max(
+                minimum.width(),
+                min(maximum.width(), rectangle.width() + direction * difference.x()),
+            )
+            rectangle.setWidth(width)
+            if edges & Qt.Edge.LeftEdge:
+                rectangle.moveRight(self.start_geometry.right())
+        if edges & (Qt.Edge.TopEdge | Qt.Edge.BottomEdge):
+            direction = -1 if edges & Qt.Edge.TopEdge else 1
+            height = max(
+                minimum.height(),
+                min(maximum.height(), rectangle.height() + direction * difference.y()),
+            )
+            rectangle.setHeight(height)
+            if edges & Qt.Edge.TopEdge:
+                rectangle.moveBottom(self.start_geometry.bottom())
+        self.setGeometry(rectangle)
+
+    def _snap_fallback(self, global_pos):
+        screen = (
+            QGuiApplication.screenAt(global_pos)
+            or self.screen()
+            or QGuiApplication.primaryScreen()
+        )
+        if screen is None:
+            return
+        available = screen.availableGeometry()
+        if abs(global_pos.y() - available.top()) <= 5:
+            if screen is not self.screen():
+                self.setScreen(screen)
+                # Selecting a virtual-desktop screen does not move the window.
+                # Keep the normal size, with its center on the pointer's screen.
+                self.move(available.center() - self.rect().center())
+            self.showMaximized()
+        elif (
+            abs(global_pos.x() - available.left()) <= 5
+            or abs(global_pos.x() - available.right()) <= 5
+        ):
+            self._place_on_side(
+                screen, right=abs(global_pos.x() - available.left()) > 5
+            )
+
+    def _place_on_side(self, screen: QScreen, *, right: bool) -> None:
+        """Use the same constrained available-area placement for keys and drags."""
+        self.showNormal()
+        available = screen.availableGeometry()
+        minimum, maximum = self._size_limits()
+        half = (
+            available.width() - available.width() // 2
+            if right
+            else available.width() // 2
+        )
+        width = max(minimum.width(), min(maximum.width(), half))
+        height = max(minimum.height(), min(maximum.height(), available.height()))
+        x = available.right() - width + 1 if right else available.left()
+        self.setGeometry(x, available.top(), width, height)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        """Watch direct-child stacking locally and captured input temporarily."""
+        if not isinstance(watched, QWidget):
+            return False
+        kind = event.type()
+        if (
+            watched not in self._grips.values()
+            and watched.parent() is self
+            and kind
+            in (
+                QEvent.Type.Show,
+                QEvent.Type.LayoutRequest,
+                QEvent.Type.ZOrderChange,
+            )
+        ):
+            self._update_grips()
+        if kind == QEvent.Type.ParentChange and watched.parent() is not self:
+            watched.removeEventFilter(self)
+        if not self._observing_gesture:
+            return False
+        belongs = watched.window() is self
+        if (
+            self._gesture
+            and not belongs
+            and kind
+            in (
+                QEvent.Type.MouseButtonPress,
+                QEvent.Type.MouseButtonDblClick,
+                QEvent.Type.MouseMove,
+                QEvent.Type.MouseButtonRelease,
+                QEvent.Type.KeyPress,
+                QEvent.Type.KeyRelease,
+            )
+        ):
+            # Captured frame input targets this window. Foreign input means
+            # ownership ended; leave its delivery and geometry untouched.
+            self._finish_gesture()
+            return False
+        if (
+            self._gesture
+            and kind == QEvent.Type.KeyPress
+            and event.key() == Qt.Key.Key_Escape
+        ):
+            self._finish_gesture(cancel=True)
+            return True
+        if kind in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick):
+            # Let the actual receiver decide whether this is a new frame gesture.
+            self._finish_gesture()
+        elif kind == QEvent.Type.MouseMove and self._gesture:
+            if not event.buttons() & Qt.MouseButton.LeftButton:
+                self._finish_gesture()
+                return False
+            global_pos = event.globalPosition().toPoint()
+            if self._gesture == "pending_move":
+                if (
+                    global_pos - self.start_pos
+                ).manhattanLength() < QApplication.startDragDistance():
+                    return True
+                self._begin_move(global_pos)
+            if self._gesture == "resize":
+                self._resize_fallback(global_pos)
+            elif self._gesture == "move":
+                self.move(global_pos - self.drag_position)
+            return self._gesture in ("pending_move", "move", "resize")
+        elif (
+            kind == QEvent.Type.MouseButtonRelease
+            and self._gesture
+            and event.button() == Qt.MouseButton.LeftButton
+        ):
+            snap = self._gesture == "move"
+            global_pos = event.globalPosition().toPoint()
+            self._finish_gesture()
+            if snap:
+                self._snap_fallback(global_pos)
+            return True
+        return False
