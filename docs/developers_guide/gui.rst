@@ -17,6 +17,21 @@ Key Technologies
 *   **Matplotlib**: Used for 2D plotting in various panels (e.g., 2D system view, analysis plots).
 *   **VTK (Visualization Toolkit)**: Used for 3D rendering of optical systems in the ViewerPanel. (Optional, GUI can run without it).
 
+Python 3.11 Binding Constraint
+------------------------------
+
+Install the GUI through the ``optiland[gui]`` extra. On Python 3.11 it selects
+PySide6 below 6.12: the 6.12.0 wheels can corrupt references to Python's
+``None`` and ``True`` singletons, causing an abort during use or interpreter
+shutdown even with a plain Qt widget. This is a binding defect, not a dock
+cleanup error (see `PYSIDE-3474 <https://qt-project.atlassian.net/browse/PYSIDE-3474>`_).
+Python 3.12 and newer retain the unrestricted binding requirement.
+
+Existing Python 3.11 environments can reinstall the GUI extra to resolve a
+compatible binding. Reassess the upper bound when corrected wheels are
+available, using ``tests/gui/test_qt_shutdown.py`` on Python 3.11; that regression
+checks a child interpreter's exit status as well as normal Qt calls.
+
 Core Architecture
 -----------------
 
