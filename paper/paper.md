@@ -41,7 +41,7 @@ Further documentation is available online [@optiland-docs].
 
 # Statement of Need
 
-Optiland addresses the need for a comprehensive open-source optical design package that unifies traditional lens design with modern, differentiable workflows. It enables a wide range of optical design, analysis, and optimization tasks that previously required costly commercial software, serving a target audience of students, educators, and researchers. By offering a fully differentiable PyTorch backend, Optiland enables computational optics research where optical systems can be embedded directly into neural networks. This capability is essential for emerging fields such as end-to-end optimization of optical systems and learned inverse design. The PyTorch backend also provides substantial performance improvements through GPU acceleration. By leveraging modern hardware, workloads that would otherwise take minutes or hours on CPUs can be reduced to seconds on GPUs.
+Optiland addresses the need for a comprehensive open-source optical design package that unifies traditional lens design with modern, differentiable workflows. It enables a wide range of optical design, analysis, and optimization tasks that previously required costly commercial software, serving a target audience of students, educators, and researchers. By offering a fully differentiable PyTorch backend, Optiland enables computational optics research where optical systems can be embedded directly into neural networks. This capability is essential for emerging fields such as end-to-end optimization of optical systems and learned inverse design. The PyTorch backend also enables GPU acceleration of ray tracing (see Performance and benchmarking).
 
 # State of the Field
 
@@ -94,7 +94,6 @@ As different numerical precisions can in principle affect ray accuracy, we also 
 Optiland bridges the gap between optical engineering and machine learning, enabling research that was previously difficult or computationally prohibitive in open-source environments.
 
 * **Realized Impact:** Optiland is currently used as the optical computation engine for [Visisipy](https://github.com/MReye-LUMC/visisipy) [@haasjes2026visisipy], a Python library for simulating visual optics developed by the MReye group at Leiden University Medical Center. This integration demonstrates Optiland's reliability in handling real-world biomedical optical simulations.
-* **Performance Significance:** As demonstrated in our benchmarks, the GPU-accelerated backend achieves a **100x speedup** over standard NumPy implementations. This throughput gain makes large-scale optical simulations and gradient-based optimization feasible on consumer hardware.
 * **Community Readiness:** Optiland is released with a comprehensive suite of analysis tools, a verified material database [@polyanskiy2024], extensive documentation, and unit tests, ensuring it is ready for immediate adoption by the research community.
 
 # Figures
