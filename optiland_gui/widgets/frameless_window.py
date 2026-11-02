@@ -6,7 +6,7 @@ uses logical coordinates, and respects the window's live layout constraints.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, QTimer
 from PySide6.QtGui import QGuiApplication, QKeyEvent, QMouseEvent, QScreen
 from PySide6.QtWidgets import (
     QAbstractButton,
@@ -60,6 +60,9 @@ class FramelessWindow(QMainWindow):
         self._observing_gesture = False
         self._owns_mouse_grab = False
         self._gesture_serial = 0
+        self._grip_stack_update = QTimer(self)
+        self._grip_stack_update.setSingleShot(True)
+        self._grip_stack_update.timeout.connect(self._update_grips)
         self._grips = {}
         for area in _EDGES:
             grip = QWidget(self)
@@ -405,7 +408,12 @@ class FramelessWindow(QMainWindow):
                 QEvent.Type.ZOrderChange,
             )
         ):
-            self._update_grips()
+            if kind == QEvent.Type.ZOrderChange:
+                # QDockWidget must see itself on top while handling this event
+                # to activate its tab. Restack grips after native dispatch.
+                self._grip_stack_update.start(0)
+            else:
+                self._update_grips()
         if kind == QEvent.Type.ParentChange and watched.parent() is not self:
             watched.removeEventFilter(self)
         if not self._observing_gesture:
