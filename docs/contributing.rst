@@ -13,13 +13,20 @@ How to Contribute
 -----------------
 
 1. **Start with an issue for anything non-trivial.** For new features, behavior changes, or anything larger than roughly 100 lines, check whether there's already an open issue. If not, please open one first so scope can be agreed before you write code. This also helps others know what's in progress and avoids duplicating effort. Typo fixes, documentation tweaks, and small obvious bug fixes can go straight to a pull request.
-2. **Let others know you're working on it.** If you'd like to work on an issue, leave a comment to say so. You can also request to be assigned, but this is optional — the goal is just to keep communication open.
+2. **Claim the issue before you start.** Comment on the issue to say you'd like to work on it. A maintainer will usually assign it to you. If nobody else has claimed it and you haven't heard back within 3 days, go ahead: your comment counts as the claim. Claims with no visible progress for 30 days may be released to others. Pull requests for an issue someone else already claimed may be closed. This keeps two people from solving the same issue and gives us a chance to point you at the right approach early.
 3. **Fork** the repository on GitHub.
 4. **Clone** your forked repository locally.
 5. **Create** a new branch for your feature or bugfix.
 6. **Commit** your changes with clear commit messages.
 7. **Push** your changes to your fork.
 8. **Open** a pull request with a detailed description of your changes.
+
+Finding Something to Work On
+----------------------------
+
+Issues labeled `good first issue <https://github.com/optiland/optiland/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22>`_ are well scoped and a good way to learn the codebase. Issues labeled `help wanted <https://github.com/optiland/optiland/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22>`_ are larger or need more domain knowledge. Each one states its scope, acceptance criteria, and what is out of scope; please stay within them. If something in an issue is unclear, ask in the issue before writing code.
+
+To find modules that need more tests, browse the coverage report on `Codecov <https://app.codecov.io/gh/optiland/optiland>`_.
 
 
 Pull Request Expectations
@@ -42,6 +49,8 @@ AI tools are welcome here. The standard is the same as for any contribution, and
 - **Write the description and answer review comments yourself,** in your own words. Please don't paste unedited model output.
 - **Disclose substantial AI assistance** using the checkbox in the pull request template. Disclosure is never held against you.
 - **Agents act for a person.** If an autonomous agent opens a PR, the human operator must have reviewed the whole diff first. Unattended bulk submissions will be closed.
+
+- **Give your agent the project context.** ``agents.md`` in the repository root describes the conventions coding agents should follow. Point your tool at it, together with the issue you are working on.
 
 PRs that appear unreviewed (for example unrelated edits, invented APIs, tests that assert nothing, or a boilerplate description) may be closed without a detailed review. You're welcome to resubmit once these are addressed.
 
@@ -91,7 +100,7 @@ Task Workflow and Coordination
 We use a lightweight workflow to help contributors collaborate smoothly and avoid duplicated effort:
 
 - **Each task should have an issue** on GitHub. If you're working on something new, check for an existing issue or `open a new one <https://github.com/optiland/optiland/issues>`_. This keeps the project transparent and easier to coordinate.
-- **Leave a comment on the issue** if you plan to work on it. Optionally, you can be assigned the issue to make your involvement visible.
+- **Leave a comment on the issue** if you plan to work on it, so others know it is claimed.
 - **Progress is tracked using GitHub Projects (kanban).** Issues are moved across columns such as "To Do", "In Progress", and "In Review". You can view the board here: `Optiland GitHub Project <https://github.com/users/HarrisonKramer/projects/1>`_. If you don’t have permission to move cards, maintainers will update them based on issue comments.
 - **Milestones help plan releases.** Larger features and grouped improvements may be linked to a milestone. If you're contributing to a milestone, try to complete the work in time — but there's no strict deadline.
 
