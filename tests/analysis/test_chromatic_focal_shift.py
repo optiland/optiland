@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
@@ -74,7 +76,9 @@ def test_singlet_f_to_c_matches_thin_lens(set_test_backend):
     shift_f, shift_c = be.to_numpy(shift[0]), be.to_numpy(shift[2])
 
     m = nbk7()
-    n_f, n_d, n_c = (float(be.to_numpy(m.n(w))) for w in (F_LINE, D_LINE, C_LINE))
+    n_f, n_d, n_c = (
+        float(be.to_numpy(m.n(w)).item()) for w in (F_LINE, D_LINE, C_LINE)
+    )
     abbe = (n_d - 1) / (n_f - n_c)
     f = 1 / ((n_d - 1) * (1 / R1 - 1 / R2))
 
@@ -191,4 +195,12 @@ def test_view_on_existing_figure(set_test_backend):
     fig, ax = cfs.view(fig_to_plot_on=existing)
     assert fig is existing
     assert ax in fig.axes
+    plt.close(fig)
+
+
+@patch("matplotlib.pyplot.show")
+def test_view_shows_by_default(mock_show, set_test_backend):
+    cfs = ChromaticFocalShift(CookeTriplet())
+    fig, _ = cfs.view()
+    mock_show.assert_called_once()
     plt.close(fig)
