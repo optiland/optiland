@@ -11,6 +11,7 @@ encircled energy, field curvature, distortion, etc.
    :caption: Analysis Modules
 
    analysis.angle_vs_height
+   analysis.chromatic_focal_shift
    analysis.distortion
    analysis.encircled_energy
    analysis.field_curvature

@@ -10,6 +10,7 @@ This section contains examples of typical analysis tasks that can be performed w
     analysis/ray_fan
     analysis/ray_fan_best_fit
     analysis/field_curvature
+    analysis/chromatic_focal_shift
     analysis/distortion
     analysis/grid_distortion
     analysis/encircled_energy
