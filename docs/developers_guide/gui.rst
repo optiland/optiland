@@ -174,6 +174,18 @@ Key Widgets
         native console/VTK widgets on Windows, this flag creates a layered native
         child window whose mouse hit testing can select the underlying console.
 
+Dock Activation and Frame Grips
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Activate a dock with its normal ``show()`` and ``raise_()`` methods. Qt owns
+selection within tabified dock groups; do not identify tabs by translated titles
+or manipulate internal tab indices. ``FramelessWindow`` observes direct-child
+stacking locally, but defers grip restacking until after ``ZOrderChange`` reaches
+the dock. Raising grips inside that event filter would prevent Qt from recognizing
+the requested dock as the topmost child. A window-owned single-shot timer coalesces
+restacking requests and is destroyed with the frame; no permanent application
+filter or polling loop is needed.
+
 Styling and Resources
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
