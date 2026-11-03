@@ -48,6 +48,7 @@ New to Optiland? Start with :ref:`start_here` to find the path that fits your go
    Tutorial 3d: Optimization Case Study: Cooke Triplet <examples/Tutorial_3d_Optimization_Case_Study_Cooke_Triplet>
    Tutorial 3e: Glass Expert Categorical Optimization <examples/Tutorial_3e_Glass_Expert_Categorical_Optimization>
    Tutorial 3f: Constrained Optimization with the Default Merit <examples/Tutorial_3f_Constrained_Default_Merit>
+  Tutorial 3g: Model Glass and Continuous Nd/Vd Optimization <examples/Tutorial_3g_Model_Glass_Nd_Vd_Optimization>
 
 
 4. Off-Axis & Complex Systems
