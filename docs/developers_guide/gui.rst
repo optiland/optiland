@@ -214,6 +214,111 @@ an explicit accessible name and tooltip. It follows the local foreground
 palette and provides native-size pixmaps for standard and HiDPI displays.
 Qt owns the finished icon; no Python icon-engine lifetime is exposed to Qt.
 
+.. _gui-atomic-output:
+
+Background saves and atomic publication
+---------------------------------------
+
+The GUI output service separates preparing bytes from publishing a completed
+file. ``services.output_tasks.prepare_output`` writes an exclusively created
+sibling staging file and returns its identity and content digest. After the
+coordinator accepts publication, ``publish_output`` checks that receipt and
+calls ``os.replace``. Preparation leaves the existing destination untouched;
+the replacement publishes the completed file without exposing a partially
+copied destination. This contract applies to the background GUI save/export
+workflow, not to every path-based core writer.
+
+Why stage beside the destination?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Atomic rename/replacement requires source and destination to be on the same
+filesystem. A system temporary directory such as ``/tmp`` may be a separate
+mount, an in-memory filesystem, or on a different volume from the design file.
+Linux rejects a cross-filesystem rename with ``EXDEV``. Staging beside the
+destination avoids that boundary; using ``shutil.move`` as a substitute could
+turn the operation into a copy followed by deletion and lose atomicity.
+
+Even if a temporary directory happens to share the destination filesystem,
+replacing the destination still changes its directory entry. On Linux this
+requires write and search permissions on the relevant directories; write
+permission on the existing file alone is not sufficient. Other platforms have
+their own ACL, sharing and replacement rules. Choosing a different staging
+directory does not bypass the permissions required to publish the replacement.
+
+Writing into the existing file is a different operation. On Linux, an existing
+file can be writable even when its directory permits traversal but not creating
+or replacing entries. Preparing output in ``/tmp`` and then copying it into
+that file can support this case. However, opening it for overwrite can truncate
+the old contents, and an interrupted copy, full disk or other write error can
+leave only part of the new contents. Finishing serialization before the copy
+does not make the copy atomic or provide rollback.
+
+For that reason the GUI does not silently fall back to an in-place write. It
+reports the failure and keeps the document available for **Save As** or export
+to a writable location. Cancellation may discard preparation, but accepted
+publication is non-cancellable. Atomic replacement describes visibility of the
+file change; it is not by itself a power-loss durability guarantee. The current
+implementation does not explicitly synchronize file contents and the containing
+directory to durable storage.
+
+The temporary-file API and its location are separate choices. Python's
+``tempfile`` APIs accept a ``dir`` argument, so using a standard temporary-file
+helper would not require using the system temporary directory. The current
+worker reserves its operation-specific path with exclusive creation and tracks
+ownership for subsequent cleanup. Replacement also affects symlinks and file
+metadata as described in :doc:`../gui_quickstart`.
+
+See the `Linux rename documentation
+<https://man7.org/linux/man-pages/man2/rename.2.html>`_,
+`Python os.replace documentation
+<https://docs.python.org/3/library/os.html#os.replace>`_ and
+`Python temporary-file documentation
+<https://docs.python.org/3/library/tempfile.html>`_ for the underlying contracts.
+
+Could QSaveFile replace the staging implementation?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Yes, at the file-transaction layer. ``PySide6.QtCore.QSaveFile`` owns temporary
+output, remembers write errors, discards uncommitted output during normal
+cleanup, and publishes it through ``commit()``. Its default direct-write
+fallback is disabled. Keeping ``setDirectWriteFallback(False)`` would preserve
+the decision to fail when atomic publication is unavailable. It uses sibling
+staging too, so it does not remove filesystem or directory-permission limits.
+
+Qt documents an optional direct-write fallback for editable files in restricted
+directories, but that mode sacrifices atomicity and makes ``cancelWriting()``
+ineffective. Enabling it would be an explicit product-policy change, not an
+implementation-equivalent replacement. See `QSaveFile
+<https://doc.qt.io/qt-6/qsavefile.html>`_.
+
+Adopting it still requires integration work:
+
+* File I/O remains synchronous. Create, write and commit the object in a worker,
+  rather than moving these operations onto the GUI thread.
+* Keep document snapshot ownership, same-destination save ordering, cancellation
+  boundaries, and the checks that prevent older saves marking newer edits clean.
+  Qt's file transaction does not know those application rules.
+* The current protocol finishes preparation and later submits a separate
+  publication job using a path, identity and digest. A live ``QSaveFile`` is
+  process-local state, not that transferable receipt. Retaining it in a worker
+  across the two phases would need explicit lifetime, abort and shutdown rules.
+  A worker dying after commit but before acknowledgement still leaves an outcome
+  that the coordinator must reconcile.
+* Native JSON can be encoded into bytes and written to the Qt device. The
+  existing Zemax and CODE V save functions instead take paths and open their
+  own files. ``QSaveFile.fileName()`` reports the destination, not a staging path
+  to hand to those functions. Direct device output therefore needs an adapter
+  or a separate core change exposing encoded output or a writable stream.
+  Copying an existing staged export through ``QSaveFile`` is possible but adds
+  another temporary file and copy.
+
+``QSaveFile`` is consequently a candidate for simplifying low-level file
+handling, not a replacement for the output coordinator. A refactor should
+preserve the existing ordering, failure, cancellation and uncertain-outcome
+tests, and explicitly compare symlink and metadata behavior before changing
+the documented contract. This guide describes that option; the current worker
+still uses sibling files and ``os.replace``.
+
 Contributing to the GUI
 -----------------------
 

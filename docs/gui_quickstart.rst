@@ -184,6 +184,14 @@ being prepared. It also has these filesystem requirements and effects:
   rules). Check or reapply any required file-specific permissions after saving
   or exporting.
 
+Staging beside the destination keeps both files on the same filesystem, which
+atomic replacement requires. A system temporary directory such as ``/tmp`` may
+be on another filesystem. Copying the completed output back into the existing
+file would avoid replacing its directory entry, but an interrupted copy could
+leave that file incomplete. Moving the temporary file elsewhere also does not
+remove the directory permissions needed for replacement. See
+:ref:`gui-atomic-output` for the implementation reasoning and alternatives.
+
 Notifications
 -------------
 
