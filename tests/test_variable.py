@@ -274,6 +274,28 @@ class TestIndexVariable:
         assert str(self.index_var) == "Refractive Index, Surface 1"
 
 
+class TestAbbeVariable:
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.optic = Objective60x()
+        self.abbe_var = variable.AbbeVariable(self.optic, 1)
+
+    def test_get_value(self, set_test_backend):
+        assert_allclose(self.abbe_var.get_value(), 84.4679939349711)
+
+    def test_update_value(self, set_test_backend):
+        self.abbe_var.update_value(50.0)
+        assert_allclose(self.abbe_var.get_value(), 50.0)
+
+    def test_update_value_preserves_index(self, set_test_backend):
+        nd = self.optic.surfaces.n(0.5875618)[1]
+        self.abbe_var.update_value(50.0)
+        assert_allclose(self.optic.surfaces.n(0.5875618)[1], nd, rtol=0, atol=1e-12)
+
+    def test_string_representation(self, set_test_backend):
+        assert str(self.abbe_var) == "Abbe Number, Surface 1"
+
+
 class TestMaterialVariable:
     @pytest.fixture(autouse=True)
     def setup(self):

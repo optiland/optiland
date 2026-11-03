@@ -777,6 +777,28 @@ class Optic:
             wavelength = self.primary_wavelength
 
         return self.surfaces.n(wavelength)
+    
+    @deprecated("optic.surfaces.abbe()")
+    def abbe(self) -> BEArray:
+        '''
+        Get the Abbe numbers of materials.
+        
+        Returns:
+            be.ndarray: An array of Abbe numbers for each surface.
+        '''                    
+        return self.surfaces.abbe()
+
+    @deprecated("optic.surfaces.dPgF()")
+    def dPgF(self) -> BEArray:
+        '''
+        Get the dPgF values of materials, which is defined as:
+        
+        dPgF = (n_g - n_F) / (n_F - n_C) - (0.6438 - 0.001682 Vd)
+        
+        Returns:
+            be.ndarray: An array of dPgF values for each surface.
+        '''
+        return self.surfaces.dPgF()
 
     def trace(
         self,

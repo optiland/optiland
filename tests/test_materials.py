@@ -589,6 +589,114 @@ class TestAbbeMaterial:
         lens.trace(Hx=0, Hy=0, wavelength=0.55)
 
 
+class TestModelMaterial:
+    """Tests for the catalogue-glass -> model-glass conversion.
+
+    ``Optic.set_index`` (with ``wavelength=None``) rebuilds the surface material
+    as a ``ModelMaterial`` from the Nd, Vd and dPgF of the current glass. The
+    conversion must keep those three descriptors within a tight tolerance and
+    must not couple them: changing only Nd or only Vd has to leave the other
+    descriptors - and the IR-anchor metadata - untouched.
+    """
+
+    GLASS_NAMES = ("N-BK7", "N-SF11", "N-LAK22")
+    D_LINE = 0.5875618
+
+    @staticmethod
+    def _as_float(value):
+        """Reduce a backend scalar/array to a float, detaching torch tensors."""
+        return np.ravel(be.to_numpy(value)).item()
+
+    @classmethod
+    def _glass_descriptors(cls, lens, surface=1):
+        """Read Nd, Vd and dPgF of the material currently on ``surface``."""
+        material = lens.surfaces[surface].material_post
+        return {
+            "nd": cls._as_float(material.n(cls.D_LINE)),
+            "vd": cls._as_float(material.abbe()),
+            "dPgF": cls._as_float(material.dPgF()),
+        }
+
+    @staticmethod
+    def _model(lens, surface=1):
+        """Return the model glass on ``surface``, asserting the conversion ran."""
+        material = lens.surfaces[surface].material_post
+        assert isinstance(material, materials.ModelMaterial)
+        return material
+
+    @classmethod
+    def _model_parameters(cls, lens, surface=1):
+        """Read the explicit descriptor attributes of the model glass."""
+        material = cls._model(lens, surface)
+        return {
+            "nd": float(material.nd),
+            "vd": float(material.vd),
+            "dPgF": float(material.dPgf),
+            "P_ref": material.p_ref,
+            "lambda_ref": material.lambda_ref,
+        }
+
+    @pytest.mark.parametrize("glass_name", GLASS_NAMES)
+    def test_glass_to_model_material_preserves_descriptors(
+        self, set_test_backend, glass_name
+    ):
+        lens = build_model(materials.Material(glass_name))
+        glass = self._glass_descriptors(lens)
+
+        # wavelength=None rebuilds the material as a ModelMaterial
+        lens.updater.set_index(glass["nd"], 1)
+        model = self._model_parameters(lens)
+
+        # the descriptors are copied verbatim, so the difference is numerical noise
+        assert_allclose(model["nd"], glass["nd"], rtol=0, atol=1e-12)
+        assert_allclose(model["vd"], glass["vd"], rtol=0, atol=1e-12)
+        assert_allclose(model["dPgF"], glass["dPgF"], rtol=0, atol=1e-12)
+
+        # the IR anchor is taken at the primary wavelength of the system
+        assert model["P_ref"] is not None
+        assert model["lambda_ref"] == pytest.approx(float(lens.primary_wavelength))
+
+    def test_converted_material_reproduces_glass_dispersion(self, set_test_backend):
+        lens = build_model(materials.Material("N-BK7"))
+        glass = self._glass_descriptors(lens)
+
+        lens.updater.set_index(glass["nd"], 1)
+        material = self._model(lens)
+
+        # the Buchdahl curve is anchored on the d, F, C and g lines, so the
+        # descriptors recomputed from n(lambda) must return the glass values
+        assert_allclose(material.n(self.D_LINE), glass["nd"], rtol=0, atol=1e-12)
+        assert_allclose(material.abbe(), glass["vd"], rtol=1e-8, atol=1e-8)
+        assert_allclose(material.dPgF(), glass["dPgF"], rtol=1e-8, atol=1e-8)
+
+    def test_set_index_only_updates_nd(self, set_test_backend):
+        lens = build_model(materials.Material("N-BK7"))
+        lens.updater.set_index(self._glass_descriptors(lens)["nd"], 1)
+        before = self._model_parameters(lens)
+
+        lens.updater.set_index(before["nd"] + 0.02, 1)
+        after = self._model_parameters(lens)
+
+        assert_allclose(after["nd"], before["nd"] + 0.02, rtol=0, atol=1e-12)
+        assert_allclose(after["vd"], before["vd"], rtol=0, atol=1e-12)
+        assert_allclose(after["dPgF"], before["dPgF"], rtol=0, atol=1e-12)
+        assert after["P_ref"] == before["P_ref"]
+        assert after["lambda_ref"] == before["lambda_ref"]
+
+    def test_set_abbe_only_updates_vd(self, set_test_backend):
+        lens = build_model(materials.Material("N-SF11"))
+        lens.updater.set_index(self._glass_descriptors(lens)["nd"], 1)
+        before = self._model_parameters(lens)
+
+        lens.updater.set_abbe(before["vd"] + 2.0, 1)
+        after = self._model_parameters(lens)
+
+        assert_allclose(after["vd"], before["vd"] + 2.0, rtol=0, atol=1e-12)
+        assert_allclose(after["nd"], before["nd"], rtol=0, atol=1e-12)
+        assert_allclose(after["dPgF"], before["dPgF"], rtol=0, atol=1e-12)
+        assert after["P_ref"] == before["P_ref"]
+        assert after["lambda_ref"] == before["lambda_ref"]
+
 class TestMaterialFile:
     def test_formula_1(self, set_test_backend):
         filename = str(

@@ -485,6 +485,40 @@ class SurfaceGroup:
         for surface in self.surfaces:
             n.append(be.atleast_1d(surface.material_post.n(wavelength)))
         return be.ravel(be.array(n))
+    
+    def abbe(self):
+        """Get the Abbe numbers of the surfaces.
+
+        Returns:
+            numpy.ndarray: The Abbe numbers of the surfaces.
+
+        """
+        abbe_numbers = []
+        for surface in self.surfaces:
+            if surface.material_post is not None:
+                abbe_numbers.append(be.atleast_1d(surface.material_post.abbe()))
+                
+        abbe_numbers = be.ravel(be.array(abbe_numbers))
+        return abbe_numbers
+
+    def dPgF(self):
+        """Get the dPgF values of the surfaces.
+
+        dPgF is defined as:
+        
+        dPgF = (n_g - n_F) / (n_F - n_C) - (0.6438 - 0.001682 Vd)
+        
+        Returns:
+            numpy.ndarray: The dPgF values of the surfaces.
+
+        """
+        dPgF_values = []
+        for surface in self.surfaces:
+            if surface.material_post is not None:
+                dPgF_values.append(be.atleast_1d(surface.material_post.dPgF()))
+                
+        dPgF_values = be.ravel(be.array(dPgF_values))
+        return dPgF_values
 
     def get_thickness(self, surface_number):
         """Calculate the thickness between two surfaces.
