@@ -132,55 +132,83 @@ class OpticUpdater:
 
         This intentionally reads from the current optic state every call so optimization
         iterations always update from the latest material state.
-        
+
         Returns:
             dict[str, float | None]: A dictionary containing the material parameters:
                 - "nd": Refractive index at d-line (0.5875618 micrometers).
                 - "vd": Abbe number.
                 - "dPgF": Partial dispersion relative to F and C lines.
-                - "P_ref": Optional reference parameter for materials with explicit P_ref.
+                - "P_ref": Optional reference parameter for materials with an
+                  explicit P_ref.
                 - "lambda_ref": The wavelength corresponding to P_ref, if applicable.
         """
         material = self.optic.surfaces[surface_number].material_post
 
-        lambda_ref = float(self.optic.primary_wavelength)
+        # lambda_ref only matters for the infrared anchor. Without a primary
+        # wavelength (for example while assembling a prescription) the model
+        # glass uses the visible route, so leave both anchors unset.
+        lambda_ref: float | None
+        try:
+            lambda_ref = float(self.optic.primary_wavelength)
+        except ValueError:
+            lambda_ref = None
+        if lambda_ref is not None and abs(lambda_ref - ModelMaterial.D_LINE) < 1e-9:
+            # An anchor at the d-line is degenerate: the Buchdahl coordinate
+            # vanishes there, which makes the IR system singular.
+            lambda_ref = None
+
         # Branch for ModelMaterial which has explicit nd, vd, dPgF attributes
         if isinstance(material, ModelMaterial):
             nd = float(material.nd)
             vd = float(material.vd)
             dpgf = self._read_dpgf(material, surface_number)
-            
+
             if material.p_ref is not None:
-                P_ref = material.p_ref 
-                lambda_ref = material.lambda_ref if material.lambda_ref is not None else lambda_ref # noqa: E501
+                P_ref = material.p_ref
+                lambda_ref = (
+                    material.lambda_ref
+                    if material.lambda_ref is not None
+                    else lambda_ref
+                )
+            elif lambda_ref is None:
+                P_ref = None
             else:
-                P_ref = float(material.P_ref(wavelength = lambda_ref))
-                
+                P_ref = float(material.P_ref(wavelength=lambda_ref))
+
         elif isinstance(material, IdealMaterial):
-            nd = float(material.index)
+            nd = float(be.to_numpy(material.index).item())
             vd = None
             dpgf = None
             P_ref = None
-                
-        else: # Fallback to reading from optic if material is not ModelMaterial
+            lambda_ref = None
+
+        else:  # Fallback to reading from optic if material is not ModelMaterial
             nd = float(self.optic.surfaces.n(wavelength=0.5875618)[surface_number])
             vd = float(self.optic.surfaces.abbe()[surface_number])
             dpgf = float(self.optic.surfaces.dPgF()[surface_number])
-            P_ref = float(be.to_numpy(material.P_ref(wavelength = lambda_ref)).item())
+            P_ref = (
+                None
+                if lambda_ref is None
+                else float(be.to_numpy(material.P_ref(wavelength=lambda_ref)).item())
+            )
 
         return {
-            "nd": nd, "vd": vd, "dPgF": dpgf, "P_ref": P_ref, "lambda_ref": lambda_ref
-            }
+            "nd": nd,
+            "vd": vd,
+            "dPgF": dpgf,
+            "P_ref": P_ref,
+            "lambda_ref": lambda_ref,
+        }
 
     def set_index(
-        self, value: float, surface_number: int, wavelength: float | None= None
+        self, value: float, surface_number: int, wavelength: float | None = None
     ) -> None:
         """Set the index of refraction of d-line (Nd) of a surface.
 
-        Reworked from IdealMaterial to both ModelMaterial and 
-        IdealMaterial. The method now supports two modes of operation based on the 
+        Reworked from IdealMaterial to both ModelMaterial and
+        IdealMaterial. The method now supports two modes of operation based on the
         presence of the `wavelength` argument:
-        
+
         Args:
             value (float): The new refractive index value in micrometers.
             surface_number (int): The index of the surface whose *post-material*
@@ -190,9 +218,9 @@ class OpticUpdater:
                 refractive index. If None, the method updates the material's
                 refractive index at the default wavelength (D-line, 0.5875618
                 micrometers), and replaces the original material with
-                ModelMaterial. 
-                If a specific wavelength is provided, the method updates the material's 
-                refractive index at that wavelength, replacing the original material 
+                ModelMaterial.
+                If a specific wavelength is provided, the method updates the material's
+                refractive index at that wavelength, replacing the original material
                 with IdealMaterial. Defaults to None.
 
         """
@@ -203,7 +231,7 @@ class OpticUpdater:
                 vd=params["vd"],
                 dPgF=params["dPgF"],
                 P_ref=params.get("P_ref", None),
-                lambda_ref=params.get("lambda_ref", None)
+                lambda_ref=params.get("lambda_ref", None),
             )
             self.set_material(new_material, surface_number)
             return
@@ -212,8 +240,8 @@ class OpticUpdater:
             self.set_material(new_material, surface_number)
 
     def set_abbe(self, value: float, surface_number: int) -> None:
-        """Set the Abbe number (Vd) of a surface by updating its material.  
-            
+        """Set the Abbe number (Vd) of a surface by updating its material.
+
         Args:
             value (float): The new Abbe number value.
             surface_number (int): The index of the surface whose *post-material*
@@ -222,19 +250,19 @@ class OpticUpdater:
 
         """
         params = self._get_material_params(surface_number)
-        
+
         if params["vd"] is None:
             raise ValueError(
                 f"Surface {surface_number} does not have a defined vd to update. "
                 "Ensure the material is not an IdealMaterial first."
             )
-            
+
         new_material = ModelMaterial(
             nd=params["nd"],
             vd=float(value),
             dPgF=params["dPgF"],
             P_ref=params.get("P_ref", None),
-            lambda_ref=params.get("lambda_ref", None)
+            lambda_ref=params.get("lambda_ref", None),
         )
         self.set_material(new_material, surface_number)
 

@@ -485,12 +485,12 @@ class TestBaseMaterialTorchCaching:
         assert mat.absorp.grad is not None
 
 
-def build_model(material: BaseMaterial):
+def build_model(material: BaseMaterial, primary: float = 0.550):
     lens = Optic()
 
     lens.fields.set_type("angle")
     lens.fields.add(0, 0)
-    lens.wavelengths.add(0.550)
+    lens.wavelengths.add(primary)
     lens.set_aperture("EPD", 2)
 
     lens.surfaces.add(index=0)
@@ -696,6 +696,64 @@ class TestModelMaterial:
         assert_allclose(after["dPgF"], before["dPgF"], rtol=0, atol=1e-12)
         assert after["P_ref"] == before["P_ref"]
         assert after["lambda_ref"] == before["lambda_ref"]
+
+    def test_set_abbe_without_primary_wavelength(self, set_test_backend):
+        # A prescription can be built before any wavelength is defined.
+        lens = Optic()
+        lens.surfaces.add(index=0)
+        lens.surfaces.add(
+            index=1, material=materials.Material("N-BK7"), radius=50, thickness=5
+        )
+        lens.surfaces.add(index=2)
+        nd_before = self._glass_descriptors(lens)["nd"]
+
+        lens.updater.set_abbe(45.0, 1)
+
+        material = lens.surfaces[1].material_post
+        assert isinstance(material, materials.ModelMaterial)
+        # no wavelength system yet -> visible route, no infrared anchor
+        assert material.p_ref is None
+        assert material.lambda_ref is None
+        # Evaluate the curve: an anchor at the d-line would make the IR system
+        # singular, which only surfaces when the coefficients are solved.
+        assert_allclose(material.n(self.D_LINE), nd_before, rtol=0, atol=1e-12)
+        assert_allclose(material.abbe(), 45.0, rtol=0, atol=1e-8)
+
+    def test_set_index_without_primary_wavelength_keeps_visible_route(
+        self, set_test_backend
+    ):
+        lens = Optic()
+        lens.surfaces.add(index=0)
+        lens.surfaces.add(
+            index=1,
+            material=materials.ModelMaterial(1.5168, 64.17, 0.0),
+            radius=50,
+            thickness=5,
+        )
+        lens.surfaces.add(index=2)
+
+        lens.updater.set_index(1.52, 1)
+
+        material = lens.surfaces[1].material_post
+        assert material.p_ref is None
+        assert material.lambda_ref is None
+        assert_allclose(material.n(self.D_LINE), 1.52, rtol=0, atol=1e-12)
+
+    def test_conversion_at_the_d_line_uses_visible_route(self, set_test_backend):
+        # An infrared anchor exactly at the d-line is degenerate.
+        lens = build_model(materials.Material("N-BK7"), primary=self.D_LINE)
+        lens.updater.set_index(self._glass_descriptors(lens)["nd"], 1)
+
+        material = self._model(lens)
+        assert material.p_ref is None
+        assert material.lambda_ref is None
+        assert_allclose(
+            material.n(0.55),
+            materials.Material("N-BK7").n(0.55),
+            rtol=0,
+            atol=1e-3,
+        )
+
 
 class TestMaterialFile:
     def test_formula_1(self, set_test_backend):

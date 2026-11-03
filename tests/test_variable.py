@@ -15,6 +15,7 @@ from optiland.geometries import (
     ZernikePolynomialGeometry,
 )
 from optiland.materials.abbe import AbbeMaterial
+from optiland.materials.ideal import IdealMaterial
 from optiland.optic import Optic
 from optiland.optimization import OptimizationProblem, OptimizerGeneric, variable
 from optiland.optimization.scaling.identity import IdentityScaler
@@ -259,6 +260,21 @@ class TestIndexVariable:
     def test_update_value(self, set_test_backend):
         self.index_var.update_value(1.6)
         assert_allclose(self.index_var.get_value(), 1.6)
+
+    def test_update_value_on_ideal_material(self, set_test_backend):
+        optic = Optic()
+        optic.wavelengths.add(0.5876, is_primary=True)
+        optic.surfaces.add(index=0)
+        optic.surfaces.add(
+            index=1, material=IdealMaterial(n=1.5), radius=50, thickness=5
+        )
+        optic.surfaces.add(index=2, radius=-50, thickness=5)
+        optic.surfaces.add(index=3)
+
+        index_var = variable.IndexVariable(optic, 1, None)
+        index_var.update_value(1.62)
+
+        assert_allclose(index_var.get_value(), 1.62)
 
     def test_get_value_no_scaling(self, set_test_backend):
         self.optic = Objective60x()

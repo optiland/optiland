@@ -545,67 +545,67 @@ class BaseMaterial(ABC):
         Calculate the partial dispersion between the F and C lines.
 
         The partial dispersion is defined as PgF = (n_g - n_F) / (n_F - n_C),
-        where n_g, n_F, and n_C are the refractive indices at g (435.8343 nm), 
+        where n_g, n_F, and n_C are the refractive indices at g (435.8343 nm),
         F (486.1327 nm), and C (656.2725 nm) spectral lines,
         respectively.
-        
+
         Returns:
             float: The partial dispersion between the g and F lines.
 
         """
         nF = self.n(0.4861327)
         nC = self.n(0.6562725)
-        ng = self.n(0.4358343)  
-        
+        ng = self.n(0.4358343)
+
         # Assign PgF = 0 when nF and nC are very close to avoid division by zero
         if be.isclose(nF, nC):
-            return 0.0  
-        
+            return 0.0
+
         PgF = be.array((ng - nF) / (nF - nC))
         return PgF
-    
+
     def P_ref(self, wavelength: float):
         """
         Calculate the relative partial dispersion at a reference wavelength.
 
-        The relative partial dispersion is defined as P_ref = (n_ref - n_D) / (n_F - n_C),
-        where n_ref, n_D, n_F, and n_C are the refractive indices at the reference wavelength,
-        D (587.5618 nm), F (486.1327 nm), and C (656.2725 nm) spectral lines,
-        respectively.
-        
+        The relative partial dispersion is defined as
+        P_ref = (n_ref - n_D) / (n_F - n_C), where n_ref, n_D, n_F and n_C are the
+        refractive indices at the reference wavelength, the D (587.5618 nm), F
+        (486.1327 nm) and C (656.2725 nm) spectral lines, respectively.
+
         Args:
             wavelength (float): The reference wavelength in microns.
         """
         nD = self.n(0.5875618)
         nF = self.n(0.4861327)
         nC = self.n(0.6562725)
-        n_ref = self.n(wavelength)  
-        
+        n_ref = self.n(wavelength)
+
         # Assign P_ref = 0 when nF and nC are very close to avoid division by zero
         if be.isclose(nF, nC):
-            return 0.0  
-        
+            return 0.0
+
         P_ref = be.array((n_ref - nD) / (nF - nC))
         return P_ref
-    
+
     def dPgF(self):
-        '''
+        """
         Calculate the deviation of the relative partial dispersion.
 
         The deviation of the relative partial dispersion is defined as
-        
+
         dPgF = PgF - (0.6438 - 0.001682 Vd)
-        
+
         Returns:
             float: The deviation of the relative partial dispersion.
 
-        '''
+        """
         PgF = self.PgF()
         Vd = self.abbe()
-        
+
         if Vd == 0.0:
             return 0.0
-        
+
         return PgF - (0.6438 - 0.001682 * Vd)
 
     @property
