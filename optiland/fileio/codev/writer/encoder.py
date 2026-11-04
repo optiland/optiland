@@ -323,9 +323,25 @@ class CodeVFileEncoder:
             return 0.0
         return float(conic)
 
+    @staticmethod
+    def _letters(raw: dict[str, Any]) -> list[tuple[str, float]]:
+        """Return the (letter, value) pairs of the non-zero aspheric coefficients."""
+        if raw.get("profile", "SPH") != "ASP":
+            return []
+        pairs = (
+            (key, float(raw.get(f"coeff_{i}", 0.0))) for i, key in enumerate(_ASPH_KEYS)
+        )
+        return [(key, val) for key, val in pairs if val != 0.0]
+
     def _encode_profile(self, lines: list[str], raw: dict[str, Any]) -> None:
-        """Write the profile keyword CODE V needs before ``K`` (``CON``)."""
-        if self._conic(raw) != 0.0:
+        """Write the profile keyword CODE V needs before ``K`` and the letters.
+
+        ``ASP`` when any aspheric letter is non-zero, else ``CON`` when there is a
+        conic constant.
+        """
+        if self._letters(raw):
+            lines.append("  ASP")
+        elif self._conic(raw) != 0.0:
             lines.append("  CON")
 
     def _encode_conic(self, lines: list[str], raw: dict[str, Any]) -> None:
@@ -334,12 +350,8 @@ class CodeVFileEncoder:
             lines.append(f"  K {_fmt(conic)}")
 
     def _encode_asphere_coeffs(self, lines: list[str], raw: dict[str, Any]) -> None:
-        if raw.get("profile", "SPH") != "ASP":
-            return
-        for i, key in enumerate(_ASPH_KEYS):
-            val = float(raw.get(f"coeff_{i}", 0.0))
-            if abs(val) > 1e-30:
-                lines.append(f"  {key} {_fmt(val)}")
+        for key, val in self._letters(raw):
+            lines.append(f"  {key} {_fmt(val)}")
 
     def _encode_decenters_tilts(self, lines: list[str], raw: dict[str, Any]) -> None:
         for cv_key, label in (

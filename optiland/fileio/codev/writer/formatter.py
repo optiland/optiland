@@ -654,6 +654,8 @@ class OpticToCodeVConverter:
             raw = handler.format(surface)
         except NotImplementedError as exc:
             raise NotImplementedError(f"Surface {output_idx}: {exc}") from None
+        except ValueError as exc:
+            raise ValueError(f"Surface {output_idx}: {exc}") from None
 
         raw["thickness"] = thickness
         raw["type"] = "standard"

@@ -44,8 +44,9 @@ def save_codev_file(optic: Optic, filepath: str) -> None:
             starting out towards ``-z``; a negative object distance alone is
             written), a
             decentered, tilted or chained surface, a surface geometry other
-            than planar, spherical or conic, a non-zero even-asphere
-            coefficient, a non-refractive interaction model (thin-lens,
+            than planar, spherical, conic or even-asphere, an even-asphere
+            with a non-zero r^2 term or a non-zero term above r^20, a
+            non-refractive interaction model (thin-lens,
             diffractive, phase), an aspheric or conic image surface,
             ideal-material absorption, a ``DataMaterial``, or a field
             definition with no CODE V equivalent.

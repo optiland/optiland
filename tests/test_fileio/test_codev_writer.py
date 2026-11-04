@@ -7,10 +7,13 @@ and the save_codev_file public entry point.
 from __future__ import annotations
 
 import os
+import re
 import tempfile
+import warnings
 
 import pytest
 
+import optiland.backend as be
 from optiland.fileio import load_codev_file, save_codev_file
 from optiland.fileio.codev.model import CodeVDataModel
 from optiland.fileio.codev.writer.encoder import CodeVFileEncoder
@@ -222,10 +225,18 @@ class TestCodeVFileEncoder:
         assert any("TITLE" in line and "My Optic" in line for line in lines)
 
     def test_aspheric_coeff_A(self):
-        """Even-asphere coefficients are refused until their powers are fixed."""
+        """Letters A and B are written after ASP and K, and no others."""
         optic = load_codev_file(_seq("asphere.seq"))
-        with pytest.raises(NotImplementedError, match="even-asphere"):
-            OpticToCodeVConverter(optic).convert()
+        model = OpticToCodeVConverter(optic).convert()
+        lines = CodeVFileEncoder(model).encode()
+        asp = lines.index("  ASP")
+        k = lines.index("  K -0.5")
+        a = next(i for i, line in enumerate(lines) if line.startswith("  A "))
+        assert asp < k < a
+        assert float(lines[a].split()[1]) == 1.5e-6
+        b = next(line for line in lines if line.startswith("  B "))
+        assert float(b.split()[1]) == -2.3e-9
+        assert not any(line.split()[:1] == [c] for line in lines for c in "CDEFGHJ")
 
     def test_conic_K(self):
         optic = _make_conic_sphere(conic=-0.5)
@@ -349,15 +360,27 @@ class TestRoundTrip:
         o1, o2 = self._round_trip("cooke_triplet.seq")
         assert o1.surface_group.num_surfaces == o2.surface_group.num_surfaces
 
-    def test_roundtrip_asphere(self):
+    def test_roundtrip_asphere(self, set_test_backend):
         optic = load_codev_file(_seq("asphere.seq"))
         with tempfile.NamedTemporaryFile(suffix=".seq", delete=False) as tmp:
             path = tmp.name
         try:
-            with pytest.raises(NotImplementedError):
-                save_codev_file(optic, path)
+            save_codev_file(optic, path)
+            optic2 = load_codev_file(path)
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read().splitlines()
         finally:
             os.unlink(path)
+        geom, geom2 = optic.surfaces[1].geometry, optic2.surfaces[1].geometry
+        coeffs = [float(c) for c in geom.coefficients]
+        assert coeffs[0] == 0.0
+        assert [float(c) for c in geom2.coefficients] == coeffs
+        # The sag of the reloaded surface equals the sag the file text describes.
+        emitted = _emitted_asphere(text)[0]
+        letters = [emitted["letters"].get(c, 0.0) for c in _LETTERS]
+        for r in (1.0, 2.5, 4.0):
+            expected = _codev_sag(emitted["radius"], emitted["k"], letters, r)
+            assert_allclose(geom2.sag(0.0, r), expected, rtol=1e-12, atol=0.0)
 
     def test_roundtrip_fno(self):
         o1, o2 = self._round_trip("fno_fields.seq")
@@ -507,27 +530,115 @@ def _make_asphere(coefficients, conic: float = 0.0) -> Optic:
     return optic
 
 
-class TestEvenAsphereRefusal:
+_LETTERS = ("A", "B", "C", "D", "E", "F", "G", "H", "J")
+
+# Distinct, alternating-sign values for the letters A..H, J.
+_ALL_LETTERS = [1.5e-6, -2.3e-9, 3.1e-12, -4.7e-15, 5.3e-18]
+_ALL_LETTERS += [-6.1e-21, 7.9e-24, -8.3e-27, 9.7e-30]
+
+
+def _codev_sag(radius: float, conic: float, letters: list[float], r: float) -> float:
+    """CODE V even-asphere sag on Python floats: letter j multiplies r**(2j + 4)."""
+    c = 1.0 / radius
+    z = c * r**2 / (1.0 + (1.0 - (1.0 + conic) * c**2 * r**2) ** 0.5)
+    return z + sum(a * r ** (2 * j + 4) for j, a in enumerate(letters))
+
+
+def _emitted_asphere(lines: list[str]) -> list[dict]:
+    """Parse the S, ASP, K and letter lines of every ``S`` surface in the text.
+
+    Returns one dict per surface with its radius, whether an ``ASP`` line was
+    written, the conic (0.0 if no ``K`` line), the letters as floats and the
+    line index of ``ASP``, ``K`` and each letter.
+    """
+    surfaces: list[dict] = []
+    for i, line in enumerate(lines):
+        if line.startswith("S "):
+            surfaces.append(
+                {
+                    "radius": float(line.split()[1]),
+                    "asp": False,
+                    "k": 0.0,
+                    "letters": {},
+                    "at": {},
+                }
+            )
+        elif surfaces and line == "  ASP":
+            surfaces[-1]["asp"] = True
+            surfaces[-1]["at"]["ASP"] = i
+        elif surfaces and line.startswith("  K "):
+            surfaces[-1]["k"] = float(line.split()[1])
+            surfaces[-1]["at"]["K"] = i
+        elif surfaces and (m := re.fullmatch(r"  ([A-HJ]) (\S+)", line)):
+            surfaces[-1]["letters"][m.group(1)] = float(m.group(2))
+            surfaces[-1]["at"][m.group(1)] = i
+    return surfaces
+
+
+def _letters_of(optic: Optic) -> dict[str, float]:
+    """Letters written for the first surface of ``optic``."""
+    return _emitted_asphere(_encode(optic))[0]["letters"]
+
+
+class TestEvenAsphereExport:
+    @pytest.mark.parametrize("conic", [-0.5, -1.0])
     @pytest.mark.parametrize(
         "coefficients",
-        [[1e-6], [0.0, 1.5e-6], [0.0, 0.0, -2.3e-9], [0.0, 0.0, 0.0, 0.0, 1e-20]],
+        [[1e-6], [1e-4, 1.5e-6, -2.3e-9], [-1e-12], [1e-6, 0.0, 0.0]],
     )
-    def test_nonzero_coefficient_refused(
-        self, coefficients, tmp_path, set_test_backend
-    ):
-        optic = _make_asphere(coefficients, conic=-0.5)
+    def test_r2_term_refused(self, coefficients, conic, tmp_path, set_test_backend):
+        optic = _make_asphere(coefficients, conic=conic)
         path = tmp_path / "existing.seq"
         path.write_bytes(b"previous design")
-        with pytest.raises(NotImplementedError, match=r"Surface 1: even-asphere"):
+        with pytest.raises(NotImplementedError, match=r"Surface 1: r\^2"):
             save_codev_file(optic, str(path))
         assert path.read_bytes() == b"previous design"
 
-    def test_nan_coefficient_refused(self, set_test_backend):
-        optic = _make_asphere([0.0, float("nan")])
-        with pytest.raises(NotImplementedError, match=r"Surface 1: even-asphere"):
+    def test_tiny_r2_term_refused(self, set_test_backend):
+        optic = _make_asphere([1e-31, 1e-6], conic=-0.5)
+        with pytest.raises(NotImplementedError, match=r"Surface 1: r\^2"):
             OpticToCodeVConverter(optic).convert()
 
-    @pytest.mark.parametrize("coefficients", [[], [0.0], [0.0, 0.0, 0.0], [0.0, 1e-31]])
+    @pytest.mark.parametrize(
+        "coefficients",
+        [
+            [0.0, 1e-6] + [0.0] * 8 + [1e-26],
+            [0.0] * 11 + [1e-26],
+            [0.0] * 11 + [1e-31],
+            [0.0, 1e-6] + [0.0] * 8 + [1e-43],
+        ],
+    )
+    def test_terms_above_r20_refused(self, coefficients, set_test_backend):
+        optic = _make_asphere(coefficients, conic=-0.5)
+        with pytest.raises(NotImplementedError, match=r"Surface 1: .*above r\^20"):
+            OpticToCodeVConverter(optic).convert()
+
+    def test_trailing_zeros_beyond_r20_ok(self, set_test_backend):
+        letters = _letters_of(_make_asphere([0.0, 1e-6] + [0.0] * 12, conic=-0.5))
+        assert letters == {"A": 1e-6}
+        letters = _letters_of(_make_asphere([0.0] * 9 + [9.7e-30], conic=-0.5))
+        assert letters == {"J": 9.7e-30}
+
+    @pytest.mark.parametrize(
+        "coefficients, bad",
+        [
+            ([0.0, float("nan")], 1),
+            ([0.0, float("inf")], 1),
+            ([0.0, float("-inf")], 1),
+            ([float("nan")], 0),
+            ([0.0] * 10 + [float("nan")], 10),
+        ],
+    )
+    def test_nan_coefficient_refused(self, coefficients, bad, set_test_backend):
+        optic = _make_asphere(coefficients)
+        message = (
+            r"Surface 1: non-finite even-asphere coefficient "
+            rf"coefficients\[{bad}\]"
+        )
+        with pytest.raises(ValueError, match=message):
+            OpticToCodeVConverter(optic).convert()
+
+    @pytest.mark.parametrize("coefficients", [[], [0.0], [0.0, 0.0, 0.0], [-0.0, 0.0]])
     def test_conic_only_asphere_written_as_con(self, coefficients, set_test_backend):
         lines = _encode(_make_asphere(coefficients, conic=-0.5))
         k = lines.index("  K -0.5")
@@ -536,18 +647,146 @@ class TestEvenAsphereRefusal:
         letters = ("A", "B", "C", "D", "E", "F", "G", "H", "J")
         assert not any(line.split()[:1] == [c] for line in lines for c in letters)
 
+    def test_tiny_letters_written(self, set_test_backend):
+        lines = _encode(_make_asphere([0.0, 1e-31], conic=-0.5))
+        k = lines.index("  K -0.5")
+        assert lines[k - 1] == "  ASP"
+        assert lines[k + 1] == "  A 1e-31"
+        lines = _encode(_make_asphere([0.0] * 9 + [1e-43], conic=-0.5))
+        k = lines.index("  K -0.5")
+        assert lines[k - 1] == "  ASP"
+        assert lines[k + 1] == "  J 1e-43"
+
     def test_zero_coefficients_and_zero_conic_write_nothing_extra(
         self, set_test_backend
     ):
         lines = _encode(_make_asphere([0.0, 0.0]))
         assert "  CON" not in lines
+        assert "  ASP" not in lines
         assert not any(line.strip().startswith("K ") for line in lines)
 
     def test_aspheric_singlet_sample_refused(self, set_test_backend):
         from optiland.samples.simple import AsphericSinglet
 
-        with pytest.raises(NotImplementedError, match=r"Surface \d+: even-asphere"):
+        with pytest.raises(NotImplementedError, match=r"Surface \d+: r\^2"):
             OpticToCodeVConverter(AsphericSinglet()).convert()
+
+    def test_aspheric_singlet_without_r2_exports(self, set_test_backend):
+        from optiland.samples.simple import AsphericSinglet
+
+        optic = AsphericSinglet()
+        optic.surfaces[1].geometry.coefficients[0] = 0.0
+        letters = _letters_of(optic)
+        assert letters == {"A": -4.690412e-6, "B": -6.404376e-8}
+
+    def test_writer_letters_follow_codev_powers(self, set_test_backend):
+        optic = _make_asphere([0.0, *_ALL_LETTERS], conic=-0.5)
+        lines = _encode(optic)
+        emitted = _emitted_asphere(lines)[0]
+        assert list(emitted["letters"]) == list(_LETTERS)
+        assert list(emitted["letters"].values()) == _ALL_LETTERS
+        assert not any(line.startswith("  I ") for line in lines)
+        at = emitted["at"]
+        assert at["ASP"] < at["K"] < at["A"]
+        geom = optic.surfaces[1].geometry
+        for r in (2.5, 5.0, 7.5, 10.0):
+            expected = _codev_sag(
+                emitted["radius"], emitted["k"], list(emitted["letters"].values()), r
+            )
+            assert_allclose(geom.sag(0.0, r), expected, rtol=1e-12, atol=0.0)
+
+    @pytest.mark.parametrize("conic", [0.0, -0.5])
+    @pytest.mark.parametrize("j", range(9))
+    def test_writer_each_letter_isolated(self, j, conic, set_test_backend):
+        optic = _make_asphere([0.0] * (j + 1) + [1.25e-7], conic=conic)
+        emitted = _emitted_asphere(_encode(optic))[0]
+        assert emitted["asp"]
+        assert emitted["letters"] == {_LETTERS[j]: 1.25e-7}
+
+    def test_writer_scale_consistency(self, set_test_backend):
+        letters = [*_ALL_LETTERS[:-1], 1e-29]
+        optic = _make_asphere([0.0, *letters], conic=-0.5)
+        before = _letters_of(optic)
+        optic.updater.scale_system(2.0)
+        after = _letters_of(optic)
+        assert list(after) == list(_LETTERS)
+        for j, key in enumerate(_LETTERS):
+            assert_allclose(
+                after[key], before[key] * 2.0 ** (-2 * j - 3), rtol=1e-12, atol=0.0
+            )
+
+    def test_two_asphere_surfaces_and_sphere(self, set_test_backend):
+        from optiland.materials import Material
+
+        optic = _make_asphere([0.0, 1e-6], conic=-0.5)
+        optic.surfaces.add(
+            index=2,
+            surface_type="even_asphere",
+            radius=80.0,
+            thickness=2.0,
+            coefficients=[0.0, 0.0, 3e-9, -4e-12],
+            material=Material("N-BK7", "schott"),
+        )
+        optic.surfaces.add(
+            index=3, radius=-60.0, thickness=40.0, material=Material("N-BK7", "schott")
+        )
+        lines = _encode(optic)
+        first, second, sphere, _ = _emitted_asphere(lines)
+        assert first["letters"] == {"A": 1e-6}
+        assert first["k"] == -0.5
+        assert second["asp"]
+        assert second["letters"] == {"B": 3e-9, "C": -4e-12}
+        assert second["k"] == 0.0
+        assert not sphere["asp"]
+        assert sphere["letters"] == {}
+        assert lines.count("  ASP") == 2
+
+    def test_write_read_write_fixed_point(self, set_test_backend, tmp_path):
+        optic = _make_asphere([0.0, *_ALL_LETTERS], conic=-0.5)
+        first = _encode(optic)
+        path = tmp_path / "again.seq"
+        save_codev_file(optic, str(path))
+        assert _encode(load_codev_file(str(path))) == first
+
+    def test_ndarray_coefficients_export(self, set_test_backend):
+        # After optimization the coefficients can be an array, not a list.
+        optic = _make_asphere([0.0], conic=-0.5)
+        optic.surfaces[1].geometry.coefficients = be.array([0.0, 1e-6, 2e-9, 0.0])
+        emitted = _emitted_asphere(_encode(optic))[0]
+        assert emitted["asp"]
+        assert emitted["letters"] == {"A": 1e-6, "B": 2e-9}
+
+    def test_padded_coefficients_from_variable_export(self, set_test_backend):
+        from optiland.optimization.variable.asphere_coeff import (
+            AsphereCoeffVariable,
+        )
+
+        # get_value() past the end of the list replaces it with a padded array.
+        optic = _make_asphere([0.0, 1e-6], conic=-0.5)
+        AsphereCoeffVariable(optic, 1, 5).get_value()
+        geom = optic.surfaces[1].geometry
+        assert not isinstance(geom.coefficients, list)
+        geom.coefficients[5] = 3e-9
+        emitted = _emitted_asphere(_encode(optic))[0]
+        assert emitted["asp"]
+        assert emitted["letters"] == {"A": 1e-6, "E": 3e-9}
+
+    def test_torch_grad_coefficients_export(self, set_test_backend):
+        if be.get_backend() != "torch":
+            pytest.skip("requires the torch backend")
+        import torch
+
+        optic = _make_asphere([0.0], conic=-0.5)
+        grads = [
+            torch.tensor(v, dtype=torch.float64, requires_grad=True)
+            for v in (0.0, 1e-6, 2e-9)
+        ]
+        optic.surfaces[1].geometry.coefficients = grads
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)  # float() on a grad tensor
+            letters = _letters_of(optic)
+        assert letters == {"A": 1e-6, "B": 2e-9}
+        assert all(g.requires_grad for g in optic.surfaces[1].geometry.coefficients)
 
 
 class TestProfileKeyword:
