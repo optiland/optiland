@@ -1,0 +1,13 @@
+# Changes to these paths need a review from the core maintainers.
+# Enforced once "Require review from Code Owners" is enabled in branch protection.
+
+/.github/                @optiland/core-maintainers
+/pyproject.toml          @optiland/core-maintainers
+/uv.lock                 @optiland/core-maintainers
+/.pre-commit-config.yaml @optiland/core-maintainers
+/AGENTS.md               @optiland/core-maintainers
+/CLAUDE.md               @optiland/core-maintainers
+/optiland/backend/       @optiland/core-maintainers
+/tests/golden/           @optiland/core-maintainers
+/tests/regression/       @optiland/core-maintainers
+/tests/conftest.py       @optiland/core-maintainers

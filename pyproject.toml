@@ -104,8 +104,6 @@ convention = "google"
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D100", "D101", "D103"]
 "docs/**" = ["D100", "D101", "D103"]
-# Standalone debug/reproduction scripts, not part of the package API.
-"optiland/scripts/**" = ["D100", "D101", "D103"]
 # Documentation build tooling (scripts/docs), not part of the package API.
 "scripts/**" = ["D100", "D101", "D103"]
 
@@ -119,6 +117,7 @@ dev = [
     "pytest-cov>=7.0.0",
     "pytest-xdist>=3.6",
     "mypy>=1.13",
+    "ruff==0.17.3", # pinned: keep in sync with .pre-commit-config.yaml
     "vulture>=2.13", # dead-code audits (see CONTRIBUTING.md); not run in CI
 ]
 
