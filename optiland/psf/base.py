@@ -83,6 +83,26 @@ class BasePSF(Wavefront):
         remove_tilt=True,
         **kwargs,
     ):
+        """Set up wavefront sampling for a single field and wavelength.
+
+        Builds the parent ``Wavefront`` with a uniform pupil distribution and
+        leaves ``psf`` as ``None`` until a subclass computes it.
+
+        Args:
+            optic (Optic): The optical system.
+            field (tuple): Field coordinates ``(x, y)`` at which to compute the
+                PSF.
+            wavelength (str | float): Wavelength of light. May be ``'primary'``
+                or a numeric value.
+            num_rays (int, optional): Rays used along one pupil dimension for
+                wavefront computation. Defaults to 128.
+            strategy (str): Wavefront reference strategy: ``"chief_ray"``,
+                ``"centroid_sphere"``, or ``"best_fit_sphere"``. Defaults to
+                ``"chief_ray"``.
+            remove_tilt (bool): If True, remove tilt and piston from OPD data.
+                Defaults to True.
+            **kwargs: Extra keyword arguments forwarded to the strategy.
+        """
         resolved_wavelength = resolve_wavelength(optic, wavelength)
         super().__init__(
             optic=optic,
