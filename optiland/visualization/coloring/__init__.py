@@ -12,6 +12,7 @@ from optiland.visualization.coloring.components import (
     ThemeColorizer,
     UniformColorizer,
 )
+from optiland.visualization.coloring.properties import abbe_number, refractive_index
 from optiland.visualization.coloring.rays import (
     RayBundleRef,
     RayColorizer,
@@ -31,4 +32,6 @@ __all__ = [
     "TracedRays",
     "UniformColorizer",
     "UniformRayColorizer",
+    "abbe_number",
+    "refractive_index",
 ]
