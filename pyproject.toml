@@ -140,6 +140,7 @@ convention = "google"
 "optiland/mtf/**" = ["D102", "D107"]
 "optiland/apodization/**" = ["D102", "D107"]
 "optiland/aberrations/**" = ["D102", "D107"]
+"optiland_gui/**" = ["D102", "D107"]
 "optiland/zernike/**" = ["D102", "D107"]
 "optiland/solves/**" = ["D102", "D107"]
 "optiland/scatter.py" = ["D102", "D107"]
