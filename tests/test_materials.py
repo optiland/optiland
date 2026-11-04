@@ -238,7 +238,7 @@ class TestBaseMaterial:
         assert BaseMaterial._requires_grad(1.5) is False
         assert BaseMaterial._requires_grad(np.array(1.5)) is False
 
-    def test_pgF_and_p_ref_return_zero_for_flat_dispersion(self, set_test_backend):
+    def test_abbe_pgF_and_p_ref_return_zero_for_flat_dispersion(self, set_test_backend):
         class FlatDispersion(BaseMaterial):
             def _calculate_n(self, wavelength, **kwargs):
                 return be.array(1.5)
@@ -248,7 +248,8 @@ class TestBaseMaterial:
 
         material = FlatDispersion()
 
-        # n_F == n_C -> both guards return 0.0 instead of dividing by zero
+        # n_F == n_C -> the guards return 0.0 instead of dividing by zero
+        assert material.abbe() == 0.0
         assert material.PgF() == 0.0
         assert material.P_ref(0.6) == 0.0
 
@@ -680,9 +681,9 @@ class TestModelMaterial:
         assert_allclose(model["vd"], glass["vd"], rtol=0, atol=1e-12)
         assert_allclose(model["dPgF"], glass["dPgF"], rtol=0, atol=1e-12)
 
-        # the IR anchor is taken at the primary wavelength of the system
-        assert model["P_ref"] is not None
-        assert model["lambda_ref"] == pytest.approx(float(lens.primary_wavelength))
+        # A visible primary wavelength keeps the model on the visible route, so the IR anchor is not set.
+        assert model["P_ref"] is None
+        assert model["lambda_ref"] is None
 
     def test_converted_material_reproduces_glass_dispersion(self, set_test_backend):
         lens = build_model(materials.Material("N-BK7"))
@@ -781,6 +782,40 @@ class TestModelMaterial:
             rtol=0,
             atol=1e-3,
         )
+
+    def test_ir_primary_adds_the_reference_anchor(self, set_test_backend):
+        lens = build_model(materials.Material("N-BK7"), primary=1.55)
+        glass = materials.Material("N-BK7")
+
+        lens.updater.set_index(self._glass_descriptors(lens)["nd"], 1)
+
+        material = self._model(lens)
+        assert material.lambda_ref == pytest.approx(
+            materials.ModelMaterial.IR_REF_WTH
+        )
+        assert material.p_ref is not None
+        # the anchor reproduces the true glass index at the reference wavelength
+        assert_allclose(
+            material.n(materials.ModelMaterial.IR_REF_WTH),
+            glass.n(1.55),
+            rtol=0,
+            atol=1e-9,
+        )
+
+    def test_existing_anchor_keeps_its_reference_wavelength(self, set_test_backend):
+        lens = build_model(
+            materials.ModelMaterial(1.5168, 64.17, 0.0, P_ref=0.60, lambda_ref=1.0)
+        )
+
+        lens.updater.set_index(1.52, 1)
+
+        material = self._model(lens)
+        # the anchor is defined at 1.0 um and must not be relabelled to 1.55 um
+        assert material.lambda_ref == pytest.approx(1.0)
+        assert material.p_ref == pytest.approx(0.60)
+        # and the curve is re-anchored at that wavelength, not at 1.55 um
+        expected = material.nd + material.p_ref * (material.nd - 1.0) / material.vd
+        assert_allclose(material.n(1.0), expected, rtol=0, atol=1e-10)
 
     def test_set_abbe_on_ideal_material_raises(self, set_test_backend):
         lens = Optic()

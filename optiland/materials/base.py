@@ -538,6 +538,10 @@ class BaseMaterial(ABC):
         nD = self.n(0.5875618)
         nF = self.n(0.4861327)
         nC = self.n(0.6562725)
+
+        if be.isclose(nF, nC, rtol=0.0, atol=1e-12):
+            return 0.0
+
         return (nD - 1) / (nF - nC)
 
     def PgF(self):
@@ -558,7 +562,7 @@ class BaseMaterial(ABC):
         ng = self.n(0.4358343)
 
         # Assign PgF = 0 when nF and nC are very close to avoid division by zero
-        if be.isclose(nF, nC):
+        if be.isclose(nF, nC, rtol=0.0, atol=1e-12):
             return 0.0
 
         PgF = be.array((ng - nF) / (nF - nC))
@@ -582,7 +586,7 @@ class BaseMaterial(ABC):
         n_ref = self.n(wavelength)
 
         # Assign P_ref = 0 when nF and nC are very close to avoid division by zero
-        if be.isclose(nF, nC):
+        if be.isclose(nF, nC, rtol=0.0, atol=1e-12):
             return 0.0
 
         P_ref = be.array((n_ref - nD) / (nF - nC))

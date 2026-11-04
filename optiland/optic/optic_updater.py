@@ -144,18 +144,25 @@ class OpticUpdater:
         """
         material = self.optic.surfaces[surface_number].material_post
 
-        # lambda_ref only matters for the infrared anchor. Without a primary
-        # wavelength (for example while assembling a prescription) the model
-        # glass uses the visible route, so leave both anchors unset.
         lambda_ref: float | None
+
         try:
-            lambda_ref = float(self.optic.primary_wavelength)
+            primary_wavelength = float(self.optic.primary_wavelength)
         except ValueError:
+            # lambda_ref only matters for the infrared anchor. Without a primary
+            # wavelength (for example while assembling a prescription) the model
+            # glass uses the visible route, so leave both anchors unset.
             lambda_ref = None
-        if lambda_ref is not None and abs(lambda_ref - ModelMaterial.D_LINE) < 1e-9:
-            # An anchor at the d-line is degenerate: the Buchdahl coordinate
-            # vanishes there, which makes the IR system singular.
-            lambda_ref = None
+        else:
+            # If the primary wavelength is above the maximum visible wavelength, we use
+            # the Infrared Routing. lambda_ref is set to 1.55 micrometers which is
+            # wavelength used to train the infrared regression matrix. Otherwise, we use
+            # the Visible Routing and lambda_ref is set to None.
+            lambda_ref = (
+                ModelMaterial.IR_REF_WTH
+                if primary_wavelength > ModelMaterial.MAX_VISIBLE_WTH
+                else None
+            )
 
         # Branch for ModelMaterial which has explicit nd, vd, dPgF attributes
         if isinstance(material, ModelMaterial):
@@ -168,7 +175,7 @@ class OpticUpdater:
                 lambda_ref = (
                     material.lambda_ref
                     if material.lambda_ref is not None
-                    else lambda_ref
+                    else ModelMaterial.IR_REF_WTH
                 )
             elif lambda_ref is None:
                 P_ref = None
@@ -225,6 +232,7 @@ class OpticUpdater:
 
         """
         params = self._get_material_params(surface_number)
+        # IdealMaterial can not be converted to ModelMaterial
         if wavelength is None and params["vd"] is not None:
             new_material = ModelMaterial(
                 nd=float(value),

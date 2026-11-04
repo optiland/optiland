@@ -80,6 +80,8 @@ class ModelMaterial(BaseMaterial):
     MAX_INDEX = 3.0  # Above this polynomial is extrapolating
     MIN_INDEX = 1.0  # Below this the polynomial is unphysical
     D_LINE = 0.5875618  # Fraunhofer d-line wavelength in microns
+    MAX_VISIBLE_WTH = 0.78  # Maximum wavelength in microns for visible route
+    IR_REF_WTH = 1.55  # Reference wavelength in microns for infrared route
 
     REGRESSION_MATRIX_VISIBLE = resources.files("optiland.database").joinpath(
         "Regression_Matrix_Visible_Routing.npy"
