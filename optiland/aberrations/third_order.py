@@ -275,6 +275,24 @@ class ThirdOrderAberrations:
     def _TchC_term(self, k: int) -> BEArray:
         return self._chromatic_prefactor(k) * self._ip[k - 1]
 
+    def _seidels_per_surface(
+        self,
+        TSC: BEArray,
+        CC: BEArray,
+        TAC: BEArray,
+        TPC: BEArray,
+        DC: BEArray,
+    ) -> BEArray:
+        """Seidel coefficients SI through SV contributed by each surface.
+
+        Returns:
+            Array of shape (5, N - 2), one column per surface from the first
+            surface after the object to the last surface before the image.
+        """
+        factor = self._n[-1] * self._ua[-1] * 2
+        terms = be.stack([TSC, CC, TAC, TPC, DC])
+        return be.reshape(-terms * factor, (5, -1))
+
     def _sum_seidels(
         self,
         TSC: BEArray,
@@ -283,13 +301,5 @@ class ThirdOrderAberrations:
         TPC: BEArray,
         DC: BEArray,
     ) -> BEArray:
-        factor = self._n[-1] * self._ua[-1] * 2
-        return be.array(
-            [
-                -be.sum(TSC) * factor,
-                -be.sum(CC) * factor,
-                -be.sum(TAC) * factor,
-                -be.sum(TPC) * factor,
-                -be.sum(DC) * factor,
-            ]
-        )
+        per_surface = self._seidels_per_surface(TSC, CC, TAC, TPC, DC)
+        return be.reshape(be.sum(per_surface, axis=1), (-1, 1))

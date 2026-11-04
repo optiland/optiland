@@ -12,6 +12,7 @@ This section contains examples of typical analysis tasks that can be performed w
     analysis/field_curvature
     analysis/chromatic_focal_shift
     analysis/longitudinal_aberration
+    analysis/seidel_diagram
     analysis/distortion
     analysis/grid_distortion
     analysis/encircled_energy
