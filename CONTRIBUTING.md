@@ -93,6 +93,14 @@ helps you land a first PR without surprises:
   locally with `pytest tests/regression/`. If you made an intentional numerical change, regenerate
   the fixtures deliberately with `pytest tests/regression/ --update-golden` and explain why in
   the PR description — never regenerate to silence an unexplained diff.
+- **Public API snapshot** (`tests/api/`): blocking. Removing a public name or changing a
+  signature incompatibly fails `tests/api/test_public_api.py`; deprecate instead. New names and
+  new optional parameters are fine. The same folder checks that `optiland/` never imports
+  `optiland_gui/` and that `optiland/backend/` stays the bottom layer.
+- **Guard report:** informational, never blocking. A job summary on each PR lists size, new
+  public API, dependency changes, quality counts that grew (complexity, missing types or
+  docstrings, suppressions) and test-integrity flags (loosened tolerances, new skips, removed
+  tests). Run it locally with `python -m scripts.guard`.
 - **`vulture` (dead-code scan):** dev-only, **not** part of CI. See "Dead-Code Audits" below.
 
 ## Task Workflow and Coordination

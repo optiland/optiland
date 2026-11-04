@@ -3,8 +3,6 @@ name: CI
 permissions:
   contents: read        # Allow reading repository contents
   actions: read         # Allow reading workflow artifacts
-  checks: write         # Allow writing check results
-  pull-requests: write  # Allow commenting on PRs
 
 on:
   push:

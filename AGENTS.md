@@ -37,6 +37,8 @@ uv run pytest -v tests/<area_you_touched>/
 - **Never run the full suite (`pytest tests/`) blindly.** It is slow; run the tests for the
   modules you touched and let CI run the rest.
 - Run tests headless: set `QT_QPA_PLATFORM=offscreen` and `MPLBACKEND=Agg`.
+- `uv run python -m scripts.guard` prints the PR report CI shows (size, API changes,
+  quality counts that grew). Aim for no ⚠️ rows.
 - Changes to `geometries/`, `materials/`, `psf/`, `rays/` or `backend/` must also pass
   `uv run pytest tests/regression/`. Regenerate fixtures (`--update-golden`) only for an
   intentional numerical change, and explain why in the PR.
@@ -47,7 +49,7 @@ uv run pytest -v tests/<area_you_touched>/
    `numpy` or `torch` directly, and must work on both the NumPy and PyTorch backends.
 2. **The public API is frozen.** Never rename, remove or change the signature of a public
    class, function, method or argument. To replace one, keep it working and mark it with
-   `optiland._deprecation.deprecated`.
+   `optiland._deprecation.deprecated`. `tests/api/test_public_api.py` enforces this.
 3. **Never loosen a test tolerance, or skip or delete a test, to make it pass.** Find the root
    cause.
 4. **`optiland_gui/` only reads from `optiland/`.** Core code never imports the GUI, and the
