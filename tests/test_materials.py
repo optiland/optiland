@@ -238,6 +238,34 @@ class TestBaseMaterial:
         assert BaseMaterial._requires_grad(1.5) is False
         assert BaseMaterial._requires_grad(np.array(1.5)) is False
 
+    def test_pgF_and_p_ref_return_zero_for_flat_dispersion(self, set_test_backend):
+        class FlatDispersion(BaseMaterial):
+            def _calculate_n(self, wavelength, **kwargs):
+                return be.array(1.5)
+
+            def _calculate_k(self, wavelength, **kwargs):
+                return be.array(0.0)
+
+        material = FlatDispersion()
+
+        # n_F == n_C -> both guards return 0.0 instead of dividing by zero
+        assert material.PgF() == 0.0
+        assert material.P_ref(0.6) == 0.0
+
+    def test_dPgF_returns_zero_for_zero_abbe(self, set_test_backend):
+        class ZeroAbbe(BaseMaterial):
+            def _calculate_n(self, wavelength, **kwargs):
+                return be.array(1.5)
+
+            def _calculate_k(self, wavelength, **kwargs):
+                return be.array(0.0)
+
+            def abbe(self):
+                return 0.0
+
+        # flat n -> PgF() == 0.0; Vd == 0.0 -> the dPgF guard returns 0.0
+        assert ZeroAbbe().dPgF() == 0.0
+
 
 @pytest.mark.skipif(
     "torch" not in be.list_available_backends(),
@@ -753,6 +781,20 @@ class TestModelMaterial:
             rtol=0,
             atol=1e-3,
         )
+
+    def test_set_abbe_on_ideal_material_raises(self, set_test_backend):
+        lens = Optic()
+        lens.surfaces.add(index=0)
+        lens.surfaces.add(
+            index=1,
+            material=materials.IdealMaterial(n=1.5),
+            radius=10,
+            thickness=5,
+        )
+        lens.surfaces.add(index=2)
+
+        with pytest.raises(ValueError, match="does not have a defined vd"):
+            lens.updater.set_abbe(45.0, 1)
 
 
 class TestMaterialFile:

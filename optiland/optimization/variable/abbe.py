@@ -5,7 +5,7 @@ the Abbe number at a specific surface. The variable can
 be used in optimization problems to optimize the Abbe number at a
 specific surface.
 
-Ziyi Xiong, 2026/4
+Ziyi Xiong, 2026/11
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ class AbbeVariable(VariableBehavior):
     Args:
         optic (Optic): The optic object associated with the variable.
         surface_number (int): The surface number where the variable is applied.
-        wavelength (float): The wavelength at which the Abbe number is calculated.
         scaler (Scaler): The scaler to use for the variable. Defaults to
             a linear scaler with offset=-1.5.
         **kwargs: Additional keyword arguments.
@@ -28,8 +27,6 @@ class AbbeVariable(VariableBehavior):
     Attributes:
         optic (Optic): The optic object to which the surface belongs.
         surface_number (int): The number of the surface.
-        wavelength (float): The wavelength at which the Abbe number is
-            calculated.
 
     Methods:
         get_value(): Returns the value of the Abbe number at the

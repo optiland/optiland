@@ -106,6 +106,10 @@ class TestModelMaterialValidation:
         with pytest.raises(ValueError, match="must be provided together"):
             ModelMaterial(1.5168, 64.17, 0.0, P_ref=0.60)
 
+    def test_from_dict_requires_descriptors(self, set_test_backend):
+        with pytest.raises(ValueError, match="Missing null required key"):
+            ModelMaterial.from_dict({"nd": 1.5168, "vd": None, "dPgF": 0.0})
+
 
 class TestModelMaterialContract:
     def test_regression_matrix_column_counts(self, set_test_backend):
