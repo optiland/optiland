@@ -89,13 +89,17 @@ select = [
     "PYI", # pyright
     "TC",  # type-checking
     # pydocstyle: missing-docstring only, scoped to top-level public API
-    # (module/class/function). D102 (methods), D105 (magic methods), and
-    # D107 (__init__) are intentionally excluded — enabling them today would
-    # flag ~480 pre-existing internals, which is exactly the one-time fixup
-    # burden constraint 4 rules out. D2xx/D4xx (content/format) stay off too.
+    # (module/class/function). D105 (magic methods) and docstring content/format
+    # rules (D2xx/D4xx) stay off; enabling them would flag ~480 pre-existing
+    # internals, which is exactly the one-time fixup burden constraint 4 rules
+    # out. D102 (methods) and D107 (__init__) are enabled via the ratchet in
+    # [tool.ruff.lint.per-file-ignores]: subpackages listed there still have
+    # undocumented methods and are fixed one entry per PR (see issue #1062).
     "D100", # undocumented-public-module
     "D101", # undocumented-public-class
     "D103", # undocumented-public-function
+    "D102", # undocumented-public-method
+    "D107", # undocumented-public-init
 ]
 exclude = ["*.ipynb"]
 
@@ -105,7 +109,50 @@ convention = "google"
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D100", "D101", "D103"]
 "docs/**" = ["D100", "D101", "D103"]
-# Documentation build tooling (scripts/docs), not part of the package API.
+# Standalone debug/reproduction scripts, not part of the package API.
+"optiland/scripts/**" = ["D100", "D101", "D103"]
+# Ratchet for D102/D107 (issue #1062): every subpackage below still has
+# undocumented public methods/__init__; one entry is removed per PR as its
+# docstrings are completed. Last entry removed wins — delete this block
+# entirely when the list is empty.
+"optiland/optimization/**" = ["D102", "D107"]
+"optiland/thin_film/**" = ["D102", "D107"]
+"optiland/visualization/**" = ["D102", "D107"]
+"optiland/samples/**" = ["D102", "D107"]
+"optiland/analysis/**" = ["D102", "D107"]
+"optiland/aperture/**" = ["D102", "D107"]
+"optiland/geometries/**" = ["D102", "D107"]
+"optiland/sequences/**" = ["D102", "D107"]
+"optiland/phase/**" = ["D102", "D107"]
+"optiland/materials/**" = ["D102", "D107"]
+"optiland/fileio/**" = ["D102", "D107"]
+"optiland/surfaces/**" = ["D102", "D107"]
+"optiland/wavefront/**" = ["D102", "D107"]
+"optiland/rays/**" = ["D102", "D107"]
+"optiland/physical_apertures/**" = ["D102", "D107"]
+"optiland/jones.py" = ["D102", "D107"]
+"optiland/coatings.py" = ["D102", "D107"]
+"optiland/tolerancing/**" = ["D102", "D107"]
+"optiland/prescription/**" = ["D102", "D107"]
+"optiland/interactions/**" = ["D102", "D107"]
+"optiland/psf/**" = ["D102", "D107"]
+"optiland/optic/**" = ["D102", "D107"]
+"optiland/distribution.py" = ["D102", "D107"]
+"optiland/mtf/**" = ["D102", "D107"]
+"optiland/apodization/**" = ["D102", "D107"]
+"optiland/aberrations/**" = ["D102", "D107"]
+"optiland/zernike/**" = ["D102", "D107"]
+"optiland/solves/**" = ["D102", "D107"]
+"optiland/scatter.py" = ["D102", "D107"]
+"optiland/raytrace/**" = ["D102", "D107"]
+"optiland/pickup.py" = ["D102", "D107"]
+"optiland/physical_optics/**" = ["D102", "D107"]
+"optiland/fields/**" = ["D102", "D107"]
+"optiland/backend/**" = ["D102", "D107"]
+"optiland/sources/**" = ["D102", "D107"]
+"optiland/paraxial_path.py" = ["D102", "D107"]
+"optiland/multiconfig/**" = ["D102", "D107"]
+"optiland/ml/**" = ["D102", "D107"]# Documentation build tooling (scripts/docs), not part of the package API.
 "scripts/**" = ["D100", "D101", "D103"]
 
 [tool.ruff.lint.isort]
