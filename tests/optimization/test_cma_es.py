@@ -628,3 +628,62 @@ class TestCMAES:
         assert np.array_equal(final_values, result.x)
         assert problem.optics_updated is True
         assert isinstance(result, optimize.OptimizeResult)
+
+    @pytest.mark.parametrize("failure", ["nan", "value_error"])
+    def test_all_failed_evaluations_are_not_success(
+        self, set_test_backend, failure: str
+    ) -> None:
+        """Test that a run whose every evaluation failed reports failure."""
+        calls = []
+
+        def always_fails(values: list[float]) -> float:
+            # The constructor evaluates the start point outside the guarded
+            # objective, so the first call fails with NaN instead of raising.
+            calls.append(values)
+            if failure == "nan" or len(calls) == 1:
+                return float("nan")
+            raise ValueError("invalid design")
+
+        problem = MockProblem(
+            [MockVariable(0.5, (0.0, 1.0))],
+            target_fun=always_fails,
+        )
+
+        result = CMAES(problem).optimize(
+            maxiter=100,
+            population_size=4,
+            sigma0=0.1,
+            tolx=0.0,
+            tolfun=0.0,
+            seed=9,
+            disp=False,
+        )
+
+        assert result.success is False
+        assert "No valid merit evaluation" in result.message
+        assert "objective values changed by at most" in result.message
+
+    def test_partially_failed_evaluations_can_succeed(self, set_test_backend) -> None:
+        """Test that failures do not block success once a valid point is found."""
+
+        def fails_above_half(values: list[float]) -> float:
+            if values[0] > 0.5:
+                return float("nan")
+            return values[0] ** 2
+
+        problem = MockProblem(
+            [MockVariable(0.4, (0.0, 1.0))],
+            target_fun=fails_above_half,
+        )
+
+        result = CMAES(problem).optimize(
+            maxiter=200,
+            population_size=6,
+            sigma0=0.3,
+            seed=3,
+            disp=False,
+        )
+
+        assert result.success is True
+        assert "No valid merit evaluation" not in result.message
+        assert result.fun < 1e-6
