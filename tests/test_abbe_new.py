@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from optiland.materials import AbbeMaterial, AbbeMaterialE
+import optiland.backend as be
+from optiland.materials import AbbeMaterial, AbbeMaterialE, Material
 from optiland.materials.abbe import AbbePolynomialModel, BuchdahlDModel, BuchdahlEModel
 
 from .utils import assert_allclose
@@ -169,6 +170,22 @@ class TestAbbeMaterialE:
         mat = AbbeMaterialE(ne, ve)
         n_pred = mat.n(0.546074)
         assert_allclose(n_pred, ne, atol=1e-6)
+
+    @pytest.mark.parametrize("glass", ["N-BK7", "N-BAK1", "F2", "SF2", "N-SF11"])
+    def test_reproduces_real_glass_dispersion(self, set_test_backend, glass):
+        # Regression test for issue #1087: the model must reproduce the V_e it
+        # was built from and track the real glass across the visible band.
+        real = Material(glass, catalog="schott")
+        ne = float(be.to_numpy(real.n(0.5460740)).item())
+        dn_real = real.n(0.4799914) - real.n(0.6438469)
+        ve = (ne - 1) / float(be.to_numpy(dn_real).item())
+
+        mat = AbbeMaterialE(ne, ve)
+        dn_model = mat.n(0.4799914) - mat.n(0.6438469)
+        assert_allclose((ne - 1) / dn_model, ve, atol=0.1)
+
+        wavelengths = be.linspace(0.42, 0.68, 14)
+        assert_allclose(mat.n(wavelengths), real.n(wavelengths), atol=5e-4)
 
     def test_to_dict(self, set_test_backend):
         mat = AbbeMaterialE(1.5, 60.0)
