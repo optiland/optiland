@@ -224,29 +224,31 @@ class BuchdahlEModel(BuchdahlModel):
         n_sq = ne**2
         n_div_v = ne / ve
 
-        # Derived via Lasso regression
+        # Least-squares regression of the e-line Buchdahl coefficients
+        # (alpha = 2.5, fitted over 0.40-0.70 µm) of 1225 Schott, Ohara, CDGM
+        # and Hikari glasses on the terms [1, 1/V, 1/V^2, n^2, n/V].
         v1 = (
-            -0.01271580
-            + 5.86039368 * inv_v
-            + 0.00000000 * inv_v2
-            - 0.00840567 * n_sq
-            - 6.04120358 * n_div_v
+            0.00050936
+            + 6.29528237 * inv_v
+            + 1.58392796 * inv_v2
+            - 0.00001050 * n_sq
+            - 6.34920602 * n_div_v
         )
 
         v2 = (
-            -0.11714561
-            - 19.45035516 * inv_v
-            + 0.00000000 * inv_v2
-            - 0.18747797 * n_sq
-            + 14.33541100 * n_div_v
+            0.07935315
+            - 11.21503436 * inv_v
+            + 44.51759032 * inv_v2
+            - 0.04276036 * n_sq
+            + 8.12614695 * n_div_v
         )
 
         v3 = (
-            0.00000000
-            + 18.43536735 * inv_v
-            - 241.00526954 * inv_v2
-            + 0.10881050 * n_sq
-            - 4.93439893 * n_div_v
+            -0.06686299
+            + 4.96061685 * inv_v
+            - 223.27449912 * inv_v2
+            - 0.00429985 * n_sq
+            + 2.45550881 * n_div_v
         )
 
         return v1, v2, v3
