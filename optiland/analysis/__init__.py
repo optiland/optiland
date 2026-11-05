@@ -19,6 +19,7 @@ from .distortion_strategies import (
 )
 from .field_curvature import FieldCurvature
 from .chromatic_focal_shift import ChromaticFocalShift
+from .longitudinal_aberration import LongitudinalAberration
 from .rms_vs_field import RmsSpotSizeVsField, RmsWavefrontErrorVsField
 from .pupil_aberration import PupilAberration
 from .irradiance import IncoherentIrradiance
