@@ -1,4 +1,4 @@
-"""Deterministic evaluation-count tests (decision V15).
+"""Deterministic evaluation-count tests.
 
 Counts come from :mod:`optiland._instrument` and involve no timing, so they
 catch regressions of the engine speed work without wall-clock noise. When a

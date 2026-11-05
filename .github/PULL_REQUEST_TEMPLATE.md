@@ -18,6 +18,7 @@ Passing CI alone is not verification. Please run the code yourself. -->
 
 ## Checklist
 
+- [ ] If this PR addresses an issue, I claimed it there first and nobody else had.
 - [ ] I have read the entire diff and can explain every change.
 - [ ] This PR is one logical change and is as small as it reasonably can be.
 - [ ] Tests are added or updated, and the relevant ones pass locally (NumPy and PyTorch where applicable).

@@ -4,7 +4,7 @@ Metrics per (problem, method): single merit-evaluation time, forward-FD
 Jacobian time, time to converge, iterations, residual evaluations, trace
 calls, final merit and crash/NaN count. Counts come from
 :mod:`optiland._instrument`; timings are wall-clock minima and are meant for
-local before/after comparison only, never for CI assertions (decision V15).
+local before/after comparison only, never for CI assertions.
 
 Kramer Harrison, 2026
 """
@@ -44,6 +44,7 @@ def _run_scipy(method_choice: str) -> Callable[[OptimizationProblem, int], objec
 METHODS: dict[str, Callable[[OptimizationProblem, int], object]] = {
     "scipy_lm": _run_scipy("lm"),
     "scipy_trf": _run_scipy("trf"),
+    "dls": _run_scipy("dls"),
 }
 
 

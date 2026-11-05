@@ -67,6 +67,43 @@ The typical workflow for using the visualization framework is as follows:
 
 3. **Render the Plot**: Generate the desired visualization, whether in 2D or 3D, using the `view` method. For 3D plots, additional options like dark mode can be applied for enhanced aesthetics.
 
+Coloring Components and Rays
+----------------------------
+
+Lens elements, mirrors, standalone surfaces and ray bundles can be colored by a pluggable strategy
+from ``optiland.visualization.coloring``. Pass a strategy to ``Optic.draw``, ``Optic.draw3D`` or the
+``view`` method of either viewer:
+
+- ``component_colorizer``: a ``ComponentColorizer`` that returns the face color of a ``ComponentRef``.
+  A ``ComponentRef`` holds a ``kind`` (``"lens_element"``, ``"mirror"`` or ``"surface"``) and the
+  ``surface_indices`` it spans. A lens element is one glass body bounded by surfaces ``(k, k + 1)``,
+  so a cemented doublet has two. Returning ``None`` keeps the default color.
+- ``ray_colorizer``: a ``RayColorizer`` that returns an ``(num_rays, 4)`` RGBA array for each traced
+  bundle (``None`` or NaN rows keep the default color).
+- ``show_colorbar``: show a colorbar (2D) or scalar bar (3D) for each strategy that exposes a ``scale``.
+
+Renderers never import concrete strategies. They only receive resolved colors, so a new "color by X"
+feature is a new ``ComponentColorizer`` or ``RayColorizer`` subclass and needs no renderer changes.
+In 3D the alpha channel is ignored and the element opacity stays fixed.
+
+``PropertyColorizer`` colors components by any scalar function of the system and a ``ComponentRef``.
+Values may be floats, NumPy scalars or Torch tensors:
+
+.. code-block:: python
+
+   from optiland.samples.objectives import CookeTriplet
+   from optiland.visualization.coloring import ColorScale, PropertyColorizer
+
+   def center_thickness(optic, ref):
+       first, last = ref.surface_indices
+       return optic.surfaces[first].thickness
+
+   lens = CookeTriplet()
+   colorizer = PropertyColorizer(
+       center_thickness, scale=ColorScale(cmap="plasma", label="Thickness (mm)")
+   )
+   lens.draw(component_colorizer=colorizer)
+
 Dark Mode for VTK
 -----------------
 

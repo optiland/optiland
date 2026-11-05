@@ -1,4 +1,4 @@
-"""Tests for evaluation epochs and the material epoch memo (opt v2 PR2.1).
+"""Tests for evaluation epochs and the material epoch memo.
 
 Kramer Harrison, 2026
 """

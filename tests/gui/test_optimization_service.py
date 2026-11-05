@@ -209,3 +209,30 @@ class TestOptimizerGroupsAndBounds:
         )
         err = service.validate_bounds_for_optimizer(LeastSquares)
         assert err is None
+
+
+def test_candidate_preview_applies_x_to_its_own_copy(minimal_optic):
+    from optiland_gui.services.job_records import OpticSnapshot
+    from optiland_gui.services.optimization_service import CandidatePreview
+
+    preview = CandidatePreview(
+        OpticSnapshot.capture(minimal_optic),
+        [{"surface_number": 1, "type": "thickness"}],
+    )
+    scaled = float(preview._variables[0].variable.scale(8.0))
+    assert preview.apply([scaled]) == pytest.approx([8.0])
+    assert preview.optic is not minimal_optic
+    assert preview.optic.surfaces[1].thickness == pytest.approx(8.0)
+    assert minimal_optic.surfaces[1].thickness == 5.0
+
+
+def test_native_dls_is_exposed_with_settings(service):
+    from optiland_gui.services.optimization_jobs import DampedLeastSquares
+
+    local = OptimizationService.get_optimizer_groups()["Local"]
+    assert ("Damped Least Squares (native)", DampedLeastSquares, "none") in local
+    assert set(service.get_optimizer_metadata(DampedLeastSquares)) == {
+        "maxiter",
+        "tol",
+        "scheme",
+    }

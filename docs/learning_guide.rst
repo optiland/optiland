@@ -21,6 +21,7 @@ New to Optiland? Start with :ref:`start_here` to find the path that fits your go
    Tutorial 1c: Material Database and Catalogs <examples/Tutorial_1c_Material_Database_and_Catalogs>
    Tutorial 1d: Saving and Loading <examples/Tutorial_1d_Saving_and_Loading>
    Tutorial 1e: Design a Doublet, End to End <examples/Tutorial_1e_Design_a_Doublet_End_to_End>
+   Tutorial 1f: Paraxial Gaussian Beams and Resonators <examples/Tutorial_1f_Paraxial_Gaussian_Beams>
 
 
 2. Real Raytracing & Analysis
@@ -46,6 +47,7 @@ New to Optiland? Start with :ref:`start_here` to find the path that fits your go
    Tutorial 3c: User-Defined Optimization <examples/Tutorial_3c_User_Defined_Optimization>
    Tutorial 3d: Optimization Case Study: Cooke Triplet <examples/Tutorial_3d_Optimization_Case_Study_Cooke_Triplet>
    Tutorial 3e: Glass Expert Categorical Optimization <examples/Tutorial_3e_Glass_Expert_Categorical_Optimization>
+   Tutorial 3f: Constrained Optimization with the Default Merit <examples/Tutorial_3f_Constrained_Default_Merit>
 
 
 4. Off-Axis & Complex Systems

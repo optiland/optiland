@@ -195,11 +195,13 @@ Magnitudes agree on every system with both tools. Two conventions to know:
 Image quality (Tier 2)
 ~~~~~~~~~~~~~~~~~~~~~~
 
-Compared with OpticStudio on the Cooke triplet and, in part, Hubble. Spot radii
-agree within 1 % (largest deviation 0.77 %), RMS wavefront error within 1 %
-(largest 0.13 %), and distortion and sagittal field curvature to the printed
-digits. Zernike coefficients (Fringe, 37 terms) agree to about 1 × 10\ :sup:`-5`
-waves. CODE V Tier 2 results are still to come.
+Compared with OpticStudio on the Cooke triplet and, in part, Hubble and the
+Double Gauss. Spot radii agree within 1 % (largest deviation 0.77 %), RMS
+wavefront error within 1 % (largest 0.13 %), and distortion and sagittal field
+curvature to the printed digits. Zernike coefficients (Fringe, 37 terms) agree
+to about 1 × 10\ :sup:`-5` waves on the Cooke triplet, and to 2.7 × 10\ :sup:`-5`
+waves at full field on the Double Gauss, where the residual is stable under
+pupil-sampling refinement. CODE V Tier 2 results are still to come.
 
 ----
 
@@ -227,8 +229,8 @@ These are known, tracked, and not hidden. None affects the Tier 1 results above.
        tangential)
      - A sampling effect: converges to OpticStudio as Optiland's pupil sampling
        increases
-   * - Double Gauss Tier 2 (wavefront, Zernike, MTF) not yet compared against
-       any tool
+   * - Double Gauss Tier 2 wavefront and MTF not yet compared against any tool
+       (Zernike coefficients are compared with OpticStudio, see above)
      - Awaiting contributions
    * - CODE V Tier 2 not yet reported
      - Awaiting contributions

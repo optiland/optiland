@@ -95,6 +95,7 @@ class OptilandConnector(QObject):
 
         # Instantiate services — order does not matter; each receives *self*.
         self._file_service = FileService(self)
+        self.file_operations = self._file_service.operations
         self._surface_service = SurfaceService(self)
         self._system_service = SystemService(self)
         self._analysis_runner = AnalysisRunner(self)
@@ -242,35 +243,9 @@ class OptilandConnector(QObject):
         Args:
             optic: The optic to validate and repair if necessary.
         """
-        if optic.surfaces.num_surfaces < 2:
-            optic.surfaces.clear()
-            optic.surfaces.add(
-                surface_type="standard",
-                radius=float("inf"),
-                thickness=10.0,
-                comment="Object",
-                material="Air",
-            )
-            optic.surfaces.add(
-                surface_type="standard",
-                radius=float("inf"),
-                thickness=0.0,
-                comment="Image",
-                material="Air",
-            )
+        from optiland_gui.services.model_initialization import ensure_valid_structure
 
-        if optic.wavelengths.num_wavelengths == 0:
-            optic.wavelengths.add(
-                self.DEFAULT_WAVELENGTH_UM, is_primary=True, unit="um"
-            )
-        elif optic.wavelengths.primary_index is None:
-            optic.wavelengths.wavelengths[0].is_primary = True
-
-        if not hasattr(optic, "aperture") or optic.aperture is None:
-            try:
-                optic.set_aperture("EPD", 10.0)
-            except Exception as e:
-                print(f"Warning: Failed to set aperture for loaded system: {e}")
+        ensure_valid_structure(optic, self.DEFAULT_WAVELENGTH_UM)
 
     def _initialize_optic_structure(
         self,

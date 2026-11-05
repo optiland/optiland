@@ -5,11 +5,13 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, QObject, Qt, Signal
+from PySide6.QtCore import QCoreApplication, QEvent, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDockWidget, QMainWindow, QWidget
 
 from optiland_gui.main_window import MainWindow
+
+from .test_file_open_import import file_operations as file_operations
 
 
 class DockWindow(MainWindow):
@@ -157,13 +159,9 @@ def test_showing_a_tabbed_panel_brings_it_to_the_front(qapp, dock_layout):
     assert not other.geometry().intersects(window.rect())
 
 
-class ConnectorSignals(QObject):
-    opticLoaded = Signal()
-    opticChanged = Signal()
-    modifiedStateChanged = Signal()
-
-
-def test_final_setup_keeps_native_actions_and_existing_listeners(qapp, monkeypatch):
+def test_final_setup_keeps_native_actions_and_existing_listeners(
+    qapp, monkeypatch, file_operations
+):
     import optiland_gui.main_window as module
 
     window = DockWindow()
@@ -176,13 +174,13 @@ def test_final_setup_keeps_native_actions_and_existing_listeners(qapp, monkeypat
     observed = []
     action.triggered.connect(lambda checked: observed.append(checked))
 
-    # Isolate finalization's action wiring from optical services and overlays.
+    # Keep the real connector's service contract; isolate unrelated UI overlays.
     window.current_theme_path = ""
     window.action_manager = SimpleNamespace(get_action=lambda _: None)
     window.panel_manager = SimpleNamespace(
         get_all_docks=lambda: [dock], connect_signals=lambda: None
     )
-    window.connector = ConnectorSignals(window)
+    window.connector = file_operations[0]
     window.settings = object()
     window.command_registry = object()
     window.load_stylesheets = lambda: None

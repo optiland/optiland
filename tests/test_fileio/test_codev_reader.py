@@ -30,6 +30,24 @@ def _seq(name: str) -> str:
     return os.path.join(_DIR, name)
 
 
+_LETTERS = ("A", "B", "C", "D", "E", "F", "G", "H", "J")
+
+
+def _codev_sag(radius: float, conic: float, letters: list[float], r: float) -> float:
+    """CODE V even-asphere sag: letter j multiplies r**(2j + 4)."""
+    c = 1.0 / radius
+    z = c * r**2 / (1.0 + (1.0 - (1.0 + conic) * c**2 * r**2) ** 0.5)
+    return z + sum(a * r ** (2 * j + 4) for j, a in enumerate(letters))
+
+
+def _write_asphere_seq(path, lines: list[str]) -> str:
+    """Write a one-asphere CODE V file; ``lines`` follow the asphere S line."""
+    body = ["EPD 5.0", "WL 587.6", "REF 1", "YAN 0.0", "SO 0.0 1e10"]
+    body += ["S 50.0 5.0 1.5168:64.17", *lines, "S -80.0 45.0", "SI 0.0 0.0"]
+    path.write_text("\n".join(body) + "\n")
+    return str(path)
+
+
 # ---------------------------------------------------------------------------
 # CodeVDataModel
 # ---------------------------------------------------------------------------
@@ -116,6 +134,8 @@ class TestCodeVDataParser:
         surf1 = model.surfaces[1]  # first real surface (index 1, SO is 0)
         assert surf1.get("conic") == pytest.approx(-0.5)
         coeffs = surf1.get("coefficients", [])
+        # The parser keeps the CODE V letters as written (A first); the shift onto
+        # Optiland's powers happens in the converter.
         assert len(coeffs) >= 2
         assert coeffs[0] == pytest.approx(1.5e-6)
         assert coeffs[1] == pytest.approx(-2.3e-9)
@@ -379,6 +399,8 @@ class TestCodeVToOpticConverter:
         asph = list(optic.surfaces)[1]
         geom = asph.geometry
         assert hasattr(geom, "coefficients")
+        # CODE V letter A is r^4, Optiland's coefficients[0] is r^2.
+        assert list(map(float, geom.coefficients)) == [0.0, 1.5e-6, -2.3e-9]
 
     def test_init_with_model(self):
         from optiland.fileio.codev.model import CodeVDataModel
@@ -422,6 +444,56 @@ class TestCodeVToOpticConverter:
         converter.optic = Optic()
         with pytest.raises(NotImplementedError, match="image-space numerical aperture"):
             converter._configure_aperture()
+
+
+class TestCodeVAsphereLetters:
+    _VALUES = [1.5e-6, -2.3e-9, 3.1e-12, -4.7e-15, 5.3e-18]
+    _VALUES += [-6.1e-21, 7.9e-24, -8.3e-27, 9.7e-30]
+
+    def test_reader_letters_land_on_codev_powers(self, set_test_backend, tmp_path):
+        lines = ["  ASP", "  K -0.5"]
+        lines += [f"  {k} {v!r}" for k, v in zip(_LETTERS, self._VALUES, strict=True)]
+        path = _write_asphere_seq(tmp_path / "all_letters.seq", lines)
+
+        geom = load_codev_file(path).surfaces[1].geometry
+
+        coeffs = [float(c) for c in geom.coefficients]
+        assert len(coeffs) == 10
+        assert coeffs[0] == 0.0
+        assert coeffs[1:] == self._VALUES
+        assert float(geom.k) == -0.5
+        for r in (2.5, 5.0, 10.0):
+            expected = _codev_sag(50.0, -0.5, self._VALUES, r)
+            assert_allclose(geom.sag(0.0, r), expected, rtol=1e-12, atol=0.0)
+
+    @pytest.mark.parametrize("j", range(9))
+    def test_reader_single_letters_only_set_their_slot(
+        self, set_test_backend, tmp_path, j
+    ):
+        lines = ["  ASP", f"  {_LETTERS[j]} 1.25e-7"]
+        path = _write_asphere_seq(tmp_path / f"letter_{j}.seq", lines)
+
+        geom = load_codev_file(path).surfaces[1].geometry
+
+        coeffs = [float(c) for c in geom.coefficients]
+        coeffs += [0.0] * (10 - len(coeffs))
+        assert len(coeffs) == 10
+        assert coeffs[j + 1] == 1.25e-7
+        assert [i for i, c in enumerate(coeffs) if c != 0.0] == [j + 1]
+
+    def test_reader_tolerates_missing_asp(self, set_test_backend, tmp_path):
+        with_letters = _write_asphere_seq(
+            tmp_path / "no_asp.seq", ["  K -0.5", "  A 1.5E-6"]
+        )
+        conic_only = _write_asphere_seq(tmp_path / "conic_only.seq", ["  K -0.5"])
+
+        geom = load_codev_file(with_letters).surfaces[1].geometry
+        assert [c for c in map(float, geom.coefficients) if c != 0.0] == [1.5e-6]
+        assert float(geom.k) == -0.5
+
+        geom = load_codev_file(conic_only).surfaces[1].geometry
+        assert not hasattr(geom, "coefficients")
+        assert float(geom.k) == -0.5
 
 
 # ---------------------------------------------------------------------------

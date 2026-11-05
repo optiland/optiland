@@ -15,6 +15,7 @@ from __future__ import annotations
 import vtk
 
 from optiland.visualization.base import BaseViewer3D
+from optiland.visualization.coloring.scale import collect_scales
 from optiland.visualization.system.rays import Rays3D
 from optiland.visualization.system.system import OpticalSystem
 
@@ -46,6 +47,18 @@ class OpticViewer3D(BaseViewer3D):
         self.ren_win = vtk.vtkRenderWindow()
         self.iren = vtk.vtkRenderWindowInteractor()
 
+    @staticmethod
+    def _add_scalar_bars(renderer, scales):
+        """Add one scalar bar per scale along the right edge, side by side."""
+        width, margin = 0.08, 0.02
+        for slot, scale in enumerate(scales):
+            bar = scale.scalar_bar_actor()
+            bar.SetOrientationToVertical()
+            bar.SetWidth(width)
+            bar.SetHeight(0.7)
+            bar.SetPosition(1.0 - (slot + 1) * (width + margin) - 0.03, 0.15)
+            renderer.AddViewProp(bar)
+
     def view(
         self,
         fields="all",
@@ -56,6 +69,10 @@ class OpticViewer3D(BaseViewer3D):
         dark_mode=False,
         reference=None,
         hide_vignetted=False,
+        *,
+        component_colorizer=None,
+        ray_colorizer=None,
+        show_colorbar=True,
     ):
         """Visualizes the optical system in 3D.
 
@@ -76,6 +93,13 @@ class OpticViewer3D(BaseViewer3D):
                 include "chief" and "marginal". Defaults to None.
             hide_vignetted (bool, optional): If True, rays that vignette at any
                 surface are not shown. Defaults to False.
+            component_colorizer (ComponentColorizer, optional): Strategy that
+                colors lens elements, mirrors and surfaces. Defaults to None,
+                which keeps the theme colors.
+            ray_colorizer (RayColorizer, optional): Strategy that colors rays.
+                Defaults to None, which keeps the default ray colors.
+            show_colorbar (bool, optional): If True (default), shows a colorbar
+                for each colorizer that provides a scale.
 
         """
         renderer = self._make_renderer(dark_mode)
@@ -86,6 +110,8 @@ class OpticViewer3D(BaseViewer3D):
         style = vtk.vtkInteractorStyleTrackballCamera()
         self.iren.SetInteractorStyle(style)
 
+        if ray_colorizer is not None:
+            ray_colorizer.prepare(self.optic)
         self.rays.plot(
             renderer,
             fields=fields,
@@ -94,8 +120,13 @@ class OpticViewer3D(BaseViewer3D):
             distribution=distribution,
             reference=reference,
             hide_vignetted=hide_vignetted,
+            _ray_colorizer=ray_colorizer,
         )
-        self.system.plot(renderer)
+        self.system.plot(renderer, _component_colorizer=component_colorizer)
+        if show_colorbar:
+            self._add_scalar_bars(
+                renderer, collect_scales(component_colorizer, ray_colorizer)
+            )
 
         self.ren_win.SetSize(*figsize)
         self.ren_win.SetWindowName("Optical System - 3D Viewer")

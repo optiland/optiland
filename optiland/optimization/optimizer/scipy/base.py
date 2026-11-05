@@ -14,6 +14,7 @@ import warnings
 from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
+from optiland.optimization.failure import reject_hard_constraints
 from scipy import optimize
 
 from ..base import BaseOptimizer
@@ -84,6 +85,7 @@ class OptimizerGeneric(BaseOptimizer):
             result (OptimizeResult): The optimization result.
 
         """
+        reject_hard_constraints(self.problem, type(self).__name__)
         if method == "Default":
             method = None
 

@@ -203,10 +203,16 @@ Optimize a system
    * - vary a radius and minimize spot size?
      - :doc:`Tutorial 3a <examples/Tutorial_3a_Simple_Optimization>`,
        :doc:`gallery/optimization/rms_spot_size`
+   * - choose an optimizer, watch a run, or cancel it?
+     - :doc:`optimization_guide`
+   * - set up a spot or wavefront merit in one call?
+     - :doc:`optimization_merit_constraints`,
+       :doc:`Tutorial 3f <examples/Tutorial_3f_Constrained_Default_Merit>`
    * - optimize against wavefront error instead of spot size?
      - :doc:`gallery/optimization/wavefront_error`
    * - hold total track, edge thickness, or another constraint?
-     - :doc:`gallery/optimization/constrained`,
+     - :doc:`optimization_merit_constraints`,
+       :doc:`gallery/optimization/constrained`,
        :doc:`gallery/optimization/bounded_operands`
    * - escape a local minimum (global optimization)?
      - :doc:`gallery/optimization/global`,

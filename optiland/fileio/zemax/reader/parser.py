@@ -33,6 +33,7 @@ from optiland.physical_apertures import (
     OffsetRadialAperture,
     RadialAperture,
     RectangularAperture,
+    SpiderAperture,
     UnionAperture,
 )
 
@@ -63,6 +64,7 @@ class ZemaxDataParser:
         self.data_model = ZemaxDataModel()
         self._current_surf = -1
         self._current_surf_data: dict[str, Any] = {}
+        self._medium = "air"  # the medium before the in-progress surface
         self._current_aperture_offset = (0.0, 0.0)
         self._declared_field_count: int | None = None
         self._declared_wavelength_count: int | None = None
@@ -110,7 +112,7 @@ class ZemaxDataParser:
             "SQOB": self._read_rectangular_obscuration,
             "ELAP": self._read_elliptical_aperture,
             "ELOB": self._read_elliptical_obscuration,
-            "SPID": self._read_unsupported_aperture,
+            "SPID": self._read_spider,
             "USAP": self._read_unsupported_aperture,
             "OBDC": self._read_aperture_decenter,
         }
@@ -556,6 +558,12 @@ class ZemaxDataParser:
             "elliptical_obscuration", float(data[1]), float(data[2])
         )
 
+    def _read_spider(self, data: list[str]) -> None:
+        # SPID <width> <arms> <pickup>: blocks rays on the arms, half-lines of
+        # the full width given from the centre, the first along local +x;
+        # everything else passes, with no outer limit.
+        self._set_aperture_shape("spider", float(data[1]), float(data[2]))
+
     def _set_aperture_shape(self, kind: str, first: float, second: float) -> None:
         self._current_aperture_shape = (kind, first, second)
         self._current_surf_data["aperture"] = self._build_aperture()
@@ -573,6 +581,8 @@ class ZemaxDataParser:
                 return outside
             return UnionAperture(self._make_circular_aperture(0.0, r_min), outside)
         offset_x, offset_y = self._current_aperture_offset
+        if kind == "spider":
+            return SpiderAperture(first, round(second), offset_x, offset_y)
         if kind.startswith("rectangular"):
             shape = RectangularAperture(
                 x_min=offset_x - first,
@@ -662,18 +672,29 @@ class ZemaxDataParser:
         OpticStudio vignettes rays at a user-fixed ("U") semi-diameter even
         when the surface has no explicit aperture, so such a surface gets a
         circular aperture of that radius. Any surface aperture, including
-        types not imported yet (SPID, USAP), replaces that
+        types not imported yet (USAP), replaces that
         clip. Automatic semi-diameters never clip.
         """
         if self._current_surf < 0:
             return
         surf = self._current_surf_data
         semi_diameter = surf.get("semi_diameter", 0.0)
+        # The clip is the edge of a lens or a mirror: a surface with air on
+        # both sides, such as a stop, a dummy or the image, does not clip at
+        # its semi-diameter. A mirror leaves the medium unchanged.
+        material = surf.get("material", "air")
+        medium_before = self._medium
+        if material != "mirror":
+            self._medium = material
+        bounds_solid = material == "mirror" or not (
+            medium_before == "air" and self._medium == "air"
+        )
         if (
             surf.get("aperture") is None
             and "unsupported_aperture" not in surf
             and surf.get("semi_diameter_fixed")
             and semi_diameter > 0.0
+            and bounds_solid
         ):
             surf["aperture"] = RadialAperture(r_min=0.0, r_max=semi_diameter)
         self.data_model.surfaces[self._current_surf] = surf

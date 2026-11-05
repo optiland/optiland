@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING
 
 import optiland.backend as be
 from optiland.interactions.base import BaseInteractionModel
-from optiland.rays.polarized_rays import PolarizedRays
 
 if TYPE_CHECKING:
     # pragma: no cover
@@ -66,11 +65,18 @@ class ThinLensInteractionModel(BaseInteractionModel):
             RealRays: The refracted rays.
 
         """
-        h2 = rays.x**2 + rays.y**2
-        rays.opd = rays.opd + self.f - be.copysign(be.sqrt(h2 + self.f**2), self.f)
+        # A zero-power lens adds no phase; inf - inf would destroy the OPD.
+        if not be.isinf(self.f):
+            h2 = rays.x**2 + rays.y**2
+            rays.opd = rays.opd + self.f - be.copysign(be.sqrt(h2 + self.f**2), self.f)
 
         n1 = self.material_pre.n(rays.w)
         n2 = n1 if self.is_reflective else self.material_post.n(rays.w)
+        # Capture this surface's incident direction, not a previous bend's.
+        rays.normalize()
+        rays.L0, rays.M0, rays.N0 = (
+            be.copy(component) for component in (rays.L, rays.M, rays.N)
+        )
         L, M, N = [component / be.abs(rays.N) for component in (rays.L, rays.M, rays.N)]
         if not be.isinf(self.f):
             if self.is_reflective:
@@ -90,27 +96,6 @@ class ThinLensInteractionModel(BaseInteractionModel):
         else:
             N *= n2 / n1
 
-        # only normalize if required
-        if self.bsdf or self.coating or isinstance(rays, PolarizedRays):
-            rays.normalize()
-
-        # if there is a surface scatter model, modify ray properties
-        if self.bsdf:
-            rays = self.bsdf.scatter(rays, nx=0, ny=0, nz=1)
-
-        # if there is a coating, modify ray properties
-        if self.coating:
-            rays = self.coating.interact(
-                rays,
-                reflect=self.is_reflective,
-                nx=0,
-                ny=0,
-                nz=1,
-            )
-        else:
-            # update polarization matrices, if PolarizedRays
-            rays.update()
-
         if self.is_reflective:
             N = -N
         rays.L = L
@@ -118,8 +103,9 @@ class ThinLensInteractionModel(BaseInteractionModel):
         rays.N = N
 
         rays.normalize()
-
-        return rays
+        # Transport the field once, from the incident to the outgoing direction.
+        # Scatter must also act on the outgoing ray rather than be overwritten.
+        return self._apply_coating_and_bsdf(rays, nx=0, ny=0, nz=1)
 
     def interact_paraxial_rays(self, rays):
         """Traces paraxial rays through the surface.

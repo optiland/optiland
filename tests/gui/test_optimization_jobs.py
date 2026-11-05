@@ -98,6 +98,7 @@ def test_solver_success_does_not_accept_ignored_variable_bounds(minimal_optic):
         ("Local", 0),
         ("Local", 1),
         ("Local", 2),
+        ("Local", 3),
         ("Global", 0),
         ("Global", 1),
         ("Global", 2),
@@ -292,3 +293,203 @@ def test_separate_candidate_window_is_released_after_close(
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     assert not panel._candidate_windows
     panel.close()
+
+
+def native_dls_parameters():
+    """A focal-length target on a radius: nonlinear, several accepted steps."""
+    from optiland_gui.services.optimization_jobs import DampedLeastSquares
+
+    options = parameters(DampedLeastSquares, {"maxiter": 200, "tol": 1e-14})
+    options["variables"] = [{"surface_number": 1, "type": "radius"}]
+    options["operands"] = [
+        {"type": "f2", "target": 80.0, "weight": 1.0, "input_data_str": "{}"}
+    ]
+    return options
+
+
+@pytest.fixture
+def slow_clock(monkeypatch):
+    """Advance the job clock 0.3 s per read so no step is throttled."""
+    import itertools
+
+    clock = itertools.count()
+    monkeypatch.setattr(
+        "optiland_gui.services.optimization_jobs.time.monotonic",
+        lambda: next(clock) * 0.3,
+    )
+
+
+def test_native_dls_candidate_streams_steps_without_mutating_input(
+    set_test_backend, minimal_optic, slow_clock
+):
+    before = pickle.dumps(minimal_optic.to_dict())
+    steps = []
+    result = optimize(
+        OpticSnapshot.capture(minimal_optic),
+        native_dls_parameters(),
+        lambda *args, **kwargs: steps.append(kwargs.get("details", {})),
+        threading.Event(),
+    )
+    candidate = result["candidate"].restore()
+    assert pickle.dumps(minimal_optic.to_dict()) == before
+    assert result["converged"]
+    assert result["final_merit"] < 1e-6
+    reported = [step for step in steps if step.get("iteration", 0) >= 1]
+    assert [step["iteration"] for step in reported] == list(range(1, len(reported) + 1))
+    assert reported[-1]["merit"] < result["initial_merit"]
+    assert all(len(step["x"]) == 1 for step in reported)
+    assert float(candidate.surfaces[1].geometry.radius) != pytest.approx(50.0)
+
+
+def test_native_dls_cancel_maps_to_token(minimal_optic, monkeypatch, slow_clock):
+    from optiland.optimization.observers import cancel as cancel_module
+
+    checks = []
+    original = cancel_module.CancelCriterion.should_stop
+
+    def should_stop(self, state):
+        stopped = original(self, state)
+        checks.append(stopped)
+        return stopped
+
+    monkeypatch.setattr(cancel_module.CancelCriterion, "should_stop", should_stop)
+    cancelled = threading.Event()
+
+    def progress(stage, **payload):
+        if payload.get("details", {}).get("iteration", 0) >= 1:
+            cancelled.set()
+
+    with pytest.raises(CalculationCancelled):
+        optimize(
+            OpticSnapshot.capture(minimal_optic),
+            native_dls_parameters(),
+            progress,
+            cancelled,
+        )
+    # The run ended through the token, at the first step, which saw the cancel.
+    assert checks == [(True, "cancelled by user")]
+
+
+def test_event_cancel_token_follows_job_event():
+    from optiland_gui.services.optimization_jobs import EventCancelToken
+
+    event = threading.Event()
+    token = EventCancelToken(event)
+    assert not token.cancelled
+    event.set()
+    assert token.cancelled
+    token.reset()
+    assert not event.is_set()
+    token.cancel()
+    assert event.is_set()
+
+
+def test_progress_is_throttled_to_ten_hertz(minimal_optic, monkeypatch):
+    import itertools
+
+    clock = itertools.count()
+    # Each clock read advances 30 ms, so steps arrive faster than 10 Hz.
+    monkeypatch.setattr(
+        "optiland_gui.services.optimization_jobs.time.monotonic",
+        lambda: next(clock) * 0.03,
+    )
+    times = []
+
+    def progress(stage, **payload):
+        if "details" in payload:
+            times.append(payload["details"]["elapsed"])
+
+    optimize(
+        OpticSnapshot.capture(minimal_optic),
+        native_dls_parameters(),
+        progress,
+        threading.Event(),
+    )
+    gaps = [later - earlier for earlier, later in itertools.pairwise(times)]
+    assert gaps
+    assert all(gap >= 0.1 - 1e-12 for gap in gaps)
+    # Seven accepted steps arrive 30 ms apart; only some are sent.
+    assert len(times) < 1 + 7
+
+
+def test_step_applies_x_to_gui_copy_not_live_document(qapp, owned_service):
+    from types import SimpleNamespace
+
+    from optiland_gui.services.optimization_service import CandidatePreview
+
+    connector, service = owned_service
+    original = connector.get_optic()
+    request = SimpleNamespace(
+        job_id="job",
+        parameters={"variables": service._variables, "operands": service._operands},
+    )
+    service._request = request
+    service._preview = CandidatePreview(
+        OpticSnapshot.capture(original), service._variables
+    )
+    x = float(service._preview._variables[0].variable.scale(8.0))
+    steps, details = [], []
+    service.stepChanged.connect(lambda *step: steps.append(step))
+    service.progressChanged.connect(details.append)
+    service._on_progress(
+        request,
+        {
+            "stage": "Optimizing",
+            "details": {"iteration": 2, "merit": 0.5, "x": [x], "callbacks": 2},
+        },
+    )
+    assert steps == [(2, 0.5, [x])]
+    assert details[-1]["variables"] == pytest.approx([8.0])
+    assert service._preview.optic.surfaces[1].thickness == pytest.approx(8.0)
+    assert original.surfaces[1].thickness == 5.0
+    service._request = None
+
+
+def test_panel_shows_each_operands_share_of_the_merit(qapp, owned_service):
+    from optiland_gui.optimization_panel import OptimizationPanel
+
+    connector, _service = owned_service
+    panel = OptimizationPanel(connector)
+    assert panel.tblOperands.horizontalHeaderItem(6).text() == "% of Merit"
+    row = panel._operand_previews.rows[0]
+    row.update(value=50.0, error="", state="current", share=42.0)
+    panel._queue_operand_rows([0])
+    panel._install_operand_rows()
+    assert panel.tblOperands.item(0, 6).text() == "42.00"
+    row.update(state="stale")
+    panel._queue_operand_rows([0])
+    panel._install_operand_rows()
+    assert panel.tblOperands.item(0, 6).text() == "—"
+    panel.close()
+
+
+def test_panel_selects_native_dls_by_default(qapp, owned_service):
+    from optiland_gui.optimization_panel import OptimizationPanel
+    from optiland_gui.services.optimization_jobs import DampedLeastSquares
+
+    connector, _service = owned_service
+    panel = OptimizationPanel(connector)
+    assert panel.cmbAlgorithm.currentData() is DampedLeastSquares
+    assert set(panel._collect_optimizer_kwargs()) == {"maxiter", "tol", "scheme"}
+    panel.close()
+
+
+def test_native_dls_process_run_commits_only_at_the_end(qapp, owned_service):
+    from optiland_gui.services.optimization_jobs import DampedLeastSquares
+
+    connector, service = owned_service
+    original = connector.get_optic()
+    completed, errors = [], []
+    service.run(
+        DampedLeastSquares,
+        {"maxiter": 200, "tol": 1e-10},
+        on_finished=completed.append,
+        on_error=errors.append,
+    )
+    assert service._preview is not None
+    wait_for(qapp, lambda: completed or errors, timeout=25)
+    assert not errors
+    assert original.surfaces[1].thickness == 5.0
+    assert connector.get_optic().surfaces[1].thickness == pytest.approx(8.0, abs=1e-5)
+    assert len(connector._undo_redo_manager._undo_stack) == 1
+    assert service._preview is None

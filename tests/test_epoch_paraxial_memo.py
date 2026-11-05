@@ -1,4 +1,4 @@
-"""Evaluation-epoch memo of paraxial, aperture and field quantities (PR2.2).
+"""Evaluation-epoch memo of paraxial, aperture and field quantities.
 
 Each memoized method is keyed by every argument (defaults applied, defaults
 standing for optic state resolved) and by its hidden inputs: backend,

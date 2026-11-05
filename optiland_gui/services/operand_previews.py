@@ -212,6 +212,12 @@ class OperandPreviews(QObject):
             row["state"] = "error" if error else "current"
             if not error:
                 row["value"] = update["value"]
+            # Shares arrive with the final batch only; partial batches drop
+            # the previous share, which no longer matches the merit.
+            if "share" in update:
+                row["share"] = update["share"]
+            else:
+                row.pop("share", None)
             changed.append(index)
         self.rowsChanged.emit(changed)
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import inspect
-from pathlib import Path
 from unittest.mock import MagicMock
 
 
@@ -17,55 +16,63 @@ class TestFileServiceNoQMessageBox:
         assert "QMessageBox.critical" not in src
         assert "QMessageBox.warning" not in src
 
-    def test_load_failure_calls_toast(self, tmp_path, qapp):
-        conn = MagicMock()
+    def test_load_failure_calls_toast(self, tmp_path, highlighting_connector):
+        conn = highlighting_connector
         conn.toast_manager = MagicMock()
-        conn._undo_redo_manager = MagicMock()
-        conn._optic = None
+        original = conn.get_optic()
+        token = conn.document_state.edit_token
+        bad_file = tmp_path / "bad.json"
+        bad_file.write_text("{ not valid json", encoding="utf-8")
 
-        from optiland_gui.services.file_service import FileService
+        conn._file_service.load(str(bad_file))
 
-        svc = FileService(conn)
-        bad_file = str(tmp_path / "bad.json")
-        Path(bad_file).write_text("{ not valid json", encoding="utf-8")
+        conn.toast_manager.notify.assert_called_once()
+        message, severity = conn.toast_manager.notify.call_args.args[:2]
+        assert "Load failed" in message and severity == "error"
+        assert conn.get_optic() is original
+        assert conn.document_state.edit_token == token
+        assert conn.is_modified() and conn.get_current_filepath() is None
 
-        svc.load(bad_file)
-
-        conn.toast_manager.notify.assert_called()
-        severity = conn.toast_manager.notify.call_args[0][1]
-        assert severity == "error"
-
-    def test_save_failure_calls_toast(self, tmp_path, qapp):
-        conn = MagicMock()
+    def test_save_failure_calls_toast(
+        self, tmp_path, highlighting_connector, monkeypatch
+    ):
+        conn = highlighting_connector
         conn.toast_manager = MagicMock()
-        conn._undo_redo_manager = MagicMock()
-        conn._capture_optic_state.side_effect = RuntimeError("capture failed")
+        original = conn.get_optic()
+        token = conn.document_state.edit_token
+        capture = MagicMock(side_effect=RuntimeError("capture failed"))
+        monkeypatch.setattr(conn, "_capture_optic_state", capture)
+        destination = tmp_path / "out.json"
+        destination.write_bytes(b"previous valid contents")
 
-        from optiland_gui.services.file_service import FileService
+        conn._file_service.save(str(destination))
 
-        svc = FileService(conn)
-        svc.save(str(tmp_path / "out.json"))
+        capture.assert_called_once_with()
+        conn.toast_manager.notify.assert_called_once()
+        message, severity = conn.toast_manager.notify.call_args.args[:2]
+        assert "capture failed" in message and severity == "error"
+        assert destination.read_bytes() == b"previous valid contents"
+        assert conn.get_optic() is original
+        assert conn.document_state.edit_token == token
+        assert conn.is_modified() and conn.get_current_filepath() is None
 
-        conn.toast_manager.notify.assert_called()
-        severity = conn.toast_manager.notify.call_args[0][1]
-        assert severity == "error"
-
-    def test_load_from_object_failure_calls_toast(self, qapp):
-        conn = MagicMock()
+    def test_load_from_object_failure_calls_toast(self, highlighting_connector):
+        conn = highlighting_connector
         conn.toast_manager = MagicMock()
-        conn._undo_redo_manager = MagicMock()
-
+        original = conn.get_optic()
+        token = conn.document_state.edit_token
         bad_obj = MagicMock()
         bad_obj.to_dict.side_effect = RuntimeError("serialisation error")
 
-        from optiland_gui.services.file_service import FileService
+        conn._file_service.load_from_object(bad_obj)
 
-        svc = FileService(conn)
-        svc.load_from_object(bad_obj)
-
-        conn.toast_manager.notify.assert_called()
-        severity = conn.toast_manager.notify.call_args[0][1]
-        assert severity == "error"
+        bad_obj.to_dict.assert_called_once_with()
+        conn.toast_manager.notify.assert_called_once()
+        message, severity = conn.toast_manager.notify.call_args.args[:2]
+        assert "serialisation error" in message and severity == "error"
+        assert conn.get_optic() is original
+        assert conn.document_state.edit_token == token
+        assert conn.is_modified() and conn.get_current_filepath() is None
 
 
 class TestSidebarNoQMessageBox:

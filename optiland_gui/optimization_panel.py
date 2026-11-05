@@ -793,9 +793,17 @@ class OptimizationPanel(QWidget):
         layout.setSpacing(4)
 
         self.tblOperands = QTableWidget()
-        self.tblOperands.setColumnCount(6)
+        self.tblOperands.setColumnCount(7)
         self.tblOperands.setHorizontalHeaderLabels(
-            ["Category", "Type", "Current Value", "Target", "Weight", "Parameters"]
+            [
+                "Category",
+                "Type",
+                "Current Value",
+                "Target",
+                "Weight",
+                "Parameters",
+                "% of Merit",
+            ]
         )
         self.tblOperands.setColumnWidth(2, 220)
         self.tblOperands.horizontalHeader().setStretchLastSection(True)
@@ -1185,6 +1193,7 @@ class OptimizationPanel(QWidget):
             params = od.get("input_data", {})
             param_str = ", ".join(f"{k}={v}" for k, v in params.items())
             self.tblOperands.setItem(i, 5, QTableWidgetItem(param_str))
+            self.tblOperands.setItem(i, 6, QTableWidgetItem("—"))
         self._operand_previews.refresh()
         self._queue_operand_rows(list(range(len(operands))))
 
@@ -1234,6 +1243,14 @@ class OptimizationPanel(QWidget):
                     if state in {"pending", "stale"}
                     else "Current optical revision"
                 )
+            )
+            share = row.get("share")
+            share_item = self.tblOperands.item(index, 6)
+            if share_item is None:
+                share_item = QTableWidgetItem()
+                self.tblOperands.setItem(index, 6, share_item)
+            share_item.setText(
+                f"{share:.2f}" if share is not None and state == "current" else "—"
             )
         if self._operand_rows_pending:
             self._operand_install_timer.start(0)

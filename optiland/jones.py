@@ -103,8 +103,11 @@ class JonesFresnel(BaseJones):
             s = (cos_theta_i - root) / (cos_theta_i + root)
             p = (n**2 * cos_theta_i - root) / (n**2 * cos_theta_i + root)
 
+            # p is along k x s for the incident and the reflected wave alike
+            # (PolarizedRays.get_local_basis), so r_p enters with its own sign;
+            # at normal incidence r_p = -r_s and the field is reflected by r_s.
             jones_matrix[:, 0, 0] = s
-            jones_matrix[:, 1, 1] = -p
+            jones_matrix[:, 1, 1] = p
             jones_matrix[:, 2, 2] = -1
         else:
             s = 2 * cos_theta_i / (cos_theta_i + root)

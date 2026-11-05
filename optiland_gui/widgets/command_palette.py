@@ -344,7 +344,9 @@ class CommandPaletteWidget(QWidget):
 
         # Connect signals
         self._search_input.textChanged.connect(self._on_query_changed)
-        self._search_input.returnPressed.connect(self._execute_selected)
+        # Consume activation keys before QLineEdit emits returnPressed and
+        # propagates the same key to this widget's keyPressEvent.
+        self._search_input.installEventFilter(self)
         self._results_list.itemActivated.connect(self._execute_item)
         self._results_list.installEventFilter(self)
 
@@ -470,7 +472,7 @@ class CommandPaletteWidget(QWidget):
             self._execute_item(item)
 
     def _execute_item(self, item: QListWidgetItem) -> None:
-        if not isinstance(item, _ResultItem):
+        if not self._visible or not isinstance(item, _ResultItem):
             return
         self.close_palette()
         self._record_recent(item.command.name)
@@ -505,14 +507,22 @@ class CommandPaletteWidget(QWidget):
         elif key == Qt.Key_Up:
             self._move_selection(-1)
         elif key == Qt.Key_Return or key == Qt.Key_Enter:
-            self._execute_selected()
+            if not event.isAutoRepeat():
+                self._execute_selected()
         else:
             super().keyPressEvent(event)
+            return
+        event.accept()
 
     def eventFilter(self, source, event) -> bool:  # noqa: ANN001
         from PySide6.QtCore import QEvent
 
-        if source is self._results_list and event.type() == QEvent.KeyPress:
+        if (
+            source in (self._search_input, self._results_list)
+            and event.type() == QEvent.KeyPress
+            and event.key()
+            in (Qt.Key_Escape, Qt.Key_Down, Qt.Key_Up, Qt.Key_Return, Qt.Key_Enter)
+        ):
             self.keyPressEvent(event)
             return True
         return super().eventFilter(source, event)

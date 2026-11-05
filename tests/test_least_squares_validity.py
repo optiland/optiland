@@ -1,4 +1,4 @@
-"""Validity tests for the legacy SciPy ``LeastSquares`` wrapper (opt v2 PR1.1)."""
+"""Validity tests for the legacy SciPy ``LeastSquares`` wrapper."""
 
 from __future__ import annotations
 
@@ -139,7 +139,7 @@ def test_final_guard_restores_best_finite_x(set_test_backend, monkeypatch):
 
 
 def test_double_gauss_does_not_raise():
-    """Baseline from the opt v2 spec: SciPy used to see NaN in its FD Jacobian."""
+    """Baseline: SciPy used to see NaN in its FD Jacobian."""
     from optiland.samples.objectives import DoubleGauss
 
     lens = DoubleGauss()

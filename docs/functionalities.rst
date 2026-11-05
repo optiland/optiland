@@ -41,6 +41,10 @@ Analysis Tools
 - **Scalar Physical-Optics Propagation**:
   Create sampled Gaussian fields and propagate their complex amplitude with a
   NumPy/PyTorch angular spectrum implementation.
+- **Paraxial Gaussian Beams**:
+  Propagate Gaussian beams through lenses, mirrors and folded systems with
+  ray-transfer matrices, find resonator eigenmodes, and compute waists, Gouy
+  phases and mode-matching efficiencies.
 - **BSDF and Scattering Models**:
   Simulate surface scattering using measured or analytical BSDF models.
 
