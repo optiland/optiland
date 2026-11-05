@@ -71,6 +71,30 @@ class TabulatedBSDF(BaseBSDF):
         )
         self._theta_i_vals = theta_i
         self._theta_s_vals = theta_s
+        self._build_sampling_tables(bsdf_grid)
+
+    def _build_sampling_tables(self, bsdf_grid: np.ndarray) -> None:
+        """Per-theta_i-row tables for importance sampling theta_s.
+
+        For each table row k the scattered polar angle is drawn with density
+        proportional to ``b_k(theta_s) cos(theta_s) sin(theta_s)``, using a
+        piecewise-constant density on the ``theta_s`` grid. Stores the
+        cumulative mass ``self._cdf`` (unnormalised, shape (K, M)) and the
+        per-bin density ``self._bin_pdf`` (normalised per row, shape
+        (K, M-1)) needed to weight each sample exactly.
+
+        Args:
+            bsdf_grid: BSDF values [1/sr], shape (len(theta_i), len(theta_s)).
+        """
+        ts = np.radians(self._theta_s_vals)
+        integrand = np.clip(bsdf_grid, 0.0, None) * np.cos(ts) * np.sin(ts)
+        integrand = np.clip(integrand, 0.0, None)  # guard theta_s > 90 deg entries
+        mass = 0.5 * (integrand[:, 1:] + integrand[:, :-1]) * np.diff(ts)
+        cdf = np.concatenate([np.zeros((mass.shape[0], 1)), np.cumsum(mass, 1)], 1)
+        total = cdf[:, -1:]
+        with np.errstate(invalid="ignore", divide="ignore"):
+            self._bin_pdf = np.where(total > 0, mass / np.diff(ts) / total, 0.0)
+        self._cdf = cdf
 
     def sample(
         self,
@@ -84,11 +108,21 @@ class TabulatedBSDF(BaseBSDF):
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Sample scattered directions from the tabulated BSDF.
 
-        Uses importance sampling via Lambertian hemisphere + BSDF weighting.
-        A per-ray draw against :attr:`transmissive_fraction` picks
-        whether that hemisphere is centred on ``normals`` (reflective) or
-        ``-normals`` (transmissive); ``theta_i``/``theta_s`` are measured
-        from whichever normal the ray's draw landed on. Sampling is detached
+        A per-ray draw against :attr:`transmissive_fraction` picks whether
+        the scatter hemisphere is centred on ``normals`` (reflective) or
+        ``-normals`` (transmissive); ``theta_s`` is measured from the normal
+        of that hemisphere. ``theta_i`` is always the angle of incidence,
+        measured from the normal on the incident side (``normals`` faces the
+        incoming ray), whichever hemisphere is drawn.
+
+        ``theta_s`` is importance-sampled from the table itself: the two
+        ``theta_i`` rows bracketing the actual incidence are mixed with the
+        linear-interpolation weights, and within a row ``theta_s`` follows
+        ``b cos(theta_s) sin(theta_s)``. Each ray carries the exact weight
+        ``2 pi b(theta_i, theta_s) cos sin / pdf``, so the scattered flux
+        equals the table's integrated scatter (no clipping of ``pi * b``).
+        Rays whose ``theta_i`` lies outside the tabulated range get weight 0,
+        as with the interpolator's ``fill_value``. Sampling is detached
         (keyed PCG32).
 
         Args:
@@ -114,20 +148,22 @@ class TabulatedBSDF(BaseBSDF):
             transmitted_np = np.zeros(n_np.shape[0], dtype=bool)
             hemisphere_np = n_np
 
-        # Compute angle of incidence relative to the chosen hemisphere.
-        cos_i = np.clip((-d_np * hemisphere_np).sum(axis=1), 0.0, 1.0)
+        # Angle of incidence, from the incident-side normal (``normals`` faces
+        # the incoming ray). Measuring it from the drawn hemisphere would give
+        # 90 deg for every transmitted draw.
+        cos_i = np.clip((-d_np * n_np).sum(axis=1), 0.0, 1.0)
         theta_i = np.degrees(np.arccos(cos_i))
 
         from optiland.nonsequential.bsdf.lambertian import (  # noqa: PLC0415
             _orthonormal_basis,
         )
 
-        r1 = rng.uniform(ray_id, bounce, EventSlot.BSDF_U1)
-        r2 = rng.uniform(ray_id, bounce, EventSlot.BSDF_U2)
+        r1 = np.asarray(rng.uniform(ray_id, bounce, EventSlot.BSDF_U1))
+        r2 = np.asarray(rng.uniform(ray_id, bounce, EventSlot.BSDF_U2))
         phi = 2.0 * np.pi * r1
-        cos_theta = np.sqrt(r2)
-        sin_theta = np.sqrt(1.0 - r2)
-        theta_s = np.degrees(np.arccos(cos_theta))
+        theta_s_rad, flux_weights = self._sample_theta_s(theta_i, r2)
+        cos_theta = np.cos(theta_s_rad)
+        sin_theta = np.sin(theta_s_rad)
 
         lx = sin_theta * np.cos(phi)
         ly = sin_theta * np.sin(phi)
@@ -140,16 +176,73 @@ class TabulatedBSDF(BaseBSDF):
         norms = (scattered * scattered).sum(axis=1, keepdims=True) ** 0.5
         scattered = scattered / norms
 
-        # Evaluate BSDF at (theta_i, theta_s) pairs
-        query = np.column_stack([theta_i, theta_s])
-        bsdf_vals = self._interp(query)
-        flux_weights = np.clip(np.pi * bsdf_vals, 0.0, 1.0)
-
         return (
             be.array(scattered.astype(np.float64)),
             be.array(flux_weights),
             be.array(transmitted_np),
         )
+
+    def _sample_theta_s(
+        self, theta_i: np.ndarray, u: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Importance-sample theta_s and return it with its flux weight.
+
+        Args:
+            theta_i: Angles of incidence [deg], shape (N,).
+            u: Uniform deviates in [0, 1), shape (N,). Split to choose the
+                table row and then to invert that row's CDF.
+
+        Returns:
+            (theta_s [rad], flux_weights), each of shape (N,).
+        """
+        ti_vals = self._theta_i_vals
+        ts = np.radians(self._theta_s_vals)
+        n_rows = len(ti_vals)
+        u = np.clip(np.asarray(u, dtype=np.float64), 0.0, np.nextafter(1.0, 0.0))
+
+        # Bracketing rows k, k+1 and linear-interpolation fraction f.
+        if n_rows == 1:
+            k = np.zeros(theta_i.shape, dtype=np.int64)
+            f = np.zeros(theta_i.shape)
+            k_hi = k
+        else:
+            k = np.clip(
+                np.searchsorted(ti_vals, theta_i, side="right") - 1, 0, n_rows - 2
+            )
+            f = np.clip(
+                (theta_i - ti_vals[k]) / (ti_vals[k + 1] - ti_vals[k]), 0.0, 1.0
+            )
+            k_hi = k + 1
+        tol = 1e-9
+        in_range = (theta_i >= ti_vals[0] - tol) & (theta_i <= ti_vals[-1] + tol)
+
+        # Choose row k_hi with probability f, re-using u (stays uniform).
+        take_hi = u < f
+        u_row = np.where(
+            take_hi,
+            u / np.where(f > 0, f, 1.0),
+            (u - f) / np.where(f < 1, 1.0 - f, 1.0),
+        )
+        row = np.where(take_hi, k_hi, k)
+
+        # Invert the chosen row's piecewise-linear CDF.
+        target = u_row * self._cdf[row, -1]
+        j = np.empty(theta_i.shape, dtype=np.int64)
+        for r in np.unique(row):
+            sel = row == r
+            j[sel] = np.searchsorted(self._cdf[r], target[sel], side="right") - 1
+        j = np.clip(j, 0, len(ts) - 2)
+        bin_mass = self._cdf[row, j + 1] - self._cdf[row, j]
+        frac = np.where(bin_mass > 0, (target - self._cdf[row, j]) / bin_mass, 0.5)
+        theta_s = ts[j] + np.clip(frac, 0.0, 1.0) * (ts[j + 1] - ts[j])
+
+        # Exact weight: 2 pi b cos sin / (mixture density of theta_s).
+        pdf = (1.0 - f) * self._bin_pdf[k, j] + f * self._bin_pdf[k_hi, j]
+        b = self._interp(np.column_stack([theta_i, np.degrees(theta_s)]))
+        integrand = np.clip(b, 0.0, None) * np.cos(theta_s) * np.sin(theta_s)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            weights = np.where((pdf > 0) & in_range, 2.0 * np.pi * integrand / pdf, 0.0)
+        return theta_s, np.clip(weights, 0.0, None)
 
     def reflectance(
         self,
