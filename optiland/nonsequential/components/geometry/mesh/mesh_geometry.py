@@ -73,11 +73,15 @@ class MeshGeometry(AnalyticGeometry):
         d_np = _to_numpy(directions)
         N = o_np.shape[0]
 
-        # trimesh ray casting
+        # trimesh ray casting. All hits are requested: a ray re-launched from
+        # the surface it has just crossed gets that surface back as its first
+        # hit (t ~ 0). With multiple_hits=False it would be the only hit
+        # returned, the t_min test below would discard it, and the real next
+        # hit (e.g. the far wall of a closed solid) would be lost.
         locations, ray_indices, triangle_indices = self.mesh.ray.intersects_location(
             ray_origins=o_np,
             ray_directions=d_np,
-            multiple_hits=False,
+            multiple_hits=True,
         )
 
         t_out = np.full(N, np.inf, dtype=np.float64)
