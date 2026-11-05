@@ -240,3 +240,62 @@ class TestParticleSwarm:
         assert result.success is True
         assert "global best stalled" in result.message
         assert result.nit < 100
+
+    @pytest.mark.parametrize("failure", ["nan", "value_error"])
+    def test_particle_swarm_all_failed_evaluations_are_not_success(
+        self, set_test_backend, failure: str
+    ) -> None:
+        """Test that a stalled swarm with only failed evaluations reports failure."""
+        calls = []
+
+        def always_fails(values: list[float]) -> float:
+            # The constructor evaluates the start point outside the guarded
+            # objective, so the first call fails with NaN instead of raising.
+            calls.append(values)
+            if failure == "nan" or len(calls) == 1:
+                return float("nan")
+            raise ValueError("invalid design")
+
+        variables = [MockVariable(1.0, (-5.0, 5.0))]
+        problem = MockProblem(variables, target_fun=always_fails)
+
+        result = ParticleSwarm(problem).optimize(
+            maxiter=100,
+            swarm_size=10,
+            tol=10.0,
+            stall_iterations=2,
+            seed=42,
+            disp=False,
+        )
+
+        assert result.success is False
+        assert "No valid merit evaluation" in result.message
+        assert "global best stalled" in result.message
+
+    def test_particle_swarm_partially_failed_evaluations_can_succeed(
+        self, set_test_backend
+    ) -> None:
+        """Test that failures do not block success once a valid point is found."""
+
+        def fails_for_positive(values: list[float]) -> float:
+            x = be.to_numpy(values[0]).item()
+            if x > 0.0:
+                return float("nan")
+            return x**2
+
+        variables = [MockVariable(-1.0, (-5.0, 5.0))]
+        problem = MockProblem(variables, target_fun=fails_for_positive)
+
+        result = ParticleSwarm(problem).optimize(
+            maxiter=100,
+            swarm_size=10,
+            tol=10.0,
+            stall_iterations=2,
+            seed=42,
+            disp=False,
+        )
+
+        assert result.success is True
+        assert "No valid merit evaluation" not in result.message
+        assert np.isfinite(result.fun)
+        assert result.fun < 1e10

@@ -25,6 +25,11 @@ if TYPE_CHECKING:
 
     from ...problem import OptimizationProblem
 
+# Merit returned by ``OptimizerGeneric._fun`` when an evaluation fails (NaN or
+# ``ValueError``). Population optimizers compare against it so that a run whose
+# best point is still this stand-in is never reported as a success.
+_FAILED_EVALUATION_MERIT = 1e10
+
 
 class OptimizerGeneric(BaseOptimizer):
     """Generic optimizer class for solving optimization problems.
@@ -160,8 +165,8 @@ class OptimizerGeneric(BaseOptimizer):
         try:
             rss = self.problem.sum_squared()
             if be.isnan(rss):
-                return 1e10
+                return _FAILED_EVALUATION_MERIT
             # --- Convert result back to float for SciPy ---
             return be.to_numpy(rss).item()
         except ValueError:
-            return 1e10
+            return _FAILED_EVALUATION_MERIT

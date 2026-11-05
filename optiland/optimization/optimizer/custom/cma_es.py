@@ -11,7 +11,7 @@ from scipy import optimize
 import optiland.backend as be
 from optiland.optimization.failure import reject_hard_constraints
 
-from ..scipy.base import OptimizerGeneric
+from ..scipy.base import _FAILED_EVALUATION_MERIT, OptimizerGeneric
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -303,6 +303,13 @@ class CMAES(OptimizerGeneric):
             if condition_number > 1e14:
                 message = "Covariance matrix condition number exceeded 1e14."
                 break
+
+        if success and best_value == _FAILED_EVALUATION_MERIT:
+            success = False
+            message = (
+                "No valid merit evaluation: every candidate failed (NaN or "
+                "ValueError), so the returned point is not a solution. " + message
+            )
 
         self._set_problem_state(best_position)
         physical_mean = self._to_physical(
