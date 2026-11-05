@@ -243,6 +243,9 @@ New to these concepts? See the :ref:`glossary` first.
 
    input_data = {"optic": lens}
    problem.add_operand(operand_type="f2", target=50.0, weight=1, input_data=input_data)
+   # EFL of a lens group (surfaces 1 through 2), as in lens.paraxial.f2_range(1, 2)
+   problem.add_operand(operand_type="f2_range", target=80.0, weight=1,
+                       input_data={"optic": lens, "start": 1, "end": 2})
    # "num_rays" is a ring count for "hexapolar": 100 rings trace 30301 rays per evaluation
    problem.add_operand(operand_type="rms_spot_size", target=0.0, weight=1,
                        input_data={"optic": lens, "field_index": 1, "wavelength_index": 0,
