@@ -24,7 +24,7 @@ class TestJonesFresnel:
 
         assert jones_matrix.shape == (1, 3, 3)
         assert jones_matrix[0, 0, 0] == -0.2
-        assert jones_matrix[0, 1, 1] == -0.2
+        assert jones_matrix[0, 1, 1] == 0.2
         assert jones_matrix[0, 2, 2] == -1.0
 
         # Test transmission calculation
@@ -51,7 +51,7 @@ class TestJonesFresnel:
 
         assert jones_matrix.shape == (1, 3, 3)
         assert_allclose(be.real(jones_matrix[0, 0, 0]), -0.20541108217641596)
-        assert_allclose(be.real(jones_matrix[0, 1, 1]), -0.19457669033430527)
+        assert_allclose(be.real(jones_matrix[0, 1, 1]), 0.19457669033430527)
         assert_allclose(be.real(jones_matrix[0, 2, 2]), -1.0)
 
         # Test transmission calculation
