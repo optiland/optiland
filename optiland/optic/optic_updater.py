@@ -137,10 +137,10 @@ class OpticUpdater:
             dict[str, float | None]: A dictionary containing the material parameters:
                 - "nd": Refractive index at d-line (0.5875618 micrometers).
                 - "vd": Abbe number.
-                - "dPgF": Partial dispersion relative to F and C lines.
-                - "P_ref": Optional reference parameter for materials with an
-                  explicit P_ref.
-                - "lambda_ref": The wavelength corresponding to P_ref, if applicable.
+                - "dPgF": deviation of the g–F partial dispersion from the
+                normal-glass line.
+                - "P_ref": Optional reference partial dispersion at lambda_ref.
+                - "lambda_ref": The optional wavelength corresponding to P_ref in um.
         """
         material = self.optic.surfaces[surface_number].material_post
 
@@ -210,26 +210,34 @@ class OpticUpdater:
     def set_index(
         self, value: float, surface_number: int, wavelength: float | None = None
     ) -> None:
-        """Set the index of refraction of d-line (Nd) of a surface.
+        """Set the refractive index of a surface.
 
-        Reworked from IdealMaterial to both ModelMaterial and
-        IdealMaterial. The method now supports two modes of operation based on the
-        presence of the `wavelength` argument:
+        With ``wavelength=None`` (the default) the surface's post-material is
+        replaced by a ``ModelMaterial`` anchored at the d-line (0.5875618 um),
+        so the index varies with wavelength according to the material's fitted
+        dispersion, within the model's fit error. The conversion needs an Abbe
+        number: an ``IdealMaterial`` cannot become a ``ModelMaterial``, so such
+        a surface keeps a constant index even on this path.
+
+        Passing ``wavelength`` restores the previous behavior and replaces the
+        post-material with an ``IdealMaterial`` holding a constant index at all
+        wavelengths. The value is only used to select that branch; it is not
+        evaluated as a wavelength, so ``value`` is the index everywhere.
 
         Args:
-            value (float): The new refractive index value in micrometers.
+            value (float): The new refractive index (dimensionless).
             surface_number (int): The index of the surface whose *post-material*
                 (material after the surface) will be updated. This also updates
                 the *pre-material* of the subsequent surface.
-            wavelength (float | None): The wavelength at which to set the
-                refractive index. If None, the method updates the material's
-                refractive index at the default wavelength (D-line, 0.5875618
-                micrometers), and replaces the original material with
-                ModelMaterial.
-                If a specific wavelength is provided, the method updates the material's
-                refractive index at that wavelength, replacing the original material
-                with IdealMaterial. Defaults to None.
+            wavelength (float | None): Selects the constant-index
+                (``IdealMaterial``) path when not None; ignored otherwise.
+                Defaults to None.
 
+        See Also:
+            ``ModelMaterial`` and these example notebooks:
+            ``docs/examples/Tutorial_3g_Model_Glass_Nd_Vd_Optimization.ipynb``,
+            ``docs/references/IR_Routing.ipynb``,
+            ``docs/references/Visible_Routing.ipynb``.
         """
         params = self._get_material_params(surface_number)
         # IdealMaterial can not be converted to ModelMaterial
