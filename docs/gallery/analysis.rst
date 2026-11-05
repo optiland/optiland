@@ -11,6 +11,7 @@ This section contains examples of typical analysis tasks that can be performed w
     analysis/ray_fan_best_fit
     analysis/field_curvature
     analysis/chromatic_focal_shift
+    analysis/lateral_color
     analysis/longitudinal_aberration
     analysis/distortion
     analysis/grid_distortion
