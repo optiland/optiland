@@ -194,6 +194,46 @@ def test_confirm_stop_size_floating_stop(set_test_backend):
     assert_allclose(lens.surfaces.y[stop_idx], stop_diam / 2)
 
 
+# ── Integration: objectNA needs a finite object ──────────────────────────────
+
+
+def _object_na_singlet(object_distance):
+    """An f = 50 mm singlet with objectNA = 0.1 and the stop on the lens."""
+    lens = Optic()
+    lens.surfaces.add(index=0, radius=be.inf, thickness=object_distance)
+    lens.surfaces.add(
+        index=1, radius=50.0, thickness=5.0, material="N-BK7", is_stop=True
+    )
+    lens.surfaces.add(index=2, radius=-50.0, thickness=90.0)
+    lens.surfaces.add(index=3)
+    lens.set_aperture(aperture_type="objectNA", value=0.1)
+    # Object-height fields are undefined for an object at infinity
+    field_type = "angle" if be.isinf(be.array(object_distance)) else "object_height"
+    lens.fields.set_type(field_type=field_type)
+    lens.fields.add(y=0.0)
+    lens.wavelengths.add(value=0.55, is_primary=True)
+    return lens
+
+
+def test_object_na_rejects_object_at_infinity(set_test_backend):
+    """An object at infinity has no object-space cone.
+
+    Previously the EPD came out as inf and every traced ray as NaN, with no
+    error.
+    """
+    lens = _object_na_singlet(be.inf)
+    with pytest.raises(ValueError, match="finite object distance"):
+        lens.paraxial.EPD()
+    with pytest.raises(ValueError, match="finite object distance"):
+        lens.trace(Hx=0, Hy=0, wavelength=0.55, num_rays=8, distribution="hexapolar")
+
+
+def test_object_na_finite_object_epd(set_test_backend):
+    """With the stop on the first lens surface, EPD = 2 * d * tan(asin(NA))."""
+    lens = _object_na_singlet(100.0)
+    assert_allclose(lens.paraxial.EPD(), 2 * 100.0 * be.tan(be.arcsin(be.array(0.1))))
+
+
 # ── Integration: imageFNO with an odd number of mirrors ──────────────────────
 
 
