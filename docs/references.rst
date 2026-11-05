@@ -1,6 +1,34 @@
 References
 ==========
 
+Citing Optiland
+---------------
+
+If you use Optiland in your work, please cite our paper in the Journal of Open
+Source Software:
+
+   Harrison, K., Mendes, M. F., Haasjes, C., & Hein, G. (2026). Optiland:
+   Open-Source Optical Design Software in Python. *Journal of Open Source
+   Software*, 11(127), 11170. https://doi.org/10.21105/joss.11170
+
+.. code-block:: bibtex
+
+   @article{Harrison2026,
+     doi = {10.21105/joss.11170},
+     url = {https://doi.org/10.21105/joss.11170},
+     year = {2026},
+     publisher = {The Open Journal},
+     volume = {11},
+     number = {127},
+     pages = {11170},
+     author = {Harrison, Kramer and Mendes, Manuel Fragata and Haasjes, Corné and Hein, Grégoire},
+     title = {Optiland: Open-Source Optical Design Software in Python},
+     journal = {Journal of Open Source Software}
+   }
+
+Bibliography
+------------
+
 The following references were used in the development of this project:
 
 1. Bass, M., & Mahajan, V. N. (2010). Handbook of optics. Volume I, Geometrical and physical optics, polarized light, components and instruments (3rd ed). McGraw-Hill.
