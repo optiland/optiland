@@ -21,6 +21,7 @@ encircled energy, field curvature, distortion, etc.
    analysis.image_simulation
    analysis.irradiance
    analysis.jones_pupil
+   analysis.lateral_color
    analysis.mtf_vs_field
    analysis.pupil_aberration
    analysis.ray_fan
