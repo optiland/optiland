@@ -60,7 +60,8 @@ def _dxf_arrowhead(
 class _DxfRenderer(_BaseRenderer):
     """Renders a single element ISO 10110 drawing into an ezdxf document.
 
-    Isolated from matplotlib logic per HarrisonKramer's architectural feedback.
+    Isolated from matplotlib logic: all layout lives in :class:`_BaseRenderer`,
+    this class only implements the DXF drawing primitives.
 
     Args:
         style: :class:`~optiland.iso10110.style.DrawingStyle` font-size scale

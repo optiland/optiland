@@ -36,6 +36,11 @@ For cemented lenses each glass component may carry independent quality specs::
     spec.set_material(0, 0, birefringence=5,  nh_class="NH040")  # crown
     spec.set_material(0, 1, birefringence=10, nh_class="NH100")  # flint
 
+Installation
+------------
+PDF and PNG output need no extra dependencies. DXF output requires the
+optional ``ezdxf`` package: ``pip install optiland[manufacturing]``.
+
 Scope / limitations
 --------------------
 :func:`identify_elements` groups surfaces by glass/air transitions. It does

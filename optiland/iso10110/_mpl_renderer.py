@@ -75,9 +75,9 @@ def _draw_glass_hatch(
 class _MatplotlibRenderer(_BaseRenderer):
     """Renders a single element ISO 10110 drawing to a matplotlib Figure.
 
-    Isolated from file-I/O and DXF logic per HarrisonKramer's architectural
-    feedback: "moving renderers to their own isolated classes will make things
-    much more maintainable."
+    Isolated from file-I/O and DXF logic: all layout lives in
+    :class:`_BaseRenderer`, this class only implements the matplotlib drawing
+    primitives.
 
     Args:
         element:       :class:`~optiland.iso10110.elements.LensElement`

@@ -20,8 +20,6 @@ Typical workflow
     spec.save_yaml("lens_spec.yaml")
     # later:
     spec = DrawingSpec.load_yaml("lens_spec.yaml", lens)
-
-Bernhard Lutzer, 2026
 """
 
 from __future__ import annotations
@@ -143,9 +141,7 @@ class DrawingSpec:
 
         Keeps title-block metadata (who drew/approved a part, part number,
         revision, free-text notes) separate at the call site from the ISO
-        10110 optical-quality specs set via :meth:`set_element`, per the
-        API structure requested in
-        `#458 <https://github.com/optiland/optiland/issues/458>`_.
+        10110 optical-quality specs set via :meth:`set_element`.
 
         Keyword arguments (all optional):
 

@@ -2,9 +2,8 @@
 
 Rendering architecture
 ----------------------
-Two isolated renderer classes handle format-specific output
-(HarrisonKramer's architectural feedback), sharing layout logic via
-:class:`~optiland.iso10110._base_renderer._BaseRenderer`:
+Two isolated renderer classes handle format-specific output, sharing layout
+logic via :class:`~optiland.iso10110._base_renderer._BaseRenderer`:
 
 * :class:`~optiland.iso10110._mpl_renderer._MatplotlibRenderer` — PDF/PNG.
 * :class:`~optiland.iso10110._dxf_renderer._DxfRenderer` — DXF via ezdxf.
@@ -17,8 +16,6 @@ Paper / orientation
 -------------------
 ``paper`` : "A5","A4","A3","A2","A1","LETTER","LEGAL","TABLOID"
 ``orientation`` : "portrait" (default) | "landscape"
-
-Bernhard Lutzer, 2026
 """
 
 from __future__ import annotations
@@ -168,7 +165,7 @@ class ElementDrawing:
         plt.close(fig)
 
     def _mpl_figure(self, figsize: tuple | None = None):
-        """Delegate to _MatplotlibRenderer (kept for backward compatibility)."""
+        """Build the matplotlib figure via :class:`_MatplotlibRenderer`."""
         renderer = _MatplotlibRenderer(
             self.element,
             self.spec,

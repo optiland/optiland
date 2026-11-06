@@ -4,8 +4,6 @@ Infers lens elements (singlets, cemented doublets, etc.) from an optic's
 surface sequence.  Optiland is purely surface-based; there is no first-class
 LensElement concept.  This module derives elements by grouping consecutive
 glass-bounded surface intervals.
-
-Bernhard Lutzer, 2026
 """
 
 from __future__ import annotations

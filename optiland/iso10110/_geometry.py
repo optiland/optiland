@@ -8,11 +8,17 @@ constants shared by both the matplotlib and DXF renderers (see
 
 from __future__ import annotations
 
+import functools
 import math
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 import optiland.backend as be
+from optiland.iso10110.elements import _to_float
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 PAPER_SIZES: dict[str, tuple[float, float]] = {
     "A5": (148.0, 210.0),
@@ -101,9 +107,7 @@ def _mat_display_name(mat) -> str:
 # per-material spec-table rows, just with different text formatting (mathtext
 # vs. plain). The two helpers below hold the "which codes, in what order"
 # logic exactly once, so a standards revision touching table order/contents
-# is a single edit instead of two parallel ones (see ISO10110_improvements.md
-# §U1 commit history — this duplication has already cost double-editing more
-# than once).
+# is a single edit instead of two parallel ones.
 
 
 def _numbered_code_rows(sspec, si: int, n: int) -> tuple[list[str], str, int]:
@@ -173,10 +177,6 @@ def _material_code_rows(comp_espec) -> list[str]:
 # ── Geometry helpers ─────────────────────────────────────────────────────────
 
 
-def _to_float(v) -> float:
-    return float(np.asarray(be.to_numpy(be.array(v))))
-
-
 def _surf_z(surface) -> float:
     return _to_float(surface.geometry.cs.z)
 
@@ -227,24 +227,164 @@ def _tol_math(tol) -> str:
         return ""
 
 
-def _surface_header_lines(
-    surf,
-    sspec,
-    is_rear: bool = False,
-    plain_text: bool = False,
-) -> list[str]:
-    """Return ISO 10110-1 Table 1 header lines for *surf* in the spec table.
+def _radius_line(r_str: str, sspec, plain_text: bool) -> str:
+    """Return the ``R <value><tolerance>`` spec-table line.
 
-    Covers standard, aspheric, cylindrical, toroidal, biconic, general-surface,
-    and grating geometries per §5.9.2 / Table 1.
+    The tolerance comes from ``sspec.r_tolerance`` and is formatted as plain
+    text (DXF) or matplotlib mathtext, depending on *plain_text*.
+    """
+    if plain_text:
+        tol = _tol_plain(sspec.r_tolerance)
+        return f"R {r_str}{tol}" if tol else f"R {r_str}"
+    tol = _tol_math(sspec.r_tolerance)
+    return f"R ${r_str}{tol}$" if tol else f"R {r_str}"
 
-    Args:
-        surf:       Surface object with a ``geometry`` attribute.
-        sspec:      :class:`~optiland.iso10110.notation.SurfaceSpec` for this surface.
-        is_rear:    ``True`` for the exit surface of the element (CX/CC sense flips).
-        plain_text: When ``True`` the tolerance is formatted as ``+hi/-lo`` plain
-                    text instead of matplotlib mathtext ``^{hi}_{lo}``.  Use for
-                    DXF output.
+
+def _conic_lines(g, attr: str, symbol: str = "κ") -> list[str]:
+    """Return ``["<symbol> = <value>"]`` when the conic constant is non-zero.
+
+    ISO 10110-12 §4.3.1: κ shall be given only when it is non-zero. Geometries
+    that lack *attr* contribute nothing.
+    """
+    try:
+        value = _to_float(getattr(g, attr))
+    except AttributeError:
+        return []
+    return [f"{symbol} = {value:+.4g}"] if value != 0.0 else []
+
+
+def _fmt_radius_value(r: float) -> str:
+    """Format a radius for the spec table: signed, 3 decimals, or ``∞``."""
+    return "∞" if math.isinf(r) else f"{r:+.3f}"
+
+
+# ── Per-geometry spec-table headers ───────────────────────────────────────────
+#
+# Each handler returns the header lines for one family of surface geometries
+# (ISO 10110-1 §5.9.2 / Table 1). To support a new geometry, write a handler
+# with the signature below and add it to ``_header_handlers()``.
+
+
+def _grating_header(g, r_val, sspec, is_rear, plain_text) -> list[str]:
+    """Grating surfaces (ISO 10110-1 §5.9.8 + ISO 10110-16 §5.3).
+
+    First line is the ISO 10110-16 Table 5 type symbol (LG, CG, CGH, ...),
+    second the surface identifier ``GRAT``. For curved substrates R and κ
+    follow, then grating frequency (lines/mm), diffraction order and groove
+    orientation angle φ.
+    """
+    from optiland.geometries import StandardGratingGeometry
+
+    lines = [sspec.grating_type or "LG", "GRAT"]
+    if isinstance(g, StandardGratingGeometry):
+        try:
+            r_sub = _to_float(g.radius)
+            if math.isinf(r_sub):
+                lines.append("R ∞")
+            else:
+                lines.append(_radius_line(f"{r_sub:+.3f}", sspec, plain_text))
+            lines.extend(_conic_lines(g, "k"))
+        except AttributeError:
+            pass
+    # grating_period is in µm (both PlaneGrating and StandardGratingGeometry).
+    try:
+        period_um = _to_float(g.grating_period)
+        order = int(round(_to_float(g.grating_order)))
+        lines.append(f"{1000.0 / period_um:.1f} l/mm")
+        lines.append(f"m = {order:+d}" if order != 0 else "m = 0")
+    except (AttributeError, ZeroDivisionError):
+        pass
+    # ISO 10110-16 Table 2: groove orientation angle φ, omitted when zero.
+    try:
+        phi_deg = math.degrees(_to_float(g.groove_orientation_angle))
+        if abs(phi_deg) > 1e-6:
+            lines.append(f"φ = {phi_deg:.1f}°")
+    except AttributeError:
+        pass
+    return lines
+
+
+def _freeform_header(g, r_val, sspec, is_rear, plain_text) -> list[str]:
+    """General (freeform) surfaces: no rotational symmetry, only ``GS``."""
+    return ["GS"]
+
+
+def _asphere_header(g, r_val, sspec, is_rear, plain_text) -> list[str]:
+    """Axially symmetric aspheres (ISO 10110-12)."""
+    from optiland.geometries import OddAsphere
+
+    lines = ["ASPH", _radius_line(_fmt_radius_value(r_val), sspec, plain_text)]
+    lines.extend(_conic_lines(g, "k"))
+    # EvenAsphere: C_i * r^{2i}, coefficients[i] -> ISO A_{2(i+1)}
+    # OddAsphere:  C_i * r^i,    coefficients[i] -> ISO A_{i+1}
+    is_odd = isinstance(g, OddAsphere)
+    try:
+        for i, ci in enumerate(g.coefficients):
+            c_val = _to_float(ci)
+            if c_val != 0.0:
+                exp = (i + 1) if is_odd else (2 * (i + 1))
+                lines.append(f"A{exp} = {c_val:+.4e}")
+    except AttributeError:
+        pass
+    # ISO 10110-12 has no dedicated Forbes notation: show ρmax + non-zero a_m.
+    try:
+        radial_terms = g.radial_terms
+        if radial_terms:
+            lines.append(f"ρmax = {_to_float(g.norm_radius):.3g}")
+            for m in sorted(radial_terms):
+                a_val = _to_float(radial_terms[m])
+                if a_val != 0.0:
+                    lines.append(f"a{m} = {a_val:+.4e}")
+    except AttributeError:
+        pass
+    return lines
+
+
+def _toroidal_header(g, r_val, sspec, is_rear, plain_text) -> list[str]:
+    """Toroidal surfaces; one infinite radius makes them cylindrical (CYL)."""
+    r_rot = _to_float(g.R_rot)
+    r_yz = _to_float(g.R_yz)
+    if math.isinf(r_rot):
+        if math.isinf(r_yz):
+            return ["CYL", f"R {_fmt_radius_value(r_yz)}"]
+        lines = ["CYL", _radius_line(_fmt_radius_value(r_yz), sspec, plain_text)]
+    else:
+        lines = [
+            "TOROID",
+            f"Rx {r_rot:+.3f}",
+            f"Ry {_fmt_radius_value(r_yz)}",
+        ]
+    return lines + _conic_lines(g, "k_yz")
+
+
+def _biconic_header(g, r_val, sspec, is_rear, plain_text) -> list[str]:
+    """Biconic surfaces: both radii plus the non-zero conic constants."""
+    lines = [
+        "BICONIC",
+        f"Rx {_fmt_radius_value(_to_float(g.Rx))}",
+        f"Ry {_fmt_radius_value(_to_float(g.Ry))}",
+    ]
+    return lines + _conic_lines(g, "kx", "κx") + _conic_lines(g, "ky", "κy")
+
+
+def _standard_header(g, r_val, sspec, is_rear, plain_text) -> list[str]:
+    """Sphere or flat plane, labelled CX/CC (ISO 10110-1 §5.9.2)."""
+    if math.isinf(r_val):
+        return ["R ∞"]
+    # CX = convex towards the incoming light side; for the rear surface the
+    # convention flips because we label from the exit side.
+    convex = r_val < 0 if is_rear else r_val > 0
+    cx_cc = "CX" if convex else "CC"
+    return [f"{_radius_line(f'{r_val:+.3f}', sspec, plain_text)} {cx_cc}"]
+
+
+@functools.lru_cache(maxsize=1)
+def _header_handlers() -> tuple[tuple[tuple[type, ...], Callable], ...]:
+    """Ordered ``(geometry classes, handler)`` pairs; first match wins.
+
+    Imported lazily so that ``optiland.geometries`` is only loaded when a
+    drawing is actually built. Order matters where one class derives from
+    another (e.g. gratings and aspheres before the standard fallback).
     """
     from optiland.geometries import (
         BiconicGeometry,
@@ -264,192 +404,54 @@ def _surface_header_lines(
         ForbesQNormalSlopeGeometry,
     )
 
+    return (
+        ((PlaneGrating, StandardGratingGeometry), _grating_header),
+        # ForbesQ2d and Chebyshev have 2-D departures from the conic base, so
+        # they are freeform (GS), not ASPH.
+        (
+            (
+                PolynomialGeometry,
+                ZernikePolynomialGeometry,
+                GridSagGeometry,
+                NurbsGeometry,
+                ForbesQ2dGeometry,
+                ChebyshevPolynomialGeometry,
+            ),
+            _freeform_header,
+        ),
+        ((EvenAsphere, OddAsphere, ForbesQNormalSlopeGeometry), _asphere_header),
+        ((ToroidalGeometry,), _toroidal_header),
+        ((BiconicGeometry,), _biconic_header),
+    )
+
+
+def _surface_header_lines(
+    surf,
+    sspec,
+    is_rear: bool = False,
+    plain_text: bool = False,
+) -> list[str]:
+    """Return ISO 10110-1 Table 1 header lines for *surf* in the spec table.
+
+    Dispatches on the surface geometry to the handlers above: standard,
+    aspheric, cylindrical, toroidal, biconic, general-surface and grating
+    geometries per §5.9.2 / Table 1. Unrecognised geometries fall back to the
+    sphere/plane label.
+
+    Args:
+        surf:       Surface object with a ``geometry`` attribute.
+        sspec:      :class:`~optiland.iso10110.notation.SurfaceSpec` for this surface.
+        is_rear:    ``True`` for the exit surface of the element (CX/CC sense flips).
+        plain_text: When ``True`` the tolerance is formatted as ``+hi/-lo`` plain
+                    text instead of matplotlib mathtext ``^{hi}_{lo}``.  Use for
+                    DXF output.
+    """
     g = surf.geometry
     r_val = _surf_r(surf)
-
-    # ── Grating (ISO 10110-1 §5.9.8 + ISO 10110-16 §5.3) ────────────────
-    # First line: ISO 10110-16 Table 5 type symbol (LG, CG, CGH …) from
-    # sspec.grating_type; second line: ISO 10110-1 surface identifier GRAT;
-    # then (for curved substrates) R and κ, then grating frequency (lines/mm),
-    # diffraction order, and groove orientation angle φ per §5.3 / Table 2.
-    if isinstance(g, (PlaneGrating, StandardGratingGeometry)):
-        gt = sspec.grating_type if sspec.grating_type else "LG"
-        lines = [gt, "GRAT"]
-        # Curved substrate (StandardGratingGeometry only): show R and κ so
-        # the drawing conveys both the substrate shape and the grating params.
-        if isinstance(g, StandardGratingGeometry):
-            try:
-                r_sub = _to_float(g.radius)
-                if math.isinf(r_sub):
-                    lines.append("R \u221e")  # ∞
-                else:
-                    r_sub_s = f"{r_sub:+.3f}"
-                    if plain_text:
-                        tol_p = _tol_plain(sspec.r_tolerance)
-                        lines.append(f"R {r_sub_s}{tol_p}" if tol_p else f"R {r_sub_s}")
-                    else:
-                        tol_m = _tol_math(sspec.r_tolerance)
-                        lines.append(
-                            f"R ${r_sub_s}{tol_m}$" if tol_m else f"R {r_sub_s}"
-                        )
-                k_sub = _to_float(g.k)
-                if k_sub != 0.0:
-                    lines.append(f"\u03ba = {k_sub:+.4g}")  # κ = …
-            except AttributeError:
-                pass
-        # ISO 10110-16 §5.3: grating frequency and diffraction order.
-        # grating_period is in µm (both PlaneGrating and StandardGratingGeometry).
-        try:
-            period_um = _to_float(g.grating_period)  # µm
-            freq_lpmm = 1000.0 / period_um  # lines/mm
-            order = int(round(_to_float(g.grating_order)))
-            lines.append(f"{freq_lpmm:.1f} l/mm")
-            lines.append(f"m = {order:+d}" if order != 0 else "m = 0")
-        except (AttributeError, ZeroDivisionError):
-            pass
-        # ISO 10110-16 Table 2: groove orientation angle φ (radians → degrees).
-        # Omitted when zero (default: grooves perpendicular to x-axis).
-        try:
-            phi_rad = _to_float(g.groove_orientation_angle)
-            phi_deg = math.degrees(phi_rad)
-            if abs(phi_deg) > 1e-6:
-                lines.append(f"\u03c6 = {phi_deg:.1f}\u00b0")  # φ = …°
-        except AttributeError:
-            pass
-        return lines
-
-    # ── General / freeform surfaces (GS) — non-rotationally-symmetric ────
-    # ForbesQ2dGeometry and ChebyshevPolynomialGeometry have 2-D departures
-    # from the conic base and are therefore freeform surfaces, not ASPH.
-    if isinstance(
-        g,
-        (
-            PolynomialGeometry,
-            ZernikePolynomialGeometry,
-            GridSagGeometry,
-            NurbsGeometry,
-            ForbesQ2dGeometry,
-            ChebyshevPolynomialGeometry,
-        ),
-    ):
-        return ["GS"]
-
-    # ── Axially-symmetric aspheres (ASPH) ─────────────────────────────────
-    if isinstance(g, (EvenAsphere, OddAsphere, ForbesQNormalSlopeGeometry)):
-        r_str = "∞" if math.isinf(r_val) else f"{r_val:+.3f}"
-        # Vertex radius — include r_tolerance when set (ISO 10110-12 §5.3.1)
-        if plain_text:
-            tol_p = _tol_plain(sspec.r_tolerance)
-            r_line = f"R {r_str}{tol_p}" if tol_p else f"R {r_str}"
-        else:
-            tol_m = _tol_math(sspec.r_tolerance)
-            r_line = f"R ${r_str}{tol_m}$" if tol_m else f"R {r_str}"
-        lines: list[str] = ["ASPH", r_line]
-        # Conic constant — ISO 10110-12 §4.3.1: κ shall be given when non-zero.
-        # Omit for κ = 0 (spherical base — no conic contribution to declare).
-        try:
-            k_val = _to_float(g.k)
-            if k_val != 0.0:
-                lines.append(f"\u03ba = {k_val:+.4g}")  # κ = …
-        except AttributeError:
-            pass
-        # Polynomial coefficients — ISO 10110-12 notation
-        # EvenAsphere: C_i * r^{2i}, coefficients[i] → ISO A_{2(i+1)}
-        # OddAsphere:  C_i * r^i,    coefficients[i] → ISO A_{i+1}
-        is_odd = isinstance(g, OddAsphere)
-        try:
-            for i, ci in enumerate(g.coefficients):
-                c_val = _to_float(ci)
-                if c_val != 0.0:
-                    exp = (i + 1) if is_odd else (2 * (i + 1))
-                    lines.append(f"A{exp} = {c_val:+.4e}")
-        except AttributeError:
-            pass
-        # Forbes Q polynomial coefficients: radial_terms dict {order m: a_m}
-        # ISO 10110-12 has no dedicated Forbes notation; show ρmax + non-zero a_m.
-        try:
-            rt = g.radial_terms
-            if rt:
-                nr = _to_float(g.norm_radius)
-                lines.append(f"\u03c1max = {nr:.3g}")  # ρmax
-                for m in sorted(rt.keys()):
-                    a_val = _to_float(rt[m])
-                    if a_val != 0.0:
-                        lines.append(f"a{m} = {a_val:+.4e}")
-        except AttributeError:
-            pass
-        return lines
-
-    # ── Toroidal ─────────────────────────────────────────────────────────
-    if isinstance(g, ToroidalGeometry):
-        r_rot = _to_float(g.R_rot)
-        r_yz = _to_float(g.R_yz)
-        if math.isinf(r_rot):
-            # One infinite radius of curvature → cylindrical surface
-            r_yz_s = "∞" if math.isinf(r_yz) else f"{r_yz:+.3f}"
-            if math.isinf(r_yz):
-                return ["CYL", f"R {r_yz_s}"]
-            if plain_text:
-                tol_p = _tol_plain(sspec.r_tolerance)
-                lines = ["CYL", f"R {r_yz_s}{tol_p}" if tol_p else f"R {r_yz_s}"]
-            else:
-                tol_m = _tol_math(sspec.r_tolerance)
-                lines = ["CYL", f"R ${r_yz_s}{tol_m}$" if tol_m else f"R {r_yz_s}"]
-            # CYL base-curve conic constant κ (ISO 10110-12): show when non-zero
-            try:
-                k_cyl = _to_float(g.k_yz)
-                if k_cyl != 0.0:
-                    lines.append(f"\u03ba = {k_cyl:+.4g}")
-            except AttributeError:
-                pass
-            return lines
-        r_rot_s = f"{r_rot:+.3f}"
-        r_yz_s = "∞" if math.isinf(r_yz) else f"{r_yz:+.3f}"
-        lines = ["TOROID", f"Rx {r_rot_s}", f"Ry {r_yz_s}"]
-        # TOROID base-curve conic constant κ (ISO 10110-12): show when non-zero
-        try:
-            k_tor = _to_float(g.k_yz)
-            if k_tor != 0.0:
-                lines.append(f"\u03ba = {k_tor:+.4g}")
-        except AttributeError:
-            pass
-        return lines
-
-    # ── Biconic ───────────────────────────────────────────────────────────
-    if isinstance(g, BiconicGeometry):
-        rx = _to_float(g.Rx)
-        ry = _to_float(g.Ry)
-        rx_s = "∞" if math.isinf(rx) else f"{rx:+.3f}"
-        ry_s = "∞" if math.isinf(ry) else f"{ry:+.3f}"
-        lines = ["BICONIC", f"Rx {rx_s}", f"Ry {ry_s}"]
-        # ISO 10110-12 conic constants: show κx and κy when non-zero
-        try:
-            kx = _to_float(g.kx)
-            if kx != 0.0:
-                lines.append(f"\u03bax = {kx:+.4g}")
-        except AttributeError:
-            pass
-        try:
-            ky = _to_float(g.ky)
-            if ky != 0.0:
-                lines.append(f"\u03bay = {ky:+.4g}")
-        except AttributeError:
-            pass
-        return lines
-
-    # ── Standard: sphere or flat plane ───────────────────────────────────
-    if math.isinf(r_val):
-        return ["R ∞"]
-
-    r_str = f"{r_val:+.3f}"
-    # CX = convex towards the incoming light side; for the rear surface the
-    # convention flips because we label from the exit side.
-    cx_cc = ("CX" if r_val < 0 else "CC") if is_rear else ("CX" if r_val > 0 else "CC")
-    if plain_text:
-        tol_p = _tol_plain(sspec.r_tolerance)
-        return [f"R {r_str}{tol_p} {cx_cc}"] if tol_p else [f"R {r_str} {cx_cc}"]
-    tol_m = _tol_math(sspec.r_tolerance)
-    return [f"R ${r_str}{tol_m}$ {cx_cc}"] if tol_m else [f"R {r_str} {cx_cc}"]
+    for classes, handler in _header_handlers():
+        if isinstance(g, classes):
+            return handler(g, r_val, sspec, is_rear, plain_text)
+    return _standard_header(g, r_val, sspec, is_rear, plain_text)
 
 
 def _tol_plain(tol) -> str:

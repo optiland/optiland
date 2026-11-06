@@ -3,8 +3,6 @@
 Batches :class:`~optiland.iso10110.drawing.ElementDrawing` instances for every
 element in a :class:`~optiland.iso10110.spec.DrawingSpec` and provides
 combined save/preview methods.
-
-Bernhard Lutzer, 2026
 """
 
 from __future__ import annotations
