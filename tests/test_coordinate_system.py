@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 import optiland.backend as be
@@ -255,6 +256,55 @@ def test_untilted_mirror_tilt_gradient(set_test_backend):
 
     assert rx.grad is not None
     assert_allclose(rx.grad, 2.0)
+
+
+def test_frame_in_gcs_array_rotations_match_scalar(set_test_backend):
+    # The rotation-free fast path must not test array-valued angles for
+    # truthiness, and a zero element must give the same frame as a scalar zero.
+    rx = [0.0, 0.1, 0.0]
+    cs = CoordinateSystem(1.0, -1.0, 2.0, rx=be.array(rx))
+    origin, axis = cs.frame_in_gcs
+
+    # A rotation leaves the origin a single element; the axis has one per angle.
+    frame = [np.broadcast_to(be.to_numpy(c), (len(rx),)) for c in (*origin, *axis)]
+    for i, angle in enumerate(rx):
+        origin_i, axis_i = CoordinateSystem(1.0, -1.0, 2.0, rx=angle).frame_in_gcs
+        for got, expected in zip(frame, (*origin_i, *axis_i), strict=True):
+            assert_allclose(got[i], be.to_numpy(expected)[0])
+
+
+@pytest.mark.parametrize("axis", ["rx", "ry"])
+def test_paraxial_path_zero_tilt_gradient(set_test_backend, axis):
+    # A tracked tilt that starts at exactly zero must reach the surface axis
+    # the paraxial path reads, so that its gradient matches a central finite
+    # difference instead of being cut off by the rotation-free fast path.
+    if be.get_backend() != "torch":
+        pytest.skip("autodiff vs. finite-difference check is torch-only")
+
+    import torch
+
+    from optiland.optic import Optic
+
+    def axis_sum(tilt):
+        optic = Optic()
+        optic.surfaces.add(index=0, z=-100)
+        optic.surfaces.add(index=1, z=10, **{axis: tilt})
+        optic.surfaces.add(index=2, z=50)
+        path = optic.surfaces.build_paraxial_path()
+        return sum(component.sum() for component in path.local_z_axes_gcs[1])
+
+    tilt = torch.tensor(0.0, dtype=torch.float64, requires_grad=True)
+    axis_sum(tilt).backward()
+    assert tilt.grad is not None
+
+    eps = 1e-6
+    with torch.no_grad():
+        f_plus = axis_sum(torch.tensor(eps, dtype=torch.float64))
+        f_minus = axis_sum(torch.tensor(-eps, dtype=torch.float64))
+    fd_grad = ((f_plus - f_minus) / (2 * eps)).item()
+
+    assert fd_grad != 0.0
+    assert abs(tilt.grad.item() - fd_grad) < 1e-6
 
 
 def test_coordinate_system_from_dict(set_test_backend):

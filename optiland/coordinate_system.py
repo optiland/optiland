@@ -190,15 +190,19 @@ class CoordinateSystem:
         """
         # Fast path: with no rotation anywhere in the reference chain,
         # ``globalize`` reduces to pure translation, so the origin is the
-        # accumulated (x, y, z) and the axis is global +z. The truthiness
-        # checks mirror the ``if rx:`` branches of ``globalize`` exactly.
+        # accumulated (x, y, z) and the axis is global +z. The checks are the
+        # ``_needs_rotation`` tests that ``globalize`` applies.
         # This matters because ``build_paraxial_path`` reads one frame per
         # surface per first-order operation; the probe below costs an order
         # of magnitude more per call.
         cs: CoordinateSystem | None = self
         rotation_free = True
         while cs is not None:
-            if cs._rx or cs._ry or cs._rz:
+            if (
+                _needs_rotation(cs._rx)
+                or _needs_rotation(cs._ry)
+                or _needs_rotation(cs._rz)
+            ):
                 rotation_free = False
                 break
             cs = cs.reference_cs
