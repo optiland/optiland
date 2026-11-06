@@ -118,6 +118,8 @@ convention = "google"
 "optiland/optimization/**" = ["D102", "D107"]
 "optiland/thin_film/**" = ["D102", "D107"]
 "optiland/visualization/**" = ["D102", "D107"]
+# GUI is out of scope for the D102/D107 ratchet (#1062).
+"optiland_gui/**" = ["D102", "D107"]
 "optiland/samples/**" = ["D102", "D107"]
 "optiland/analysis/**" = ["D102", "D107"]
 "optiland/aperture/**" = ["D102", "D107"]
@@ -141,7 +143,6 @@ convention = "google"
 "optiland/mtf/**" = ["D102", "D107"]
 "optiland/apodization/**" = ["D102", "D107"]
 "optiland/aberrations/**" = ["D102", "D107"]
-"optiland_gui/**" = ["D102", "D107"]
 "optiland/zernike/**" = ["D102", "D107"]
 "optiland/solves/**" = ["D102", "D107"]
 "optiland/scatter.py" = ["D102", "D107"]
@@ -153,7 +154,9 @@ convention = "google"
 "optiland/sources/**" = ["D102", "D107"]
 "optiland/paraxial_path.py" = ["D102", "D107"]
 "optiland/multiconfig/**" = ["D102", "D107"]
-"optiland/ml/**" = ["D102", "D107"]# Documentation build tooling (scripts/docs), not part of the package API.
+"optiland/ml/**" = ["D102", "D107"]
+"optiland/iso10110/**" = ["D102", "D107"]
+"optiland/propagation/grin.py" = ["D102", "D107"]# Documentation build tooling (scripts/docs), not part of the package API.
 "scripts/**" = ["D100", "D101", "D103"]
 
 [tool.ruff.lint.isort]
