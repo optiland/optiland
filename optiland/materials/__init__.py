@@ -9,6 +9,7 @@ from .agf import AGFMaterial
 from .base import BaseMaterial
 from .catalog import MaterialCatalog
 from .data import DataMaterial
+from .gradient_material import GradientMaterial
 from .ideal import IdealMaterial
 from .material import Material
 from .material_file import MaterialFile
@@ -33,6 +34,8 @@ __all__ = [
     "AGFMaterial",
     # From base.py
     "BaseMaterial",
+    # From gradient_material.py
+    "GradientMaterial",
     # From ideal.py
     "IdealMaterial",
     "DataMaterial",
