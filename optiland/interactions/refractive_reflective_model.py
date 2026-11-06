@@ -45,8 +45,7 @@ class RefractiveReflectiveModel(BaseInteractionModel):
         if self.is_reflective:
             rays.reflect(nx, ny, nz)
         else:
-            n1 = self.material_pre.n(rays.w)
-            n2 = self.material_post.n(rays.w)
+            n1, n2 = self._real_indices(rays)
             rays.refract(nx, ny, nz, n1, n2)
 
         # Apply coating and BSDF

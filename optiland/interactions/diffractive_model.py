@@ -38,8 +38,7 @@ class DiffractiveInteractionModel(RefractiveReflectiveModel):
         nx, ny, nz = self.geometry.surface_normal(rays)
 
         # Interact with surface (refract or reflect)
-        n1 = self.material_pre.n(rays.w)
-        n2 = self.material_post.n(rays.w)
+        n1, n2 = self._real_indices(rays)
 
         # find grating vector
         fx, fy, fz = self.geometry.grating_vector(rays)
