@@ -8,20 +8,23 @@ rendered as the placeholder dash (—) in the drawing.
 
 ISO 10110 part mapping
 ----------------------
-0/  Stress birefringence          → ElementSpec.birefringence
-1/  Bubbles and inclusions        → ElementSpec.bubbles
-2/  Inhomogeneity and striae      → ElementSpec.homogeneity_grade / nh_class /
-                                    striae_grade / striae_density / striae_shadowgraph
-3/  Surface form error            → SurfaceSpec.sag_tolerance / irregularity /
-                                    rotationally_symmetric / test_wavelength
-4/  Centration tolerance          → SurfaceSpec.centration / centration_decentration
-5/  Surface imperfections         → SurfaceSpec.imperfections / scratches /
-                                    edge_chips / coating_imperfections
-6/  Laser damage threshold        → SurfaceSpec.laser_damage
-7/  Surface treatment / coatings  → SurfaceSpec.coating
-8/  Surface texture               → SurfaceSpec.roughness
-13/ Transmitted wavefront         → SurfaceSpec.wavefront_deformation
-15/ Assembly surface imperfections→ SurfaceSpec.assembly_imperfections
+::
+
+    0/  Stress birefringence          → ElementSpec.birefringence
+    1/  Bubbles and inclusions        → ElementSpec.bubbles
+    2/  Inhomogeneity and striae      → ElementSpec.homogeneity_grade / nh_class /
+                                        striae_grade / striae_density /
+                                        striae_shadowgraph
+    3/  Surface form error            → SurfaceSpec.sag_tolerance / irregularity /
+                                        rotationally_symmetric / test_wavelength
+    4/  Centration tolerance          → SurfaceSpec.centration / centration_decentration
+    5/  Surface imperfections         → SurfaceSpec.imperfections / scratches /
+                                        edge_chips / coating_imperfections
+    6/  Laser damage threshold        → SurfaceSpec.laser_damage
+    7/  Surface treatment / coatings  → SurfaceSpec.coating
+    8/  Surface texture               → SurfaceSpec.roughness
+    13/ Transmitted wavefront         → SurfaceSpec.wavefront_deformation
+    15/ Assembly surface imperfections→ SurfaceSpec.assembly_imperfections
 
 Bernhard Lutzer, 2026
 """

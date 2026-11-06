@@ -7,6 +7,8 @@ itself does not carry.
 
 Typical workflow
 ----------------
+::
+
     spec = DrawingSpec(lens)
 
     # Surface-level tolerances (designer fills these in)
