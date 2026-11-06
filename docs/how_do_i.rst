@@ -261,6 +261,8 @@ Tolerance a system
      - :doc:`gallery/tolerancing/compensators`
    * - include surface roughness and scattering?
      - :doc:`Tutorial 6c <examples/Tutorial_6c_Roughness_Scattering_and_Extended_Sources>`
+   * - produce ISO 10110 fabrication drawings (PDF or DXF) for my lenses?
+     - :doc:`Tutorial 11a <examples/Tutorial_11a_ISO_10110_Drawings>`
 
 ----
 

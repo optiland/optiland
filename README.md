@@ -124,6 +124,7 @@ For more details, see the [installation guide](https://www.optiland.org/docs/ins
 | **📊 Optical Analysis** | Generate spot diagrams, wavefront error maps, ray fans, PSF/MTF plots, Zernike decompositions, distortion plots, etc. |
 | **🧠 Optimization** | Local & global optimizers, autograd support, operand-based merit functions, and GlassExpert for categorical variable search. |
 | **📈 Tolerancing** | Monte Carlo and parametric sensitivity analysis to evaluate robustness and manufacturability. |
+| **🏭 Manufacturing Drawings** | Generate ISO 10110 fabrication drawings (PDF, PNG, DXF) with tolerance and glass-quality annotations for each lens element. |
 | **📚 Material Library** | Integrated access to refractiveindex.info. Support for custom dispersion models and material creation. |
 | **🖼️ Visualization** | 2D plots via matplotlib, 3D interactive scenes with VTK, and debugging tools to inspect ray behavior. |
 | **🧩 Interoperability** | Import/Export Zemax (.zmx), CODE V (.seq), and OSLO (.len) files, save/load systems in JSON, use full Python API for scripting and automation. |
