@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from PySide6.QtCore import QEvent, Qt, QTimer, Slot
+from PySide6.QtCore import Qt, QTimer, Slot
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -42,9 +42,12 @@ from typing import TYPE_CHECKING
 
 from . import gui_plot_utils
 from .analysis_panel import CustomMatplotlibToolbar
+from .config import DEFAULT_TAB_POSITION
 from .layout_highlighting import LayoutHighlightController
-from .layout_presenter import present_2d, present_3d, present_sag
+from .layout_highlighting_3d import LayoutHighlightController3D
+from .layout_presenter import present_2d, present_3d, present_sag, style_chief_rays
 from .widgets.layout_job_view import LayoutJobView
+from .widgets.ray_count import RayCountSpinBox
 
 if TYPE_CHECKING:
     from .optiland_connector import OptilandConnector
@@ -216,6 +219,7 @@ class SagViewer(QWidget):
 
     def update_theme(self, theme="dark"):
         self.current_theme = theme
+        self.toolbar.update_theme(theme)
         self.settings_toggle_btn.setIcon(QIcon(f":/icons/{theme}/settings.svg"))
         self.layout_job.redraw()
 
@@ -261,6 +265,7 @@ class ViewerPanel(QWidget):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         self.tabWidget = QTabWidget()
+        self.tabWidget.setTabPosition(DEFAULT_TAB_POSITION)
 
         # Create 2D Viewer Tab
         self.viewer2D = MatplotlibViewer(self.connector)
@@ -406,14 +411,26 @@ class MatplotlibViewer(QWidget):
         settings_layout = QVBoxLayout(self.settings_area)
         self.settings_form_layout = QFormLayout()
 
-        self.num_rays_spinbox = QSpinBox()
-        self.num_rays_spinbox.setRange(1, 100)
+        self.num_rays_spinbox = RayCountSpinBox()
         self.num_rays_spinbox.setValue(3)
         self.settings_form_layout.addRow("Num Rays:", self.num_rays_spinbox)
 
         self.dist_combo = QComboBox()
         self.dist_combo.addItems(["line_y", "line_x", "hexapolar", "random"])
         self.settings_form_layout.addRow("Distribution:", self.dist_combo)
+        self.dist_combo.currentTextChanged.connect(
+            self.num_rays_spinbox.set_distribution
+        )
+        self._chief_ray_artists = []
+        self.chief_ray_checkbox = QCheckBox("Highlight chief ray")
+        self.chief_ray_checkbox.setObjectName("highlight_chief_ray")
+        self.chief_ray_checkbox.setChecked(True)
+        self.chief_ray_checkbox.setToolTip(
+            "Draw each field's pupil-center ray in blue above the other 2D rays. "
+            "The chief is included in Num Rays; unchecking restores its normal style."
+        )
+        self.chief_ray_checkbox.toggled.connect(lambda: style_chief_rays(self))
+        self.settings_form_layout.addRow(self.chief_ray_checkbox)
 
         apply_button = QPushButton("Apply")
         apply_button.clicked.connect(self.plot_optic)
@@ -441,20 +458,8 @@ class MatplotlibViewer(QWidget):
         )
 
         self.canvas.mpl_connect("motion_notify_event", self.on_mouse_move_on_plot)
-        self.canvas.mpl_connect("scroll_event", self.on_scroll_zoom)
-
-        # Add new event connections for panning
-        self.canvas.mpl_connect("button_press_event", self.on_mouse_button_press)
-        self.canvas.mpl_connect("button_release_event", self.on_mouse_button_release)
         self.ax.callbacks.connect("xlim_changed", self.on_ax_limit_changed)
         self.ax.callbacks.connect("ylim_changed", self.on_ax_limit_changed)
-
-        # Initialize panning state variables
-        self._pan_start_x = None
-        self._pan_start_y = None
-        self._is_panning = False
-        self._pan_moved = False
-        self.canvas.installEventFilter(self)
 
         self._preserve_next = False
         self.preserve_zoom = False
@@ -480,102 +485,19 @@ class MatplotlibViewer(QWidget):
         else:
             self.layout_job.request()
 
-    def on_mouse_button_press(self, event):
-        """
-        Handles mouse button press events to initiate panning.
-
-        Args:
-            event: The Matplotlib mouse button press event.
-        """
-        if (
-            event.button == 1
-            and event.inaxes is self.ax
-            and event.xdata is not None
-            and event.ydata is not None
-            and self._default_pan_available()
-        ):
-            self._finish_default_pan()
-            self.toolbar.push_current()
-            self._pan_start_x = event.xdata
-            self._pan_start_y = event.ydata
-            self._is_panning = True
-            self._pan_moved = False
-            self.canvas.setCursor(
-                Qt.ClosedHandCursor
-            )  # Change cursor to indicate panning
-
-    def on_mouse_button_release(self, event):
-        """
-        Handles mouse button release events to stop panning.
-
-        Args:
-            event: The Matplotlib mouse button release event.
-        """
-        if event.button == 1:
-            self._finish_default_pan()
-
-    def _default_pan_available(self) -> bool:
-        """Leave toolbar and interactive-widget gestures to their owner."""
-        return not self.toolbar.mode and self.canvas.widgetlock.available(self)
-
-    def _finish_default_pan(self) -> None:
-        """End only our own drag, without replacing a toolbar tool's cursor."""
-        if not self._is_panning:
-            return
-        self._is_panning = False
-        self._pan_start_x = None
-        self._pan_start_y = None
-        if self._pan_moved:
-            self.toolbar.push_current()
-        self._pan_moved = False
-        if self._default_pan_available():
-            self.canvas.unsetCursor()
-
-    def eventFilter(self, watched, event):
-        """Discard an interrupted custom drag while preserving normal Qt events."""
-        if watched is self.canvas and (
-            event.type() in (QEvent.FocusOut, QEvent.Hide, QEvent.WindowDeactivate)
-            or (event.type() == QEvent.KeyPress and event.key() == Qt.Key_Escape)
-        ):
-            self._finish_default_pan()
-        return super().eventFilter(watched, event)
-
     def on_mouse_move_on_plot(self, event):
         """
-        Displays the cursor's coordinates on the plot and handles panning.
+        Displays the cursor's coordinates when no navigation gesture is active.
 
         Args:
             event: The Matplotlib motion notify event.
         """
-        if self._is_panning and not self._default_pan_available():
-            self._finish_default_pan()
-
         has_coordinates = (
             event.inaxes is self.ax
             and event.xdata is not None
             and event.ydata is not None
         )
-        if self._is_panning and has_coordinates and self._pan_start_x is not None:
-            # Calculate the distance moved
-            dx = self._pan_start_x - event.xdata
-            dy = self._pan_start_y - event.ydata
-
-            # Get current axis limits
-            ax = event.inaxes
-            xlim = ax.get_xlim()
-            ylim = ax.get_ylim()
-
-            # Update the limits by the distance moved
-            ax.set_xlim(xlim[0] + dx, xlim[1] + dx)
-            ax.set_ylim(ylim[0] + dy, ylim[1] + dy)
-            self._pan_moved = self._pan_moved or dx != 0 or dy != 0
-
-            # Redraw the canvas
-            self.canvas.draw_idle()
-            return  # Skip the coordinate display when panning
-
-        # Original coordinate display code
-        if has_coordinates:
+        if has_coordinates and not self.toolbar.is_dragging:
             x_coord = f"{event.xdata:.3f}"
             y_coord = f"{event.ydata:.3f}"
             self.cursor_coord_label.setText(f"(Z, Y) = ({x_coord}, {y_coord})")
@@ -585,35 +507,6 @@ class MatplotlibViewer(QWidget):
             self.cursor_coord_label.raise_()
         else:
             self.cursor_coord_label.setVisible(False)
-
-    def on_scroll_zoom(self, event):
-        """
-        Implements zoom functionality using the mouse scroll wheel.
-
-        Args:
-            event: The Matplotlib scroll event.
-        """
-        if not event.inaxes:
-            return
-
-        ax = event.inaxes
-        scale_factor = 1.1 if event.step < 0 else 1 / 1.1
-
-        cur_xlim = ax.get_xlim()
-        cur_ylim = ax.get_ylim()
-
-        xdata = event.xdata
-        ydata = event.ydata
-
-        new_width = (cur_xlim[1] - cur_xlim[0]) * scale_factor
-        new_height = (cur_ylim[1] - cur_ylim[0]) * scale_factor
-
-        rel_x = (cur_xlim[1] - xdata) / (cur_xlim[1] - cur_xlim[0])
-        rel_y = (cur_ylim[1] - ydata) / (cur_ylim[1] - cur_ylim[0])
-
-        ax.set_xlim([xdata - new_width * (1 - rel_x), xdata + new_width * rel_x])
-        ax.set_ylim([ydata - new_height * (1 - rel_y), ydata + new_height * rel_y])
-        ax.figure.canvas.draw_idle()
 
     def update_theme(self, theme="dark"):
         """
@@ -627,6 +520,7 @@ class MatplotlibViewer(QWidget):
             self.current_theme = theme
             gui_plot_utils.apply_gui_matplotlib_styles(theme=self.current_theme)
             self.layout_job.redraw()
+        self.toolbar.update_theme(theme)
         self.settings_toggle_btn.setIcon(QIcon(f":/icons/{theme}/settings.svg"))
 
     def set_interaction_state(self, state):
@@ -663,6 +557,7 @@ class MatplotlibViewer(QWidget):
             self.highlight_controller.install_bindings(*self._highlight_bindings)
 
     def _layout_parameters(self):
+        self.num_rays_spinbox.normalize()
         return {
             "num_rays": self.num_rays_spinbox.value(),
             "distribution": self.dist_combo.currentText(),
@@ -670,10 +565,11 @@ class MatplotlibViewer(QWidget):
 
     def _present_layout(self, data, context, restyle=False, *, reset=False):
         present_2d(self, data, context, restyle, reset=reset)
+        style_chief_rays(self)
 
     def plot_optic(self, preserve_zoom=False):
         """Request the latest visible layout; calculation belongs to its worker."""
-        self._finish_default_pan()
+        self.toolbar.finish_navigation()
         self._preserve_next = bool(preserve_zoom)
         self.layout_job.request()
 
@@ -704,6 +600,9 @@ class VTKViewer(QWidget):
         self.connector = connector
         self.current_theme = "dark"
         self._has_scene = False
+        self.interaction_state = None
+        self.highlight_controller = None
+        self._highlight_context = None
         if not VTK_AVAILABLE:
             self.layout = QVBoxLayout(self)
             self.layout.addWidget(QLabel("VTK is not available."))
@@ -725,6 +624,28 @@ class VTKViewer(QWidget):
 
     def _layout_parameters(self):
         return {}
+
+    def set_interaction_state(self, state):
+        if self.highlight_controller is not None:
+            self.interaction_state.changed.disconnect(
+                self.highlight_controller.schedule
+            )
+            self.highlight_controller.clear()
+            self.highlight_controller.deleteLater()
+        self.interaction_state = state
+        self.highlight_controller = LayoutHighlightController3D(self, state)
+        if self._highlight_context is not None:
+            self.install_3d_highlights(self._scene_actor_specs, self._highlight_context)
+
+    def clear_3d_highlights(self):
+        if self.highlight_controller is not None:
+            self.highlight_controller.clear()
+
+    def install_3d_highlights(self, actors, context):
+        self._highlight_context = context
+        if self.highlight_controller is not None:
+            self.interaction_state.sync_document(self.connector.get_optic())
+            self.highlight_controller.install(actors, context["surface_identities"])
 
     def showEvent(self, event):
         super().showEvent(event)

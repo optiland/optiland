@@ -128,6 +128,7 @@ def test_completion_listener_can_start_next_run(qapp, owned_service):
         ("Local", 0),
         ("Local", 1),
         ("Local", 2),
+        ("Local", 3),
         ("Global", 0),
         ("Global", 1),
         ("Global", 2),
@@ -138,11 +139,12 @@ def test_exposed_algorithms_return_finite_detached_candidates(
     minimal_optic, group, index
 ):
     algorithm = OptimizationService.get_optimizer_groups()[group][index][1]
-    kwargs = (
-        {"max_iter": 3}
-        if algorithm.__name__ == "OrthogonalDescent"
-        else {"maxiter": 3, "disp": False}
-    )
+    if algorithm.__name__ == "OrthogonalDescent":
+        kwargs = {"max_iter": 3}
+    elif algorithm.__name__ == "DampedLeastSquares":
+        kwargs = {"maxiter": 3}
+    else:
+        kwargs = {"maxiter": 3, "disp": False}
     if algorithm.__name__ == "LeastSquares":
         kwargs["method_choice"] = "trf"
     options = test_optimization_jobs.parameters(algorithm, kwargs)

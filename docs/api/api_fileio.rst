@@ -18,6 +18,7 @@ a small refractive-index difference is still an optical property.
    :maxdepth: 1
 
    /oslo_import
+   /zemax_import
 
 .. autosummary::
    :toctree: generated

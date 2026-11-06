@@ -85,7 +85,17 @@ class OsloDataParser:
             "THF": self._read_th,
             "AP": self._read_ap,
             "APF": self._read_ap,
+            "APN": self._read_apn,
             "APCK": self._read_apck,
+            "APK": self._read_aperture_pickup,
+            "ATP": self._read_special_aperture,
+            "AAC": self._read_special_aperture,
+            "AAN": self._read_special_aperture,
+            "AGN": self._read_special_aperture,
+            "AX1": self._read_special_aperture,
+            "AX2": self._read_special_aperture,
+            "AY1": self._read_special_aperture,
+            "AY2": self._read_special_aperture,
             "ASP": self._read_asp,
             "AST": self._read_ast,
             "CC": self._read_coeff,
@@ -175,6 +185,9 @@ class OsloDataParser:
                     elif re.fullmatch(r"AS\d+", cmd):
                         self._validate_numbers(tokens)
                         self._read_coeff(tokens)
+                    elif re.fullmatch(r"AV[XY][1-4]", cmd):
+                        self._validate_numbers(tokens)
+                        self._read_special_aperture(tokens)
                     elif cmd in self._dispatch_table:
                         self._validate_numbers(tokens)
                         self._validate_command(tokens)
@@ -595,6 +608,31 @@ class OsloDataParser:
             raise ValueError("APCK expects ON or OFF")
         self.data_model.settings["aperture_check"] = flag in {"ON", "1"}
 
+    def _read_apn(self, tokens: list[str]) -> None:
+        count = int(tokens[1])
+        if not 0 <= count <= 256:
+            raise ValueError("APN count must be between 0 and 256")
+        self._current_surf_data["APN"] = count
+        self._current_surf_data["special_apertures"] = {}
+        self._current_surf_data.pop("aperture_pickups", None)
+
+    def _read_special_aperture(self, tokens: list[str]) -> None:
+        if len(tokens) != 3:
+            raise ValueError(f"{tokens[0]} expects an aperture identifier and value")
+        cmd, identifier = tokens[:2]
+        identifier = identifier.upper()
+        value = float(tokens[2])
+        if cmd in {"ATP", "AAC", "AGN"} and not value.is_integer():
+            raise ValueError(f"{cmd} requires an integer")
+        if cmd == "AAC" and value not in {1, 2, 4}:
+            self._unsupported(
+                cmd,
+                f"aperture action {value} is not mapped",
+            )
+        self._current_surf_data.setdefault("special_apertures", {}).setdefault(
+            identifier, {}
+        )[cmd] = value
+
     def _read_ast(self, tokens: list[str]) -> None:
         for data in self.data_model.surfaces.values():
             data.pop("AST", None)
@@ -701,3 +739,12 @@ class OsloDataParser:
             int(tokens[3])
         self._clear_constraint(kind)
         self._current_surf_data.setdefault("pickups", []).append(tokens[1:])
+
+    def _read_aperture_pickup(self, tokens: list[str]) -> None:
+        if len(tokens) != 4:
+            raise ValueError(
+                "APK expects target aperture, source surface and source aperture"
+            )
+        self._current_surf_data.setdefault("aperture_pickups", []).append(
+            [tokens[1].upper(), tokens[2], tokens[3].upper()]
+        )

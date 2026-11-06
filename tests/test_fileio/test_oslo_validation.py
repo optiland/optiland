@@ -13,7 +13,7 @@ from optiland.fileio.oslo.reader.converter import OsloToOpticConverter
 from optiland.fileio.oslo.reader.parser import OsloDataParser
 from optiland.geometries import EvenAsphere, OddAsphere, StandardGeometry
 from optiland.interactions import RefractiveReflectiveModel, ThinLensInteractionModel
-from optiland.physical_apertures import RadialAperture
+from optiland.physical_apertures import RadialAperture, UnclippedAperture
 from optiland.rays import RealRays
 from tests.utils import assert_allclose
 
@@ -125,6 +125,19 @@ def test_export_cannot_discard_custom_ray_interactions(
     assert output.read_text() == "saved design"
 
 
+@pytest.mark.parametrize("radius", [0, -1, math.inf, math.nan])
+@pytest.mark.parametrize("checked", [True, False])
+def test_export_rejects_unrepresentable_surface_radius_without_overwriting(
+    lens_file, tmp_path, radius, checked
+):
+    optic = load_oslo_file(lens_file(), strict=True)
+    aperture = RadialAperture(radius)
+    optic.surfaces[1].aperture = aperture if checked else UnclippedAperture(aperture)
+    output = tmp_path / "invalid-surface-radius.len"
+    output.write_text("saved design", encoding="utf-8")
+    with pytest.raises(ValueError, match="finite positive surface aperture radius"):
+        save_oslo_file(optic, output)
+    assert output.read_text() == "saved design"
 
 
 def test_export_cannot_turn_a_zero_radius_clip_into_an_open_aperture(

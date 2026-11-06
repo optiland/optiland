@@ -438,7 +438,7 @@ def test_one_active_fixture_preserves_geometry_aperture_and_primary_trace(
 
     assert model.name == "SyntheticFTYP"
     assert tuple(model.surfaces) == (0, 1, 2)
-    assert model.surfaces[1]["diameter"] == 2
+    assert model.surfaces[1]["semi_diameter"] == 2
     assert [surface["thickness"] for surface in model.surfaces.values()] == [10, 20, 0]
     for optic in (imported, reference):
         assert len(optic.surfaces) == 3

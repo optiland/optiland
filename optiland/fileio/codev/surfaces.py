@@ -9,6 +9,7 @@ Kramer Harrison, 2026
 
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -236,23 +237,51 @@ class EvenAsphereSurfaceHandler(BaseSurfaceHandler):
     def format(self, surface: Surface) -> dict[str, Any]:
         """Format an even-asphere surface to CODE V operand dict.
 
+        Optiland's ``coefficients[i]`` multiplies ``r**(2i+2)``; CODE V letter
+        ``A`` multiplies ``r**4`` and ``J`` multiplies ``r**20``. Letter ``j`` is
+        therefore written from ``coefficients[j + 1]`` and returned as
+        ``coeff_j``.
+
         Args:
             surface: The Optiland surface.
 
         Returns:
-            Raw operand dict for CodeVFileEncoder.
+            Raw operand dict for CodeVFileEncoder (radius, conic and the letters
+            ``coeff_0`` .. ``coeff_8`` for A..J).
+
+        Raises:
+            ValueError: If any coefficient is NaN or infinite.
+            NotImplementedError: If ``coefficients[0]`` (the r^2 term, which CODE V
+                has no way to carry) or any term above r^20 (``coefficients[10:]``)
+                is non-zero.
         """
         geom = surface.geometry
-        coeffs: list[float] = list(geom.coefficients) if geom.coefficients else []
-        # Pad to 9 terms (A–J)
-        while len(coeffs) < len(self._COEFF_KEYS):
-            coeffs.append(0.0)
-
-        result: dict[str, Any] = {
+        # No truthiness test on the container: after optimization ``coefficients``
+        # can be a numpy array, whose truth value is ambiguous.
+        coeffs = [float(c) for c in geom.coefficients]
+        # Finiteness first: a NaN must not be reported as an unsupported term.
+        for i, c in enumerate(coeffs):
+            if not math.isfinite(c):
+                raise ValueError(
+                    f"non-finite even-asphere coefficient coefficients[{i}] ({c!r})"
+                )
+        # Exact zero test: how large a term must be to matter depends on the
+        # aperture and the power, so any non-zero value is a real term.
+        if coeffs and coeffs[0] != 0.0:
+            raise NotImplementedError(
+                "r^2 aspheric term (coefficients[0]) has no CODE V equivalent"
+            )
+        n_letters = len(self._COEFF_KEYS)
+        if any(c != 0.0 for c in coeffs[n_letters + 1 :]):
+            raise NotImplementedError(
+                "aspheric terms above r^20 (coefficients[10:]) cannot be "
+                "exported to CODE V"
+            )
+        raw: dict[str, Any] = {
             "profile": self.codev_type,
             "radius": _raw_from_radius(float(geom.radius)),
             "conic": float(getattr(geom, "k", 0.0)),
         }
-        for i, _key in enumerate(self._COEFF_KEYS):
-            result[f"coeff_{i}"] = float(coeffs[i])
-        return result
+        for j, c in enumerate(coeffs[1 : n_letters + 1]):
+            raw[f"coeff_{j}"] = c
+        return raw

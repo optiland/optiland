@@ -11,12 +11,15 @@ Author: Manuel Fragata Mendes, 2025
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QSize, Qt, Signal
 from PySide6.QtGui import QIcon, QResizeEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
     QLabel,
     QSizePolicy,
+    QStyle,
+    QStyleOptionToolButton,
+    QStylePainter,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -25,6 +28,44 @@ from PySide6.QtWidgets import (
 COLLAPSE_THRESHOLD_WIDTH = 80
 SIDEBAR_MIN_WIDTH = 60
 SIDEBAR_MAX_WIDTH = 150
+
+
+class SidebarButton(QToolButton):
+    """Paint hover across the button, including paths with a missing Qt Enter."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._pointer_inside = False
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+
+    def event(self, event: QEvent) -> bool:
+        kind = event.type()
+        if kind in (
+            QEvent.Type.HoverEnter,
+            QEvent.Type.HoverMove,
+            QEvent.Type.HoverLeave,
+            QEvent.Type.Hide,
+        ):
+            inside = kind in (
+                QEvent.Type.HoverEnter,
+                QEvent.Type.HoverMove,
+            ) and self.rect().contains(event.position().toPoint())
+            if inside != self._pointer_inside:
+                self._pointer_inside = inside
+                self.update()
+        return super().event(event)
+
+    def paintEvent(self, event) -> None:
+        option = QStyleOptionToolButton()
+        self.initStyleOption(option)
+        # Windows can deliver HoverMove over the icon without setting
+        # underMouse(). Keep the native style and layout, using local hit bounds.
+        if self._pointer_inside:
+            option.state |= QStyle.StateFlag.State_MouseOver
+        else:
+            option.state &= ~QStyle.StateFlag.State_MouseOver
+        painter = QStylePainter(self)
+        painter.drawComplexControl(QStyle.ComplexControl.CC_ToolButton, option)
 
 
 class SidebarWidget(QWidget):
@@ -92,7 +133,7 @@ class SidebarWidget(QWidget):
         ]
 
         for name, text, icon_filename in button_definitions:
-            button = QToolButton()
+            button = SidebarButton()
             button.setObjectName(f"sidebar-btn-{name}")
             button.setText(text)
             button.setIconSize(QSize(24, 24))

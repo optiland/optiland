@@ -38,7 +38,7 @@ Architecture
   version, build time). The footer of every page links to it.
 - **Version.** ``release`` is derived from the installed package metadata
   (``versioningit``), so a build from ``master`` is labelled with the honest
-  development version (for example ``0.6.2.post49+g<sha>``). It is never
+  development version (for example ``0.6.3.post49+g<sha>``). It is never
   hardcoded.
 - **Code highlighting.** Colours come from the ``a11y-high-contrast``
   Pygments styles selected in ``docs/conf.py`` plus a few overrides in

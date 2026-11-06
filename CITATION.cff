@@ -14,5 +14,30 @@ identifiers:
 repository-code: 'https://github.com/optiland/optiland'
 url: 'https://www.optiland.org/docs/'
 license: MIT
-version: 0.6.1
-date-released: '2026-02-08'
+version: 0.6.3
+date-released: '2026-10-11'
+preferred-citation:
+  type: article
+  title: 'Optiland: Open-Source Optical Design Software in Python'
+  authors:
+    - given-names: Kramer
+      family-names: Harrison
+      orcid: 'https://orcid.org/0009-0000-5494-139X'
+    - given-names: Manuel Fragata
+      family-names: Mendes
+      orcid: 'https://orcid.org/0009-0009-2957-0799'
+    - given-names: Corné
+      family-names: Haasjes
+      orcid: 'https://orcid.org/0000-0003-0187-4116'
+    - given-names: Grégoire
+      family-names: Hein
+      orcid: 'https://orcid.org/0009-0001-3029-7242'
+  journal: Journal of Open Source Software
+  volume: 11
+  issue: 127
+  start: 11170
+  year: 2026
+  publisher:
+    name: The Open Journal
+  doi: 10.21105/joss.11170
+  url: 'https://doi.org/10.21105/joss.11170'

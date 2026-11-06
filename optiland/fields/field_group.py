@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import optiland.backend as be
+from optiland._epoch import epoch_memo
 from optiland.fields.field import Field
 from optiland.fields.field_types import BaseFieldDefinition
 
@@ -72,16 +73,19 @@ class FieldGroup:
         return be.array([field.y for field in self.fields])
 
     @property
+    @epoch_memo()
     def max_x_field(self):
         """float: Maximum field value in the x-direction."""
         return be.max(self.x_fields)
 
     @property
+    @epoch_memo()
     def max_y_field(self):
         """float: Maximum field value in the y-direction."""
         return be.max(self.y_fields)
 
     @property
+    @epoch_memo()
     def max_field(self):
         """float: Maximum radial field value."""
         if not self.fields:
@@ -142,6 +146,30 @@ class FieldGroup:
         vx_new = result[..., 0]
         vy_new = result[..., 1]
         return vx_new, vy_new
+
+    def apply_vignetting(self, Hx, Hy, Px, Py):
+        """Maps normalized pupil coordinates onto the vignetted pupil.
+
+        Each pupil coordinate is compressed by ``(1 - v)``, where ``v`` is the
+        vignetting factor of the nearest defined field. This is the single
+        place where vignetting is applied, so every ray aimer and every trace
+        entry point sees the same pupil. When no field is vignetted, the
+        inputs are returned unchanged.
+
+        Args:
+            Hx (float or be.ndarray): The normalized x field coordinate.
+            Hy (float or be.ndarray): The normalized y field coordinate.
+            Px (float or be.ndarray): The normalized x pupil coordinate.
+            Py (float or be.ndarray): The normalized y pupil coordinate.
+
+        Returns:
+            tuple: The vignetted ``(Px, Py)``.
+
+        """
+        if not any(field.vx or field.vy for field in self.fields):
+            return Px, Py
+        vx, vy = self.get_vig_factor(Hx, Hy)
+        return Px * (1 - vx), Py * (1 - vy)
 
     def get_field_coords(self) -> list[tuple[ScalarOrArray, ScalarOrArray]]:
         """Returns the coordinates of the fields.

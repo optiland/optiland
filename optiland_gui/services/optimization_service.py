@@ -21,6 +21,49 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class CandidatePreview:
+    """GUI-owned copy of the optic that follows a run's variable vector.
+
+    The run itself works on its own copy in the calculation process and
+    streams the scaled variable vector ``x``. This class applies each ``x`` to
+    a second copy, owned by the GUI thread, through the run's variable list.
+    The live document is never touched. Only variable values are written;
+    pickups and solves are resolved in the final candidate.
+
+    Args:
+        snapshot: The run's starting design.
+        variables: The run's variable definitions.
+    """
+
+    def __init__(self, snapshot: OpticSnapshot, variables: list[dict]) -> None:
+        from optiland.optimization.variable.variable import Variable
+
+        from .optimization_jobs import variable_arguments
+
+        self.optic = snapshot.restore()
+        self._variables = [
+            Variable(
+                self.optic,
+                definition["type"],
+                **variable_arguments(self.optic, definition),
+            )
+            for definition in variables
+        ]
+
+    def apply(self, x: list[float]) -> list[float]:
+        """Write a scaled variable vector to the copy.
+
+        Args:
+            x: Scaled values, one per variable, in definition order.
+
+        Returns:
+            The resulting physical variable values.
+        """
+        for variable, value in zip(self._variables, x, strict=True):
+            variable.update(value)
+        return [float(variable.variable.get_value()) for variable in self._variables]
+
+
 class OptimizationService(QObject):
     """Manages definitions and accepts owned candidates on the GUI thread.
 
@@ -30,6 +73,8 @@ class OptimizationService(QObject):
     """
 
     progressChanged = Signal(dict)
+    #: ``(iteration, merit, x)`` of the run, at most 10 per second.
+    stepChanged = Signal(int, float, list)
     completed = Signal(str)
     failed = Signal(str)
     stateChanged = Signal(str)
@@ -187,6 +232,7 @@ class OptimizationService(QObject):
         self._request = None
         self._stopping = False
         self._candidate = None
+        self._preview: CandidatePreview | None = None
         self._callbacks = (None, None, None)
         self.preview_options = {"enabled": False, "frequency": 10}
         jobs = connector.calculation_jobs
@@ -298,7 +344,19 @@ class OptimizationService(QObject):
             OrthogonalDescent,
         )
 
+        from .optimization_jobs import DampedLeastSquares
+
         meta = self.OPTIMIZER_METADATA
+
+        meta[DampedLeastSquares] = {
+            "maxiter": {"type": "int", "default": 1000},
+            "tol": {"type": "float", "default": 1e-3, "decimals": 6},
+            "scheme": {
+                "type": "choice",
+                "options": ["forward", "central"],
+                "default": "forward",
+            },
+        }
 
         meta[OptimizerGeneric] = {
             "method": {
@@ -682,7 +740,11 @@ class OptimizationService(QObject):
             OrthogonalDescent,
         )
 
+        from .optimization_jobs import DampedLeastSquares
+
+        # The first entry is the panel's default selection.
         local: list[tuple[str, type, str]] = [
+            ("Damped Least Squares (native)", DampedLeastSquares, "none"),
             ("Generic (scipy.minimize)", OptimizerGeneric, "none"),
             ("Least Squares", LeastSquares, "none"),
             ("Orthogonal Descent", OrthogonalDescent, "none"),
@@ -798,6 +860,12 @@ class OptimizationService(QObject):
                     "Optimizer classes must be importable by the calculation process."
                 )
             snapshot = OpticSnapshot.capture(optic)
+            self._preview = None
+            try:
+                self._preview = CandidatePreview(snapshot, self._variables)
+            except Exception as exc:
+                # The run validates the same definitions and reports the error.
+                logger.debug("OptimizationService: no candidate preview: %s", exc)
             self._request = self._connector.calculation_jobs.submit(
                 "optimization",
                 "optiland_gui.services.optimization_jobs:optimize",
@@ -840,6 +908,11 @@ class OptimizationService(QObject):
         ):
             return
         details = message.get("details") or {}
+        if "x" in details and self._preview is not None:
+            details = {**details, "variables": self._preview.apply(details["x"])}
+            self.stepChanged.emit(
+                details["iteration"], details["merit"], list(details["x"])
+            )
         self.progressChanged.emit(
             {
                 "stage": message["stage"],
@@ -855,6 +928,7 @@ class OptimizationService(QObject):
         callback = self._callbacks[2]
         self._callbacks = (None, None, None)
         self._request = None
+        self._preview = None
         self.failed.emit(message)
         if callback is not None:
             callback(message)
@@ -911,6 +985,7 @@ class OptimizationService(QObject):
         callback = self._callbacks[1]
         self._callbacks = (None, None, None)
         self._request = None
+        self._preview = None
         self.completed.emit(summary)
         if callback is not None:
             callback(summary)

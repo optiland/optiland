@@ -4,6 +4,7 @@ channels:
   - https://repo.prefix.dev/conda-forge
 dependencies:
   - matplotlib
+  - numba
   - numpy
   - pandas
   - pyyaml
@@ -12,6 +13,5 @@ dependencies:
   - tabulate
   - xeus-python
   - pip:
-    - ./jupyterlite/mock_libraries/numba
     - ./jupyterlite/mock_libraries/vtk
     - ..

@@ -78,6 +78,39 @@ class PolarizationState:
         """
         return self.__str__()
 
+    def to_dict(self) -> dict[str, bool | float | None]:
+        """Return backend-independent values suitable for JSON serialization.
+
+        The dictionary stores ``is_polarized``, normalized electric-field
+        amplitudes ``Ex``/``Ey``, and phases ``phase_x``/``phase_y`` in radians.
+        The four numerical values are ``None`` for unpolarized light.
+        Tensor values are detached from their computational graph.
+        """
+        data = {"is_polarized": bool(self.is_polarized)}
+        for name in ("Ex", "Ey", "phase_x", "phase_y"):
+            value = getattr(self, name)
+            data[name] = float(be.to_numpy(value)) if value is not None else None
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict[str, bool | float | None]) -> PolarizationState:
+        """Restore and validate an incident state using the active backend.
+
+        Args:
+            data: Values produced by :meth:`to_dict`. For unpolarized light,
+                the four numerical values may also be omitted.
+
+        Returns:
+            The restored incident polarization state.
+
+        Raises:
+            ValueError: If the values are inconsistent with ``is_polarized``.
+        """
+        return cls(
+            is_polarized=data["is_polarized"],
+            **{name: data.get(name) for name in ("Ex", "Ey", "phase_x", "phase_y")},
+        )
+
 
 def create_polarization(pol_type: str):
     """Create a polarization state based on the given polarization type.

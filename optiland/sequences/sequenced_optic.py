@@ -142,7 +142,9 @@ class SequencedOptic:
             Hx: The normalized x field coordinate(s).
             Hy: The normalized y field coordinate(s).
             wavelength: The wavelength of the rays in microns.
-            num_rays: The number of rays to trace. Defaults to 100.
+            num_rays: The sampling parameter, interpreted as in `Optic.trace`.
+                For 'hexapolar' it is the number of rings N, giving
+                ``1 + 3 * N * (N + 1)`` rays per field point. Defaults to 100.
             distribution: The distribution of rays. Defaults to 'hexapolar'.
             retain_launch: Whether to retain the generated ray state for an
                 analysis. Defaults to False.
@@ -214,10 +216,7 @@ class SequencedOptic:
         tracer._validate_normalized_coordinates(Hx, Hy, "field")
         tracer._validate_normalized_coordinates(Px, Py, "pupil")
 
-        vx, vy = self.fields.get_vig_factor(Hx, Hy)
-        Px = Px * (1 - vx)
-        Py = Py * (1 - vy)
-
+        # Vignetting is applied once, in RayGenerator.generate_rays.
         Hx, Hy, Px, Py = tracer._validate_array_size(Hx, Hy, Px, Py)
 
         rays = tracer.ray_generator.generate_rays(

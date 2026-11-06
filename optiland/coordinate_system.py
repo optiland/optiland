@@ -13,13 +13,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 import optiland.backend as be
 from optiland.rays import RealRays
 
 if TYPE_CHECKING:
-    import numpy as np
     from numpy.typing import NDArray
 
     from optiland._types import BEArray, ScalarOrArray
@@ -200,6 +200,18 @@ class CoordinateSystem:
                 y = y + ref._y
                 z = z + ref._z
                 ref = ref.reference_cs
+            if be.get_backend() == "numpy":
+                # Same arrays as the backend calls below: the NumPy
+                # atleast_1d casts to float64, so the axis is float64 for
+                # all precisions. Direct calls skip the backend dispatch.
+                return (
+                    (
+                        np.atleast_1d(x).astype(float),
+                        np.atleast_1d(y).astype(float),
+                        np.atleast_1d(z).astype(float),
+                    ),
+                    (np.zeros(1), np.zeros(1), np.ones(1)),
+                )
             zero = be.atleast_1d(be.array(0.0))
             one = be.atleast_1d(be.array(1.0))
             return (

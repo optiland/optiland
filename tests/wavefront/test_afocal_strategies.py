@@ -54,6 +54,7 @@ def test_afocal_chief_ray_strategy():
         optic, fields=[(0, 0)], wavelengths=[0.55], strategy="chief_ray", afocal=True
     )
     data = wf.get_data((0, 0), 0.55)
+    assert data.reference_center is None
 
     # Check rays
     valid = data.intensity > 0
@@ -81,6 +82,7 @@ def test_afocal_best_fit_strategy():
         optic, fields=[(1.0, 0)], wavelengths=[0.55], strategy="best_fit", afocal=True
     )
     data = wf.get_data((1.0, 0), 0.55)
+    assert data.reference_center is None
 
     # Check that it identified it as infinite radius (plane)
     assert np.isinf(data.radius)

@@ -277,6 +277,12 @@ class IterativeRayAimer(BaseRayAimer):
         # and the paraxial substitution: hold them (zero step) without
         # re-triggering the refresh ladder every iteration.
         hopeless = be.zeros(num_rays) > 0.0
+        # Rays whose line search accepted no step. Their state and Jacobian
+        # are then unchanged (the Broyden update is skipped for a zero step),
+        # so every later iteration would repeat the same rejected trial
+        # steps: they are held from here on, which leaves the result
+        # unchanged and saves up to _MAX_BACKTRACK traces per iteration.
+        stalled = be.zeros(num_rays) > 0.0
 
         converged = ex**2 + ey**2 < tol_sq
         self.last_iterations = 0
@@ -289,14 +295,15 @@ class IterativeRayAimer(BaseRayAimer):
             if be.all(converged):
                 break
 
-            stuck = be.logical_or(converged, be.isnan(error_sq))
+            stuck = be.logical_or(be.logical_or(converged, be.isnan(error_sq)), stalled)
             if be.all(stuck):
                 break
 
             self.last_iterations = _iter_idx + 1
 
-            # Active Set Strategy: only process non-converged rays
-            active_mask = ~converged
+            # Active Set Strategy: only process non-converged, non-stalled
+            # rays
+            active_mask = be.logical_and(~converged, be.logical_not(stalled))
             # Ensure indices are integers
             idx = full_indices[active_mask]
 
@@ -433,6 +440,9 @@ class IterativeRayAimer(BaseRayAimer):
                 if not be.any(searching):
                     break
                 alpha = alpha * 0.5
+
+            stalled = be.copy(stalled)
+            stalled[idx] = searching
 
             # Commit the accepted (possibly zero) step for each active ray.
             xi = be.copy(xi)

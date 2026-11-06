@@ -10,7 +10,6 @@ Author: Manuel Fragata Mendes, 2025
 
 from __future__ import annotations
 
-import contextlib
 import inspect
 import logging
 import os
@@ -38,7 +37,6 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QToolBar,
     QVBoxLayout,
-    QWidget,
 )
 
 import optiland.samples
@@ -48,6 +46,7 @@ from . import gui_plot_utils
 from .action_manager import ActionManager
 from .config import (
     APPLICATION_NAME,
+    DEFAULT_TAB_POSITION,
     OPTILAND_ICON_PATH,
     ORGANIZATION_NAME,
     SIDEBAR_QSS_PATH,
@@ -189,6 +188,7 @@ class MainWindow(FramelessWindow):
         self.setWindowTitle("Optiland GUI")
         self.setWindowIcon(QIcon(OPTILAND_ICON_PATH))
         self.setGeometry(100, 100, 1600, 900)
+        self.setTabPosition(Qt.AllDockWidgetAreas, DEFAULT_TAB_POSITION)
 
     def _init_core_components(self):
         """Initializes non-UI core components like settings, the connector,
@@ -203,8 +203,6 @@ class MainWindow(FramelessWindow):
         self.iface = self.OptilandInterface(self)
         self.panel_manager = PanelManager(self, self.connector)
         self.action_manager = ActionManager(self, self.connector)
-        self.dock_animations = {}
-        self.dock_original_sizes = {}
         self.about_dialog = None
         # These are initialised after the window is shown (needs parent geometry)
         self.toast_manager: ToastManager | None = None
@@ -244,10 +242,8 @@ class MainWindow(FramelessWindow):
         self.addToolBar(Qt.TopToolBarArea, self.quick_actions_toolbar)
 
     def _setup_layout(self):
-        """Sets up the central widget and the default dock layout."""
-        self.main_docking_area_placeholder = QWidget()
-        self.main_docking_area_placeholder.setObjectName("MainDockingAreaPlaceholder")
-        self.setCentralWidget(self.main_docking_area_placeholder)
+        """Set up a dock-only workspace with one separator beside navigation."""
+        # An empty central widget creates two adjacent dock-area separators.
         self.setDockNestingEnabled(True)
         self._apply_revised_default_dock_layout()
 
@@ -260,7 +256,6 @@ class MainWindow(FramelessWindow):
             dark_theme_action.setChecked(self.current_theme_path == THEME_DARK_PATH)
             light_theme_action.setChecked(self.current_theme_path != THEME_DARK_PATH)
 
-        self._connect_dock_animations()
         self.panel_manager.connect_signals()
 
         self.connector.opticLoaded.connect(self._update_project_name_in_title_bar)
@@ -273,6 +268,18 @@ class MainWindow(FramelessWindow):
         self.toast_manager = ToastManager(self)
         # Expose on connector so services can call it
         self.connector.toast_manager = self.toast_manager
+        from optiland_gui.widgets.file_operation_status import FileOperationStatus
+
+        self.file_operation_status = FileOperationStatus(
+            self.connector.file_operations, self
+        )
+        self.statusBar().addWidget(self.file_operation_status, 1)
+        self.connector.file_operations.completed.connect(
+            self._update_project_name_in_title_bar
+        )
+        self.connector.file_operations.candidate_conflict.connect(
+            self._resolve_file_candidate
+        )
 
         # Logging handler: route Python WARNING+ to toasts
         self._gui_log_handler = _log_handler.install(self.toast_manager)
@@ -339,27 +346,6 @@ class MainWindow(FramelessWindow):
             is_dark = self.current_theme_path == THEME_DARK_PATH
             dark_theme_action.setChecked(is_dark)
             light_theme_action.setChecked(not is_dark)
-
-    def _connect_dock_animations(self):
-        """Connects dock widget view actions to an animation handler.
-
-        This method disconnects the default `triggered` signal from each dock's
-        toggle view action and reconnects it to a custom slot that provides a
-        fade-in/out animation for a smoother user experience.
-        """
-        if not hasattr(self, "panel_manager"):
-            return
-        for dock_widget_ref in self.panel_manager.get_all_docks():
-            if dock_widget_ref:
-                action = dock_widget_ref.toggleViewAction()
-                if action:
-                    with contextlib.suppress(TypeError, RuntimeError):
-                        action.triggered.disconnect()
-                    action.triggered.connect(
-                        lambda checked, dock=dock_widget_ref: self.animate_dock_toggle(
-                            dock, checked
-                        )
-                    )
 
     def _populate_main_menu_bar(self, menu_bar: QMenuBar):
         """Populates the main menu bar with actions and sub-menus.
@@ -495,112 +481,21 @@ class MainWindow(FramelessWindow):
 
             self.custom_title_bar_widget.set_project_name(display_name)
 
-    def _animate_dock_show(
-        self, dock_widget, is_left_or_right, original_dimension, duration, curve
-    ):
-        """Handles the animation for showing a dock widget."""
-        if dock_widget.isHidden():
-            dock_widget.show()
-            dock_widget.raise_()
-            target_prop = b"maximumWidth" if is_left_or_right else b"maximumHeight"
-            animation = QPropertyAnimation(dock_widget, target_prop)
-            animation.setStartValue(0)
-            animation.setEndValue(original_dimension)
-            if is_left_or_right:
-                dock_widget.setMaximumWidth(
-                    original_dimension if original_dimension > 0 else 5000
-                )
-            else:
-                dock_widget.setMaximumHeight(
-                    original_dimension if original_dimension > 0 else 5000
-                )
-            animation.setDuration(duration)
-            animation.setEasingCurve(curve)
-            animation.start(QPropertyAnimation.DeleteWhenStopped)
-            self.dock_animations[dock_widget] = animation
-        else:
-            dock_widget.raise_()
-
-    def _animate_dock_hide(
-        self, dock_widget, is_left_or_right, original_dimension, duration, curve
-    ):
-        """Handles the animation for hiding a dock widget."""
-        if not dock_widget.isHidden():
-            current_size = (
-                dock_widget.width() if is_left_or_right else dock_widget.height()
-            )
-            target_prop = b"maximumWidth" if is_left_or_right else b"maximumHeight"
-            animation = QPropertyAnimation(dock_widget, target_prop)
-            animation.setStartValue(current_size)
-            animation.setEndValue(0)
-            animation.setDuration(duration)
-            animation.setEasingCurve(curve)
-            animation.finished.connect(dock_widget.hide)
-            animation.finished.connect(
-                lambda: dock_widget.setMaximumSize(5000, 5000)
-            )  # Restore max size
-            animation.start(QPropertyAnimation.DeleteWhenStopped)
-            self.dock_animations[dock_widget] = animation
-
     def animate_dock_toggle(
         self, dock_widget: QDockWidget, show_state_after_toggle: bool
     ) -> None:
-        """Toggle a dock widget visibility with a slide/fade animation.
+        """Set dock visibility immediately and bring shown panels to the front.
+
+        This scripting entry point preserves the dock's size constraints. View
+        menu actions use Qt's native ``toggleViewAction`` visibility handling.
 
         Args:
             dock_widget: The dock widget to show or hide.
             show_state_after_toggle: ``True`` to show, ``False`` to hide.
         """
-        animation_duration = 150
-        easing_curve = QEasingCurve.InOutQuad
-        is_left_or_right_dock = self.dockWidgetArea(dock_widget) in [
-            Qt.LeftDockWidgetArea,
-            Qt.RightDockWidgetArea,
-        ]
-
-        # Determine the dimension to animate
-        if (
-            hasattr(self, "panel_manager")
-            and dock_widget == self.panel_manager.sidebar
-            and self.panel_manager.sidebar_content_widget
-        ):
-            original_dimension = (
-                self.panel_manager.sidebar_content_widget.maximumWidth()
-                if not self.panel_manager.sidebar_content_widget._is_collapsed
-                else self.panel_manager.sidebar_content_widget.minimumWidth()
-            )
-        else:
-            default_size = 300 if is_left_or_right_dock else 200
-            current_size = (
-                dock_widget.width() if is_left_or_right_dock else dock_widget.height()
-            )
-            original_dimension = self.dock_original_sizes.get(
-                dock_widget, current_size if current_size > 0 else default_size
-            )
-
-        # Stop any currently running animation on this dock
-        if (
-            dock_widget in self.dock_animations
-            and self.dock_animations[dock_widget].state() == QPropertyAnimation.Running
-        ):
-            self.dock_animations[dock_widget].stop()
-
+        dock_widget.setVisible(show_state_after_toggle)
         if show_state_after_toggle:
-            self._animate_dock_show(
-                dock_widget,
-                is_left_or_right_dock,
-                original_dimension,
-                animation_duration,
-                easing_curve,
-            )
-        else:
-            self._animate_dock_hide(
-                dock_widget,
-                is_left_or_right_dock,
-                original_dimension,
-                animation_duration,
-                easing_curve,
-            )
+            dock_widget.raise_()
 
     @Slot(str)
     def switch_theme(self, theme_path: str) -> None:
@@ -634,6 +529,8 @@ class MainWindow(FramelessWindow):
     @Slot()
     def open_system_action(self) -> None:
         """Slot for the *Open System* action — shows a file chooser dialog."""
+        if not self._confirm_discard_changes():
+            return
         filepath, _ = QFileDialog.getOpenFileName(
             self,
             "Open Optiland System",
@@ -641,7 +538,7 @@ class MainWindow(FramelessWindow):
             "Optiland JSON Files (*.json);;Zemax Files (*.zmx);;All Files (*)",
         )
         if filepath:
-            self.connector.load_optic_from_file(filepath)
+            self.connector.file_operations.request_load(filepath)
             self._update_project_name_in_title_bar()
             logger.debug("Open System action triggered: %s", filepath)
 
@@ -706,7 +603,7 @@ class MainWindow(FramelessWindow):
             "Zemax Files (*.zmx);;All Files (*)",
         )
         if filepath:
-            self.connector.import_zemax(filepath)
+            self.connector.file_operations.request_load(filepath, "zemax")
             self._update_project_name_in_title_bar()
 
     @Slot()
@@ -721,7 +618,7 @@ class MainWindow(FramelessWindow):
             "CODE V Files (*.seq);;All Files (*)",
         )
         if filepath:
-            self.connector.import_codev(filepath)
+            self.connector.file_operations.request_load(filepath, "codev")
             self._update_project_name_in_title_bar()
 
     @Slot()
@@ -1038,3 +935,19 @@ class MainWindow(FramelessWindow):
                 self.toast_manager.notify(msg, "error")
             else:
                 QMessageBox.critical(self, "Sample Load Error", msg)
+
+    @Slot(str, str)
+    def _resolve_file_candidate(self, identifier, path):
+        token = self.connector.document_state.edit_token
+        reply = QMessageBox.question(
+            self,
+            "Document changed while opening",
+            f"The file is ready: {path}\n"
+            "The current document changed while it was loading. "
+            "Replace the current document with this loaded candidate?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        self.connector.file_operations.resolve_candidate(
+            identifier, reply == QMessageBox.StandardButton.Yes, token
+        )

@@ -132,7 +132,7 @@ class PhaseInteractionModel(BaseInteractionModel):
         rays = self._apply_coating_and_bsdf(rays, nx, ny, nz)
 
         # Apply phase profile efficiency
-        rays.i = rays.i * self.phase_profile.efficiency
+        rays.attenuate(self.phase_profile.efficiency)
 
         return rays
 

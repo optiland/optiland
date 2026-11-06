@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 import optiland.backend as be
@@ -179,6 +180,53 @@ class TestFresnelCoating:
 
         R = ((1.5 - 1.0) / (1.5 + 1.0)) ** 2
         assert be.allclose(rays_after.i * 1.5, (1 - R) * i_before)
+
+    @staticmethod
+    def _field_after(coating, k, reflect):
+        """One ray through a plane z = 0: Optiland bends it, then the coating
+        acts. Returns the polarization matrix and the outgoing direction."""
+        ray = rays.PolarizedRays(
+            *(be.zeros(1),) * 3, *(be.array([c]) for c in k), be.ones(1), be.ones(1)
+        )
+        nx, ny, nz = be.zeros(1), be.zeros(1), be.ones(1)
+        if reflect:
+            ray.reflect(nx, ny, nz)
+            coating.reflect(ray, nx, ny, nz)
+        else:
+            ray.refract(nx, ny, nz, 1.0, 1.5)
+            coating.transmit(ray, nx, ny, nz)
+        k_out = np.array([be.to_numpy(v)[0] for v in (ray.L, ray.M, ray.N)])
+        return be.to_numpy(ray.p)[0], k_out
+
+    @pytest.mark.parametrize("reflect", [True, False])
+    def test_field_matches_closed_form(self, set_test_backend, reflect):
+        """The 3D field after the surface is the closed-form Fresnel field, with
+        p along s x k for every wave, for any incident polarization."""
+        n1, n2 = 1.0, 1.5
+        coating = coatings.FresnelCoating(
+            materials.IdealMaterial(n=n1), materials.IdealMaterial(n=n2)
+        )
+        for deg, az in [(0, 0), (20, 30), (45, 100), (70, -60)]:
+            th, b = np.radians(deg), np.radians(az)
+            k_in = np.array(
+                [np.sin(th) * np.cos(b), np.sin(th) * np.sin(b), np.cos(th)]
+            )
+            c1 = np.cos(th)
+            c2 = np.sqrt(1 - (n1 * np.sin(th) / n2) ** 2)
+            if reflect:
+                ts = (n1 * c1 - n2 * c2) / (n1 * c1 + n2 * c2)
+                tp = (n2 * c1 - n1 * c2) / (n2 * c1 + n1 * c2)
+            else:
+                ts = 2 * n1 * c1 / (n1 * c1 + n2 * c2)
+                tp = 2 * n1 * c1 / (n2 * c1 + n1 * c2)
+            s = np.array([-np.sin(b), np.cos(b), 0.0])
+            p_in = np.cross(s, k_in)
+
+            pol, k_out = self._field_after(coating, k_in, reflect)
+            p_out = np.cross(s, k_out)
+            for E in (s, p_in, 0.6 * s + (0.2 + 0.75j) * p_in):
+                expected = ts * np.dot(E, s) * s + tp * np.dot(E, p_in) * p_out
+                np.testing.assert_allclose(pol @ E, expected, atol=1e-12)
 
     def test_to_dict(self, set_test_backend):
         mat1 = materials.IdealMaterial(n=1.0)

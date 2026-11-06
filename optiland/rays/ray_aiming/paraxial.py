@@ -85,9 +85,11 @@ class ParaxialRayAimer(BaseRayAimer):
     def _aim_rays_impl(self, Hx, Hy, Px, Py):
         """Body of :meth:`aim_rays`, run inside the paraxial seed scope."""
 
-        vxf, vyf = self.optic.fields.get_vig_factor(Hx, Hy)
-        vx = 1 - be.array(vxf)
-        vy = 1 - be.array(vyf)
+        # (Px, Py) arrive already vignetted: RayGenerator.generate_rays applies
+        # the field vignetting once for every aimer. Unit factors keep the
+        # launch formulas below unchanged.
+        vx = be.ones_like(be.array(Px))
+        vy = be.ones_like(be.array(Py))
 
         x0, y0, z0 = self.optic.fields.require_definition().get_ray_origins(
             self.optic, Hx, Hy, Px, Py, vx, vy
@@ -160,6 +162,21 @@ class ParaxialRayAimer(BaseRayAimer):
         L = be.where(is_zero, 0.0, (x1 - x0) / mag)
         M = be.where(is_zero, 0.0, (y1 - y0) / mag)
         N = be.where(is_zero, 1.0, (z1 - z0) / mag)
+
+        # A finite object closer to the lens than its virtual entrance pupil has the
+        # pupil behind it: the aim point is then behind the launch point, and a ray
+        # sent toward it would leave the lens, its optical path counted backwards.
+        # Send it toward the lens along the same line through the pupil point.
+        finite = not self.optic.object_surface.is_infinite
+        if finite and not self.optic.obj_space_telecentric:
+            if frame is None:
+                along = z1 - z0
+            else:
+                along = (x1 - x0) * d0[0] + (y1 - y0) * d0[1] + (z1 - z0) * d0[2]
+            behind = along < 0
+            L = be.where(behind, -L, L)
+            M = be.where(behind, -M, M)
+            N = be.where(behind, -N, N)
 
         return x0, y0, z0, L, M, N
 

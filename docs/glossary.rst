@@ -81,8 +81,10 @@ Fields
 ------
 
 Define the points in the object plane (or angular directions) being imaged. Fields can be specified by
-angle (degrees) or object height (mm). Vignetting factors can be applied per field. Each ``Field`` has an
-optional ``weight`` used in weighted analysis aggregation.
+angle (degrees) or object height (mm). Vignetting factors can be applied per field: a factor ``v`` shrinks
+the pupil of its field by scaling the normalized pupil coordinates by ``1 - v`` (the OpticStudio VCX/VCY
+convention), for every ray-aiming mode and trace path. Each ``Field`` has an optional ``weight`` used in
+weighted analysis aggregation.
 
 Wavelengths
 -----------

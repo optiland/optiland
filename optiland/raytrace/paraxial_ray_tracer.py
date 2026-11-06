@@ -151,10 +151,11 @@ class ParaxialRayTracer(BaseRayTracer):
                 slopes.append(be.copy(u_))
                 continue
 
-            # propagate to surface
+            # propagate to surface through the medium before it
             t = pos[k] - z_
             z_ = pos[k]
-            y_ = y_ + t * u_
+            medium = surfs[k].material_post if reverse else surfs[k].material_pre
+            y_, u_ = medium.propagation_model.paraxial_transfer(y_, u_, t)
 
             # reflect or refract
             if surfs[k].interaction_model.is_reflective:

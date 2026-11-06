@@ -747,6 +747,66 @@ def test_calculate_FNO(optic_and_values):
     assert_allclose(optic_instance.paraxial.FNO(), values["FNO"])
 
 
+def _singlet_with_flat_mirrors(num_mirrors, radius=50.0):
+    """A symmetric N-BK7 singlet (biconvex, or biconcave if ``radius`` is
+    negative) with ``EPD = 10``, followed by flat mirrors at normal incidence."""
+    lens = Optic()
+    lens.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+    lens.surfaces.add(
+        index=1, radius=radius, thickness=5, material="N-BK7", is_stop=True
+    )
+    lens.surfaces.add(index=2, radius=-radius, thickness=30)
+    direction = 1
+    for k in range(num_mirrors):
+        direction = -direction
+        lens.surfaces.add(
+            index=3 + k, radius=be.inf, thickness=direction * 20, material="mirror"
+        )
+    lens.surfaces.add(index=3 + num_mirrors)
+    lens.set_aperture(aperture_type="EPD", value=10)
+    lens.fields.set_type(field_type="angle")
+    lens.fields.add(y=0)
+    lens.wavelengths.add(value=0.55, is_primary=True)
+    return lens
+
+
+@pytest.mark.parametrize("num_mirrors", [1, 2, 3])
+def test_FNO_is_unchanged_by_flat_mirrors(num_mirrors, set_test_backend):
+    """Folding the path does not change the F-number, although f2 changes sign
+    with every reflection."""
+    straight = _singlet_with_flat_mirrors(0)
+    folded = _singlet_with_flat_mirrors(num_mirrors)
+
+    assert_allclose(folded.paraxial.f2(), (-1) ** num_mirrors * straight.paraxial.f2())
+    assert_allclose(folded.paraxial.FNO(), straight.paraxial.FNO())
+
+
+def test_FNO_is_positive_for_a_concave_mirror(set_test_backend):
+    """A paraboloid of 200 mm focal length with a 25 mm pupil is f/8, not f/-8."""
+    mirror = Optic()
+    mirror.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+    mirror.surfaces.add(
+        index=1, radius=-400, thickness=-200, conic=-1, material="mirror", is_stop=True
+    )
+    mirror.surfaces.add(index=2)
+    mirror.set_aperture(aperture_type="EPD", value=25)
+    mirror.fields.set_type(field_type="angle")
+    mirror.fields.add(y=0)
+    mirror.wavelengths.add(value=0.55, is_primary=True)
+
+    assert_allclose(mirror.paraxial.f2(), -200.0)
+    assert_allclose(mirror.paraxial.FNO(), 8.0)
+
+
+def test_FNO_is_positive_for_a_diverging_lens(set_test_backend):
+    """The value that, set as ``imageFNO``, gives back the same pupil."""
+    lens = _singlet_with_flat_mirrors(0, radius=-50.0)
+    f2 = lens.paraxial.f2()
+
+    assert be.to_numpy(f2) < 0
+    assert_allclose(lens.paraxial.FNO(), -f2 / 10)
+
+
 @pytest.mark.parametrize("optic_and_values", get_optic_data(), indirect=True)
 def test_calculate_invariant(optic_and_values):
     optic_instance, values = optic_and_values

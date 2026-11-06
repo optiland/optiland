@@ -94,11 +94,16 @@ def test_pupil_sampling_and_vignetting_preserve_slopes(
         field.vx, field.vy = vx, vy
     px = np.array([0.0, 0.3, 1.0, -1.0, 0.0, 0.0])
     py = np.array([0.0, -0.4, 0.0, 0.0, 1.0, -1.0])
-    x, y, z, L, M, N = ParaxialRayAimer(optic).aim_rays(
-        (be.full(6, 0.3), be.full(6, 0.4)),
+    # Field vignetting is applied once by the ray generator (for every aimer
+    # and trace entry point), so the launch is exercised through it.
+    rays = optic.ray_tracer.ray_generator.generate_rays(
+        be.full(6, 0.3),
+        be.full(6, 0.4),
+        be.array(px),
+        be.array(py),
         be.full(6, 0.55),
-        (be.array(px), be.array(py)),
     )
+    x, y, z, L, M, N = rays.x, rays.y, rays.z, rays.L, rays.M, rays.N
 
     marginal_slope = math.tan(math.asin(na / index))
     slope_x = px * (1 - vx) * marginal_slope

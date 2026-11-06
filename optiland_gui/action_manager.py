@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
+from PySide6.QtWidgets import QProgressBar, QPushButton
 
 from .config import THEME_DARK_PATH, THEME_LIGHT_PATH
 
@@ -124,15 +125,44 @@ class ActionManager:
         """Create Undo and Redo actions and wire their enabled
         state to the connector."""
         undo = self._create_action(
-            "undo", "&Undo", QKeySequence.Undo, self.connector.undo
+            "undo", "&Undo", QKeySequence.Undo, self.connector.request_undo
         )
         redo = self._create_action(
-            "redo", "&Redo", QKeySequence.Redo, self.connector.redo
+            "redo", "&Redo", QKeySequence.Redo, self.connector.request_redo
         )
         undo.setEnabled(False)
         redo.setEnabled(False)
-        self.connector.undoStackAvailabilityChanged.connect(undo.setEnabled)
-        self.connector.redoStackAvailabilityChanged.connect(redo.setEnabled)
+        self.connector.undoStackAvailabilityChanged.connect(
+            self._refresh_history_actions
+        )
+        self.connector.redoStackAvailabilityChanged.connect(
+            self._refresh_history_actions
+        )
+        self.connector.history.state_changed.connect(self._history_state_changed)
+        status = self.main_window.statusBar()
+        self.history_progress = QProgressBar(status)
+        self.history_progress.setRange(0, 0)
+        self.history_progress.setFixedWidth(100)
+        self.history_progress.setAccessibleName("History preparation progress")
+        self.history_cancel = QPushButton("Cancel history", status)
+        self.history_cancel.clicked.connect(self.connector.history.cancel)
+        status.addPermanentWidget(self.history_progress)
+        status.addPermanentWidget(self.history_cancel)
+        self.history_progress.hide()
+        self.history_cancel.hide()
+        self._refresh_history_actions()
+
+    def _refresh_history_actions(self, *args):
+        manager = self.connector._undo_redo_manager
+        available = not self.connector.history.busy
+        self.actions["undo"].setEnabled(available and manager.can_undo())
+        self.actions["redo"].setEnabled(available and manager.can_redo())
+
+    def _history_state_changed(self, busy, message):
+        self._refresh_history_actions()
+        self.history_progress.setVisible(busy)
+        self.history_cancel.setVisible(busy)
+        self.main_window.statusBar().showMessage(message, 0 if busy else 10000)
 
     def _create_view_actions(self) -> None:
         """Create View-menu actions for docking and layout reset."""

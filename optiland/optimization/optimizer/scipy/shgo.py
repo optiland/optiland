@@ -5,6 +5,7 @@ from __future__ import annotations
 import warnings
 from typing import TYPE_CHECKING, Any
 
+from optiland.optimization.failure import reject_hard_constraints
 from scipy import optimize
 
 from ..live_plotter import LiveOptimizationPlotter
@@ -61,6 +62,7 @@ class SHGO(OptimizerGeneric):
             ValueError: If any variable in the problem does not have bounds.
 
         """
+        reject_hard_constraints(self.problem, type(self).__name__)
         x0 = [var.value for var in self.problem.variables]
         self._x.append(x0)
         bounds = tuple([var.bounds for var in self.problem.variables])

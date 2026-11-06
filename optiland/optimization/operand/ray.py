@@ -14,6 +14,22 @@ from optiland import wavefront
 from optiland.distribution import GaussianQuadrature
 
 
+def _angle_of_incidence(
+    L: be.ndarray,
+    M: be.ndarray,
+    N: be.ndarray,
+    nx: be.ndarray,
+    ny: be.ndarray,
+    nz: be.ndarray,
+) -> be.ndarray:
+    """Return a scalar unsigned angle in degrees without detaching gradients."""
+    dot = be.abs(L * nx + M * ny + N * nz)
+    cross = be.stack([M * nz - N * ny, N * nx - L * nz, L * ny - M * nx])
+    # atan2 avoids acos' precision loss and singular derivative near normal incidence.
+    angle = be.arctan2(be.linalg.norm(cross, axis=0), dot)
+    return be.reshape(be.rad2deg(angle), ())
+
+
 class RayOperand:
     """A class that provides static methods for performing ray tracing
         calculations on an optic.
@@ -251,7 +267,7 @@ class RayOperand:
             wavelength: The wavelength of the ray.
 
         Returns:
-            The angle of incidence in degrees (always positive as in zemax).
+            A backend scalar containing the unsigned angle in degrees.
         """
 
         optic.trace_generic(Hx, Hy, Px, Py, wavelength)
@@ -279,22 +295,7 @@ class RayOperand:
         # public surface_normal method
         nx, ny, nz = geometry.surface_normal(rays=rays_at_surface)
 
-        # dot product between incident ray and surface normal
-        dot_product = be.abs(L_inc * nx + M_inc * ny + N_inc * nz)
-
-        # handle potential floating point errors where dot_product > 1.0
-        dot_product_clip = be.minimum(dot_product, be.array(1.0))
-
-        angle_rad = be.arccos(dot_product_clip)
-        angle_deg = be.rad2deg(angle_rad)
-
-        # For some reason angle_deg can sometimes be a single-element array.
-        # In that case, retreive the float inside.
-        # This is a workaround until a solution is found.
-        if be.is_array_like(angle_deg):
-            angle_deg = angle_deg.item()
-
-        return angle_deg
+        return _angle_of_incidence(L_inc, M_inc, N_inc, nx, ny, nz)
 
     @staticmethod
     def rms_spot_size(
@@ -314,7 +315,9 @@ class RayOperand:
             surface_number: The number of the surface.
             Hx: The normalized x field coordinate.
             Hy: The normalized y field coordinate.
-            num_rays: The number of rays to trace.
+            num_rays: The sampling parameter passed to ``optic.trace``. For the
+                'hexapolar' distribution this is the number of rings N, so
+                ``1 + 3 * N * (N + 1)`` rays are traced (not N rays).
             wavelength: The wavelength of the rays.
             distribution: The distribution of the rays. Default is 'hexapolar'.
             nan_policy: How to handle NaN ray intersections, which typically

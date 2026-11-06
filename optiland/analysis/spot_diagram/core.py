@@ -308,6 +308,7 @@ class SpotDiagram(BaseAnalysis):
             A tuple of two lists: x-axis radii and y-axis radii per field.
         """
         chief_cosines = self.generate_chief_rays_cosines(wavelength)
+        n = be.atleast_1d(self.optic.image_surface.material_post.n(wavelength))[0]
         airy_rad_x_list, airy_rad_y_list = [], []
 
         for i, fp in enumerate(self.fields):
@@ -326,8 +327,8 @@ class SpotDiagram(BaseAnalysis):
                 + self.angle_from_cosine(chief, west)
             ) / 2
 
-            f_num_x = self.f_number(n=1, theta=angle_x)
-            f_num_y = self.f_number(n=1, theta=angle_y)
+            f_num_x = self.f_number(n=n, theta=angle_x)
+            f_num_y = self.f_number(n=n, theta=angle_y)
 
             # Convert radius from µm to mm
             airy_rad_x_list.append(self.airy_radius(f_num_x, wavelength) * 1e-3)

@@ -6,10 +6,12 @@ Kramer Harrison, 2025
 from __future__ import annotations
 
 import optiland.backend as be
+from optiland._epoch import epoch_memo
 from optiland.paraxial_path import (
     AMBIGUOUS_WIDE_ANGLE_FIELD,
     UnsupportedParaxialGeometryError,
     require_nonsingular_tangent_angles,
+    resolve_optic_seed,
 )
 from optiland.utils import globalize_coordinates
 
@@ -213,6 +215,7 @@ class AngleField(BaseFieldDefinition):
         target_slope = be.tan(be.deg2rad(max_field_angle))
         return target_slope / u_obj_unit
 
+    @epoch_memo(resolve=resolve_optic_seed)
     def _get_starting_z_offset(self, optic):
         """Calculate the starting ray z-coordinate offset for systems with an
         object at infinity. This is relative to the first surface of the optic.

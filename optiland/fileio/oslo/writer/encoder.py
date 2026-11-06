@@ -28,7 +28,7 @@ from optiland.fileio.oslo.validation import validate_object_na
 from optiland.interactions import RefractiveReflectiveModel, ThinLensInteractionModel
 from optiland.materials import AbbeMaterial, DataMaterial, IdealMaterial, Material
 from optiland.materials.definition import IndexTable
-from optiland.physical_apertures import RadialAperture
+from optiland.physical_apertures import RadialAperture, UnclippedAperture
 
 if TYPE_CHECKING:
     from optiland.optic import Optic
@@ -253,7 +253,9 @@ class OpticToOsloEncoder:
 
             # Aperture
             aperture = surface.aperture
-            checked = True
+            checked = not isinstance(aperture, UnclippedAperture)
+            if not checked:
+                aperture = aperture.aperture
             if aperture is not None and (
                 type(aperture) is not RadialAperture or aperture.r_min != 0
             ):

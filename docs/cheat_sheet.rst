@@ -122,7 +122,8 @@ New to these concepts? See the :ref:`glossary` first.
 
 .. code-block:: python
 
-   # Trace a distribution of rays for a given field and wavelength
+   # Trace a distribution of rays for a given field and wavelength.
+   # For "hexapolar", num_rays is the number of rings N: 1 + 3*N*(N+1) rays (12481 here)
    rays = lens.trace(Hx=0, Hy=0, wavelength=0.5876, num_rays=64, distribution="hexapolar")
    print(rays.x, rays.y)   # image-plane x, y coordinates
 
@@ -242,6 +243,10 @@ New to these concepts? See the :ref:`glossary` first.
 
    input_data = {"optic": lens}
    problem.add_operand(operand_type="f2", target=50.0, weight=1, input_data=input_data)
+   # EFL of a lens group (surfaces 1 through 2), as in lens.paraxial.f2_range(1, 2)
+   problem.add_operand(operand_type="f2_range", target=80.0, weight=1,
+                       input_data={"optic": lens, "start": 1, "end": 2})
+   # "num_rays" is a ring count for "hexapolar": 100 rings trace 30301 rays per evaluation
    problem.add_operand(operand_type="rms_spot_size", target=0.0, weight=1,
                        input_data={"optic": lens, "field_index": 1, "wavelength_index": 0,
                                    "distribution": "hexapolar", "num_rays": 100})

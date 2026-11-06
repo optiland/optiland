@@ -162,6 +162,13 @@ What Optiland does
 .. grid:: 1 1 2 2
    :gutter: 3
 
+   .. grid-item-card:: Validation against OpticStudio and CODE V
+      :link: validation
+      :link-type: doc
+
+      First-order properties, aberrations and real rays compared with
+      commercial tools on four reference systems.
+
    .. grid-item-card:: Try Optiland in your browser
       :link: try_it
       :link-type: doc
@@ -187,6 +194,7 @@ What Optiland does
    Get Started <user_guide>
    Learn <learn>
    Capabilities <functionalities>
+   Validation <validation>
    API Reference <api/api_introduction>
    Developer Guide <developers_guide/introduction>
    Contributing <contributing>

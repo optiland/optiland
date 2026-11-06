@@ -10,7 +10,7 @@ removes it. This page is the single place that tracks *what* is deprecated, *wha
 and *which release* is allowed to remove it — nothing gets removed just because a phase of work
 happens to touch the surrounding file.
 
-Current Optiland version: ``0.6.1``.
+Current Optiland version: ``0.6.3``.
 
 Pending Removals
 -----------------
@@ -28,7 +28,7 @@ Pending Removals
      - ``v0.7.0``
      - Property getter/setter both emit ``DeprecationWarning``
        (``optiland/optic/optic.py``). Removal was explicitly scoped to
-       ``v0.7.0``; not yet due at the current ``0.6.1`` release.
+       ``v0.7.0``; not yet due at the current ``0.6.3`` release.
    * - ``Surface.coating``
      - ``Surface.interaction_model.coating``
      - Not yet committed

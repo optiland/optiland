@@ -43,6 +43,31 @@ class UndoRedoManager(QObject):
         super().__init__(parent)
         self._undo_stack: list = []
         self._redo_stack: list = []
+        self.revision = 0
+
+    def peek(self, direction):
+        stack = self._undo_stack if direction == "undo" else self._redo_stack
+        return stack[-1] if stack else None
+
+    def emit_availability(self):
+        self.undoStackAvailabilityChanged.emit(self.can_undo())
+        self.redoStackAvailabilityChanged.emit(self.can_redo())
+
+    def move(self, direction, current_state, *, notify=True):
+        """Commit a previously prepared history candidate without reconstruction."""
+        source, destination = (
+            (self._undo_stack, self._redo_stack)
+            if direction == "undo"
+            else (self._redo_stack, self._undo_stack)
+        )
+        if not source:
+            return None
+        state = source.pop()
+        destination.append(current_state)
+        self.revision += 1
+        if notify:
+            self.emit_availability()
+        return state
 
     def add_state(self, state_data: object) -> None:
         """Push *state_data* onto the undo stack.
@@ -56,6 +81,7 @@ class UndoRedoManager(QObject):
         """
         self._undo_stack.append(state_data)
         self._redo_stack.clear()
+        self.revision += 1
         self.undoStackAvailabilityChanged.emit(self.can_undo())
         self.redoStackAvailabilityChanged.emit(self.can_redo())
         logger.debug(
@@ -80,10 +106,7 @@ class UndoRedoManager(QObject):
         if not self.can_undo():
             return None
 
-        restored_state = self._undo_stack.pop()
-        self._redo_stack.append(current_state_for_redo)
-        self.undoStackAvailabilityChanged.emit(self.can_undo())
-        self.redoStackAvailabilityChanged.emit(self.can_redo())
+        restored_state = self.move("undo", current_state_for_redo)
         logger.debug(
             "Undo. Undo stack: %d, Redo stack: %d",
             len(self._undo_stack),
@@ -107,10 +130,7 @@ class UndoRedoManager(QObject):
         if not self.can_redo():
             return None
 
-        restored_state = self._redo_stack.pop()
-        self._undo_stack.append(current_state_for_undo)
-        self.undoStackAvailabilityChanged.emit(self.can_undo())
-        self.redoStackAvailabilityChanged.emit(self.can_redo())
+        restored_state = self.move("redo", current_state_for_undo)
         logger.debug(
             "Redo. Undo stack: %d, Redo stack: %d",
             len(self._undo_stack),
@@ -130,5 +150,6 @@ class UndoRedoManager(QObject):
         """Clear both the undo and redo stacks and emit availability signals."""
         self._undo_stack.clear()
         self._redo_stack.clear()
+        self.revision += 1
         self.undoStackAvailabilityChanged.emit(self.can_undo())
         self.redoStackAvailabilityChanged.emit(self.can_redo())

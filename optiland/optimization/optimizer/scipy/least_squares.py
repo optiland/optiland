@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import math
 import warnings
 from typing import TYPE_CHECKING, Any, Literal
 
+import numpy as np
+
 import optiland.backend as be
+from optiland import _epoch
+from optiland.optimization.failure import reject_hard_constraints
 from scipy import optimize
 
 from ..live_plotter import LiveOptimizationPlotter
@@ -22,6 +27,15 @@ class LeastSquares(OptimizerGeneric):
 
     def __init__(self, problem: OptimizationProblem):
         super().__init__(problem)
+        self._f_last = 0.0
+        self._best_x: np.ndarray | None = None
+        self._best_f = float("inf")
+        self._last_finite = True
+
+    def _penalty_vector(self, num_rows: int) -> np.ndarray:
+        """Scale-aware stand-in for rows that could not be evaluated."""
+        penalty = 10.0 * max(self._f_last, 1.0) / math.sqrt(max(num_rows, 1))
+        return np.full(num_rows, penalty)
 
     def _compute_residuals_vector(self, x_numpy_variables_from_scipy):
         """
@@ -29,39 +43,46 @@ class LeastSquares(OptimizerGeneric):
         'x_numpy_variables_from_scipy' contains the current values of the optimization
         variables as provided by the SciPy optimizer. These are typically scaled values
         if variable scaling is active.
+
+        The residuals are read inside one evaluation epoch, so per-design work
+        such as material indices is computed once per evaluation.
+
+        Residuals are ``effective_weight * delta`` per operand. SciPy cannot accept
+        non-finite values, so non-finite rows are replaced by a penalty scaled to the
+        last finite residual norm; a failed call yields a full penalty vector.
         """
-
-        for i, optiland_var_wrapper in enumerate(self.problem.variables):
-            optiland_var_wrapper.update(x_numpy_variables_from_scipy[i])
-
-        self.problem.update_optics()
+        num_operands = self.problem.num_residuals
 
         try:
-            residuals_backend_array = be.array(
-                [op.fun() for op in self.problem.operands]
-            )
+            for i, optiland_var_wrapper in enumerate(self.problem.variables):
+                optiland_var_wrapper.update(x_numpy_variables_from_scipy[i])
 
-            # Handle cases where ray tracing might fail and produce NaNs
-            if be.any(be.isnan(residuals_backend_array)):
-                num_operands = len(self.problem.operands)
-                # Return a vector of large constant values to penalize this region
-                # The magnitude should be large enough to indicate a poor solution.
-                error_value = be.sqrt(1e10 / num_operands if num_operands > 0 else 1e10)
-                return be.to_numpy(be.full(num_operands, error_value))
-
-            return be.to_numpy(
-                residuals_backend_array
-            )  # Convert to NumPy array for SciPy
-
+            self.problem.update_optics()
+            # Optic state is frozen from here until the residuals are read
+            optics = {var.optic for var in self.problem.variables}
+            with _epoch.evaluation_epoch(optics):
+                residuals = np.asarray(
+                    be.to_numpy(self.problem.residual_vector()), dtype=float
+                ).reshape(-1)
+        except _epoch.EpochViolationError:
+            raise  # debug guard: a contract breach is a bug, not a bad design
         except Exception:
-            # Catch any other exceptions during optical calculation
-            # (e.g., critical ray failure)
-            # This is a general fallback; more specific error handling
-            # might be beneficial.
-            num_operands = len(self.problem.operands)
-            error_value = be.sqrt(1e10 / num_operands if num_operands > 0 else 1e10)
-            # Return a vector of large constant values
-            return be.to_numpy(be.full(num_operands, error_value))
+            # e.g. critical ray failure: no usable rows at all
+            self._last_finite = False
+            return self._penalty_vector(num_operands)
+
+        finite = np.isfinite(residuals)
+        self._last_finite = bool(finite.all())
+        if self._last_finite:
+            norm = float(np.linalg.norm(residuals))
+            self._f_last = norm
+            if norm < self._best_f:
+                self._best_f = norm
+                self._best_x = np.array(x_numpy_variables_from_scipy, dtype=float)
+            return residuals
+
+        # Keep finite rows so the Jacobian stays informative
+        return np.where(finite, residuals, self._penalty_vector(residuals.size))
 
     def optimize(
         self,
@@ -85,6 +106,12 @@ class LeastSquares(OptimizerGeneric):
                                    change in the sum of squares). Defaults to 1e-3.
             callback (callable, optional): Called after each optimization iteration.
             method_choice (str, optional): Method for scipy.optimize.least_squares.
+                                         'dls': Optiland's native damped least
+                                         squares (experimental; supports
+                                         bounds; maxiter counts residual
+                                         evaluations including Jacobian
+                                         columns). The only choice that
+                                         enforces hard constraints.
                                          'lm': Levenberg-Marquardt (DLS,
                                          does not support bounds).
                                          'trf': Trust Region Reflective
@@ -100,7 +127,13 @@ class LeastSquares(OptimizerGeneric):
 
         Returns:
             OptimizeResult: The SciPy optimization result.
+
+        Raises:
+            ConfigurationError: If the problem has hard constraints and
+                ``method_choice`` is not ``"dls"``.
         """
+        if method_choice != "dls":
+            reject_hard_constraints(self.problem, f"LeastSquares({method_choice!r})")
 
         x0_scaled_values = [var.value for var in self.problem.variables]
         self._x.append(list(x0_scaled_values))
@@ -114,34 +147,40 @@ class LeastSquares(OptimizerGeneric):
             [b[1] if b[1] is not None else be.inf for b in current_bounds_scaled]
         )
 
-        num_residuals = len(self.problem.operands)
+        num_residuals = self.problem.num_residuals
         num_variables = len(x0_numpy)
         original_method_choice = method_choice  # Store for warning message
+
+        if method_choice == "dls":
+            return self._optimize_dls(maxiter, disp, plot, tol, callback, x_scale)
 
         # Validate and adjust method_choice
         if method_choice == "lm":
             if num_residuals < num_variables:
-                print(
-                    f"Warning: Method 'lm' (Levenberg-Marquardt) "
+                warnings.warn(
+                    f"Method 'lm' (Levenberg-Marquardt) "
                     f"chosen, but number of residuals ({num_residuals}) is less "
                     f"than number of variables ({num_variables}). "
-                    "This is not supported by 'lm'. Switching to 'trf' method."
+                    "This is not supported by 'lm'. Switching to 'trf' method.",
+                    stacklevel=2,
                 )
                 method_choice = "trf"
             elif be.any(lower_bounds_np != -be.inf) or be.any(
                 upper_bounds_np != be.inf
             ):
                 # This warning is for 'lm' when bounds are present but m >= n
-                print(
-                    "Warning: Method 'lm' (Levenberg-Marquardt) chosen, "
+                warnings.warn(
+                    "Method 'lm' (Levenberg-Marquardt) chosen, "
                     "but variable bounds are set. "
                     "SciPy's 'lm' method does not support bounds; bounds will "
-                    "be ignored."
+                    "be ignored.",
+                    stacklevel=2,
                 )
         elif method_choice not in ["trf", "dogbox"]:
-            print(
-                f"Warning: Unknown method_choice '{original_method_choice}'. "
-                "Defaulting to 'trf' method."
+            warnings.warn(
+                f"Unknown method_choice '{original_method_choice}'. "
+                "Defaulting to 'trf' method.",
+                stacklevel=2,
             )
             method_choice = "trf"
 
@@ -170,6 +209,12 @@ class LeastSquares(OptimizerGeneric):
                     x0_numpy[i] = lower_bounds_np[i]
 
         scipy_verbose_level = 1 if disp else 0
+
+        # Seed F_last and the best finite point from x0
+        self._f_last = 0.0
+        self._best_x = None
+        self._best_f = float("inf")
+        self._compute_residuals_vector(x0_numpy)
 
         live_plotter: LiveOptimizationPlotter | None = None
         if plot:
@@ -201,8 +246,12 @@ class LeastSquares(OptimizerGeneric):
                 **least_squares_kwargs,
             )
 
+        x_final = result.x
+        self._compute_residuals_vector(x_final)
+        if not self._last_finite and self._best_x is not None:
+            x_final = self._best_x
         for i, optiland_var_wrapper in enumerate(self.problem.variables):
-            optiland_var_wrapper.update(result.x[i])
+            optiland_var_wrapper.update(x_final[i])
         self.problem.update_optics()  # Final update to the optical system
 
         if live_plotter is not None:
@@ -210,3 +259,91 @@ class LeastSquares(OptimizerGeneric):
             live_plotter.finalize()
 
         return result
+
+    def _optimize_dls(
+        self,
+        maxiter: int | None,
+        disp: bool,
+        plot: bool,
+        tol: float,
+        callback: Any,
+        x_scale: ArrayLike | float | Literal["jac"] | None,
+    ) -> optimize.OptimizeResult:
+        """Run the native damped least-squares core (``method_choice="dls"``).
+
+        Residuals are ``effective_weight * delta`` from a finite-difference
+        evaluator with partial-trace Jacobians; variable bounds and hard
+        constraints are honored.
+        ``maxiter`` caps residual evaluations, Jacobian columns included.
+        """
+        from optiland.optimization.evaluators import FiniteDiffEvaluator
+        from optiland.optimization.native import dls
+        from optiland.optimization.observers.callback import CallbackObserver
+
+        evaluator = FiniteDiffEvaluator(self.problem)
+
+        live_plotter: LiveOptimizationPlotter | None = None
+        if plot:
+            live_plotter = LiveOptimizationPlotter(self)
+            live_plotter.initialize()
+
+        # The user callback and the live plot are observers of the run.
+        observers: list[Any] = []
+        if callback is not None:
+            observers.append(CallbackObserver(callback))
+        if live_plotter is not None:
+            observers.append(_PlotObserver(live_plotter))
+
+        initial_cost = 0.5 * float(be.to_numpy(self.problem.sum_squared()))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            result = dls(
+                evaluator,
+                max_nfev=maxiter,
+                ftol=tol,
+                x_scale=DLS_X_SCALE if x_scale is None else x_scale,
+                jacobian_update=DLS_JACOBIAN_UPDATE,
+                observers=observers,
+            )
+
+        # dls leaves the optics at result.x
+        if disp:
+            print(
+                f"{result.message}\nFunction evaluations {result.nfev}, initial "
+                f"cost {initial_cost:.4e}, final cost {result.cost:.4e}, "
+                f"first-order optimality {result.optimality:.2e}."
+            )
+        if live_plotter is not None:
+            live_plotter.update()
+            live_plotter.finalize()
+        return result
+
+
+class _PlotObserver:
+    """Refreshes a live plot after every accepted step."""
+
+    def __init__(self, plotter: LiveOptimizationPlotter) -> None:
+        self._plotter = plotter
+
+    def on_start(self, state: Any) -> None:
+        pass
+
+    def on_step(self, state: Any) -> None:
+        self._plotter.update()
+
+    def on_end(self, state: Any, result: Any) -> None:
+        pass
+
+
+# Jacobian update of method_choice="dls". "exact" is the default because gated
+# Broyden ("auto") regresses on the benchmarks: both modes reach every
+# certified analytic/NIST minimum and stay within 1% of SciPy "trf" on the
+# fast lens set (tests/optimization/validation/), but on the freeform
+# benchmark "auto" ends at merit 4.49 versus 2.08 for "exact" after the same
+# 100n residual evaluations.
+DLS_JACOBIAN_UPDATE = "exact"
+
+# Damping scale of method_choice="dls" when x_scale is None: fixed unit scale,
+# SciPy "trf"'s default. Moré scaling (x_scale="jac") stalls on the Double
+# Gauss benchmark at ~2x trf's merit, as SciPy "trf" itself does with "jac".
+DLS_X_SCALE: float | str = 1.0

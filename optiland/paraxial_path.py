@@ -28,14 +28,20 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import math
 import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+import numpy as np
+
 import optiland.backend as be
 
 if TYPE_CHECKING:
+    from typing import Any
+
     from optiland._types import BEArray, ScalarOrArray
+    from optiland.surfaces import SurfaceGroup
 
 # A direction this close to an axis is treated as on that axis. This is the
 # float64 intent; use angular_tolerance() for a dtype-aware value.
@@ -100,6 +106,82 @@ def paraxial_seed_scope():
 def in_paraxial_seed_scope() -> bool:
     """Whether a paraxial seed scope is currently active."""
     return _SEED_SCOPE.get()
+
+
+def paraxial_seed_key(surface_group: SurfaceGroup) -> bool | None:
+    """The seed scope as a hidden memo input, or None where it is moot.
+
+    The scope changes a first-order result only where
+    :meth:`ParaxialPath.require_scalar_paraxial` would raise outside it: on a
+    path with a diagnostic outside :data:`APPROXIMATE_DIAGNOSTIC_CODES`.
+    Elsewhere values inside and outside the scope are identical, so memoized
+    quantities (:mod:`optiland._epoch`) share one entry.
+
+    Args:
+        surface_group: The surface group whose path decides.
+    """
+    try:
+        diagnostics = surface_group.build_paraxial_path().diagnostics
+    except Exception:
+        return in_paraxial_seed_scope()
+    if all(d.code in APPROXIMATE_DIAGNOSTIC_CODES for d in diagnostics):
+        return None
+    return in_paraxial_seed_scope()
+
+
+def resolve_optic_seed(owner: Any, arguments: dict[str, Any]) -> None:
+    """``epoch_memo`` resolver adding the seed scope of an ``optic`` argument.
+
+    For memoized methods taking the optic as their first argument (field
+    definitions, for one); see :func:`paraxial_seed_key`.
+    """
+    arguments["<seed>"] = paraxial_seed_key(arguments["optic"].surfaces)
+
+
+# While set, SurfaceGroup.build_paraxial_path returns one path for each
+# surface group instead of a new path for each call. The value maps
+# id(surface_group) to its path, or to None before the first build. A scope
+# must not contain geometry changes. It is a context variable, so a scope
+# in one thread has no effect on other threads.
+_SHARED_PATHS = contextvars.ContextVar("optiland_shared_paraxial_paths", default=None)
+
+
+@contextlib.contextmanager
+def shared_path_scope(surface_group):
+    """Scope in which all calls share one paraxial path of ``surface_group``.
+
+    The path is built at the first request in the scope and is discarded
+    when the scope ends. Nested scopes for the same group use the outer
+    path. Do not change the geometry of the group in the scope.
+    """
+    shared = _SHARED_PATHS.get()
+    if shared is not None and id(surface_group) in shared:
+        yield
+        return
+    scoped = dict(shared) if shared else {}
+    scoped[id(surface_group)] = None
+    token = _SHARED_PATHS.set(scoped)
+    try:
+        yield
+    finally:
+        _SHARED_PATHS.reset(token)
+
+
+def shared_path(surface_group, build):
+    """Return the shared path of ``surface_group``, or ``None`` out of scope.
+
+    Args:
+        surface_group: The group whose path is requested.
+        build: Callable with no arguments that builds the path. It is called
+            only at the first request in the scope.
+    """
+    shared = _SHARED_PATHS.get()
+    if shared is None or id(surface_group) not in shared:
+        return None
+    path = shared[id(surface_group)]
+    if path is None:
+        path = shared[id(surface_group)] = build()
+    return path
 
 
 def angular_tolerance() -> float:
@@ -247,6 +329,33 @@ def _cross(a: tuple, b: tuple) -> tuple:
 
 def _is_finite_vec(a: tuple) -> bool:
     return all(bool(be.all(be.isfinite(be.array(_to_float(c))))) for c in a)
+
+
+def _host_math_available() -> bool:
+    """Whether :func:`build_paraxial_path` can use host-float arithmetic.
+
+    This is true for NumPy in float64, where host floats give bit-identical
+    results to the backend operations.
+    """
+    return be.get_backend() == "numpy" and be.get_precision() == 64
+
+
+def _float_converter():
+    """Return a function that gives the same result as :func:`_to_float`.
+
+    On the NumPy backend, ``_to_float`` casts to the backend precision and
+    reads the first element. The returned function does the same cast in
+    one call, without the backend dispatch. Other backends use
+    ``_to_float``.
+    """
+    if be.get_backend() != "numpy":
+        return _to_float
+    dtype = np.float32 if be.get_precision() == 32 else np.float64
+
+    def to_float(value) -> float:
+        return float(np.asarray(value, dtype=dtype).reshape(-1)[0])
+
+    return to_float
 
 
 def transverse_basis(direction: tuple) -> tuple[tuple, tuple]:
@@ -603,6 +712,13 @@ def build_paraxial_path(surfaces: list) -> ParaxialPath:
         for them); call ``path.require_scalar_paraxial()`` at the boundary
         of any scalar first-order computation.
     """
+    to_float = _float_converter()
+
+    def is_finite_vec(vector: tuple) -> bool:
+        # Same test as _is_finite_vec: the converted value is already in
+        # the backend precision.
+        return all(math.isfinite(to_float(c)) for c in vector)
+
     frames = [surf.geometry.cs.frame_in_gcs for surf in surfaces]
     mirrors = [
         bool(getattr(surf.interaction_model, "is_reflective", False))
@@ -626,13 +742,13 @@ def build_paraxial_path(surfaces: list) -> ParaxialPath:
         and not object_is_infinite
         and not degenerate_entry
         and not _off_axis(entry)
-        and _to_float(entry[2]) < 0.0
+        and to_float(entry[2]) < 0.0
     ):
         first_leg = [vertices[2][k] - vertices[1][k] for k in range(3)]
         leg_norm = be.sqrt(sum(s * s for s in first_leg))
-        if bool(be.all(be.isfinite(leg_norm))) and _to_float(leg_norm) > _AXIS_TOL:
+        if bool(be.all(be.isfinite(leg_norm))) and to_float(leg_norm) > _AXIS_TOL:
             leg_dir = tuple(s / leg_norm for s in first_leg)
-            if not _off_axis(leg_dir) and _to_float(leg_dir[2]) > 0.0:
+            if not _off_axis(leg_dir) and to_float(leg_dir[2]) > 0.0:
                 entry = (be.array(0.0), be.array(0.0), be.array(1.0))
 
     any_mirror_off_axis = any(
@@ -640,7 +756,7 @@ def build_paraxial_path(surfaces: list) -> ParaxialPath:
         for (_, normal), is_mirror in zip(frames, mirrors, strict=True)
     )
     entry_off_axis = _off_axis(entry)
-    entry_negative_z = (not entry_off_axis) and n >= 2 and _to_float(entry[2]) < 0.0
+    entry_negative_z = (not entry_off_axis) and n >= 2 and to_float(entry[2]) < 0.0
 
     positions_are_global_z = (
         not entry_off_axis and not entry_negative_z and not any_mirror_off_axis
@@ -668,10 +784,18 @@ def build_paraxial_path(surfaces: list) -> ParaxialPath:
 
     # Characteristic scale for spatial tolerances: largest finite vertex
     # coordinate magnitude.
+    # With NumPy in float64, the walk below does its arithmetic on host
+    # floats. Python floats and float64 NumPy scalars follow the same IEEE
+    # rules, and the operations are the same and in the same order, so all
+    # results are bit-identical. This avoids approximately 35 small array
+    # operations for each surface. Other backends and precisions use
+    # backend arithmetic.
+    host_math = _host_math_available()
+    host_vertices = [tuple(to_float(c) for c in vertex) for vertex in vertices]
+
     scale = 1.0
-    for vertex in vertices:
-        for component in vertex:
-            value = _to_float(component)
+    for vertex in host_vertices:
+        for value in vertex:
             if abs(value) != float("inf") and abs(value) > scale:
                 scale = abs(value)
     pos_tol = position_tolerance(scale)
@@ -691,22 +815,31 @@ def build_paraxial_path(surfaces: list) -> ParaxialPath:
         first = vertices[0]
         axial.append(
             first[2]
-            if _is_finite_vec(first)
+            if is_finite_vec(first)
             else sum(first[k] * direction[k] for k in range(3))
         )
+    if host_math:
+        host_axes = [tuple(to_float(c) for c in axis) for axis in axes]
+        host_direction = tuple(to_float(c) for c in direction)
+        axial = [to_float(value) for value in axial]
 
     for k in range(n):
         incoming.append(direction)
         parity_before.append(parity)
 
-        axis_dot = _to_float(_dot(axes[k], direction))
+        if host_math:
+            axis_dot = _dot(host_axes[k], host_direction)
+        else:
+            axis_dot = to_float(_dot(axes[k], direction))
         sign = 1.0 if axis_dot >= 0.0 else -1.0
         orientation.append(parity * sign)
         alignments.append(axis_dot)
 
         surf = surfaces[k]
-        powered = _surface_is_powered(surf) if k > 0 else False
         oblique = abs(abs(axis_dot) - 1.0) > ang_tol
+        # Only the oblique branches below use this, so it is evaluated only
+        # for an oblique surface.
+        powered = k > 0 and oblique and _surface_is_powered(surf)
 
         if is_folded_or_off_axis and k > 0 and oblique:
             if powered and mirrors[k]:
@@ -790,20 +923,37 @@ def build_paraxial_path(surfaces: list) -> ParaxialPath:
             )
             direction = _normalize(direction)
             parity = -parity
+            if host_math:
+                host_direction = tuple(to_float(c) for c in direction)
 
         outgoing.append(direction)
         parity_after.append(parity)
 
         if k + 1 < n:
-            nxt = vertices[k + 1]
-            prev = vertices[k]
-            step = sum((nxt[i] - prev[i]) * direction[i] for i in range(3))
-            if be.all(be.isfinite(axial[-1])) and be.all(be.isfinite(step)):
+            if host_math:
+                nxt = host_vertices[k + 1]
+                prev = host_vertices[k]
+                step_direction = host_direction
+            else:
+                nxt = vertices[k + 1]
+                prev = vertices[k]
+                step_direction = direction
+            step = sum((nxt[i] - prev[i]) * step_direction[i] for i in range(3))
+            if host_math:
+                leg_is_finite = math.isfinite(axial[-1]) and math.isfinite(step)
+            else:
+                leg_is_finite = bool(be.all(be.isfinite(axial[-1]))) and bool(
+                    be.all(be.isfinite(step))
+                )
+            if leg_is_finite:
                 axial.append(axial[-1] + parity * step)
                 residual = tuple(
-                    (nxt[i] - prev[i]) - step * direction[i] for i in range(3)
+                    (nxt[i] - prev[i]) - step * step_direction[i] for i in range(3)
                 )
-                residual_norm = _to_float(_norm(residual))
+                if host_math:
+                    residual_norm = math.sqrt(_dot(residual, residual))
+                else:
+                    residual_norm = to_float(_norm(residual))
                 if residual_norm > pos_tol:
                     if is_folded_or_off_axis:
                         diagnostics.append(
@@ -839,7 +989,9 @@ def build_paraxial_path(surfaces: list) -> ParaxialPath:
                 # global z instead of accumulating an inf that would cancel
                 # into a nan.
                 axial.append(nxt[2])
-                if is_folded_or_off_axis and not _is_finite_vec(nxt):
+                if is_folded_or_off_axis and not all(
+                    math.isfinite(to_float(c)) for c in nxt
+                ):
                     diagnostics.append(
                         ParaxialPathDiagnostic(
                             code=NONOBJECT_INFINITY,
@@ -861,7 +1013,12 @@ def build_paraxial_path(surfaces: list) -> ParaxialPath:
     if positions_are_global_z:
         axial_positions = be.array([origin[2] for origin, _ in frames])
     else:
-        axial_positions = be.array(axial) if axial else be.array([])
+        if host_math:
+            axial_positions = (
+                be.array([[value] for value in axial]) if axial else be.array([])
+            )
+        else:
+            axial_positions = be.array(axial) if axial else be.array([])
 
     entry_u, entry_v = transverse_basis(entry)
 
@@ -869,8 +1026,8 @@ def build_paraxial_path(surfaces: list) -> ParaxialPath:
 
     anchor_on_origin = False
     if n >= 2:
-        ax = abs(_to_float(vertices[1][0]))
-        ay = abs(_to_float(vertices[1][1]))
+        ax = abs(host_vertices[1][0])
+        ay = abs(host_vertices[1][1])
         anchor_on_origin = ax <= pos_tol and ay <= pos_tol
     legacy_aiming_compatible = positions_are_global_z and (n < 2 or anchor_on_origin)
 

@@ -5,24 +5,28 @@ Author: Manuel Fragata Mendes, 2025
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QPainter
+from PySide6.QtCore import QEvent, QSize, Qt
+from PySide6.QtGui import QIcon, QPainter, QPalette
 from PySide6.QtWidgets import (
     QDockWidget,
     QHBoxLayout,
     QLabel,
-    QPushButton,
+    QSizePolicy,
     QStyle,
     QStyleOption,
+    QToolButton,
     QWidget,
 )
+
+from optiland_gui.resources import resources_rc  # noqa: F401
 
 
 class CustomDockTitleBar(QWidget):
     """A custom title bar for :class:`~PySide6.QtWidgets.QDockWidget` instances.
 
-    Provides macOS-style traffic-light buttons (hide, float/dock, close) and
-    supports dragging the dock widget while it is floating.
+    Provides float/dock and close buttons. Qt owns title-bar gestures
+    for both docked and floating panels, including the drag threshold,
+    docking preview and double-click behavior.
 
     Args:
         parent_dock: The dock widget that owns this title bar.
@@ -34,41 +38,91 @@ class CustomDockTitleBar(QWidget):
         self.setObjectName("CustomDockTitleBar")
         self.dock_widget = parent_dock
 
-        # Initialise drag-tracking state
-        self._mouse_press_pos = None
-        self._window_pos_before_move = None
-
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 3, 8, 3)
+        layout.setContentsMargins(8, 3, 6, 3)
         layout.setSpacing(2)
 
         self.title_label = QLabel(title)
-        layout.addWidget(self.title_label)
-        layout.addStretch()
-
-        self.minimize_btn = QPushButton(self)
-        self.minimize_btn.setObjectName("DockMinimizeButton")
-        self.minimize_btn.setFixedSize(10, 10)
-        self.minimize_btn.setToolTip("Hide")
-        self.minimize_btn.clicked.connect(parent_dock.toggleViewAction().trigger)
-
-        self.undock_btn = QPushButton(self)
-        self.undock_btn.setObjectName("DockUndockButton")
-        self.undock_btn.setFixedSize(10, 10)
-        self.undock_btn.setToolTip("Float/Dock")
-        self.undock_btn.clicked.connect(
-            lambda: parent_dock.setFloating(not parent_dock.isFloating())
+        self.title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.title_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
         )
+        layout.addWidget(self.title_label, 1)
 
-        self.close_btn = QPushButton(self)
+        self.undock_btn = QToolButton(self)
+        self.undock_btn.setObjectName("DockUndockButton")
+        self.undock_btn.clicked.connect(self._toggle_floating)
+
+        self.close_btn = QToolButton(self)
         self.close_btn.setObjectName("DockCloseButton")
-        self.close_btn.setFixedSize(10, 10)
-        self.close_btn.setToolTip("Close")
+        self.close_btn.setToolTip("Close panel")
+        self.close_btn.setAccessibleName("Close panel")
+        self.close_btn.setAccessibleDescription("Hide this panel from the workspace.")
         self.close_btn.clicked.connect(parent_dock.close)
 
-        layout.addWidget(self.minimize_btn)
-        layout.addWidget(self.undock_btn)
-        layout.addWidget(self.close_btn)
+        for button in (self.undock_btn, self.close_btn):
+            button.setFixedSize(26, 26)
+            button.setIconSize(QSize(16, 16))
+            button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            layout.addWidget(button)
+
+        parent_dock.topLevelChanged.connect(self._update_floating_state)
+        parent_dock.featuresChanged.connect(self._update_features)
+        parent_dock.windowTitleChanged.connect(self._update_title)
+        self._update_title(title)
+        self._update_floating_state(parent_dock.isFloating())
+        self._update_features(parent_dock.features())
+        self._update_theme_icons()
+
+    def _update_title(self, title: str) -> None:
+        """Keep the full panel title available when the header clips its label."""
+        self.title_label.setText(title)
+        self.setToolTip(title)
+
+    def _update_floating_state(self, floating: bool) -> None:
+        """Name the action this control will perform in the current state."""
+        action = "Dock panel" if floating else "Float panel"
+        self.undock_btn.setToolTip(action)
+        self.undock_btn.setAccessibleName(action)
+        self.undock_btn.setAccessibleDescription(
+            "Return this panel to its docked location."
+            if floating
+            else "Move this panel to a separate window."
+        )
+
+    def _toggle_floating(self) -> None:
+        """Keep the requested panel visible and its action reachable."""
+        keep_focus = self.undock_btn.hasFocus()
+        redocking = self.dock_widget.isFloating()
+        self.dock_widget.setFloating(not redocking)
+        if redocking:
+            # Qt can return a dock behind the peer selected while it floated.
+            self.dock_widget.raise_()
+        if keep_focus:
+            self.dock_widget.activateWindow()
+            self.undock_btn.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _update_theme_icons(self) -> None:
+        """Keep the bundled action glyphs legible when the theme changes."""
+        background = self.palette().color(QPalette.ColorRole.Window)
+        theme = "light" if background.lightness() > 128 else "dark"
+        self.undock_btn.setIcon(QIcon(f":/icons/{theme}/maximize_restore.svg"))
+        self.close_btn.setIcon(QIcon(f":/icons/{theme}/close.svg"))
+
+    def changeEvent(self, event: QEvent) -> None:
+        """Update glyph contrast with Qt's stylesheet-driven palette."""
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.PaletteChange and hasattr(self, "close_btn"):
+            self._update_theme_icons()
+
+    def _update_features(self, features: QDockWidget.DockWidgetFeatures) -> None:
+        """Expose only actions allowed by the owning dock widget."""
+        self.undock_btn.setVisible(
+            bool(features & QDockWidget.DockWidgetFeature.DockWidgetFloatable)
+        )
+        self.close_btn.setVisible(
+            bool(features & QDockWidget.DockWidgetFeature.DockWidgetClosable)
+        )
 
     def paintEvent(self, event) -> None:  # noqa: ANN001
         """Draw the background according to the active stylesheet."""
@@ -81,28 +135,17 @@ class CustomDockTitleBar(QWidget):
         super().paintEvent(event)
 
     def mousePressEvent(self, event) -> None:  # noqa: ANN001
-        """Begin a drag operation when the left button is pressed over
-        a floating dock."""
-        if (
-            event.button() == Qt.MouseButton.LeftButton
-            and self.dock_widget.isFloating()
-        ):
-            self._mouse_press_pos = event.globalPosition().toPoint()
-            self._window_pos_before_move = self.dock_widget.pos()
-        super().mousePressEvent(event)
+        """Pass title-bar presses to QDockWidget's gesture handler."""
+        event.ignore()
 
     def mouseMoveEvent(self, event) -> None:  # noqa: ANN001
-        """Move the floating dock widget as the mouse is dragged."""
-        if (
-            self.dock_widget.isFloating()
-            and event.buttons() == Qt.MouseButton.LeftButton
-            and self._mouse_press_pos is not None
-        ):
-            delta = event.globalPosition().toPoint() - self._mouse_press_pos
-            self.dock_widget.move(self._window_pos_before_move + delta)
-        super().mouseMoveEvent(event)
+        """Let Qt move the panel and calculate its docking preview together."""
+        event.ignore()
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: ANN001
-        """End the drag operation on mouse release."""
-        self._mouse_press_pos = None
-        super().mouseReleaseEvent(event)
+        """Let Qt commit the previewed docking location on release."""
+        event.ignore()
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: ANN001
+        """Let Qt toggle floating state while respecting dock feature flags."""
+        event.ignore()

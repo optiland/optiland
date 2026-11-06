@@ -102,13 +102,25 @@ class ComponentGeometry(ABC):
 
     @abstractmethod
     def ray_intersect(
-        self, origins: np.ndarray, directions: np.ndarray
+        self,
+        origins: np.ndarray,
+        directions: np.ndarray,
+        eps: float | np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Find ray intersections with this geometry in local coordinates.
 
         Args:
             origins: Ray origins in local frame, shape (N, 3) [mm].
             directions: Ray directions in local frame, shape (N, 3), unit vectors.
+            eps: Minimum accepted ray parameter (the self-intersection accept
+                threshold): a scalar, or one value per ray of shape (N,), in
+                the backend and dtype of ``origins``. ``BaseComponent`` and
+                ``BaseDetector`` pass one value per ray, ``k`` ulps of the
+                ray's global coordinate magnitude (see
+                ``optiland.nonsequential._tol.accept_t_min``). ``None`` (a
+                direct call) keeps the absolute ``1e-9`` used before.
+                Subclasses must accept this argument: the callers always pass
+                it by keyword.
 
         Returns:
             A tuple (t, normals, hit_mask, n_geom) where:

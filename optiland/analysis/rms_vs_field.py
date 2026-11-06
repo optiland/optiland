@@ -156,7 +156,9 @@ class RmsWavefrontErrorVsField(Wavefront):
         optic (Optic): the optical system.
         num_fields (int): the number of fields. Default is 32.
         wavelengths (list): the wavelengths to be analyzed. Default is 'all'.
-        num_rays (int): the number of rays. Default is 12.
+        num_rays (int): the pupil sampling parameter. For 'hexapolar' this is
+            the number of rings N (``1 + 3 * N * (N + 1)`` rays per field).
+            Default is 12.
         distribution (str): the distribution of the fields.
             Default is 'hexapolar'.
 

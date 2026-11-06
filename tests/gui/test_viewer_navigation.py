@@ -67,7 +67,7 @@ def test_rectangle_zoom_changes_limits_only_on_release(viewer, start, end):
     emit(viewer, "motion_notify_event", start_pixel)
     cursor = viewer.canvas.cursor().shape()
     emit(viewer, "button_press_event", start_pixel)
-    assert not viewer._is_panning
+    assert not viewer.toolbar._pointer_pan
     emit(viewer, "motion_notify_event", end_pixel)
     np.testing.assert_array_equal(limits(viewer), before)
     emit(viewer, "button_release_event", end_pixel)
@@ -85,7 +85,7 @@ def test_toolbar_pan_does_not_also_start_custom_pan(viewer):
     start, end = viewer.ax.transData.transform([(3, 3), (4, 4)])
     before = limits(viewer)
     emit(viewer, "button_press_event", start)
-    assert not viewer._is_panning
+    assert not viewer.toolbar._pointer_pan
     emit(viewer, "motion_notify_event", end)
     emit(viewer, "button_release_event", end)
     assert not np.array_equal(limits(viewer), before)
@@ -96,14 +96,14 @@ def test_toolbar_pan_does_not_also_start_custom_pan(viewer):
 def test_default_pan_has_history_and_stops_on_outside_release(viewer):
     before = limits(viewer)
     start, end = viewer.ax.transData.transform([(3, 3), (4, 4)])
-    emit(viewer, "button_press_event", start)
-    assert viewer._is_panning
-    emit(viewer, "motion_notify_event", end)
-    emit(viewer, "button_release_event", (-10, -10))
-    assert not viewer._is_panning
+    emit(viewer, "button_press_event", start, MouseButton.RIGHT)
+    assert viewer.toolbar._pointer_pan
+    emit(viewer, "motion_notify_event", end, MouseButton.RIGHT)
+    emit(viewer, "button_release_event", (-10, -10), MouseButton.RIGHT)
+    assert not viewer.toolbar._pointer_pan
     after = limits(viewer)
     assert not np.array_equal(after, before)
-    emit(viewer, "motion_notify_event", start)
+    emit(viewer, "motion_notify_event", start, MouseButton.RIGHT)
     np.testing.assert_array_equal(limits(viewer), after)
     viewer.toolbar.back()
     np.testing.assert_allclose(limits(viewer), before)
@@ -117,10 +117,10 @@ def test_other_widget_lock_prevents_custom_pan(viewer):
     start, end = viewer.ax.transData.transform([(3, 3), (7, 7)])
     viewer.canvas.widgetlock(owner)
     try:
-        emit(viewer, "button_press_event", start)
-        emit(viewer, "motion_notify_event", end)
-        emit(viewer, "button_release_event", end)
-        assert not viewer._is_panning
+        emit(viewer, "button_press_event", start, MouseButton.RIGHT)
+        emit(viewer, "motion_notify_event", end, MouseButton.RIGHT)
+        emit(viewer, "button_release_event", end, MouseButton.RIGHT)
+        assert not viewer.toolbar._pointer_pan
         np.testing.assert_array_equal(limits(viewer), before)
     finally:
         viewer.canvas.widgetlock.release(owner)
@@ -133,12 +133,13 @@ def test_other_widget_lock_prevents_custom_pan(viewer):
 def test_interrupted_default_drag_cannot_keep_panning(viewer, interrupt):
     start, end = viewer.ax.transData.transform([(3, 3), (7, 7)])
     before = limits(viewer)
-    emit(viewer, "button_press_event", start)
-    assert viewer._is_panning
+    emit(viewer, "button_press_event", start, MouseButton.RIGHT)
+    assert viewer.toolbar._pointer_pan
     owner = object()
     if interrupt == "zoom":
         viewer.toolbar.zoom()
     elif interrupt == "lock":
+        viewer.canvas.widgetlock.release(viewer.toolbar)
         viewer.canvas.widgetlock(owner)
     elif interrupt == "escape":
         QApplication.sendEvent(
@@ -158,13 +159,13 @@ def test_interrupted_default_drag_cannot_keep_panning(viewer, interrupt):
         }[interrupt]
         QApplication.sendEvent(viewer.canvas, QEvent(event_type))
     try:
-        emit(viewer, "motion_notify_event", end)
-        assert not viewer._is_panning
+        emit(viewer, "motion_notify_event", end, MouseButton.RIGHT)
+        assert not viewer.toolbar._pointer_pan
         np.testing.assert_array_equal(limits(viewer), before)
     finally:
         if interrupt == "lock":
             viewer.canvas.widgetlock.release(owner)
-    emit(viewer, "button_release_event", end)
+    emit(viewer, "button_release_event", end, MouseButton.RIGHT)
 
 
 def test_click_without_drag_and_missing_coordinates_do_not_move_view(viewer):
@@ -205,19 +206,18 @@ def test_async_scene_presentation_finishes_drag_started_while_calculating(viewer
     assert viewer.layout_job.data is previous_data  # Last good scene stays visible.
     before = limits(viewer)
     start, end = viewer.ax.transData.transform([(3, 3), (4, 4)])
-    emit(viewer, "button_press_event", start)
-    emit(viewer, "motion_notify_event", end)
-    assert viewer._is_panning
+    emit(viewer, "button_press_event", start, MouseButton.RIGHT)
+    emit(viewer, "motion_notify_event", end, MouseButton.RIGHT)
+    assert viewer.toolbar._pointer_pan
     dragged = limits(viewer)
     assert not np.array_equal(dragged, before)
 
     wait_for(qapp, lambda: viewer.layout_job.data is not previous_data)
-    assert not viewer._is_panning
-    assert viewer._pan_start_x is None and viewer._pan_start_y is None
+    assert not viewer.toolbar._pointer_pan
     np.testing.assert_allclose(limits(viewer), dragged)
-    emit(viewer, "motion_notify_event", start)
+    emit(viewer, "motion_notify_event", start, MouseButton.RIGHT)
     np.testing.assert_allclose(limits(viewer), dragged)
-    emit(viewer, "button_release_event", start)
+    emit(viewer, "button_release_event", start, MouseButton.RIGHT)
     viewer.toolbar.back()
     np.testing.assert_allclose(limits(viewer), before)
     viewer.toolbar.forward()
@@ -228,15 +228,20 @@ def test_async_scene_presentation_finishes_drag_started_while_calculating(viewer
 def test_default_pan_is_anchored_through_multiple_motion_events(viewer):
     before = limits(viewer)
     start, middle, end = viewer.ax.transData.transform([(3, 3), (4, 4), (5, 5)])
-    emit(viewer, "button_press_event", start)
-    emit(viewer, "motion_notify_event", middle)
-    emit(viewer, "motion_notify_event", end)
-    emit(viewer, "button_release_event", end)
-    np.testing.assert_allclose(limits(viewer), before - 2)
+    # Native MouseEvent positions use integer display pixels. Predict the
+    # data displacement from those pixels, without relaxing numeric tolerances.
+    inverse = viewer.ax.transData.frozen().inverted()
+    delta = inverse.transform(np.trunc(start)) - inverse.transform(np.trunc(end))
+    expected = before + delta[:, None]
+    emit(viewer, "button_press_event", start, MouseButton.RIGHT)
+    emit(viewer, "motion_notify_event", middle, MouseButton.RIGHT)
+    emit(viewer, "motion_notify_event", end, MouseButton.RIGHT)
+    emit(viewer, "button_release_event", end, MouseButton.RIGHT)
+    np.testing.assert_allclose(limits(viewer), expected)
     viewer.toolbar.back()
     np.testing.assert_allclose(limits(viewer), before)
     viewer.toolbar.forward()
-    np.testing.assert_allclose(limits(viewer), before - 2)
+    np.testing.assert_allclose(limits(viewer), expected)
     viewer.toolbar.home()
     np.testing.assert_allclose(limits(viewer), before)
 
@@ -249,7 +254,7 @@ def test_scroll_zoom_and_coordinate_readout_keep_working(viewer):
     viewer.canvas.callbacks.process(
         "scroll_event", MouseEvent("scroll_event", viewer.canvas, *pixel, step=1)
     )
-    np.testing.assert_allclose(np.diff(limits(viewer)), np.diff(before) / 1.1)
+    np.testing.assert_allclose(np.diff(limits(viewer)), np.diff(before) / 1.2)
     viewer.canvas.callbacks.process(
         "scroll_event", MouseEvent("scroll_event", viewer.canvas, *pixel, step=-1)
     )
@@ -278,6 +283,6 @@ def test_native_qt_rectangle_drag(viewer, qapp):
     QTest.mousePress(viewer.canvas, Qt.MouseButton.LeftButton, pos=qt_point(start))
     QTest.mouseMove(viewer.canvas, qt_point(end))
     np.testing.assert_array_equal(limits(viewer), before)
-    assert not viewer._is_panning
+    assert not viewer.toolbar._pointer_pan
     QTest.mouseRelease(viewer.canvas, Qt.MouseButton.LeftButton, pos=qt_point(end))
     assert not np.array_equal(limits(viewer), before)

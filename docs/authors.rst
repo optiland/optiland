@@ -38,6 +38,7 @@ We sincerely appreciate the contributions of the following individuals, whose ef
 - **Jan-Willem Beenakker** (`GitHub <https://github.com/jwmbeenakker>`__)
 - **RayPragma** (`GitHub <https://github.com/RayPragma>`__)
 - **Doron Behar** (`GitHub <https://github.com/doronbehar>`__)
+- **Jie Cai** (`GitHub <https://github.com/jiecaix>`__)
 - **Ayachi Padmanabh Mishra** (`GitHub <https://github.com/AyachiMishra>`__)
 - **somnus-J-307** (`GitHub <https://github.com/somnus-J-307>`__)
 - **Nikita Vladimirov** (`GitHub <https://github.com/nvladimus>`__)

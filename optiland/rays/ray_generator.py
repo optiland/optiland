@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import optiland.backend as be
+from optiland.paraxial_path import shared_path_scope
 from optiland.rays.polarized_rays import PolarizedRays
 from optiland.rays.ray_aiming.registry import create_ray_aimer
 from optiland.rays.real_rays import RealRays
@@ -75,16 +76,25 @@ class RayGenerator:
                 self.set_ray_aiming(**config)
                 self._current_config = config.copy()
 
-        # Aim rays using the configured strategy
-        x0, y0, z0, L, M, N = self.aimer.aim_rays(
-            (Hx, Hy),
-            wavelength,
-            (Px, Py),
-        )
+        # Vignetting is applied here, once, for every aimer and every trace
+        # entry point (distribution traces and generic rays alike). Aimers
+        # receive the already-vignetted pupil coordinates.
+        Pxv, Pyv = self.optic.fields.apply_vignetting(Hx, Hy, Px, Py)
+
+        # Aim rays using the configured strategy. The aimers do not change
+        # the geometry, so all their paraxial calls can share one path.
+        with shared_path_scope(self.optic.surfaces):
+            x0, y0, z0, L, M, N = self.aimer.aim_rays(
+                (Hx, Hy),
+                wavelength,
+                (Pxv, Pyv),
+            )
 
         apodization = self.optic.apodization
         if apodization:
-            intensity = apodization.get_intensity(Px, Py)
+            # Evaluate the beam profile where the ray crosses the pupil, i.e.
+            # at the vignetted pupil coordinates.
+            intensity = apodization.get_intensity(Pxv, Pyv)
         else:
             intensity = be.ones_like(Px)
 

@@ -9,6 +9,7 @@ import pytest
 
 import optiland.backend as be
 from optiland.psf.huygens_fresnel import HuygensPSF
+from optiland.psf.huygens_fresnel_strategies import NumbaSummation
 from optiland.samples.objectives import CookeTriplet, DoubleGauss, ReverseTelephoto
 
 matplotlib.use("Agg")  # use non-interactive backend for testing
@@ -59,6 +60,72 @@ class TestHuygensPSF:
         "reverse_telephoto_optic",
     ]
     FIELDS_TO_TEST = [(0, 0), (0.5, 0.0), (0.0, 0.7)]  # On-axis and off-axis
+
+    def test_obliquity_is_unity_at_reference_sphere_center(self):
+        """A wavelet normal points inward from the sphere to its image point."""
+        center = (4.0, -3.0, 20.0)
+        radius = 10.0
+        result = NumbaSummation().compute(
+            np.array([[center[0]]]),
+            np.array([[center[1]]]),
+            np.array([[center[2]]]),
+            np.array([center[0]]),
+            np.array([center[1]]),
+            np.array([center[2] - radius]),
+            np.ones(1),
+            np.zeros(1),
+            0.00055,
+            radius,
+            center,
+        )
+
+        assert result[0, 0] == pytest.approx(1.0 / radius**2)
+
+    def test_summation_is_invariant_to_global_translation(self):
+        """Moving the complete geometry must not change the Huygens result."""
+        center = np.array([1.25, -2.5, 30.0])
+        radius = 20.0
+        pupil_x = np.array([-2.0, 0.5, 3.0]) + center[0]
+        pupil_y = np.array([0.5, -1.0, 1.5]) + center[1]
+        radial_xy_sq = (pupil_x - center[0]) ** 2 + (pupil_y - center[1]) ** 2
+        pupil_z = center[2] - np.sqrt(radius**2 - radial_xy_sq)
+        image_x = np.array([[center[0] - 0.01, center[0] + 0.01]])
+        image_y = np.array([[center[1], center[1]]])
+        image_z = np.array([[center[2], center[2]]])
+        amplitude = np.array([1.0, 0.8, 0.6])
+        opd = np.array([0.0, 1e-4, -2e-4])
+
+        summation = NumbaSummation()
+        reference = summation.compute(
+            image_x,
+            image_y,
+            image_z,
+            pupil_x,
+            pupil_y,
+            pupil_z,
+            amplitude,
+            opd,
+            0.00055,
+            radius,
+            tuple(center),
+        )
+
+        translation = np.array([11.0, -7.0, 5.0])
+        translated = summation.compute(
+            image_x + translation[0],
+            image_y + translation[1],
+            image_z + translation[2],
+            pupil_x + translation[0],
+            pupil_y + translation[1],
+            pupil_z + translation[2],
+            amplitude,
+            opd,
+            0.00055,
+            radius,
+            tuple(center + translation),
+        )
+
+        np.testing.assert_allclose(translated, reference, rtol=1e-10, atol=1e-10)
 
     @pytest.mark.parametrize("optic_fixture_name", OPTIC_FIXTURES)
     @pytest.mark.parametrize("field", FIELDS_TO_TEST)
@@ -282,7 +349,7 @@ class TestHuygensPSF:
                 (
                     0.7,
                     0.0,
-                ): 0.8828802278745688,
+                ): 0.9256881209403168,
             },
         }
         # Tolerance for Strehl comparison
@@ -540,3 +607,50 @@ class TestHuygensPSF:
         # The extent is centered around (cx, cy)
         assert np.isclose(xmax - xmin, 2 * expected_extent)
         assert np.isclose(ymax - ymin, 2 * expected_extent)
+
+
+def _immersed_paraboloid(n):
+    """Paraboloid fully immersed in a medium of index n: perfect on-axis focus."""
+    from optiland.materials import IdealMaterial
+    from optiland.optic import Optic
+
+    optic = Optic()
+    medium = IdealMaterial(n)
+    optic.surfaces.add(index=0, thickness=np.inf, material=medium)
+    optic.surfaces.add(
+        index=1, radius=-50, conic=-1, thickness=-25, material="mirror", is_stop=True
+    )
+    optic.surfaces.add(index=2, material=medium)
+    optic.set_aperture("EPD", 12)
+    optic.fields.set_type("angle")
+    optic.fields.add(y=0)
+    optic.wavelengths.add(0.55, is_primary=True)
+    return optic
+
+
+@pytest.mark.parametrize("vectorial", [False, True])
+def test_psf_scales_with_image_space_index(vectorial):
+    """Immersion in index n shrinks the PSF n-fold (NA = n sin u)."""
+    from optiland.psf.huygens_fresnel import ScalarHuygensPSF
+    from optiland.psf.vectorial_huygens import VectorialHuygensPSF
+    from optiland.rays import PolarizationState
+
+    n = 1.5
+    pitch = 0.1e-3  # mm
+    psfs = []
+    for index, pixel_pitch in ((1.0, pitch), (n, pitch / n)):
+        optic = _immersed_paraboloid(index)
+        psf_cls = ScalarHuygensPSF
+        if vectorial:
+            optic.updater.set_polarization(
+                PolarizationState(
+                    is_polarized=True, Ex=1.0, Ey=0.0, phase_x=0.0, phase_y=0.0
+                )
+            )
+            psf_cls = VectorialHuygensPSF
+        psf = psf_cls(
+            optic, (0, 0), 0.55, num_rays=32, image_size=33, pixel_pitch=pixel_pitch
+        )
+        psfs.append(be.to_numpy(psf.psf))
+
+    np.testing.assert_allclose(psfs[1], psfs[0], atol=0.5)

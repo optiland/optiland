@@ -14,8 +14,11 @@ class Field:
     Attributes:
         x (float): The x-coordinate of the field.
         y (float): The y-coordinate of the field.
-        vx (float): The vignette factor in the x-direction.
-        vy (float): The vignette factor in the y-direction.
+        vx (float): The vignette factor in the x-direction. The normalized
+            pupil x coordinate of every ray of this field is scaled by
+            ``1 - vx``.
+        vy (float): The vignette factor in the y-direction, applied to the
+            pupil y coordinate in the same way.
         weight (float): The relative importance scalar for this field.
             Non-negative; 0.0 means excluded from weighted contexts.
 

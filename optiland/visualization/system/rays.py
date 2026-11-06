@@ -7,17 +7,32 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 import vtk
 
 import optiland.backend as be
 from optiland.utils import resolve_fields, resolve_wavelengths
+from optiland.visualization.coloring.rays import RayBundleRef, TracedRays
 from optiland.visualization.system.ray_bundle import RayBundle
 from optiland.visualization.system.ray_path import (
+    curved_segments,
     neutral_reference_mask,
     physical_ray_path,
+    splice_curved_segments,
 )
 from optiland.visualization.system.utils import transform
+
+if TYPE_CHECKING:
+    from optiland.visualization.coloring.rays import RayColorizer
+
+
+def _ray_color(ray_colors: np.ndarray | None, index: int):
+    """RGBA override of one ray, or None for the default color."""
+    if ray_colors is None or np.isnan(ray_colors[index]).any():
+        return None
+    return tuple(ray_colors[index])
 
 
 class Rays2D:
@@ -48,6 +63,7 @@ class Rays2D:
         self.y = None
         self.z = None
         self.i = None
+        self.wavelength = None
 
         n = optic.surfaces.num_surfaces
         self.r_extent = be.zeros(n)
@@ -63,6 +79,8 @@ class Rays2D:
         theme=None,
         projection="YZ",
         hide_vignetted=False,
+        *,
+        _ray_colorizer: RayColorizer | None = None,
     ):
         """Plots the rays for the given fields and wavelengths.
 
@@ -79,6 +97,8 @@ class Rays2D:
             theme (Theme, optional): The theme to apply. Defaults to None.
             hide_vignetted (bool, optional): If True, rays that vignette at any
                 surface are not shown. Defaults to False.
+            _ray_colorizer (RayColorizer, optional): Private; per-ray color
+                strategy supplied by the viewers. Defaults to None.
 
         """
         # Visualization ignores weights; extract coords and values directly
@@ -109,6 +129,13 @@ class Rays2D:
                             theme=theme,
                             projection=projection,
                             hide_vignetted=hide_vignetted,
+                            ray_colors=self._ray_colors(
+                                _ray_colorizer,
+                                (i, j),
+                                (field, wavelength),
+                                (len(fields_coords), len(wavelengths_vals)),
+                                is_reference=False,
+                            ),
                         )
                     )
 
@@ -124,6 +151,13 @@ class Rays2D:
                             theme=theme,
                             projection=projection,
                             hide_vignetted=hide_vignetted,
+                            ray_colors=self._ray_colors(
+                                _ray_colorizer,
+                                (i, j),
+                                (field, wavelength),
+                                (len(fields_coords), len(wavelengths_vals)),
+                                is_reference=True,
+                            ),
                         )
                     )
         return artists
@@ -152,6 +186,7 @@ class Rays2D:
 
         """
         self.optic.trace(*field, wavelength, num_rays, distribution)
+        self.wavelength = wavelength
         self._process_traced_rays()
 
     def _trace_reference(self, field, wavelength, reference):
@@ -173,7 +208,56 @@ class Rays2D:
         else:
             raise ValueError(f"Invalid ray reference type: {reference}")
 
+        self.wavelength = wavelength
         self._process_traced_rays()
+
+    def _ray_colors(self, colorizer, indices, bundle, counts, *, is_reference):
+        """Per-ray RGBA colors of the bundle just traced, or None for defaults.
+
+        Args:
+            colorizer (RayColorizer | None): Strategy to query.
+            indices (tuple[int, int]): Field and wavelength index of the bundle.
+            bundle (tuple): Field coordinates and wavelength of the bundle.
+            counts (tuple[int, int]): Number of drawn fields and wavelengths.
+            is_reference (bool): True if the bundle holds reference rays.
+
+        Returns:
+            np.ndarray | None: Array of shape ``(num_rays, 4)``, or None.
+        """
+        if colorizer is None:
+            return None
+        (field_index, wavelength_index), (field, wavelength) = indices, bundle
+        ref = RayBundleRef(
+            field_index=field_index,
+            field=tuple(float(be.to_numpy(c)) for c in field),
+            wavelength_index=wavelength_index,
+            wavelength=float(be.to_numpy(wavelength)),
+            num_fields=counts[0],
+            num_wavelengths=counts[1],
+            is_reference=is_reference,
+        )
+        colors = colorizer.ray_colors(ref, self._traced_rays())
+        if colors is None:
+            return None
+        colors = np.asarray(colors, dtype=float)
+        expected = (self.z.shape[1], 4)
+        if colors.shape != expected:
+            raise ValueError(
+                f"RayColorizer returned colors of shape {colors.shape}; "
+                f"expected {expected}"
+            )
+        return colors
+
+    def _traced_rays(self) -> TracedRays:
+        """NumPy snapshot of the bundle just traced."""
+        opds = [surf.opd for surf in self.optic.surfaces if be.size(surf.opd) > 0]
+        return TracedRays(
+            x=np.array(be.to_numpy(self.x)),
+            y=np.array(be.to_numpy(self.y)),
+            z=np.array(be.to_numpy(self.z)),
+            intensity=np.array(be.to_numpy(self.i)),
+            opd=np.array(be.to_numpy(be.stack(opds))) if opds else None,
+        )
 
     def _update_surface_extents(self):
         """Updates the extents of the surfaces in the optic's surface group."""
@@ -221,6 +305,7 @@ class Rays2D:
         theme=None,
         projection="YZ",
         hide_vignetted=False,
+        ray_colors=None,
     ):
         """Plots multiple lines on the given axis.
 
@@ -238,6 +323,8 @@ class Rays2D:
             theme (Theme, optional): The theme to apply. Defaults to None.
             projection (str, optional): The projection plane. Must be 'XY',
                 'XZ', or 'YZ'. Defaults to 'YZ'.
+            ray_colors (np.ndarray, optional): RGBA per ray, overriding the
+                bundle color where finite. Defaults to None.
 
 
         Returns:
@@ -246,7 +333,7 @@ class Rays2D:
         """
         artists = {}
         bundle_id = f"bundle_{color_idx}"
-        for path in self._iter_physical_paths(hide_vignetted):
+        for index, path in self._iter_indexed_paths(hide_vignetted):
             xk, yk, zk = path.T
             artist, ray_bundle = self._plot_single_line(
                 ax,
@@ -258,6 +345,7 @@ class Rays2D:
                 linewidth,
                 theme=theme,
                 projection=projection,
+                ray_color=_ray_color(ray_colors, index),
             )
             ray_bundle.bundle_id = bundle_id
             artists[artist] = ray_bundle
@@ -265,22 +353,43 @@ class Rays2D:
 
     def _iter_physical_paths(self, hide_vignetted=False):
         """Yield shared 3D polylines for both display backends."""
-        neutral = neutral_reference_mask(list(self.optic.surfaces))
+        for _, path in self._iter_indexed_paths(hide_vignetted):
+            yield path
+
+    def _iter_indexed_paths(self, hide_vignetted=False):
+        """Yield ``(ray_index, polyline)`` for each ray with a visible path."""
+        surfaces = list(self.optic.surfaces)
+        neutral = neutral_reference_mask(surfaces)
+        segments = curved_segments(surfaces, self.wavelength)
         x, y, z, intensity = (
             be.to_numpy(values) for values in (self.x, self.y, self.z, self.i)
         )
         for index in range(z.shape[1]):
-            path = physical_ray_path(
+            points, ray_intensity, ray_neutral = splice_curved_segments(
                 np.column_stack((x[:, index], y[:, index], z[:, index])),
                 intensity[:, index],
                 neutral,
-                hide_vignetted=hide_vignetted,
+                segments,
+                index,
+            )
+            path = physical_ray_path(
+                points, ray_intensity, ray_neutral, hide_vignetted=hide_vignetted
             )
             if len(path):
-                yield path
+                yield index, path
 
     def _plot_single_line(
-        self, ax, x, y, z, color_idx, field, linewidth=1, theme=None, projection="YZ"
+        self,
+        ax,
+        x,
+        y,
+        z,
+        color_idx,
+        field,
+        linewidth=1,
+        theme=None,
+        projection="YZ",
+        ray_color=None,
     ):
         """Plots a single line on the given axes.
 
@@ -295,12 +404,15 @@ class Rays2D:
             theme (Theme, optional): The theme to apply. Defaults to None.
             projection (str, optional): The projection plane. Must be 'XY',
                 'XZ', or 'YZ'. Defaults to 'YZ'.
+            ray_color (tuple, optional): RGBA overriding the bundle color.
 
         Returns:
             None
 
         """
-        if theme:
+        if ray_color is not None:
+            color = ray_color
+        elif theme:
             ray_cycle = theme.parameters.get("ray_cycle")
             color = ray_cycle[color_idx % len(ray_cycle)]
         else:
@@ -338,6 +450,8 @@ class Rays3D(Rays2D):
         reference=None,
         theme=None,
         hide_vignetted=False,
+        *,
+        _ray_colorizer: RayColorizer | None = None,
     ):
         """Plots the rays for the given fields and wavelengths.
 
@@ -354,6 +468,8 @@ class Rays3D(Rays2D):
             theme (Theme, optional): The theme to apply. Defaults to None.
             hide_vignetted (bool, optional): If True, rays that vignette at any
                 surface are not shown. Defaults to False.
+            _ray_colorizer (RayColorizer, optional): Private; per-ray color
+                strategy supplied by the viewers. Defaults to None.
 
         """
         # Visualization ignores weights; extract coords and values directly
@@ -380,6 +496,13 @@ class Rays3D(Rays2D):
                         field,
                         theme=theme,
                         hide_vignetted=hide_vignetted,
+                        ray_colors=self._ray_colors(
+                            _ray_colorizer,
+                            (i, j),
+                            (field, wavelength),
+                            (len(fields_coords), len(wavelengths_vals)),
+                            is_reference=False,
+                        ),
                     )
 
                 # trace reference rays and plot lines
@@ -392,6 +515,13 @@ class Rays3D(Rays2D):
                         linewidth=1.5,
                         theme=theme,
                         hide_vignetted=hide_vignetted,
+                        ray_colors=self._ray_colors(
+                            _ray_colorizer,
+                            (i, j),
+                            (field, wavelength),
+                            (len(fields_coords), len(wavelengths_vals)),
+                            is_reference=True,
+                        ),
                     )
 
     def __init__(self, optic):
@@ -412,16 +542,40 @@ class Rays3D(Rays2D):
         ]
 
     def _plot_lines(
-        self, ax, color_idx, field, linewidth=1, theme=None, hide_vignetted=False
+        self,
+        ax,
+        color_idx,
+        field,
+        linewidth=1,
+        theme=None,
+        hide_vignetted=False,
+        ray_colors=None,
     ):
-        for path in self._iter_physical_paths(hide_vignetted):
+        for index, path in self._iter_indexed_paths(hide_vignetted):
             xk, yk, zk = path.T
             self._plot_single_line(
-                ax, xk, yk, zk, color_idx, field, linewidth, theme=theme
+                ax,
+                xk,
+                yk,
+                zk,
+                color_idx,
+                field,
+                linewidth,
+                theme=theme,
+                ray_color=_ray_color(ray_colors, index),
             )
 
     def _plot_single_line(
-        self, renderer, x, y, z, color_idx, field, linewidth=1, theme=None
+        self,
+        renderer,
+        x,
+        y,
+        z,
+        color_idx,
+        field,
+        linewidth=1,
+        theme=None,
+        ray_color=None,
     ):
         """Plots a single line in 3D space using VTK with the specified
         coordinates and color index.
@@ -436,9 +590,13 @@ class Rays3D(Rays2D):
             field (tuple): The field coordinates for the ray.
             linewidth (float): The width of the line. Default is 1.
             theme (Theme, optional): The theme to apply. Defaults to None.
+            ray_color (tuple, optional): RGBA overriding the bundle color; alpha
+                is ignored.
 
         """
-        if theme:
+        if ray_color is not None:
+            color = ray_color[:3]
+        elif theme:
             from matplotlib.colors import to_rgb
 
             ray_cycle = theme.parameters.get("ray_cycle")

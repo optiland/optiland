@@ -40,6 +40,8 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QStyle,
+    QTabBar,
     QTabWidget,
     QTextEdit,
     QVBoxLayout,
@@ -47,6 +49,10 @@ from PySide6.QtWidgets import (
 )
 from qtconsole.inprocess import QtInProcessKernelManager
 from qtconsole.rich_jupyter_widget import RichJupyterWidget
+
+from ..config import DEFAULT_TAB_POSITION
+from .custom_dock_title_bar import CustomDockTitleBar
+from .custom_dock_widget import CustomDockWidget
 
 
 class PythonHighlighter(QSyntaxHighlighter):
@@ -315,6 +321,7 @@ class PythonTerminalWidget(QWidget):
         self.dock_area = QMainWindow()
         self.dock_area.setWindowFlags(Qt.Widget)
         self.dock_area.setDockNestingEnabled(True)
+        self.dock_area.setTabPosition(Qt.AllDockWidgetAreas, DEFAULT_TAB_POSITION)
         main_layout.addWidget(self.dock_area)
         self.console_dock = self._create_console_dock()
         self.dock_area.addDockWidget(Qt.RightDockWidgetArea, self.console_dock)
@@ -323,7 +330,7 @@ class PythonTerminalWidget(QWidget):
 
     def _create_editor_dock(self) -> QDockWidget:
         """Create the dock widget containing the script editor and snippets panel."""
-        dock = QDockWidget("Script Editor", self)
+        dock = CustomDockWidget("Script Editor", self)
         dock.setAllowedAreas(Qt.AllDockWidgetAreas)
         editor_widget = QWidget()
         layout = QVBoxLayout(editor_widget)
@@ -356,6 +363,7 @@ class PythonTerminalWidget(QWidget):
         layout.addLayout(editor_area_layout)
 
         self.script_tabs = QTabWidget()
+        self.script_tabs.setTabPosition(DEFAULT_TAB_POSITION)
         self.script_tabs.setTabsClosable(True)
         self.script_tabs.setMovable(True)
         self.script_tabs.setObjectName("ScriptTabWidget")
@@ -396,7 +404,7 @@ class PythonTerminalWidget(QWidget):
 
     def _create_console_dock(self) -> QDockWidget:
         """Create the dock widget containing the Jupyter console."""
-        dock = QDockWidget("Console", self)
+        dock = CustomDockWidget("Console", self)
         dock.setAllowedAreas(Qt.AllDockWidgetAreas)
         self.jupyter_widget = RichJupyterWidget()
         self.jupyter_widget.kernel_manager = self.kernel_manager
@@ -443,6 +451,12 @@ class PythonTerminalWidget(QWidget):
         )
         index = self.script_tabs.addTab(editor, title)
         self.script_tabs.setTabText(index, title)
+        # Keep Qt's close button, with room around its centered glyph.
+        bar = self.script_tabs.tabBar()
+        close_side = QTabBar.ButtonPosition(
+            bar.style().styleHint(QStyle.SH_TabBar_CloseButtonPosition, None, bar)
+        )
+        bar.tabButton(index, close_side).setFixedSize(36, 24)
 
         self.script_tabs.setCurrentIndex(index)
         self.set_theme(self.current_theme)
@@ -662,6 +676,25 @@ class PythonTerminalWidget(QWidget):
         self.current_theme = theme_name
         theme_palette = self.themes.get(theme_name, self.themes["dark"])
 
+        dark = theme_name == "dark"
+        foreground = "#E0E0E0" if dark else "#212529"
+        background = "#2E2E2E" if dark else "#DEE2E6"
+        hover = "#4A4A4A" if dark else "#CED4DA"
+        for dock in self.findChildren(QDockWidget):
+            title = dock.titleBarWidget()
+            if not isinstance(title, CustomDockTitleBar):
+                continue
+            title.setStyleSheet(
+                "#CustomDockTitleBar {"
+                f"background: {background}; color: {foreground}; }}"
+                f"QLabel {{ color: {foreground}; background: transparent; }}"
+                "QToolButton { background: transparent;"
+                "border: 1px solid transparent; border-radius: 3px; }"
+                "QToolButton:hover, QToolButton:pressed {"
+                f"background: {hover}; border-color: {foreground}; }}"
+                f"QToolButton:focus {{ border: 1px dashed {foreground}; }}"
+            )
+
         btn_style = (
             "QPushButton {"
             "    background-color: transparent;"
@@ -695,8 +728,11 @@ class PythonTerminalWidget(QWidget):
             QIcon(f":/icons/{theme_name}/add_quick_action.svg")
         )
         self.script_tabs.setStyleSheet(
-            f"QTabBar::close-button {{ image: url(:/icons/{theme_name}/close.svg); }} "
-            "QTabBar::close-button:hover {{ background: #DB0000; }}"
+            "QTabBar::close-button {"
+            f" image: url(:/icons/{theme_name}/close.svg);"
+            " margin: 2px 8px; }"
+            "QTabBar::close-button:hover {"
+            f" background: {theme_palette['btn_hover']}; }}"
         )
 
         self.jupyter_widget.syntax_style = theme_palette["jupyter_style"]

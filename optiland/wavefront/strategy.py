@@ -15,7 +15,11 @@ from typing import TYPE_CHECKING, Literal
 
 import optiland.backend as be
 
-from ..fields.field_types import AngleField
+from ..fields.field_types import (
+    AngleField,
+    ParaxialImageHeightField,
+    RealImageHeightField,
+)
 from .reference_geometry import PlanarReference, ReferenceGeometry, SphericalReference
 from .wavefront_data import WavefrontData
 
@@ -24,6 +28,10 @@ if TYPE_CHECKING:
     from optiland.distribution import BaseDistribution
     from optiland.optic.optic import Optic
     from optiland.rays.real_rays import RealRays
+
+# Field types that, for an object at infinity, launch a collimated beam from a common
+# plane: the image-height fields at the angle that reaches their image height.
+_COLLIMATED_FIELDS = (AngleField, ParaxialImageHeightField, RealImageHeightField)
 
 WavefrontStrategyType = Literal["chief_ray", "centroid", "best_fit"]
 ReferenceType = Literal["sphere", "plane"]
@@ -94,11 +102,13 @@ class ReferenceStrategy(ABC):
     ) -> BEArrayT:
         """Restore the incident phase across the ray launch plane.
 
-        Infinite-conjugate angular fields launch rays on a common object-space plane
-        with a common starting optical path, which holds their phase equal across that
-        plane. For an oblique beam the constant-phase surfaces are tilted with respect
-        to the launch plane, so the incident relative eikonal ``n * (u . r)`` is
-        restored here.
+        For an object at infinity, an angle field and the paraxial and real image-height
+        fields (which solve for the angle that reaches their image height) launch their
+        rays on a common object-space plane with a common starting optical path, which
+        holds their phase equal across that plane. For an oblique beam the
+        constant-phase surfaces are tilted with respect to the launch plane, so the
+        incident relative eikonal ``n * (u . r)`` is restored here. A finite object
+        launches from its point, and needs no correction.
 
         The generated positions and directions are retained before propagation or
         surface interaction, so the phase follows the active ray aimer without
@@ -115,7 +125,7 @@ class ReferenceStrategy(ABC):
         Returns:
             ndarray: The OPD array with tilt correction applied.
         """
-        if not isinstance(self.optic.fields.field_definition, AngleField):
+        if not isinstance(self.optic.fields.field_definition, _COLLIMATED_FIELDS):
             return opd
 
         if not self.optic.object_surface.is_infinite:
@@ -212,8 +222,9 @@ class ChiefRayStrategy(ReferenceStrategy):
         )
         geometry = self._create_reference_geometry(self._chief_ray)
 
-        # 2. Calculate reference OPD from the chief ray
-        opd_img_ref = geometry.path_length(self._chief_ray, self.n_image)
+        # 2. Use relative paths so a large common geometric term cancels
+        # before floating-point subtraction of chief and sample OPDs.
+        opd_img_ref = geometry._relative_path_length(self._chief_ray, self.n_image)
         opd_ref = self._chief_ray.opd - opd_img_ref
 
         # 3. Trace the full grid of rays for the field
@@ -228,7 +239,7 @@ class ChiefRayStrategy(ReferenceStrategy):
 
         # 4. Compute OPD for all rays
         opd_img = geometry.path_length(rays, self.n_image)
-        opd = rays.opd - opd_img
+        opd = rays.opd - geometry._relative_path_length(rays, self.n_image)
 
         opd = self._restore_launch_phase(rays, opd, wavelength, self._chief_ray)
         rays._launch_state = None
@@ -272,6 +283,9 @@ class ChiefRayStrategy(ReferenceStrategy):
             opd=opd_wv,
             intensity=intensity,
             radius=geometry.radius,
+            reference_center=(
+                geometry.center if isinstance(geometry, SphericalReference) else None
+            ),
             **kwargs,
         )
 
@@ -395,7 +409,7 @@ class CentroidStrategy(ReferenceStrategy):
 
         # 4. Compute OPD from image surface to reference geometry
         opd_img = geometry.path_length(rays, self.n_image)
-        opd = rays.opd - opd_img
+        opd = rays.opd - geometry._relative_path_length(rays, self.n_image)
 
         # 5. Remove piston by subtracting mean OPD
         valid_mask = rays.i > 0
@@ -429,6 +443,9 @@ class CentroidStrategy(ReferenceStrategy):
             opd=opd_waves,
             intensity=rays.i,
             radius=geometry.radius,
+            reference_center=(
+                geometry.center if isinstance(geometry, SphericalReference) else None
+            ),
             **kwargs,
         )
 

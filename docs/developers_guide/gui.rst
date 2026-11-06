@@ -17,10 +17,35 @@ Key Technologies
 *   **Matplotlib**: Used for 2D plotting in various panels (e.g., 2D system view, analysis plots).
 *   **VTK (Visualization Toolkit)**: Used for 3D rendering of optical systems in the ViewerPanel. (Optional, GUI can run without it).
 
+Python 3.11 Binding Constraint
+------------------------------
+
+Install the GUI through the ``optiland[gui]`` extra. On Python 3.11 it selects
+PySide6 below 6.12: the 6.12.0 wheels can corrupt references to Python's
+``None`` and ``True`` singletons, causing an abort during use or interpreter
+shutdown even with a plain Qt widget. This is a binding defect, not a dock
+cleanup error (see `PYSIDE-3474 <https://qt-project.atlassian.net/browse/PYSIDE-3474>`_).
+Python 3.12 and newer retain the unrestricted binding requirement.
+
+Existing Python 3.11 environments can reinstall the GUI extra to resolve a
+compatible binding. Reassess the upper bound when corrected wheels are
+available, using ``tests/gui/test_qt_shutdown.py`` on Python 3.11; that regression
+checks a child interpreter's exit status as well as normal Qt calls.
+
 Core Architecture
 -----------------
 
 The GUI's architecture revolves around a main window that hosts several dockable panels, each dedicated to a specific aspect of optical design or analysis. The `OptilandConnector` class serves as a crucial intermediary, linking these GUI components to the underlying `Optic` object from the Optiland backend.
+
+Command Palette Activation
+--------------------------
+
+The palette consumes Return and keypad Enter in event filters installed only
+on its search field and result list. This prevents a search field's
+``returnPressed`` signal and a propagated key event from executing the same
+command twice. Escape and Up/Down share that local routing; other keys remain
+with the focused Qt widget. Held Enter keys do not dispatch commands, and stale
+activation notifications are ignored once the palette starts closing.
 
 Key Components
 --------------
@@ -65,6 +90,29 @@ These are the primary QDockWidget or QWidget instances that provide specific fun
     *   **2D View**: Uses Matplotlib to render a 2D cross-section of the system, including lens elements and ray paths. Includes basic navigation (pan/zoom) and a settings area to control ray display.
     *   **3D View**: Uses VTK (if available) to render a 3D model of the system, allowing for interactive rotation, panning, and zooming.
     *   Both views update in response to changes in the `Optic` object via signals from `OptilandConnector`.
+
+    GUI ray sampling lives in ``services/layout_rays.py``. ``layout_pupil``
+    returns pupil coordinates and an explicit chief index; the chief is sampled
+    at normalized pupil coordinates ``Px = Py = 0`` for each field, using the
+    configured aiming and polarization at the primary wavelength. GUI totals
+    include the chief. ``RayCountSpinBox`` in ``widgets/ray_count.py`` steps
+    through supported totals and normalizes typed values. In particular,
+    hexapolar GUI totals count rays, while the helper translates them to the
+    ring count expected by the existing Python distribution API. The
+    :ref:`GUI quickstart <gui_quickstart>` describes the user-facing counts.
+
+    ``trace_layout_rays`` retains chief identity alongside each physical path,
+    including paths terminated by blocking. When only the chief is displayed,
+    four additional, undisplayed rim probes size automatic lens outlines.
+    Physical apertures and the schematic image marker retain their existing
+    precedence; these probes do not alter the prescription or displayed count.
+
+    The 2D presenter retains chief artists so ``style_chief_rays`` can change
+    their color, stroke width and drawing order without submitting a calculation
+    or changing the view limits. This styling belongs to the System Viewer;
+    other consumers of the shared presenter need no chief-ray checkbox. The
+    3D preparation includes the chief alongside 24 rim rays per field and creates
+    ordinary depth-tested ray actors, with no chief-specific foreground overlay.
 
 *   **Analysis Panel (`analysis_panel.py`)**:
 
@@ -126,12 +174,30 @@ Key Widgets
         native console/VTK widgets on Windows, this flag creates a layered native
         child window whose mouse hit testing can select the underlying console.
 
+Dock Activation and Frame Grips
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Activate a dock with its normal ``show()`` and ``raise_()`` methods. Qt owns
+selection within tabified dock groups; do not identify tabs by translated titles
+or manipulate internal tab indices. ``FramelessWindow`` observes direct-child
+stacking locally, but defers grip restacking until after ``ZOrderChange`` reaches
+the dock. Raising grips inside that event filter would prevent Qt from recognizing
+the requested dock as the topmost child. A window-owned single-shot timer coalesces
+restacking requests and is destroyed with the frame; no permanent application
+filter or polling loop is needed.
+
 Styling and Resources
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
 *   **Qt StyleSheets (`.qss`)**: Themes (e.g., `dark_theme.qss`, `light_theme.qss`) are defined using QSS, Qt's CSS-like styling language. These are located in `optiland_gui/resources/styles/`.
 *   **Resource Files (`resources.qrc`, `resources_rc.py`)**: Icons and other assets are managed using Qt's resource system. `resources.qrc` is an XML file defining resources, which is compiled into `resources_rc.py` using `pyside6-rcc`. This allows resources to be bundled with the application.
 *   **Plot Styling (`gui_plot_utils.py`)**: Contains utility functions to apply consistent Matplotlib styles that match the selected GUI theme.
+*   **Tab Placement (``config.DEFAULT_TAB_POSITION``)**: The shared default is
+    ``QTabWidget.North``. Main-window and nested terminal dock groups apply it
+    to every dock area; viewer, script, optimization, and surface-property tabs
+    use the same default. Future settings should configure this shared policy.
+    Review orientation-dependent theme borders and the surface-properties
+    close-button corner before offering other tab positions.
 
 Running the GUI
 ---------------
@@ -161,6 +227,29 @@ mouse recipient over a notification above a native text editor, then send input
 to that window. Sending a test click directly to a label, or selecting it with
 ``QApplication.widgetAt``, bypasses layered-window hit testing and does not
 reproduce clicks passing through to the console.
+
+Shared 2D plot navigation
+-------------------------
+
+``widgets.plot_navigation.PlotNavigationToolbar`` owns the shared 2D mouse
+gestures for lens layout, sag, analysis and optimization preview canvases.
+Right/middle drag uses Matplotlib's frozen press-time pan transform; wheel zoom
+uses each axis's scale transform so logarithmic and inverted axes behave
+consistently. Ordinary left-click remains available to plot selection handlers.
+Explicit toolbar tools use left-drag. A gesture holds the canvas widget lock
+and records a completed view in navigation history; focus loss, Escape, scene
+replacement and tool changes end active gestures.
+
+Call ``finish_navigation()`` before replacing an existing scene, or ``update()``
+when the replacement also requires clearing view history. Do not attach an
+additional scroll or default-pan handler to a canvas using this toolbar.
+``test_plot_navigation.py`` exercises the shared contract, while
+``test_viewer_navigation.py`` checks real lens-worker integration.
+
+The rectangle-zoom glyph combines a dotted selection box and magnifier, with
+an explicit accessible name and tooltip. It follows the local foreground
+palette and provides native-size pixmaps for standard and HiDPI displays.
+Qt owns the finished icon; no Python icon-engine lifetime is exposed to Qt.
 
 Contributing to the GUI
 -----------------------

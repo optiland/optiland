@@ -284,7 +284,9 @@ class Surface(ObserverMixin):
 
         """
         t = -rays.z
-        rays.propagate(t)
+        model = self.material_pre.propagation_model
+        rays.y, rays.u = model.paraxial_transfer(rays.y, rays.u, t)
+        rays.z = rays.z + t
         rays = self.interaction_model.interact_paraxial_rays(rays)
         return rays
 
@@ -298,11 +300,7 @@ class Surface(ObserverMixin):
             RealRays: The traced real rays.
 
         """
-        t = _aperture_aware_distance(self, rays)
-        self.material_pre.propagation_model.propagate(rays, t)
-        # t is oriented along the ray: virtual propagation subtracts OPL.
-        # Real return paths after reflection still have t > 0 and add OPL.
-        rays.opd = rays.opd + t * self.material_pre.n(rays.w)
+        self.material_pre.propagation_model.propagate_to_surface(rays, self)
         if self.aperture:
             self.aperture.clip(rays)
         rays = self.interaction_model.interact_real_rays(rays)

@@ -15,12 +15,19 @@ jobs:
       - uses: actions/stale@v9
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-          stale-issue-message: 'Hi there! 👋 This issue has been automatically marked as stale because it has not had recent activity. It will be closed in 7 days if no further activity occurs. Thank you for your contributions. If you believe this is still relevant, please leave a comment to keep it open!'
+          stale-issue-message: 'Hi there! 👋 This issue has been automatically marked as stale because it has not had recent activity. It will be closed in 14 days if no further activity occurs. Thank you for your contributions. If you believe this is still relevant, please leave a comment to keep it open!'
           stale-pr-message: 'Hi there! 👋 This pull request has been automatically marked as stale because it has not had recent activity. It will be closed in 7 days if no further activity occurs. Thank you for your contributions. If you are still working on this, please let us know or push a new commit!'
           stale-issue-label: 'stale'
           stale-pr-label: 'stale'
-          days-before-stale: 60
-          days-before-close: 7
-          exempt-issue-labels: 'bug,enhancement,security,pinned,help wanted,good first issue'
-          exempt-pr-labels: 'dependencies,security'
+          days-before-issue-stale: 60
+          days-before-issue-close: 14
+          days-before-pr-stale: 30
+          days-before-pr-close: 7
+          # Bug and enhancement labels no longer exempt an issue: they covered nearly
+          # every issue, so inactive ones were never closed. Assigned issues are still
+          # treated as active work.
+          exempt-issue-labels: 'security,pinned,help wanted,good first issue'
+          exempt-all-issue-assignees: true
+          exempt-pr-labels: 'dependencies,security,pinned'
+          exempt-all-pr-assignees: true
           operations-per-run: 50

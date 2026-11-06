@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import optiland.backend as be
-from optiland.aperture.base import BaseSystemAperture
+from optiland.aperture.base import BaseSystemAperture, aperture_memo
 
 if TYPE_CHECKING:
     from optiland._types import BEArray, ScalarOrArray
@@ -49,6 +49,7 @@ class ObjectNAAperture(BaseSystemAperture):
     def is_scalable(self) -> bool:
         return False
 
+    @aperture_memo
     def object_space_sine(
         self, optic: Optic, wavelength: float | None = None
     ) -> BEArray:
@@ -66,13 +67,20 @@ class ObjectNAAperture(BaseSystemAperture):
             counterpart's dtype, or the configured precision if neither has one.
 
         Raises:
-            ValueError: If the object is missing, NA or index is not a single
-                value, the index is not finite and positive, or NA lies outside
-                ``0 <= NA < n``. Zero defines a chief-only cone; a grazing cone
-                has no finite forward slope.
+            ValueError: If the object is missing or at infinity, NA or index
+                is not a single value, the index is not finite and positive,
+                or NA lies outside ``0 <= NA < n``. Zero defines a chief-only
+                cone; a grazing cone has no finite forward slope.
         """
         if optic.object_surface is None:
             raise ValueError("objectNA aperture requires a defined object surface.")
+        if optic.object_surface.is_infinite:
+            # An object at infinity has no object-space cone: the EPD would be
+            # inf and every traced ray NaN.
+            raise ValueError(
+                "objectNA aperture requires a finite object distance; for an "
+                "object at infinity, use 'EPD' or 'imageFNO' instead."
+            )
         if wavelength is None:
             wavelength = optic.primary_wavelength
         # Preserve input precision: rounding to the backend default can turn
@@ -111,6 +119,7 @@ class ObjectNAAperture(BaseSystemAperture):
         sine = na / index
         return sine if be.is_torch_tensor(sine) else be.asarray(sine, dtype=sine.dtype)
 
+    @aperture_memo
     def compute_epd(self, paraxial: Paraxial, wavelength: float | None = None) -> float:
         """Compute EPD from object-space NA.
 
@@ -124,15 +133,17 @@ class ObjectNAAperture(BaseSystemAperture):
             Entrance pupil diameter.
 
         Raises:
-            ValueError: If the object surface is missing, its refractive index
-                is invalid, or NA lies outside ``0 <= NA < n``.
+            ValueError: If the object surface is missing or at infinity, its
+                refractive index is invalid, or NA lies outside ``0 <= NA < n``.
 
         """
         sine = self.object_space_sine(paraxial.optic, wavelength)
         obj_z = paraxial.optic.object_surface.geometry.cs.z
         u0 = be.arcsin(sine)
         z = paraxial.entrance_pupil_axial_position() - obj_z
-        return 2 * z * be.tan(u0)
+        # A diameter: a virtual entrance pupil behind the object (z < 0) is as wide
+        # as one in front of it at the same distance, not negative.
+        return 2 * be.abs(z) * be.tan(u0)
 
     def scale(self, factor: float) -> ObjectNAAperture:
         """Return ``self`` — NA is dimensionless and does not scale.

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     # pragma: no cover
+    from optiland._types import BEArray
     from optiland.coatings import BaseCoating
     from optiland.rays import ParaxialRays, RealRays
     from optiland.scatter import BaseBSDF
@@ -50,6 +51,29 @@ class BaseInteractionModel(ABC):
     @property
     def geometry(self):
         return self.parent_surface.geometry
+
+    def _real_indices(self, rays: RealRays) -> tuple[BEArray, BEArray]:
+        """Refractive indices before and after the surface at the ray hits.
+
+        Each medium's propagation model supplies its index, so media whose
+        index varies with position are evaluated where the rays land.
+
+        Args:
+            rays: The rays, in the local frame of the parent surface.
+
+        Returns:
+            The indices ``(n1, n2)`` before and after the surface.
+        """
+        surface = self.parent_surface
+        previous = surface.previous_surface
+        entrance = surface if previous is None else previous
+        n1 = entrance.material_post.propagation_model.boundary_index(
+            rays, surface, entrance
+        )
+        n2 = surface.material_post.propagation_model.boundary_index(
+            rays, surface, surface
+        )
+        return n1, n2
 
     def __init_subclass__(cls, **kwargs):
         """Automatically register subclasses."""

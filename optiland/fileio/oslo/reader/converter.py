@@ -8,6 +8,7 @@ Kramer Harrison, 2026
 from __future__ import annotations
 
 import math
+import re
 import warnings
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
@@ -20,6 +21,7 @@ from optiland.fileio.oslo.constants import (
     OBJECT_INFINITY_THRESHOLD,
     THICKNESS_INFINITY_THRESHOLD,
 )
+from optiland.fileio.oslo.reader.apertures import physical_aperture
 from optiland.fileio.oslo.reader.configurations import select_configuration
 from optiland.fileio.oslo.reader.coordinates import surface_coordinates
 from optiland.fileio.oslo.reader.geometry import surface_geometry
@@ -38,7 +40,6 @@ from optiland.materials import (
 )
 from optiland.optic import Optic
 from optiland.phase import LinearGratingPhaseProfile
-from optiland.physical_apertures import RadialAperture
 
 # ---------------------------------------------------------------------------
 # Fallback glass catalog for OSLO glass names not in the refractiveindex.info
@@ -363,12 +364,10 @@ class OsloToOpticConverter(BaseOpticReader):
             material_raw, data.get("glass_wavelengths")
         )
 
-        if (
-            data.get("aperture_checked")
-            and self.data.settings.get("aperture_check", True)
-            and data.get("AP", 0.0) > 0
-        ):
-            surface_params["aperture"] = RadialAperture(r_max=data["AP"] * scale)
+        aperture_data = self._neutral_aperture_holes(index, data, surface_params)
+        surface_params["aperture"] = physical_aperture(
+            aperture_data, scale, self.data.settings.get("aperture_check", True)
+        )
 
         if has_coord_transform:
             surface_params.pop("thickness")
@@ -377,6 +376,46 @@ class OsloToOpticConverter(BaseOpticReader):
         self.optic.surfaces.add(**surface_params)
         if has_coord_transform:
             self.optic.surfaces[index].thickness = th * scale
+
+    def _neutral_aperture_holes(
+        self, index: int, data: dict[str, Any], surface_params: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Retain undeviated holes only on plain air-to-air planes.
+
+        Their interior and exterior have identical interaction, so retaining
+        a drawing outline is exact. Other holes require per-ray interaction
+        and media decisions that a transmitting aperture cannot represent.
+        """
+        apertures = data.get("special_apertures", {})
+        if not any(spec.get("AAC") == 1 for spec in apertures.values()):
+            return data
+        previous = self.optic.surfaces[index - 1].material_post if index else None
+        neutral = (
+            isinstance(surface_params["material"], str)
+            and surface_params["material"] == "air"
+            and type(previous) is IdealMaterial
+            and previous.n(0.55).item() == 1
+            and previous.k(0.55).item() == 0
+            and surface_params["surface_type"] == "standard"
+            and math.isinf(surface_params["radius"])
+            and "phase_profile" not in surface_params
+            and not any(re.fullmatch(r"J[AP][ABCD]", key) for key in data)
+        )
+        if neutral:
+            return data
+        message = (
+            f"OSLO undeviated hole at surface {index} requires a plain air-to-air "
+            "plane; powered, reflecting and polarization interactions are not mapped"
+        )
+        if self.strict:
+            raise ValueError(message)
+        warnings.warn(message, UserWarning, stacklevel=3)
+        return {
+            **data,
+            "special_apertures": {
+                key: spec for key, spec in apertures.items() if spec.get("AAC") != 1
+            },
+        }
 
     def _resolve_material(
         self, material_raw: str, wavelengths: list[float] | None = None

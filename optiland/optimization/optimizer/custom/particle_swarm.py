@@ -8,8 +8,9 @@ import numpy as np
 from scipy import optimize
 
 import optiland.backend as be
+from optiland.optimization.failure import reject_hard_constraints
 
-from ..scipy.base import OptimizerGeneric
+from ..scipy.base import _FAILED_EVALUATION_MERIT, OptimizerGeneric
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -119,6 +120,7 @@ class ParticleSwarm(OptimizerGeneric):
             especially with dimensionality, variable scaling,
             noise in the merit function, and tight or active bounds.
         """
+        reject_hard_constraints(self.problem, type(self).__name__)
         x0_backend = [var.value for var in self.problem.variables]
         self._x.append(x0_backend)
         x0 = np.asarray(be.to_numpy(x0_backend), dtype=float)
@@ -335,6 +337,13 @@ class ParticleSwarm(OptimizerGeneric):
                     f"tol={tol} for {stall_iterations} iterations."
                 )
                 break
+
+        if success and global_best_value == _FAILED_EVALUATION_MERIT:
+            success = False
+            message = (
+                "No valid merit evaluation: every candidate failed (NaN or "
+                "ValueError), so the returned point is not a solution. " + message
+            )
 
         # Update problem variables with the final best solution found by the swarm.
         for idvar, var in enumerate(self.problem.variables):

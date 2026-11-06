@@ -294,7 +294,9 @@ def test_torch_evanescent_decay_gradient_away_from_zero(distance_value):
         indices = be.arange_indices(32)
         checkerboard = 1 - 2 * (indices % 2)
         data = checkerboard[:, None] * checkerboard[None, :]
-        field = ScalarField(data, dx=0.1, wavelength=1.0)
+        # Integer-to-complex promotion would make complex64 on Torch despite
+        # the configured float64 precision. This reference uses 1e-12 tolerance.
+        field = ScalarField(be.cast(data), dx=0.1, wavelength=1.0)
         distance = be.array(distance_value)
 
         power = field.propagate(distance, evanescent="decay").power

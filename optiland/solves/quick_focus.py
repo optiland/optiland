@@ -44,7 +44,8 @@ class QuickFocusSolve(BaseSolve):
             Hx (float): The normalized x field.
             Hy (float): The normalized y field.
             wavelength (float): The wavelength of the light.
-            num_rays (int): The number of rays to trace.
+            num_rays (int): The pupil sampling parameter. For 'hexapolar' this
+                is the number of rings N (``1 + 3 * N * (N + 1)`` rays).
             distribution (str): The distribution of rays to trace.
 
         Returns:

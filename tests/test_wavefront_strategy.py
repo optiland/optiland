@@ -12,6 +12,7 @@ from optiland.optic import Optic
 from optiland.rays import RealRays
 from optiland.samples.objectives import DoubleGauss
 from optiland.wavefront import OPD
+from optiland.wavefront.reference_geometry import SphericalReference
 from optiland.wavefront.strategy import (
     BestFitSphereStrategy,
     CentroidReferenceSphereStrategy,
@@ -234,6 +235,13 @@ class TestChiefRayStrategy:
         assert wavefront_data.intensity.shape == (num_points,)
         assert isinstance(wavefront_data.radius, float)
         assert wavefront_data.radius > 0
+        assert wavefront_data.reference_center is not None
+        distances = be.sqrt(
+            (wavefront_data.pupil_x - wavefront_data.reference_center[0]) ** 2
+            + (wavefront_data.pupil_y - wavefront_data.reference_center[1]) ** 2
+            + (wavefront_data.pupil_z - wavefront_data.reference_center[2]) ** 2
+        )
+        assert_allclose(distances[wavefront_data.intensity > 0], wavefront_data.radius)
 
     def test_masks_non_finite_ray_samples(self, set_test_backend):
         """Test that invalid rays cannot contaminate downstream wavefront data."""
@@ -249,6 +257,9 @@ class TestChiefRayStrategy:
         chief_ray.x = be.array(0.0)
         chief_ray.y = be.array(0.0)
         chief_ray.z = be.array(10.0)
+        chief_ray.L = be.array(0.0)
+        chief_ray.M = be.array(0.0)
+        chief_ray.N = be.array(1.0)
         chief_ray.opd = be.array(0.0)
         optic.trace_generic.return_value = chief_ray
 
@@ -264,11 +275,7 @@ class TestChiefRayStrategy:
         rays.get_exit_fields = None
         optic.trace.return_value = rays
 
-        geometry = MagicMock(radius=10.0)
-        geometry.path_length.side_effect = [
-            be.array(0.0),
-            be.array([0.0, float("nan")]),
-        ]
+        geometry = SphericalReference((0.0, 0.0, 10.0), 10.0)
         strategy = ChiefRayStrategy(optic, MagicMock())
         strategy._create_reference_geometry = MagicMock(return_value=geometry)
 
@@ -409,6 +416,7 @@ class TestCentroidReferenceSphereStrategy:
         assert_allclose(be.mean(wavefront_data.opd), 0.0)
         assert isinstance(wavefront_data.radius, float)
         assert wavefront_data.radius > 0
+        assert wavefront_data.reference_center is not None
 
 
 def test_create_strategy(optic, distribution, set_test_backend):

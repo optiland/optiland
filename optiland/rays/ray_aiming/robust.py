@@ -689,14 +689,9 @@ class RobustRayAimer(BaseRayAimer):
         chief, strategy, chief_report = self._solve_chief(
             Hx, Hy, wl, stop_idx, is_inf, seed_map, param, seed=seed
         )
-        probes = []
-        probe_fallbacks = 0
-        for px, py in _EDGE_PROBES:
-            probe, fell_back = self._solve_probe(
-                wl, stop_idx, is_inf, px, py, r_stop, chief, param
-            )
-            probes.append(probe)
-            probe_fallbacks += int(fell_back)
+        solved = self._solve_probes(wl, stop_idx, is_inf, r_stop, chief, param)
+        probes = [probe for probe, _ in solved]
+        probe_fallbacks = sum(int(fell_back) for _, fell_back in solved)
         record = _CalibrationRecord(
             chief_strategy=strategy,
             chief_report=chief_report,
@@ -1147,6 +1142,48 @@ class RobustRayAimer(BaseRayAimer):
                     return None
 
         return (launch, None) if t >= 1.0 else None
+
+    def _solve_probes(
+        self,
+        wl: float,
+        stop_idx: int,
+        is_inf: bool,
+        r_stop: float,
+        chief: tuple[float, float, float, float, float, float],
+        param: LaunchParameterization,
+    ) -> list[tuple[tuple, bool]]:
+        """Solve the four cardinal edge probes in one batch.
+
+        Every probe starts from the chief launch and the solver core treats
+        each ray independently (its own Jacobian, line search and
+        convergence), so this gives the same probes as :meth:`_solve_probe`
+        called once per probe, with a quarter of the traces.
+
+        Returns:
+            list: One ``(launch, fell_back)`` pair per entry of
+            ``_EDGE_PROBES``, as returned by :meth:`_solve_probe`.
+        """
+        n = len(_EDGE_PROBES)
+        x0, y0, z0, L0, M0, N0 = (be.array([v] * n) for v in chief)
+        wl_a = be.array([wl] * n)
+        tx = be.array([px * r_stop for px, _ in _EDGE_PROBES])
+        ty = be.array([py * r_stop for _, py in _EDGE_PROBES])
+
+        x, y, z, L, M, N, converged, _, _r = self._iterative._solve_core(
+            x0, y0, z0, L0, M0, N0, wl_a, stop_idx, is_inf, tx, ty, param=param
+        )
+
+        converged = be.to_numpy(converged).reshape(-1)
+        state = [be.to_numpy(v).reshape(-1) for v in (x, y, z, L, M, N)]
+        solved = []
+        for i in range(n):
+            if not converged[i]:
+                # See _solve_probe: an unreachable probe falls back to the
+                # chief launch.
+                solved.append((chief, True))
+            else:
+                solved.append((tuple(float(v[i]) for v in state), False))
+        return solved
 
     def _solve_probe(
         self,

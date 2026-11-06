@@ -195,16 +195,19 @@ class MathMixin:
         """
         return np.diff(x, n=n, axis=axis, **kwargs)
 
-    def all(self, x: Any) -> bool:
+    def all(self, x: Any, axis: int | tuple[int, ...] | None = None) -> bool | NDArray:
         """Return True if all elements of x are True.
 
         Args:
             x: Input array.
+            axis: Axis or axes to reduce. None reduces the whole array.
 
         Returns:
-            bool: Whether all elements are True.
+            Python bool for a whole-array reduction; otherwise a boolean
+            NumPy array with the unreduced dimensions (0D if none remain).
         """
-        return bool(np.all(x))
+        result = np.all(x, axis=axis)
+        return bool(result) if axis is None else np.asarray(result)
 
     def any(self, x: Any) -> bool:
         """Return True if any element of x is True.

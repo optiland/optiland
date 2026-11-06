@@ -22,6 +22,7 @@ from optiland.physical_apertures import (
     RadialAperture,
     RectangularAperture,
 )
+from optiland.visualization.system.face_color import FaceColored
 from optiland.visualization.system.utils import revolve_contour, transform, transform_3d
 
 
@@ -34,7 +35,7 @@ def _to_float(val: Any, default: float = 0.0) -> float:
         return default
 
 
-class Lens2D:
+class Lens2D(FaceColored):
     """A class to represent a 2D lens and provide methods for plotting it.
 
     Args:
@@ -49,6 +50,8 @@ class Lens2D:
 
     """
 
+    component_kind = "lens_element"
+
     def __init__(self, surfaces: list[Any]) -> None:
         self.surfaces = surfaces
         # Sidecar ownership metadata preserves the existing public
@@ -56,6 +59,13 @@ class Lens2D:
         self.artist_surfaces = {}
         self.boundary_coordinates = {}
         self._check_surface_overlap()
+
+    def element_surfaces(self) -> list[tuple[Any, ...]]:
+        """Surfaces bounding each glass body: consecutive pairs."""
+        return [
+            (first.surf, second.surf)
+            for first, second in zip(self.surfaces, self.surfaces[1:], strict=False)
+        ]
 
     def _check_surface_overlap(self) -> None:
         """Check if any neighboring surfaces in the lens physically overlap."""
@@ -174,6 +184,7 @@ class Lens2D:
             if theme:
                 facecolor = theme.parameters.get("lens.color", facecolor)
                 edgecolor = theme.parameters.get("axes.edgecolor", edgecolor)
+            facecolor = self.face_color() or facecolor
 
             circle = plt.Circle(
                 (
@@ -292,7 +303,7 @@ class Lens2D:
 
         return x, y, z
 
-    def _plot_single_lens(self, ax, x, y, z, theme=None, projection="YZ"):
+    def _plot_single_lens(self, ax, x, y, z, theme=None, projection="YZ", *, element=0):
         """Plot a single lens on the given matplotlib axis.
 
         Args:
@@ -305,6 +316,8 @@ class Lens2D:
                 Defaults to None.
             projection (str, optional): The projection plane. Must be 'XY',
                 'XZ', or 'YZ'. Defaults to 'YZ'.
+            element (int, optional): Position of the glass body being drawn,
+                used to look up its color override. Defaults to 0.
 
         """
         facecolor = (0.8, 0.8, 0.8, 0.6)
@@ -312,6 +325,7 @@ class Lens2D:
         if theme:
             facecolor = theme.parameters.get("lens.color", facecolor)
             edgecolor = theme.parameters.get("axes.edgecolor", edgecolor)
+        facecolor = self.face_color(element) or facecolor
 
         if projection == "XZ":
             vertices = be.to_numpy(be.column_stack((z, x)))
@@ -377,7 +391,7 @@ class Lens2D:
             z = be.concatenate([z1, be.flip(z2)])
 
             artists_for_lens = self._plot_single_lens(
-                ax, x, y, z, theme=theme, projection=projection
+                ax, x, y, z, theme=theme, projection=projection, element=k
             )
             if artists_for_lens is None:
                 continue
@@ -432,7 +446,7 @@ class Lens3D(Lens2D):
             return False
         for surf in self.surfaces:
             geometry = surf.surf.geometry
-            if not geometry.is_symmetric:
+            if not surf.supports_revolution:
                 return False
             if (
                 geometry.cs.rx != 0
@@ -466,6 +480,7 @@ class Lens3D(Lens2D):
                 Defaults to None.
 
         """
+        self.artist_surfaces = {}
         if self.is_symmetric:
             sags = self._compute_sag()  # sags are in global coordinates
             self._plot_lenses(renderer, sags, theme=theme)
@@ -473,7 +488,9 @@ class Lens3D(Lens2D):
             self._plot_surfaces(renderer, theme=theme)
             self._plot_surface_edges(renderer, theme=theme)
 
-    def _plot_single_lens(self, renderer, x, y, z, theme=None, *args, **kwargs):
+    def _plot_single_lens(
+        self, renderer, x, y, z, theme=None, *args, element=0, **kwargs
+    ):
         """Plots a single lens by revolving a contour and configuring its
         material. The input coordinates are expected to be in global space.
 
@@ -485,14 +502,33 @@ class Lens3D(Lens2D):
             z (numpy.ndarray): The z-coordinates of the contour points.
             theme (Theme, optional): The theme to use for plotting.
                 Defaults to None.
+            element (int, optional): Position of the glass body being drawn,
+                used to look up its color override. Defaults to 0.
 
         """
         # Points are already global from _compute_sag with apply_transform=True
         actor = revolve_contour(be.to_numpy(x), be.to_numpy(y), be.to_numpy(z))
-        actor = self._configure_material(actor, theme=theme)
+        actor = self._configure_material(
+            actor, theme=theme, color=self.face_color(element)
+        )
         renderer.AddActor(actor)
+        return actor
 
-    def _configure_material(self, actor, theme=None):
+    def _adjacent_body_surfaces(self, surface):
+        """Live boundaries of the lens bodies adjoining this physical face."""
+        index = self.surfaces.index(surface)
+        return tuple(
+            item.surf
+            for item in self.surfaces[
+                max(0, index - 1) : min(len(self.surfaces), index + 2)
+            ]
+        )
+
+    def _surface_element(self, surface: Any) -> int:
+        """Glass body whose color a face takes: the lower-index body it bounds."""
+        return max(self.surfaces.index(surface) - 1, 0)
+
+    def _configure_material(self, actor, theme=None, color=None):
         """Configures the material properties of a given VTK actor.
         This method sets the opacity, color, specular, and specular power
         properties of the provided VTK actor to predefined values.
@@ -502,17 +538,22 @@ class Lens3D(Lens2D):
                 be configured.
             theme (Theme, optional): The theme to use for plotting.
                 Defaults to None.
+            color (tuple, optional): RGB or RGBA color overriding the theme
+                color. Alpha is ignored; opacity is fixed. Defaults to None.
 
         Returns:
             vtkActor: The VTK actor with updated material properties.
 
         """
-        color = (0.9, 0.9, 1.0)
-        if theme:
-            from matplotlib.colors import to_rgb
+        if color is not None:
+            color = color[:3]
+        else:
+            color = (0.9, 0.9, 1.0)
+            if theme:
+                from matplotlib.colors import to_rgb
 
-            color_hex = theme.parameters.get("lens.color", "#E5E5FF")
-            color = to_rgb(color_hex)
+                color_hex = theme.parameters.get("lens.color", "#E5E5FF")
+                color = to_rgb(color_hex)
 
         prop = actor.GetProperty()
         prop.SetOpacity(0.5)
@@ -544,8 +585,13 @@ class Lens3D(Lens2D):
             actor = (
                 surface_3d_obj.get_surface()
             )  # retrieves actor from Surface3D (already transformed)
-            actor = self._configure_material(actor, theme=theme)
+            actor = self._configure_material(
+                actor,
+                theme=theme,
+                color=self.face_color(self._surface_element(surface_3d_obj)),
+            )
             renderer.AddActor(actor)
+            self.artist_surfaces[actor] = self._adjacent_body_surfaces(surface_3d_obj)
 
             # Add annulus if surface extent does not extend to lens edge
             if common_axis and surface_3d_obj.extent < max_extent:
@@ -643,11 +689,18 @@ class Lens3D(Lens2D):
         annulus_actor.SetMapper(mapper)
 
         # Configure material properties
-        annulus_actor = self._configure_material(annulus_actor, theme=theme)
+        annulus_actor = self._configure_material(
+            annulus_actor,
+            theme=theme,
+            color=self.face_color(self._surface_element(surface_3d_obj)),
+        )
         annulus_actor = transform_3d(annulus_actor, surf_props)
         renderer.AddActor(annulus_actor)
+        self.artist_surfaces[annulus_actor] = self._adjacent_body_surfaces(
+            surface_3d_obj
+        )
 
-    def _get_edge_surface(self, circle1, circle2, theme=None):
+    def _get_edge_surface(self, circle1, circle2, theme=None, element=0):
         """Generates a VTK actor representing the surface between two circles.
 
         Args:
@@ -657,6 +710,8 @@ class Lens3D(Lens2D):
                 circle.
             theme (Theme, optional): The theme to use for plotting.
                 Defaults to None.
+            element (int, optional): Position of the glass body the edge
+                belongs to, used to look up its color override. Defaults to 0.
 
         Returns:
             vtk.vtkActor: VTK actor representing the surface between the two
@@ -697,7 +752,9 @@ class Lens3D(Lens2D):
 
         actor = vtk.vtkActor()
         actor.SetMapper(mapper)
-        actor = self._configure_material(actor, theme=theme)
+        actor = self._configure_material(
+            actor, theme=theme, color=self.face_color(element)
+        )
 
         return actor
 
@@ -729,8 +786,12 @@ class Lens3D(Lens2D):
                 for surface in self.surfaces[k : k + 2]
             )
             circle2 = self._align_perimeters(circle1, circle2, rectangular)
-            actor = self._get_edge_surface(circle1, circle2, theme=theme)
+            actor = self._get_edge_surface(circle1, circle2, theme=theme, element=k)
             renderer.AddActor(actor)
+            self.artist_surfaces[actor] = (
+                self.surfaces[k].surf,
+                self.surfaces[k + 1].surf,
+            )
 
     @staticmethod
     def _align_perimeters(first, second, rectangular):

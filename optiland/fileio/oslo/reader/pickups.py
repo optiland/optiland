@@ -89,4 +89,16 @@ def resolve_pickups(surfaces: dict[int, dict[str, Any]]) -> dict[int, dict[str, 
                 data["DT"] = sign * original.get("DT", 1)
             else:
                 raise ValueError(f"OSLO PK {kind} is unsupported")
+        for target, source_value, source_id in data.get("aperture_pickups", []):
+            source = reference_index(int(source_value), index)
+            if source not in resolved or source >= index or source < 0:
+                raise ValueError(
+                    f"OSLO APK at surface {index} requires a preceding source"
+                )
+            apertures = resolved[source].get("special_apertures", {})
+            if source_id not in apertures:
+                raise ValueError(f"OSLO APK source aperture {source_id} is undefined")
+            data.setdefault("special_apertures", {})[target] = deepcopy(
+                apertures[source_id]
+            )
     return resolved

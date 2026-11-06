@@ -65,6 +65,51 @@ class TestParaxialOperand:
     def test_total_track(self, set_test_backend, hubble):
         assert_allclose(operand.ParaxialOperand.total_track(hubble), 6365.20955)
 
+    def test_f2_range(self, set_test_backend, cooke_triplet):
+        assert_allclose(
+            operand.ParaxialOperand.f2_range(cooke_triplet, 1, 2),
+            cooke_triplet.paraxial.f2_range(1, 2),
+        )
+
+    def test_f2_range_full_system_matches_f2(self, set_test_backend, cooke_triplet):
+        last = cooke_triplet.surfaces.num_surfaces - 1
+        assert_allclose(
+            operand.ParaxialOperand.f2_range(cooke_triplet, 1, last),
+            cooke_triplet.paraxial.f2(),
+        )
+
+    def test_f2_range_wavelength(self, set_test_backend, cooke_triplet):
+        blue = operand.ParaxialOperand.f2_range(cooke_triplet, 1, 2, wavelength=0.4861)
+        assert_allclose(blue, cooke_triplet.paraxial.f2_range(1, 2, 0.4861))
+        red = operand.ParaxialOperand.f2_range(cooke_triplet, 1, 2, wavelength=0.6563)
+        assert float(be.to_numpy(blue)) < float(be.to_numpy(red))
+
+    def test_f2_range_registered(self, set_test_backend, cooke_triplet):
+        op = operand.Operand(
+            operand_type="f2_range",
+            target=0.0,
+            input_data={"optic": cooke_triplet, "start": 3, "end": 4},
+        )
+        assert_allclose(op.value, cooke_triplet.paraxial.f2_range(3, 4))
+
+    def test_f2_range_optimization_reaches_target(self, set_test_backend):
+        from optiland.optimization import LeastSquares, OptimizationProblem
+
+        lens = CookeTriplet()
+        target = 1.1 * float(be.to_numpy(lens.paraxial.f2_range(1, 2)))
+
+        problem = OptimizationProblem()
+        problem.add_operand(
+            "f2_range",
+            target=target,
+            weight=1.0,
+            input_data={"optic": lens, "start": 1, "end": 2},
+        )
+        problem.add_variable(lens, "radius", surface_number=1)
+        LeastSquares(problem).optimize(maxiter=50)
+
+        assert_allclose(lens.paraxial.f2_range(1, 2), target, rtol=1e-6)
+
 
 class TestAberrationOperand:
     def test_seidel(self, set_test_backend, hubble):

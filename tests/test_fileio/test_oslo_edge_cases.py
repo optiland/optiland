@@ -19,7 +19,10 @@ from optiland.fileio.oslo.reader.pickups import resolve_pickups
 from optiland.fileio.oslo.writer.encoder import OpticToOsloEncoder
 from optiland.fileio.oslo.writer.formatter import OsloDataFormatter
 from optiland.materials import AbbeMaterial
-from optiland.physical_apertures import BaseAperture, RectangularAperture
+from optiland.physical_apertures import (
+    BaseAperture,
+    UnclippedAperture,
+)
 from optiland.rays import RealRays
 from tests.utils import assert_allclose
 
@@ -31,6 +34,11 @@ from tests.utils import assert_allclose
         ("TELE MAYBE", "TELE expects"),
         ("APCK MAYBE", "APCK expects"),
         ("AP -1", "radius must be nonnegative"),
+        ("APN -1", "APN count"),
+        ("APN 257", "APN count"),
+        ("AX1 A", "aperture identifier and value"),
+        ("AVX1 A 1 2", "aperture identifier and value"),
+        ("ATP A 1.5", "ATP requires an integer"),
         ("AS1", "one coefficient"),
         ("WV1002 .55", "bounded wavelength index"),
         ("WV2 .55 .6", "one value"),
@@ -39,6 +47,7 @@ from tests.utils import assert_allclose
         ("GTO 4", "outside the declared lens"),
         ("END 2", "count differs from LEN"),
         ("PK AP 0 1", "invalid number of arguments"),
+        ("APK A 0", "APK expects"),
     ],
 )
 def test_parser_rejects_invalid_boundaries_with_source(lens_file, command, message):
@@ -118,6 +127,8 @@ def test_unsupported_prescriptions_warn_or_reject(lens_file, command, message):
         ("GLA 1.5 1.6", "index/wavelength counts differ"),
         ("GSP -1", "positive spacing"),
         ("GOR 1", "positive spacing"),
+        ("ATP A 5", "aperture type 5"),
+        ("ATP A 1\nAX1 A 2\nAX2 A 1", "increasing bounds"),
         ("ASP ASR 1\nAS257 .001", "limit 256"),
         ("ASP ASR 1\nAS0 .001", "offset sag"),
         ("ASP ARA 1\nAS0 .001", "offset sag"),
@@ -210,7 +221,14 @@ def test_perfect_lens_warns_and_scales_focal_length(lens_file, set_test_backend)
         load_oslo_file(path, strict=True)
 
 
-@pytest.mark.parametrize("pickup,message", [("PK LN 1 1", "invalid length range")])
+@pytest.mark.parametrize(
+    "pickup,message",
+    [
+        ("PK LN 1 1", "invalid length range"),
+        ("APK A 2 A", "preceding source"),
+        ("APK A 1 MISSING", "source aperture MISSING is undefined"),
+    ],
+)
 def test_invalid_pickup_references(lens_file, pickup, message):
     with pytest.raises(ValueError, match=message):
         load_oslo_file(lens_file(second=pickup), strict=True)
@@ -552,12 +570,48 @@ def test_finite_entrance_beam_radius_is_measured_at_surface_one(
     assert_allclose(optic.paraxial.marginal_ray()[0][1], [radius])
 
 
+@pytest.mark.parametrize(
+    "aperture_type,value", [("EPD", 4), ("imageFNO", 8), ("float_by_stop_size", 3)]
+)
+def test_export_entrance_beam_matches_finite_conjugate_ray(
+    lens_file, tmp_path, set_test_backend, aperture_type, value
+):
+    from optiland.physical_apertures import RadialAperture
+
+    optic = load_oslo_file(lens_file(distance="100", second="AST"), strict=True)
+    optic.surfaces[2].aperture = RadialAperture(value)
+    optic.set_aperture(aperture_type, value)
+    expected = float(optic.paraxial.marginal_ray()[0][1].item())
+    path = tmp_path / "finite-beam.len"
+    save_oslo_file(optic, path)
+    command = next(
+        line for line in path.read_text().splitlines() if line.startswith("EBR ")
+    )
+    assert float(command.split()[1]) == pytest.approx(expected, rel=1e-6)
+    restored = load_oslo_file(path, strict=True)
+    assert_allclose(restored.paraxial.marginal_ray()[0][1], [expected], rtol=1e-6)
+
+
 def test_diverging_fno_uses_a_positive_entrance_pupil(lens_file, set_test_backend):
     optic = load_oslo_file(
         lens_file(aperture="FNO 5", surface="RD -20", second="RD 20"), strict=True
     )
     assert float(optic.paraxial.EPD()) > 0
     assert_allclose(abs(optic.paraxial.marginal_ray()[1][-2]), [0.1])
+
+
+@pytest.mark.parametrize("drawing", [False, True])
+def test_offset_radial_export_preserves_destination(lens_file, tmp_path, drawing):
+    from optiland.physical_apertures import OffsetRadialAperture
+
+    optic = load_oslo_file(lens_file(), strict=True)
+    aperture = OffsetRadialAperture(1, offset_x=2)
+    optic.surfaces[1].aperture = UnclippedAperture(aperture) if drawing else aperture
+    path = tmp_path / "offset-aperture.len"
+    path.write_text("saved design", encoding="utf-8")
+    with pytest.raises(NotImplementedError, match="aperture"):
+        save_oslo_file(optic, path)
+    assert path.read_text() == "saved design"
 
 
 def test_custom_material_cannot_export_as_its_catalog_like_name(lens_file, tmp_path):
@@ -622,6 +676,17 @@ def test_surface_loss_and_scatter_export_preserves_destination(
     with pytest.raises(NotImplementedError, match="coatings or scattering"):
         save_oslo_file(optic, path)
     assert path.read_text() == "saved design"
+
+
+def test_resetting_special_apertures_clears_their_pickups(lens_file, set_test_backend):
+    optic = load_oslo_file(
+        lens_file(
+            surface="APN 1\nAX1 A -1\nAX2 A 1\nAY1 A -1\nAY2 A 1",
+            second="APN 1\nAPK A 1 A\nAPN 0",
+        ),
+        strict=True,
+    )
+    assert optic.surfaces[2].aperture is None
 
 
 def test_telecentric_import_survives_native_serialization(lens_file, set_test_backend):
@@ -761,6 +826,30 @@ def test_indexed_wavelength_edit_preserves_other_defaults(lens_file, slot):
 def test_indexed_wavelength_cannot_restore_removed_slots_implicitly(lens_file):
     with pytest.raises(ValueError, match="undefined wavelength slots"):
         OsloDataParser(lens_file(system="WV .55\nWV3 .7")).parse()
+
+
+@pytest.mark.parametrize("kind", [1, 2])
+def test_special_aperture_rotates_about_its_centroid(lens_file, set_test_backend, kind):
+    optic = load_oslo_file(
+        lens_file(
+            system="UNI 2",
+            surface=f"APN 1\nATP A {kind}\nAX1 A 2\nAX2 A 6\n"
+            "AY1 A 1\nAY2 A 3\nAAN A 90",
+        ),
+        strict=True,
+    )
+    aperture = optic.surfaces[1].aperture
+    # Rotating a 4-by-2 boundary leaves its center (4, 2) fixed, then UNI=2
+    # makes the extent [6, 10] x [0, 8]. The displaced origin must not pass.
+    assert_allclose(aperture.extent, [6, 10, 0, 8])
+    points_x, points_y = be.array([8, 8, 10.1, -4]), be.array([4, 7, 4, 8])
+    expected = [True, True, False, False]
+    assert_allclose(aperture.contains(points_x, points_y), expected)
+    restored = BaseAperture.from_dict(aperture.to_dict())
+    assert_allclose(restored.contains(points_x, points_y), expected)
+    restored.scale(3)
+    assert_allclose(restored.extent, [18, 30, 0, 24])
+    assert_allclose(restored.contains(points_x * 3, points_y * 3), expected)
 
 
 @pytest.mark.parametrize(

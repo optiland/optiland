@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from optiland.optimization.failure import reject_hard_constraints
 from optiland.optimization.optimizer.base import BaseOptimizer
 from scipy.optimize import minimize_scalar
 
@@ -41,6 +42,7 @@ class OrthogonalDescent(BaseOptimizer):
             tol (float): Tolerance for convergence (relative change in cost function).
             plot: If True, update live plots during optimization.
         """
+        reject_hard_constraints(self.problem, type(self).__name__)
 
         live_plotter: LiveOptimizationPlotter | None = None
         if plot:

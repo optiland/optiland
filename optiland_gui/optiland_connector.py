@@ -10,6 +10,7 @@ Author: Manuel Fragata Mendes, 2025
 
 from __future__ import annotations
 
+import pickle
 from contextlib import contextmanager
 
 from PySide6.QtCore import QObject, Signal
@@ -22,6 +23,7 @@ from optiland_gui.services.file_service import (
     SpecialFloatEncoder,  # re-exported for backward compat
     json_inf_nan_hook,  # re-exported for backward compat
 )
+from optiland_gui.services.history_service import HistoryService
 from optiland_gui.services.optimization_service import OptimizationService
 from optiland_gui.services.surface_service import SurfaceService
 from optiland_gui.services.system_service import SystemService
@@ -89,9 +91,11 @@ class OptilandConnector(QObject):
 
         self._optic = Optic("Default System")
         self._undo_redo_manager = UndoRedoManager(self)
+        self.history = HistoryService(self)
 
         # Instantiate services — order does not matter; each receives *self*.
         self._file_service = FileService(self)
+        self.file_operations = self._file_service.operations
         self._surface_service = SurfaceService(self)
         self._system_service = SystemService(self)
         self._analysis_runner = AnalysisRunner(self)
@@ -239,35 +243,9 @@ class OptilandConnector(QObject):
         Args:
             optic: The optic to validate and repair if necessary.
         """
-        if optic.surfaces.num_surfaces < 2:
-            optic.surfaces.clear()
-            optic.surfaces.add(
-                surface_type="standard",
-                radius=float("inf"),
-                thickness=10.0,
-                comment="Object",
-                material="Air",
-            )
-            optic.surfaces.add(
-                surface_type="standard",
-                radius=float("inf"),
-                thickness=0.0,
-                comment="Image",
-                material="Air",
-            )
+        from optiland_gui.services.model_initialization import ensure_valid_structure
 
-        if optic.wavelengths.num_wavelengths == 0:
-            optic.wavelengths.add(
-                self.DEFAULT_WAVELENGTH_UM, is_primary=True, unit="um"
-            )
-        elif optic.wavelengths.primary_index is None:
-            optic.wavelengths.wavelengths[0].is_primary = True
-
-        if not hasattr(optic, "aperture") or optic.aperture is None:
-            try:
-                optic.set_aperture("EPD", 10.0)
-            except Exception as e:
-                print(f"Warning: Failed to set aperture for loaded system: {e}")
+        ensure_valid_structure(optic, self.DEFAULT_WAVELENGTH_UM)
 
     def _initialize_optic_structure(
         self,
@@ -288,22 +266,14 @@ class OptilandConnector(QObject):
         optic_instance.updater.update()
 
     def _capture_optic_state(self) -> dict:
-        """Serialise the current optic state for undo/redo.
+        """Capture an owned prescription without normalization or optical solves.
 
         Returns:
             A dict representation of the current optic.
         """
-        if self._optic.wavelengths.num_wavelengths == 0:
-            self._optic.wavelengths.add(
-                self.DEFAULT_WAVELENGTH_UM, is_primary=True, unit="um"
-            )
-        elif (
-            self._optic.wavelengths.primary_index is None
-            and self._optic.wavelengths.num_wavelengths > 0
-        ):
-            self._optic.wavelengths.wavelengths[0].is_primary = True
-        self._optic.updater.update()
-        return self._optic.to_dict()
+        # The undo state must not alias mutable arrays in the current optic.
+        # This transports our own serializer output, never an external pickle.
+        return pickle.loads(pickle.dumps(self._optic.to_dict(), protocol=5))
 
     def _restore_optic_state(self, state_data: dict) -> None:
         """Restore the optic from a previously captured state dict.
@@ -311,8 +281,9 @@ class OptilandConnector(QObject):
         Args:
             state_data: A dict returned by :meth:`_capture_optic_state`.
         """
-        self._optic = Optic.from_dict(state_data)
-        self._initialize_optic_structure(self._optic, is_specific_new_system=False)
+        candidate = Optic.from_dict(state_data)
+        self._initialize_optic_structure(candidate, is_specific_new_system=False)
+        self._optic = candidate
         self.notify_change("replacement")
 
     # ------------------------------------------------------------------
@@ -321,17 +292,32 @@ class OptilandConnector(QObject):
 
     def undo(self) -> None:
         """Revert to the previous design state."""
-        if self._undo_redo_manager.can_undo():
-            state = self._undo_redo_manager.undo(self._capture_optic_state())
-            if state:
-                self._restore_optic_state(state)
+        self._apply_history("undo")
 
     def redo(self) -> None:
         """Re-apply the next design state."""
-        if self._undo_redo_manager.can_redo():
-            state = self._undo_redo_manager.redo(self._capture_optic_state())
-            if state:
-                self._restore_optic_state(state)
+        self._apply_history("redo")
+
+    def _apply_history(self, direction):
+        state = self._undo_redo_manager.peek(direction)
+        if state is None:
+            return
+        current = self._capture_optic_state()
+        candidate = Optic.from_dict(state)
+        self._initialize_optic_structure(candidate, is_specific_new_system=False)
+        self._undo_redo_manager.move(direction, current, notify=False)
+        self._optic = candidate
+        self.notify_change("replacement")
+        self.set_modified(True)
+        self._undo_redo_manager.emit_availability()
+
+    def request_undo(self):
+        """Prepare Undo asynchronously for an interactive GUI action."""
+        return self.history.submit("undo")
+
+    def request_redo(self):
+        """Prepare Redo asynchronously for an interactive GUI action."""
+        return self.history.submit("redo")
 
     # ------------------------------------------------------------------
     # FileService delegation
@@ -451,6 +437,10 @@ class OptilandConnector(QObject):
             A string value or ``None``.
         """
         return self._surface_service.get_surface_data(row, col_idx)
+
+    def get_surface_display_rows(self, rows=None, columns=None):
+        """Capture display cells with one shared positions calculation per refresh."""
+        return self._surface_service.get_display_rows(rows, columns)
 
     def set_surface_data(self, row: int, col_idx: int, value_str: str) -> None:
         """Write a value to a specific LDE cell.

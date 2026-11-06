@@ -22,13 +22,17 @@ class PlaneGeometry(AnalyticGeometry):
     """
 
     def ray_intersect(
-        self, origins: np.ndarray, directions: np.ndarray
+        self,
+        origins: np.ndarray,
+        directions: np.ndarray,
+        eps: float | np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Intersect rays with the infinite plane z=0.
 
         Args:
             origins: Ray origins in local frame, shape (N, 3).
             directions: Ray directions in local frame, shape (N, 3).
+            eps: See :meth:`ComponentGeometry.ray_intersect`.
 
         Returns:
             (t, normals, hit_mask, n_geom). n_geom is the fixed local +z
@@ -42,7 +46,9 @@ class PlaneGeometry(AnalyticGeometry):
         valid = be.abs(dz) > 1e-12
         safe_dz = be.where(valid, dz, be.ones_like(dz))
         t = be.where(valid, -oz / safe_dz, be.ones_like(oz) * be.inf)
-        hit_mask = valid & (t > 1e-9)
+        if eps is None:
+            eps = 1e-9
+        hit_mask = valid & (t > eps)
         t = be.where(hit_mask, t, be.ones_like(t) * be.inf)
 
         # n_geom: fixed +z, independent of ray direction.
@@ -105,13 +111,17 @@ class FinitePlaneGeometry(AnalyticGeometry):
         )
 
     def ray_intersect(
-        self, origins: np.ndarray, directions: np.ndarray
+        self,
+        origins: np.ndarray,
+        directions: np.ndarray,
+        eps: float | np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Intersect rays with the finite plane.
 
         Args:
             origins: Ray origins in local frame, shape (N, 3).
             directions: Ray directions in local frame, shape (N, 3).
+            eps: See :meth:`ComponentGeometry.ray_intersect`.
 
         Returns:
             (t, normals, hit_mask, n_geom). n_geom is the fixed local +z
@@ -126,7 +136,9 @@ class FinitePlaneGeometry(AnalyticGeometry):
         t = be.where(
             plane_valid, -oz / be.where(plane_valid, dz, be.ones_like(dz)), inf_arr
         )
-        t = be.where(plane_valid & (t > 1e-9), t, inf_arr)
+        if eps is None:
+            eps = 1e-9
+        t = be.where(plane_valid & (t > eps), t, inf_arr)
 
         # Hit position in local frame
         safe_t = be.where(be.isfinite(t), t, be.zeros_like(t))

@@ -124,7 +124,7 @@ def test_units_scale_prescription_aperture_and_object_height(
     optic = load_oslo_file(path)
     assert_allclose(optic.surfaces[1].geometry.radius, 20 * 25.4)
     assert_allclose(optic.surfaces[1].thickness, 2 * 25.4)
-    assert optic.surfaces[1].aperture is None
+    assert_allclose(optic.surfaces[1].aperture.extent[1], 3 * 25.4)
     assert_allclose(optic.aperture.value, 4 * 25.4)
     assert_allclose(optic.fields.y_fields[-1], 25.4)
     assert_allclose(optic.wavelengths.primary_wavelength.value, 0.58756)
@@ -233,6 +233,76 @@ def test_single_direct_index_and_unknown_glass_strict(tmp_path, set_test_backend
         load_oslo_file(simple_lens(tmp_path, surface="GLA MISSING_GLASS"), strict=True)
 
 
+@pytest.mark.parametrize(
+    "shape,points,expected",
+    [
+        (1, [(1, 0), (0, 0), (1, 1.1), (2.1, 0)], [True, True, False, False]),
+        (2, [(1.9, 0.9), (2.1, 0), (0, 1.1)], [True, False, False]),
+    ],
+)
+def test_special_aperture_shapes(tmp_path, set_test_backend, shape, points, expected):
+    commands = f"APN 1\nATP A {shape}\nAAC A 4\nAX1 A 0\nAX2 A 2\nAY1 A -1\nAY2 A 1"
+    optic = load_oslo_file(simple_lens(tmp_path, surface=commands), strict=True)
+    aperture = optic.surfaces[1].aperture
+    assert_allclose(
+        aperture.contains(
+            be.array([p[0] for p in points]), be.array([p[1] for p in points])
+        ),
+        expected,
+    )
+
+
+def test_obstruction_groups_and_native_serialization(tmp_path, set_test_backend):
+    from optiland.physical_apertures import BaseAperture
+
+    commands = (
+        "AP CHK 3\nAPN 2\nATP A 1\nAAC A 2\nAX1 A -1\nAX2 A 1\nAY1 A -1\nAY2 A 1\n"
+        "ATP B 2\nAAC B 4\nAGN B 1\nAX1 B -.1\nAX2 B .1\nAY1 B -.1\nAY2 B .1"
+    )
+    aperture = (
+        load_oslo_file(simple_lens(tmp_path, surface=commands), strict=True)
+        .surfaces[1]
+        .aperture
+    )
+    for ap in [aperture, BaseAperture.from_dict(aperture.to_dict())]:
+        assert_allclose(
+            ap.contains(be.array([0, 0.5, 2, 4]), be.array([0, 0, 0, 0])),
+            [True, False, True, False],
+        )
+
+
+def test_rotated_scaled_rectangle_and_triangle(tmp_path, set_test_backend):
+    commands = "APN 1\nATP A 2\nAAC A 4\nAX1 A -2\nAX2 A 2\nAY1 A -1\nAY2 A 1\nAAN A 90"
+    ap = (
+        load_oslo_file(
+            simple_lens(tmp_path, system="UNI 10", surface=commands), strict=True
+        )
+        .surfaces[1]
+        .aperture
+    )
+    assert_allclose(ap.contains(be.array([0, 15]), be.array([15, 0])), [True, False])
+    commands = (
+        "APN 1\nATP A 3\nAAC A 4\nAVX1 A 0\nAVY1 A 0\n"
+        "AVX2 A 2\nAVY2 A 0\nAVX3 A 0\nAVY3 A 2"
+    )
+    ap = (
+        load_oslo_file(simple_lens(tmp_path, surface=commands), strict=True)
+        .surfaces[1]
+        .aperture
+    )
+    assert_allclose(
+        ap.contains(be.array([0.5, 1.5]), be.array([0.5, 1.5])), [True, False]
+    )
+
+
+def test_checked_aperture_and_hole_diagnostic(tmp_path):
+    path = simple_lens(tmp_path, surface="AP CHK 1.5")
+    assert OsloDataParser(path).parse().surfaces[1]["AP"] == 1.5
+    path = simple_lens(tmp_path, surface="APN 1\nATP A 1\nAAC A 1")
+    with pytest.raises(ValueError, match="hole"):
+        load_oslo_file(path, strict=True)
+
+
 @pytest.mark.parametrize("order", [1, -1])
 def test_oslo_tilt_sign_order_and_decenter(tmp_path, set_test_backend, order):
     import numpy as np
@@ -315,8 +385,26 @@ def test_multiple_pickups_relative_indices_curvature_and_length(
     assert_allclose(optic.surfaces[2].geometry.coefficients[1], -0.001)
     assert_allclose(optic.surfaces[2].thickness, 3)
     assert_allclose(optic.surfaces[3].thickness, 5)
-    assert optic.surfaces[2].aperture is None
+    assert_allclose(optic.surfaces[2].aperture.extent[1], 3)
     assert_allclose(optic.surfaces[2].material_post.n(0.55), 1.5)
+
+
+def test_special_aperture_pickup_and_coordinate_inverse(tmp_path, set_test_backend):
+    path = write_lens(
+        tmp_path,
+        'LEN NEW "pickup pose" 1 3\nEBR 1\nANG 0\nTH 1e20\nNXT\n'
+        "AIR\nDCY 2\nTLA 10\nTLB 20\nTLC 30\nAPN 1\n"
+        "ATP A 2\nAAC A 4\nAX1 A -1\nAX2 A 1\nAY1 A -2\nAY2 A 2\n"
+        "NXT\nAIR\nPK TDM -1\nAPN 1\nAPK A -1 A\nTH 5\nNXT\nAIR\nEND 3\n",
+    )
+    optic = load_oslo_file(path, strict=True)
+    position, rotation = optic.surfaces[2].geometry.cs.get_effective_transform()
+    assert_allclose(position, [0, 0, 0], atol=1e-12)
+    assert_allclose(rotation, be.eye(3), atol=1e-12)
+    assert_allclose(
+        optic.surfaces[2].aperture.contains(be.array([0, 2]), be.array([1.5, 0])),
+        [True, False],
+    )
 
 
 @pytest.mark.parametrize("pickup", ["PK TH 2", "PK TH -5", "PK UNKNOWN -1"])
@@ -453,6 +541,84 @@ def test_perfect_lens_reports_nonparaxial_approximation(tmp_path):
         load_oslo_file(simple_lens(tmp_path, surface="PFL 20"), strict=True)
 
 
+def test_metadata_and_deleting_surface_data(tmp_path, set_test_backend):
+    commands = (
+        'NOT "lens note"\nCC -1\nAD .001\nATD\nCVX .1\nCXD\n'
+        "DCY 2\nTLA 10\nTDD\nGC 0\nGCD\nRCO\nRCD\nBEN\nBED\n"
+        "APN 1\nAPD\nPY 2\nTSD\nPU .1\nCSD\nBDI 2 1\nVX 1 0 0 0\n"
+        'PF 1 0 1 2 3\nLMO EGR\nLMN "element"\nLME'
+    )
+    optic = load_oslo_file(simple_lens(tmp_path, surface=commands), strict=True)
+    assert_allclose(optic.surfaces[1].geometry.radius, 20)
+    assert_allclose(
+        optic.surfaces[1].geometry.cs.get_effective_transform()[0], [0, 0, 0]
+    )
+    assert_allclose(optic.surfaces[2].geometry.cs.z, 2)
+    assert_allclose(
+        optic.surfaces[1].geometry.sag(be.array([0]), be.array([1])), 20 - 399**0.5
+    )
+
+
+@pytest.mark.parametrize(
+    "aperture,setting,intensity",
+    [
+        ("AP 1", "", 1),
+        ("AP CHK 1", "", 0),
+        ("AP CHK 1", "APCK OFF", 1),
+        ("AP UNC 1", "APCK ON", 1),
+    ],
+)
+def test_aperture_checking_distinguishes_drawing_bounds(
+    tmp_path, set_test_backend, aperture, setting, intensity
+):
+    from optiland.rays import RealRays
+
+    optic = load_oslo_file(
+        simple_lens(tmp_path, system=setting, surface=aperture), strict=True
+    )
+    rays = RealRays(
+        be.array([2.0]),
+        be.array([0.0]),
+        be.array([-1.0]),
+        be.array([0.0]),
+        be.array([0.0]),
+        be.array([1.0]),
+        1,
+        0.55,
+    )
+    optic.surfaces[1].trace(rays)
+    assert_allclose(rays.i, [intensity])
+    assert_allclose(optic.surfaces[1].aperture.extent, [-1, 1, -1, 1])
+
+
+def test_legacy_special_apertures_omit_zero_bounds(tmp_path, set_test_backend):
+    optic = load_oslo_file(
+        simple_lens(
+            tmp_path,
+            surface="APN 1\nATP A 2\nAAC A 4\nAX1 A -.2\nAY1 A -1.5\nAY2 A 1.5",
+        ),
+        strict=True,
+    )
+    assert_allclose(
+        optic.surfaces[1].aperture.contains(be.array([-0.1, 0.1]), be.array([0, 0])),
+        [True, False],
+    )
+
+
+@pytest.mark.parametrize("checked", [False, True])
+def test_roundtrip_preserves_radial_clipping_mode(tmp_path, set_test_backend, checked):
+    from optiland.physical_apertures import UnclippedAperture
+
+    optic = load_oslo_file(
+        simple_lens(tmp_path, surface="AP CHK 1" if checked else "AP 1"), strict=True
+    )
+    target = tmp_path / "aperture.len"
+    save_oslo_file(optic, target)
+    restored = load_oslo_file(target, strict=True)
+    assert isinstance(restored.surfaces[1].aperture, UnclippedAperture) is not checked
+    assert_allclose(restored.surfaces[1].aperture.extent, [-1, 1, -1, 1])
+
+
 def test_solved_thickness_feeds_pickups_and_export(tmp_path, set_test_backend):
     path = simple_lens(tmp_path, surface="PY 1")
     path.write_text(path.read_text().replace("TH 20", "TH 20\nPK TH -1 1"))
@@ -542,7 +708,14 @@ def test_tilt_pickup_retains_pivot(tmp_path, set_test_backend):
     assert_allclose(rotation, be.eye(3), atol=1e-12)
 
 
-@pytest.mark.parametrize("commands", ["GSP .002\nGOR 1", "DCY 2"])
+@pytest.mark.parametrize(
+    "commands",
+    [
+        "GSP .002\nGOR 1",
+        "DCY 2",
+        "APN 1\nATP A 2\nAX1 A -1\nAX2 A 1\nAY1 A -2\nAY2 A 2",
+    ],
+)
 def test_writer_rejects_unsupported_data_before_overwriting(tmp_path, commands):
     optic = load_oslo_file(simple_lens(tmp_path, surface=commands), strict=True)
     output = tmp_path / "protected.len"

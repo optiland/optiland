@@ -29,6 +29,8 @@ class ZemaxToOpticConverter(BaseOpticReader):
     Args:
         zemax_data: A plain dict (legacy) or ZemaxDataModel containing the
             Zemax optical system data.
+        agf_dirs: Folders to search for the file's GCAT catalogs as AGF
+            files when reading; see ``optiland.materials.agf.agf_search_dirs``.
 
     Attributes:
         data: The Zemax data as a plain dict.
@@ -37,7 +39,8 @@ class ZemaxToOpticConverter(BaseOpticReader):
             coordinate-break surfaces.
     """
 
-    def __init__(self, zemax_data: dict[str, Any] | ZemaxDataModel):
+    def __init__(self, zemax_data: dict[str, Any] | ZemaxDataModel, agf_dirs=None):
+        self.agf_dirs = agf_dirs
         if isinstance(zemax_data, ZemaxDataModel):
             self.data = zemax_data.to_dict()
         else:
@@ -61,7 +64,7 @@ class ZemaxToOpticConverter(BaseOpticReader):
         src_handler = ZemaxFileSourceHandler(source)
         filename = src_handler.get_local_file()
         try:
-            data_model = ZemaxDataParser(filename).parse()
+            data_model = ZemaxDataParser(filename, self.agf_dirs).parse()
             self.data = data_model.to_dict()
             self.current_cs = CoordinateSystem()
             return self.convert()
@@ -282,10 +285,12 @@ class ZemaxToOpticConverter(BaseOpticReader):
         aperture_data = self.data["aperture"]
 
         if aperture_data.get("floating_stop"):
+            # DIAM holds the stop's semi-diameter; float_by_stop_size takes
+            # the full diameter.
             stop_diameter = None
             for surf_data in self.data["surfaces"].values():
-                if surf_data.get("is_stop") and "diameter" in surf_data:
-                    stop_diameter = surf_data["diameter"]
+                if surf_data.get("is_stop") and "semi_diameter" in surf_data:
+                    stop_diameter = 2.0 * surf_data["semi_diameter"]
                     break
             if stop_diameter is None:
                 raise ValueError(

@@ -469,8 +469,12 @@ class AbstractBackend(ABC):
         """Calculate the n-th discrete difference along the given axis."""
 
     @abstractmethod
-    def all(self, x: Any) -> bool:
-        """Return True if all elements of x are True."""
+    def all(self, x: Any, axis: int | tuple[int, ...] | None = None) -> Any:
+        """Reduce truth values globally or along axes.
+
+        With axis=None, return a Python bool. With explicit axes, return a
+        boolean backend array/scalar retaining the unreduced dimensions.
+        """
 
     @abstractmethod
     def any(self, x: Any) -> bool:

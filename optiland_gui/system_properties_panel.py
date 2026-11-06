@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -472,15 +473,15 @@ class WavelengthsEditor(PropertyEditorBase):
 
     def _create_control_buttons(self, parent_layout):
         """Creates the control buttons for managing wavelengths."""
-        button_layout = QHBoxLayout()
+        button_layout = QGridLayout()
         self.btnAddWavelength = QPushButton("Add Wavelength")
         self.btnRemoveWavelength = QPushButton("Remove Wavelength")
         self.btnSetPrimary = QPushButton("Set Selected as Primary")
         self.btnApplyWavelengths = QPushButton("Apply Wavelength Changes")
-        button_layout.addWidget(self.btnAddWavelength)
-        button_layout.addWidget(self.btnRemoveWavelength)
-        button_layout.addWidget(self.btnSetPrimary)
-        button_layout.addWidget(self.btnApplyWavelengths)
+        button_layout.addWidget(self.btnAddWavelength, 0, 0)
+        button_layout.addWidget(self.btnRemoveWavelength, 0, 1)
+        button_layout.addWidget(self.btnSetPrimary, 1, 0)
+        button_layout.addWidget(self.btnApplyWavelengths, 1, 1)
         parent_layout.addLayout(button_layout)
 
     @Slot()

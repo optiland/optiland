@@ -114,6 +114,36 @@ class TestCookeTripetSpotDiagram:
         assert_allclose(airy_radius_y[1], 0.003430811760325915)
         assert_allclose(airy_radius_y[2], 0.0035453238661865244)
 
+    @pytest.mark.parametrize("n", [1.0, 1.5])
+    def test_airy_disc_image_space_index(self, set_test_backend, n):
+        """Airy radius is 0.61 * lambda / NA with NA = n sin(u) in immersion."""
+        from optiland.materials import IdealMaterial
+
+        lens = Optic()
+        medium = IdealMaterial(n)
+        lens.surfaces.add(index=0, thickness=np.inf, material=medium)
+        lens.surfaces.add(
+            index=1,
+            radius=-50,
+            conic=-1,
+            thickness=-25,
+            material="mirror",
+            is_stop=True,
+        )
+        lens.surfaces.add(index=2, material=medium)
+        lens.set_aperture("EPD", 12)
+        lens.fields.set_type("angle")
+        lens.fields.add(y=0)
+        lens.wavelengths.add(0.55, is_primary=True)
+
+        spot = analysis.SpotDiagram(lens)
+        airy_radius_x, airy_radius_y = spot.airy_disc_x_y(wavelength=0.55)
+
+        sin_u = 6 / np.hypot(6, 25 - 6**2 / 100)  # marginal ray, paraboloid sag
+        expected = 0.61 * 0.55e-3 / (n * sin_u)
+        assert_allclose(airy_radius_x[0], expected)
+        assert_allclose(airy_radius_y[0], expected)
+
     def test_airy_disc_in_view_spot_diagram(self, set_test_backend, cooke_triplet):
         spot = analysis.SpotDiagram(cooke_triplet)
         fig, axes = spot.view(add_airy_disk=True)

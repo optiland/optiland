@@ -195,7 +195,8 @@ class CodeVToOpticConverter(BaseOpticReader):
 
         coefficients = surf.get("coefficients")
         if coefficients:
-            params["coefficients"] = coefficients
+            # CODE V letter A is r**4; Optiland's coefficients[0] is the r**2 term.
+            params["coefficients"] = [0.0, *coefficients]
 
         if surf.get("aperture") is not None:
             params["aperture"] = surf["aperture"]

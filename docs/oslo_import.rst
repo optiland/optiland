@@ -97,9 +97,19 @@ UTF-8 (including BOM) and legacy Windows-1252 text are accepted.
        ``material_overrides`` bind names to verified native material definitions;
        No global material registry is changed.
    * - ``AP``, ``APF``, ``AP CHK/UNC``, ``APCK``, ``AST``
-     - CHK enables circular clipping; unchecked drawing bounds are omitted. APCK OFF
+     - Ordinary AP retains drawing bounds; CHK enables clipping. APCK OFF
        disables clipping. Default import uses checked/special apertures for
        clipping, matching OSLO spot-diagram behavior. The default stop is surface 1.
+   * - ``APN``, ``ATP``, ``AAC``, ``AGN``, ``AAN``, ``AX1/2``, ``AY1/2``,
+       ``AVX1..4``, ``AVY1..4``, ``APK``
+     - Ellipses, rectangles, triangles, quadrangles, centroid-based rotation,
+       obstructions and unions of intersecting aperture groups. Omitted legacy
+       coordinates are zero. Transmitting/obstructing actions are supported.
+       Undeviated holes (AAC 1) are supported on plain air-to-air planes without
+       phase or polarization elements: their outline is retained without clipping.
+       Other holes are diagnosed. APK copies a preceding special aperture.
+       Polygon boundaries must be nondegenerate; quadrangles must have strictly
+       convex vertices in clockwise or counterclockwise order.
    * - ``DCX/Y/Z``, ``TLA/B/C``, ``DT``, ``TOX/Y/Z``, ``GC``, ``RCO``, ``BEN``
      - OSLO intrinsic Euler rotations, signed X/Y tilts, translation order,
        pivots, preceding global references and coordinate returns. BEN supports

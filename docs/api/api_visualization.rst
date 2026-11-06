@@ -13,6 +13,9 @@ of the full system, including rays, is orchestrated by the `optiland.visualizati
    :caption: visualization Modules
 
    visualization.analysis.surface_sag
+   visualization.coloring.components
+   visualization.coloring.rays
+   visualization.coloring.scale
    visualization.component_renderer
    visualization.info.lens_info_viewer
    visualization.info.material_formatter

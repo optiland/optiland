@@ -81,7 +81,9 @@ Create a simple biconvex singlet in 8 lines:
 4. Trace Rays
 -------------
 
-Trace a bundle of rays and inspect the image-plane coordinates:
+Trace a bundle of rays and inspect the image-plane coordinates. For the ``hexapolar``
+distribution, ``num_rays`` is the number of rings N, so 1 + 3N(N+1) rays are traced
+(12481 for N = 64):
 
 .. code-block:: python
 

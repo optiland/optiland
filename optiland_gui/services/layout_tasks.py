@@ -11,6 +11,7 @@ import numpy as np
 
 import optiland.backend as be
 from optiland_gui.services.job_records import check_cancelled
+from optiland_gui.services.layout_rays import trace_layout_rays
 
 
 def _surface_indices(component, indices):
@@ -27,7 +28,6 @@ def prepare_2d(snapshot, parameters, progress, cancelled):
     from matplotlib.text import Annotation
 
     from optiland.visualization.system.lens import Lens2D
-    from optiland.visualization.system.ray_bundle import RayBundle
     from optiland.visualization.system.rays import Rays2D
     from optiland.visualization.system.surface import Surface2D
     from optiland.visualization.system.system import OpticalSystem
@@ -40,18 +40,27 @@ def prepare_2d(snapshot, parameters, progress, cancelled):
     axes = figure.add_subplot()
     rays = Rays2D(optic)
     progress("Tracing layout rays")
-    ray_artists = rays.plot(
-        axes,
-        fields="all",
-        wavelengths="primary",
-        num_rays=parameters["num_rays"],
-        distribution=parameters["distribution"],
+    paths = trace_layout_rays(
+        rays, parameters["num_rays"], parameters["distribution"], progress, cancelled
     )
     check_cancelled(cancelled)
     progress("Preparing optical outlines")
     system = OpticalSystem(optic, rays, projection="2d")
-    artists = {**ray_artists, **system.plot(axes)}
-    primitives = []
+    artists = system.plot(axes)
+    primitives = [
+        {
+            "kind": "line",
+            "xy": path["xyz"][:, [2, 1]],
+            "role": "ray",
+            "surfaces": (),
+            "chief": path["chief"],
+            "color_index": path["color_index"],
+            "linewidth": 1.0,
+            "linestyle": "-",
+            "label": "Chief ray" if path["chief"] else "_nolegend_",
+        }
+        for path in paths
+    ]
     boundaries = {}
     references = {}
     surface_views = {}
@@ -62,7 +71,7 @@ def prepare_2d(snapshot, parameters, progress, cancelled):
             surface_views[id(component.surf)] = component
     for line in axes.lines:
         component = artists.get(line)
-        role = "ray" if isinstance(component, RayBundle) else "surface"
+        role = "surface"
         if id(component) in indices:
             role = "aperture"
         primitives.append(
@@ -71,9 +80,6 @@ def prepare_2d(snapshot, parameters, progress, cancelled):
                 "xy": line.get_xydata().copy(),
                 "role": role,
                 "surfaces": _surface_indices(component, indices),
-                "color_index": int(component.bundle_id.rsplit("_", 1)[-1])
-                if role == "ray"
-                else 0,
                 "linewidth": line.get_linewidth(),
                 "linestyle": line.get_linestyle(),
                 "label": line.get_label(),
@@ -155,8 +161,11 @@ def prepare_3d(snapshot, parameters, progress, cancelled):
     """Return VTK polydata arrays without any native rendering context."""
     from vtk.util.numpy_support import vtk_to_numpy
 
+    from optiland.visualization.system.lens import Lens3D
     from optiland.visualization.system.rays import Rays3D
+    from optiland.visualization.system.surface import Surface3D
     from optiland.visualization.system.system import OpticalSystem
+    from optiland_gui.services.planar_layout_mesh import compact_planar_face
 
     progress("Restoring optical snapshot")
     optic = snapshot.restore()
@@ -164,21 +173,66 @@ def prepare_3d(snapshot, parameters, progress, cancelled):
     rays = Rays3D(optic)
     collector = _ActorCollector()
     progress("Tracing 3D rays")
-    rays.plot(
-        collector, fields="all", wavelengths="primary", num_rays=24, distribution="ring"
-    )
+    # Keep the existing 24 rim rays and include the chief with ordinary VTK
+    # ray styling and depth. There is no foreground/overlay actor.
+    paths = trace_layout_rays(rays, 25, "ring", progress, cancelled)
+    for path in paths:
+        rays._plot_single_line(
+            collector, *path["xyz"].T, path["color_index"], path["field"]
+        )
     groups = [(actor, "ray", ()) for actor in collector.actors]
     system = OpticalSystem(optic, rays, projection="3d")
     system._identify_components()
+    surface_views = {}
+    surface_faces = {}
     for index, component in enumerate(system.components):
         progress("Preparing 3D components", index, len(system.components))
         collector.actors = []
-        component.plot(collector)
-        groups.extend(
-            (actor, "lens", _surface_indices(component, indices))
-            for actor in collector.actors
+        if isinstance(component, Surface3D):
+            face = compact_planar_face(component) or component.get_surface()
+            collector.AddActor(face)
+            surface_faces[indices[id(component.surf)]] = face
+        else:
+            component.plot(collector)
+        component_surfaces = _surface_indices(component, indices)
+        body = isinstance(component, Lens3D)
+        for actor in collector.actors:
+            owned = getattr(component, "artist_surfaces", {}).get(actor)
+            surfaces = (
+                tuple(indices[id(surface)] for surface in owned)
+                if owned
+                else component_surfaces
+            )
+            groups.append((actor, "lens" if body else "surface", surfaces))
+            if body:
+                groups.append((_highlight_edges(actor), "body_edge", surfaces))
+        if body:
+            for surface in component.surfaces:
+                surface_views[indices[id(surface.surf)]] = surface
+        elif isinstance(component, Surface3D):
+            surface_views[indices[id(component.surf)]] = component
+
+    # Face and boundary overlays are prepared once beside the scene. Selection
+    # changes only visibility/material properties; no GUI-side sag or mesh work.
+    for index, surface in enumerate(optic.surfaces):
+        if getattr(surface, "is_infinite", False):
+            continue
+        progress("Preparing surface outlines", index, len(optic.surfaces))
+        view = surface_views.get(index)
+        if view is None:
+            extent = float(rays.r_extent[index])
+            if not np.isfinite(extent) or extent <= 0:
+                extent = 0.1
+            view = Surface3D(surface, extent)
+        face = surface_faces.get(index)
+        if face is None:
+            face = compact_planar_face(view) or view.get_surface()
+        groups.append((face, "face_highlight", (index,)))
+        groups.append(
+            (_highlight_edges(face, boundary_only=True), "surface_edge", (index,))
         )
     meshes = []
+    geometry_cache = {}
     for index, (actor, role, surfaces) in enumerate(groups):
         progress("Preparing display arrays", index, len(groups))
         mapper = actor.GetMapper()
@@ -186,18 +240,27 @@ def prepare_3d(snapshot, parameters, progress, cancelled):
         data = mapper.GetInput()
         if data is None or data.GetPoints() is None:
             continue
-        cells = {}
-        for name, source in (
-            ("polys", data.GetPolys()),
-            ("lines", data.GetLines()),
-            ("verts", data.GetVerts()),
-            ("strips", data.GetStrips()),
-        ):
-            if source.GetNumberOfCells():
-                cells[name] = (
-                    vtk_to_numpy(source.GetOffsetsArray()).copy(),
-                    vtk_to_numpy(source.GetConnectivityArray()).copy(),
-                )
+        geometry_key = data.GetAddressAsString("")
+        if geometry_key not in geometry_cache:
+            cells = {}
+            for name, source in (
+                ("polys", data.GetPolys()),
+                ("lines", data.GetLines()),
+                ("verts", data.GetVerts()),
+                ("strips", data.GetStrips()),
+            ):
+                if source.GetNumberOfCells():
+                    cells[name] = (
+                        vtk_to_numpy(source.GetOffsetsArray()).copy(),
+                        vtk_to_numpy(source.GetConnectivityArray()).copy(),
+                    )
+            geometry_cache[geometry_key] = {
+                "points": vtk_to_numpy(data.GetPoints().GetData()).copy(),
+                "cells": cells,
+                "normals": vtk_to_numpy(data.GetPointData().GetNormals()).copy()
+                if data.GetPointData().GetNormals() is not None
+                else None,
+            }
         matrix = actor.GetMatrix()
         prop = actor.GetProperty()
         color = tuple(prop.GetColor())
@@ -207,8 +270,7 @@ def prepare_3d(snapshot, parameters, progress, cancelled):
         )
         meshes.append(
             {
-                "points": vtk_to_numpy(data.GetPoints().GetData()).copy(),
-                "cells": cells,
+                **geometry_cache[geometry_key],
                 "matrix": np.array(
                     [[matrix.GetElement(i, j) for j in range(4)] for i in range(4)]
                 ),
@@ -222,13 +284,34 @@ def prepare_3d(snapshot, parameters, progress, cancelled):
                 "linewidth": prop.GetLineWidth(),
                 "role": role,
                 "surfaces": surfaces,
-                "normals": vtk_to_numpy(data.GetPointData().GetNormals()).copy()
-                if data.GetPointData().GetNormals() is not None
-                else None,
             }
         )
     check_cancelled(cancelled)
     return {"name": optic.name, "meshes": _batch_ray_meshes(meshes)}
+
+
+def _highlight_edges(actor, *, boundary_only=False):
+    """Extract retained outline geometry in the worker, preserving world pose."""
+    import vtk
+
+    actor.GetMapper().Update()
+    edges = vtk.vtkFeatureEdges()
+    edges.SetInputData(actor.GetMapper().GetInput())
+    edges.BoundaryEdgesOn()
+    edges.NonManifoldEdgesOff()
+    edges.ManifoldEdgesOff()
+    edges.SetFeatureEdges(not boundary_only)
+    edges.SetFeatureAngle(35)
+    edges.ColoringOff()
+    edges.Update()
+    mapper = vtk.vtkPolyDataMapper()
+    mapper.SetInputData(edges.GetOutput())
+    outline = vtk.vtkActor()
+    outline.SetMapper(mapper)
+    outline.SetUserMatrix(actor.GetMatrix())
+    outline.GetProperty().SetAmbient(1)
+    outline.GetProperty().SetDiffuse(0)
+    return outline
 
 
 def _batch_ray_meshes(meshes):

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 import optiland.backend as be
+from optiland.nonsequential import _tol
 from optiland.nonsequential._utils import as_param
 
 if TYPE_CHECKING:
@@ -108,15 +109,24 @@ class BaseComponent(ABC):
         positions_l = (positions_g - t_be) @ R_be
         directions_l = directions_g @ R_be
 
+        # Self-intersection accept threshold, one per ray: k ulps of that
+        # ray's own largest *global* coordinate (see _tol.accept_t_min), so a
+        # far or escaped ray cannot change another ray's threshold. Global,
+        # not local: a component's vertex-local frame stays small (a lens
+        # edge is a few mm across wherever the lens sits), while the rounding
+        # error a ray carries is set by its global position.
+        abs_g = be.abs(positions_g)
+        t_min = _tol.accept_t_min(
+            be.maximum(be.maximum(abs_g[:, 0], abs_g[:, 1]), abs_g[:, 2])
+        )
         t_hit, normals_l, hit_mask, n_geom_l = self.geometry.ray_intersect(
-            positions_l, directions_l
+            positions_l, directions_l, eps=t_min
         )
 
-        # T_EPSILON guard: prevent self-intersection after surface crossing
-        T_EPSILON = 1e-9
+        # Guard against self-intersection after a surface crossing
         inf_like = be.ones_like(t_hit) * be.inf
-        t_hit = be.where(t_hit > T_EPSILON, t_hit, inf_like)
-        hit_mask = hit_mask & (t_hit > T_EPSILON)
+        t_hit = be.where(t_hit > t_min, t_hit, inf_like)
+        hit_mask = hit_mask & (t_hit > t_min)
 
         # Dead rays can't hit
         t_hit = be.where(rays.alive, t_hit, inf_like)

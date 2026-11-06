@@ -21,17 +21,15 @@ from typing import TYPE_CHECKING, Literal, get_args, get_origin, get_type_hints
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
 from PySide6.QtCore import (
     QEasingCurve,
     QPropertyAnimation,
     QRegularExpression,
     Qt,
-    QTimer,
     Slot,
 )
-from PySide6.QtGui import QIcon, QRegularExpressionValidator
+from PySide6.QtGui import QColor, QIcon, QPainter, QPalette, QRegularExpressionValidator
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -72,16 +70,18 @@ from optiland.analysis import (
     YYbar,
 )
 from optiland.mtf import FFTMTF, GeometricMTF
+from optiland_gui.widgets.plot_navigation import PlotNavigationToolbar
 
 from . import gui_plot_utils
 from .services.analysis_plots import draw_analysis_plot
 from .services.job_records import BackendConfig
+from .widgets.retained_analysis_canvas import RetainedAnalysisCanvas
 
 if TYPE_CHECKING:
     from .optiland_connector import OptilandConnector
 
 
-class CustomMatplotlibToolbar(NavigationToolbar):
+class CustomMatplotlibToolbar(PlotNavigationToolbar):
     """A custom Matplotlib toolbar with styleable buttons.
 
     This toolbar assigns unique object names to its buttons, allowing them to be
@@ -96,6 +96,14 @@ class CustomMatplotlibToolbar(NavigationToolbar):
     def __init__(self, canvas, parent=None):
         super().__init__(canvas, parent, coordinates=False)
 
+        # Keep the original alpha masks; repeated theme changes must never
+        # recolor an already dimmed disabled icon or replace navigation actions.
+        self._navigation_icons = {
+            action: action.icon().pixmap(64)
+            for action in self.actions()
+            if not action.icon().isNull()
+        }
+
         # Assign unique object names to each tool button
         for action in self.actions():
             tooltip = action.toolTip()
@@ -104,6 +112,57 @@ class CustomMatplotlibToolbar(NavigationToolbar):
                 button_widget = self.widgetForAction(action)
                 if button_widget:
                     button_widget.setObjectName(f"MPL{action_id}Button")
+                    button_widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.update_theme("dark")
+
+    def update_theme(self, theme="dark"):
+        """Theme navigation affordances without changing actions or view mode."""
+        dark = "dark" in theme.lower()
+        foreground, disabled, background, hover, checked = (
+            ("#E0E0E0", "#8D969F", "#2E2E2E", "#3C3C3C", "#4A4A4A")
+            if dark
+            else ("#212529", "#6C757D", "#F8F9FA", "#E9ECEF", "#DEE2E6")
+        )
+        palette = self.palette()
+        for role in (QPalette.ColorRole.Window, QPalette.ColorRole.Button):
+            palette.setColor(role, QColor(background))
+        for role in (QPalette.ColorRole.WindowText, QPalette.ColorRole.ButtonText):
+            palette.setColor(role, QColor(foreground))
+            palette.setColor(QPalette.ColorGroup.Disabled, role, QColor(disabled))
+        self.setPalette(palette)
+        self.setStyleSheet(
+            "QToolBar { background: transparent; border: none; }"
+            "QToolButton {"
+            f"background: {background}; color: {foreground};"
+            "border: 1px solid transparent; border-radius: 3px; padding: 2px; }"
+            f"QToolButton:hover {{ background: {hover}; }}"
+            "QToolButton:checked, QToolButton:pressed {"
+            f"background: {checked}; border-color: {foreground}; }}"
+            "QToolButton:focus {"
+            f"border: 1px dashed {foreground}; }}"
+            f"QToolButton:disabled {{ color: {disabled}; background: {background}; }}"
+        )
+        for action, source in self._navigation_icons.items():
+            icon = QIcon()
+            for mode in (
+                QIcon.Mode.Normal,
+                QIcon.Mode.Active,
+                QIcon.Mode.Selected,
+                QIcon.Mode.Disabled,
+            ):
+                pixmap = source.copy()
+                painter = QPainter(pixmap)
+                painter.setCompositionMode(
+                    QPainter.CompositionMode.CompositionMode_SourceIn
+                )
+                painter.fillRect(
+                    pixmap.rect(),
+                    QColor(disabled if mode == QIcon.Mode.Disabled else foreground),
+                )
+                painter.end()
+                for state in (QIcon.State.Off, QIcon.State.On):
+                    icon.addPixmap(pixmap, mode, state)
+            action.setIcon(icon)
 
 
 class AnalysisPanel(QWidget):
@@ -279,11 +338,6 @@ class AnalysisPanel(QWidget):
 
         main_content_layout = QHBoxLayout()
         main_content_layout.setSpacing(10)
-
-        self.resize_timer = QTimer(self)
-        self.resize_timer.setSingleShot(True)
-        self.resize_timer.setInterval(100)
-        self.resize_timer.timeout.connect(self.handle_resize_finished)
 
         self._setup_plot_display_frame(main_content_layout)
         self._setup_settings_panel(main_content_layout)
@@ -1034,13 +1088,13 @@ class AnalysisPanel(QWidget):
             self.display_plot_page(self.current_plot_page_index)
             self.logArea.append("Analysis removed.")
 
-    def resizeEvent(self, event):
-        """Restarts a timer every time the window is resized."""
-        super().resizeEvent(event)
-        self.resize_timer.start()
-
     def handle_resize_finished(self):
-        """Repaint retained plots after resizing without recalculation."""
+        """Request an explicit retained-plot repaint without recalculation.
+
+        Geometry changes already repaint through Matplotlib's canvas resize
+        handler. Scheduling a second panel-level redraw duplicates that work,
+        especially when a populated plot takes longer than a debounce interval.
+        """
         if self.active_mpl_canvas_widget:
             self.active_mpl_canvas_widget.draw_idle()
 
@@ -1184,12 +1238,11 @@ class AnalysisPanel(QWidget):
     def _create_new_plot_canvas(self, page_data):
         """Creates a new FigureCanvas and connects mouse interaction events."""
         fig = Figure(figsize=page_data.get("figsize", (7, 5)), dpi=100)
-        canvas = FigureCanvas(fig)
+        canvas = RetainedAnalysisCanvas(fig)
         canvas.setFocusPolicy(Qt.FocusPolicy.ClickFocus | Qt.FocusPolicy.StrongFocus)
 
         # Connect events and store their IDs for later disconnection
         cids = [
-            canvas.mpl_connect("scroll_event", self.on_scroll_zoom),
             canvas.mpl_connect("motion_notify_event", self.on_mouse_move_on_plot),
             canvas.mpl_connect("button_press_event", self.on_plot_double_click),
         ]
@@ -1206,6 +1259,7 @@ class AnalysisPanel(QWidget):
         self.active_mpl_toolbar_widget = CustomMatplotlibToolbar(
             canvas, self.mpl_toolbar_in_titlebar_container
         )
+        self.active_mpl_toolbar_widget.update_theme(self.current_theme)
         self.mpl_toolbar_in_titlebar_layout.addWidget(self.active_mpl_toolbar_widget)
         self.mpl_toolbar_in_titlebar_container.setVisible(True)
 
@@ -1723,9 +1777,6 @@ class AnalysisPanel(QWidget):
                     tm.notify(msg, "error")
                 else:
                     QMessageBox.critical(self, "Save Error", msg)
-
-    def on_scroll_zoom(self, event):
-        gui_plot_utils.handle_matplotlib_scroll_zoom(event)
 
     @Slot()
     def _load_analysis_settings_slot(self):

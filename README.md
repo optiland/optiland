@@ -5,6 +5,7 @@
 ![Stars](https://img.shields.io/github/stars/optiland/optiland.svg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.14588961.svg)](https://doi.org/10.5281/zenodo.14588961)
+[![JOSS](https://joss.theoj.org/papers/10.21105/joss.11170/status.svg)](https://doi.org/10.21105/joss.11170)
 [![Python Versions](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14%20-blue)](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14%20-blue)
 
 
@@ -191,6 +192,28 @@ We curate issues specifically for new contributors. Click the badges below to fi
 We welcome contributions of all kinds - features, bugfixes, docs, and discussions! 🎉
 
 To get started, please check out the [contributing guide](./CONTRIBUTING.md) for best practices and coordination tips.
+
+
+## Citing Optiland
+
+If you use Optiland in your work, please cite our [JOSS paper](https://doi.org/10.21105/joss.11170):
+
+```bibtex
+@article{Harrison2026,
+  doi = {10.21105/joss.11170},
+  url = {https://doi.org/10.21105/joss.11170},
+  year = {2026},
+  publisher = {The Open Journal},
+  volume = {11},
+  number = {127},
+  pages = {11170},
+  author = {Harrison, Kramer and Mendes, Manuel Fragata and Haasjes, Corné and Hein, Grégoire},
+  title = {Optiland: Open-Source Optical Design Software in Python},
+  journal = {Journal of Open Source Software}
+}
+```
+
+GitHub's "Cite this repository" button uses [`CITATION.cff`](./CITATION.cff).
 
 
 ## License

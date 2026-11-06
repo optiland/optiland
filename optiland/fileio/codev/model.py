@@ -30,6 +30,9 @@ class CodeVDataModel:
             0-based primary wavelength index.
         surfaces: Mapping from surface index to a raw operand dict used by
             the encoder / converter.
+        private_glasses: Private glass catalog written as a ``PRV`` block,
+            mapping a glass name (``"OPT1"``) to its refractive index at each
+            wavelength, in the order the wavelengths are written.
         radius_mode: If True, surface values are radii (RDM Y); if False,
             values are curvatures (RDM N). Defaults to True.
         units: Length units string; always ``"MM"`` for v1.
@@ -40,6 +43,7 @@ class CodeVDataModel:
     fields: dict[str, Any] = field(default_factory=dict)
     wavelengths: dict[str, Any] = field(default_factory=lambda: {"data": []})
     surfaces: dict[int, dict[str, Any]] = field(default_factory=dict)
+    private_glasses: dict[str, list[float]] = field(default_factory=dict)
     radius_mode: bool = True
     units: str = "MM"
     sto_surface_index: int | None = None  # explicit global stop surface (STO Sn)
@@ -57,6 +61,7 @@ class CodeVDataModel:
             "fields": self.fields,
             "wavelengths": self.wavelengths,
             "surfaces": self.surfaces,
+            "private_glasses": self.private_glasses,
             "radius_mode": self.radius_mode,
             "units": self.units,
             "sto_surface_index": self.sto_surface_index,

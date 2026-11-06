@@ -23,6 +23,7 @@ except (ImportError, ModuleNotFoundError):
     LRScheduler = None
 
 import optiland.backend as be
+from optiland.optimization.failure import reject_hard_constraints
 
 from ..base import BaseOptimizer
 from ..live_plotter import LiveOptimizationPlotter
@@ -115,6 +116,7 @@ class TorchBaseOptimizer(BaseOptimizer, ABC):
             callback (Callable[[int, float], None] | None): A callback function to
                 be called after each step with the current step and loss value.
         """
+        reject_hard_constraints(self.problem, type(self).__name__)
         optimizer, scheduler = self._create_optimizer_and_scheduler(lr, gamma)
 
         live_plotter: LiveOptimizationPlotter | None = None

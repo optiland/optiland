@@ -45,6 +45,9 @@ You can launch the Optiland GUI in a couple of ways:
 Main Interface Components
 -------------------------
 
+The navigation sidebar and workspace share one draggable separator. Drag it to
+adjust the sidebar width; the panels use the remaining workspace width.
+
 When you first open the Optiland GUI, you'll see a main window containing several panels. Here's a brief overview:
 
 .. image:: _static/gui_overview.png
@@ -64,10 +67,20 @@ When you first open the Optiland GUI, you'll see a main window containing severa
     *   **2D View**: Shows a 2D cross-section of the lens, with options to display rays.
     *   **3D View**: Renders a 3D model of the system (if VTK is installed and working).
 
-    In the 2D view, select **Zoom to rectangle** and drag around the area to
-    inspect. The drawing stays fixed while the rectangle is drawn; releasing
-    the mouse applies the zoom. Toolbar pan and ordinary drag-pan use separate
-    gestures. **Back** and **Forward** navigate the resulting view history.
+    All 2D plots share the same direct controls: **right-drag** or
+    **middle-drag** pans, and the **mouse wheel** zooms around the pointer.
+    Ordinary left-click is available for selection where the plot supports it
+    and does not pan. These defaults also apply to sag plots, analysis plots
+    and optimizer candidate previews. There is currently no mouse-binding
+    settings window.
+
+    Select **Zoom to rectangle** (a magnifier over a dotted rectangle) and
+    left-drag around the area to inspect. The drawing stays fixed until you
+    release the mouse. The **Pan** tool enables left-drag panning. Right/middle
+    panning and wheel zoom remain available with either tool selected; wheel
+    zoom waits until any drag is finished. ``Escape`` exits the selected tool.
+    **Back** and **Forward** navigate completed views. The 3D view has its own
+    rotation and navigation controls.
 
     .. image:: _static/gui_viewer_panel.png
        :alt: Viewer Panel (2D/3D)
@@ -75,6 +88,9 @@ When you first open the Optiland GUI, you'll see a main window containing severa
        :width: 600px
 
 *   **Analysis Panel**: Allows you to select, configure, and run various optical analyses. Results are typically displayed as plots within this panel. Note that you can run several analyses, each of which can be accessed using the numbered tabs on the right sidebar.
+
+    Plot navigation controls follow the light or dark theme. Selected tools
+    have an outlined border; keyboard focus uses a dashed border.
 
     .. image:: _static/gui_analysis_panel.png
        :alt: Analysis Panel
@@ -106,6 +122,42 @@ Optiland features a VS Code-style **Command Palette** that provides quick access
 .. note::
 
    All windows are dockable and can be rearranged to suit your workflow. You can also save your layout for future sessions. These can be loaded by pressing "1" or "2" in the top toolbar, corresponding to the slot used for saving your layout.
+
+   Drag a panel's title to detach or reposition it. A small movement remains a
+   click; continue dragging to a window side or another panel to preview a
+   docked split or tab group, then release to place it. Double-click the title,
+   or use its Float panel / Dock panel button, to change floating state.
+   The Close panel button hides the panel; reopen it from the View menu.
+   When a floating panel is docked with its Dock panel button, its tab is selected.
+   The Script Editor and Console use the same controls inside Scripts Terminal.
+   Drag the separator between docked panels to resize them, or an edge or
+   corner of a floating panel. Content minimum sizes limit how far a panel
+   can shrink. Docking uses sides, splits and tabs; it does not align panels
+   to a pixel grid. Use Reset Layout to return to the default arrangement.
+
+   Drag the main window's title background to move it. Drag an outer edge or
+   corner to resize it, including where panel content reaches the window edge.
+   Window controls and menu items retain their usual behavior. Supported
+   platforms use the system's window moving, resizing and snapping behavior.
+   The fallback snaps to a screen's left/right half or maximizes at its top
+   edge on release; ``Escape`` cancels an active fallback move or resize.
+
+   The main window also retains its keyboard commands: ``Ctrl+Left`` and
+   ``Ctrl+Right`` place it on the corresponding half of its current screen,
+   subject to size constraints. ``Ctrl+Up`` maximizes it. ``Ctrl+Down`` restores
+   a maximized window and otherwise minimizes it. Focused widgets receive these
+   keys first; an unhandled key can reach the main window. These commands move
+   the main window rather than rearranging its docked panels. Screen placement
+   depends on support from the platform's window manager.
+
+Resizing analysis plots
+-----------------------
+
+Complex analysis plots can show a temporary scaled view while resizing,
+then redraw sharply at the new size. Plot navigation and image saving use
+the current figure. Resizing preserves results and zoom without running
+the analysis again.
+
 
 Notifications
 -------------
@@ -153,6 +205,43 @@ With the Cooke Triplet loaded:
 *   In the **Viewer Panel**, ensure the **2D View** tab is selected.
 *   Experiment with the Matplotlib toolbar controls, such as zooming and panning.
 *   Switch to the **3D View** tab in the Viewer Panel to see the lens and rays in 3D. You can rotate, pan, and zoom this view.
+
+Open **Viewer Settings** with the gear button in **2D Layout** to choose the
+ray count and distribution. **Num Rays is the total number of rays per field,
+including the chief ray**, at the primary wavelength. A count of **1** displays
+only the chief for each field.
+
+The **chief ray** follows the center of the beam through the entrance pupil,
+using the design's configured ray aiming. It can leave the source at an angle
+in an off-axis or decentered system; it is not necessarily a zero-angle ray.
+
+The available distributions use these counts:
+
+*   **line_x / line_y**: odd totals, **1, 3, 5, ...**, with equal pairs around
+    the chief. An even value rounds up to the next supported total.
+*   **hexapolar**: complete bundles of **1, 7, 19, 37, 61 or 91 rays**. This GUI
+    count means **rays, not rings**: for example, **7 rays = the chief plus six
+    surrounding rays**. The arrows step between complete bundles; an intermediate
+    value rounds up to the next bundle, so entering 8 gives 19.
+*   **random**: the chief plus the remaining randomly sampled rays, all included
+    in the displayed total.
+
+The control shows the normalized count when you finish editing, within its
+displayed limits. Click **Apply** to use count or distribution changes. Each
+field receives its own bundle, and blocked rays can stop before reaching the
+image.
+
+**Highlight chief ray** is enabled by default. It draws each chief in blue with
+a slightly thicker stroke above the other 2D rays, distinct from surface
+selection and hover in both themes. Unchecking it restores ordinary ray styling;
+it does not remove the chief or change the count. This checkbox takes effect
+immediately, without recalculating the layout or moving the view. Highlighting
+does not extend a blocked ray.
+
+In **3D Layout**, the chief uses ordinary ray styling and normal depth/occlusion.
+The 2D highlight checkbox does not place it in front of 3D geometry. These GUI
+count conventions do not change scientific analyses or the public Python
+pupil-distribution APIs.
 
 3. Changing a Surface Parameter
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

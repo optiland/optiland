@@ -604,9 +604,11 @@ class TestRobustReports:
                 self, x, y, z, L, M, N, wavelengths, stop_idx, is_inf, tx, ty,
                 **kwargs,
             )
+            # The four edge probes are solved as one batch with nonzero
+            # targets; the final polish (two rays here) is left alone.
             n = len(be.as_array_1d(x))
-            target = float(be.to_numpy(be.abs(tx) + be.abs(ty)).reshape(-1)[0])
-            if n == 1 and target > 0.0:
+            target = float(be.to_numpy(be.abs(tx) + be.abs(ty)).max())
+            if n == 4 and target > 0.0:
                 x_, y_, z_, L_, M_, N_, conv, nan_flag, report = result
                 return (
                     x_,
@@ -615,7 +617,7 @@ class TestRobustReports:
                     L_,
                     M_,
                     N_,
-                    conv & (be.zeros(1) > 0.0),
+                    conv & (be.zeros(n) > 0.0),
                     nan_flag,
                     report,
                 )

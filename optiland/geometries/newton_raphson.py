@@ -346,6 +346,18 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
         # be the physical branch.
         t = super().distance(rays, aperture=aperture)
 
+        # A ray can miss the base conic and still cross the surface: a steep
+        # ray near the rim of a strongly aspheric surface, where the
+        # polynomial terms bend the surface away from its base sphere. Such
+        # rays have no conic seed (NaN); they are seeded on the vertex
+        # tangent plane instead and kept only if the iteration converges to a
+        # root in front of the ray. Rays with a conic seed are unaffected.
+        no_seed = be.isnan(t)
+        plane_seeded = bool(be.any(no_seed))
+        if plane_seeded:
+            N_safe = be.where(be.abs(rays.N) > 1e-14, rays.N, 1e-14)
+            t = be.where(no_seed, -rays.z / N_safe, t)
+
         tol = _effective_tolerance(self.tol, t)
 
         iterations = 0
@@ -353,8 +365,11 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
         converged = be.abs(f_t) < tol
 
         for i in range(self.max_iter):
-            # 1-3. Convergence is checked before any normal evaluation.
-            if be.all(converged):
+            # 1-3. Convergence is checked before any normal evaluation. A NaN
+            # residual never converges and a Newton step keeps it NaN, so a
+            # batch whose only unconverged rays are NaN is finished too;
+            # otherwise one dead ray would hold the whole batch to max_iter.
+            if be.all(be.logical_or(converged, be.isnan(f_t))):
                 break
 
             # 4. Only reached while at least one ray is still unconverged.
@@ -370,6 +385,20 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
             f_t = self._surface_residual(t, rays)
             converged = be.abs(f_t) < tol
 
+        # A ray whose residual is NaN would have had its distance turned into
+        # NaN by the next Newton step; keep that outcome after an early exit.
+        dead = be.isnan(f_t)
+        if plane_seeded:
+            # A plane-seeded ray that did not reach a root in front of it
+            # is a miss, as it was before the fallback.
+            dead = be.logical_or(
+                dead,
+                be.logical_and(
+                    no_seed, be.logical_not(be.logical_and(converged, t > 0))
+                ),
+            )
+            converged = be.logical_and(converged, be.logical_not(dead))
+        t = be.where(dead, be.full_like(t, be.nan), t)
         return _DistanceSolveResult(
             t=t, residual=f_t, converged=converged, iterations=iterations
         )

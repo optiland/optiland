@@ -230,15 +230,25 @@ class ReductionsMixin:
         """
         return torch.diff(x, n=n, dim=axis, **kwargs)
 
-    def all(self, x: Any) -> bool:
+    def all(self, x: Any, axis: int | tuple[int, ...] | None = None) -> bool | Tensor:
         """Return True if all elements of x are True.
 
         Args:
             x: Input tensor or bool.
+            axis: Axis or axes to reduce. None reduces the whole input.
 
         Returns:
-            bool: Whether all elements are True.
+            Python bool for a whole-input reduction. Explicit axes return a
+            boolean tensor on the input tensor's device (the backend device
+            for host inputs), without copying the result to the CPU.
         """
+        if axis is not None:
+            values = (
+                x
+                if isinstance(x, torch.Tensor)
+                else torch.as_tensor(x, device=self._device())
+            )
+            return torch.all(values.bool(), dim=axis)
         if isinstance(x, bool):
             return x
         if isinstance(x, torch.Tensor):

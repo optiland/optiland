@@ -50,7 +50,7 @@ Components Explained
      - **Differential Evolution** (global)
      - **Basin Hopping** (global)
      - **SHGO** (global)
-     - **Least Squares** (local)
+     - **Least Squares** (local), with SciPy solvers or the native ``"dls"``
      - **Orthogonal Descent** (local)
      - **Nelder-Mead**, **Powell**, **BFGS**, **L-BFGS-B**, **COBYLA**, etc. (local optimization, from `scipy.optimize.minimize`)
      - **CMA-ES** and **Particle Swarm** (custom, gradient-free global optimizers in `optiland.optimization.optimizer.custom`)
@@ -148,6 +148,41 @@ Typical Optimization Process
    print(result)   # standard output from scipy.optimize.minimize
    lens.draw()     # Plot the lens in 2D
 
+
+Native Optimizer Architecture
+-----------------------------
+
+The native damped least squares (``"dls"``) and the ``minimize()`` facade are
+built from small, separately testable layers under ``optiland.optimization``.
+For usage, see the :doc:`../optimization_guide`.
+
+- **Evaluators** (``evaluators/``): turn a variable vector into residuals and a
+  Jacobian. ``FiniteDiffEvaluator`` writes ``x`` into the variables, opens one
+  *evaluation epoch* (``optiland._epoch``, inside which per-design work such as
+  material indices, paraxial data and ray aiming is memoized) and reads
+  ``problem.residual_vector()``. Jacobian columns resume real-ray traces from
+  snapshots of the baseline evaluation (``optiland.raytrace.partial_trace``).
+  Caches live only inside an epoch; outside one, behavior is unchanged.
+- **Residual blocks** (``block/``): a ``ResidualBlock`` returns many weighted
+  residual rows in one vectorized call and declares the rays it needs
+  (``BundleRequest``) so they join the batched evaluator's bundles.
+  ``DefaultMeritBlock`` is the built-in example.
+- **Constraints** (``constraint/``): ``Constraint`` rows kept out of the merit,
+  and the ``add_physical_constraints`` thickness helper.
+- **Step control** (``control/``): the Levenberg damping state and the KKT
+  active-set controller used for constraints and variable bounds.
+- **Native core** (``native/``): the ``dls`` loop; stopping criteria
+  (``stopping/``) and observers (``observers/``) plug into it.
+- **Managed adapters** (``managed/``): run SciPy and torch methods behind the
+  same observer and stopping interface.
+
+Residuals follow one convention everywhere: ``r_i = effective_weight_i * delta_i``
+and the merit is ``sum(r ** 2)``. A failed trace yields ``NaN`` rows, never an
+exception out of an evaluator; the native core rejects the trial, while SciPy
+adapters substitute a scale-aware penalty. Evaluation counts are guarded by
+deterministic tests (``tests/optimization/test_eval_counts.py``) and
+numerical equivalence of traces by ``tests/test_golden_trace.py``; run
+``python -m benchmarks.optimization.run`` for local timings.
 
 Batched Ray Evaluation Internals
 --------------------------------

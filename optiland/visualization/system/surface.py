@@ -14,6 +14,7 @@ from vtk.util.numpy_support import numpy_to_vtk, numpy_to_vtkIdTypeArray
 import optiland.backend as be
 from optiland.physical_apertures import RadialAperture
 from optiland.rays import RealRays
+from optiland.visualization.system.face_color import FaceColored
 from optiland.visualization.system.utils import revolve_contour, transform, transform_3d
 
 # Surfaces tilted more than 60° toward the viewing axis are rendered as a
@@ -43,7 +44,7 @@ def _schematic_image_extent(surface) -> float:
     return 1.0  # mm: deterministic schematic radius without any finite aperture
 
 
-class Surface2D:
+class Surface2D(FaceColored):
     """A class used to represent a 2D surface for visualization.
 
     Args:
@@ -80,6 +81,10 @@ class Surface2D:
     # Maps projection name to the index of the viewing axis in global normal.
     # e.g. for "YZ" the view is along X (index 0); "XZ" along Y (index 1); etc.
     _VIEWING_AXIS_IDX: dict[str, int] = {"YZ": 0, "XZ": 1, "XY": 2}
+
+    def element_surfaces(self):
+        """Surfaces bounding the single element: this surface."""
+        return [(self.surf,)]
 
     def _is_face_on(self, projection: str) -> bool:
         """Return True if the surface normal is >60° toward the viewing axis.
@@ -120,6 +125,7 @@ class Surface2D:
         color = "gray"
         if theme:
             color = theme.parameters.get("axes.edgecolor", color)
+        color = self.face_color() or color
 
         label = f"Surface {self.surf.comment}"
         if self.extent_source == "schematic":
@@ -221,17 +227,25 @@ class Surface3D(Surface2D):
                 the surface geometry.
 
         """
-        has_symmetric_aperture = (
-            type(self.surf.aperture) is RadialAperture
-            or self.surf.aperture is None  # "no aperture" is symmetric
-        )
-        is_symmetric = self.surf.geometry.is_symmetric
-        if is_symmetric and has_symmetric_aperture:
+        if self.supports_revolution:
             actor = self._get_symmetric_surface()
         else:
             actor = self._get_asymmetric_surface()
         actor = self._configure_material(actor, theme=theme)
         return actor
+
+    @property
+    def supports_revolution(self):
+        """Whether an uninterrupted circular contour represents this aperture.
+
+        Annular clipping creates discontinuous contours; a clipped grid retains
+        the central opening without introducing NaN vertices into VTK.
+        """
+        aperture = self.surf.aperture
+        circular = aperture is None or (
+            type(aperture) is RadialAperture and aperture.r_min == 0
+        )
+        return self.surf.geometry.is_symmetric and circular
 
     def _get_symmetric_surface(self):
         """Generates a symmetric surface actor by computing the sag, revolving
@@ -256,16 +270,15 @@ class Surface3D(Surface2D):
 
         """
         x, y, z = self._compute_sag_3d()
-        x = be.to_numpy(x)
-        y = be.to_numpy(y)
-        z = be.to_numpy(z)
-
-        # Apply aperture filtering to the grid of points
+        # Aperture predicates operate on the active backend's grid. Convert
+        # coordinates and the resulting mask only at the VTK boundary.
         if self.surf.aperture is not None:
             mask = self.surf.aperture.contains(x, y)
         else:
-            r = np.hypot(x, y)
-            mask = r <= be.to_numpy(self.extent)
+            mask = be.hypot(x, y) <= self.extent
+        x = be.to_numpy(x)
+        y = be.to_numpy(y)
+        z = be.to_numpy(z)
 
         # Preserve the original row-major vertex order and vtkPoints float32
         # precision, but avoid one Python/VTK call per coordinate and quad.
@@ -327,6 +340,9 @@ class Surface3D(Surface2D):
 
             color_hex = theme.parameters.get("lens.color", "#FFFFFF")
             color = to_rgb(color_hex)
+        override = self.face_color()
+        if override is not None:
+            color = override[:3]
 
         actor.GetProperty().SetColor(color)
         actor.GetProperty().SetAmbient(0.5)

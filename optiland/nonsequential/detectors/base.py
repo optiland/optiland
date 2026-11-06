@@ -9,6 +9,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 import optiland.backend as be
+from optiland.nonsequential import _tol
 from optiland.nonsequential.components.base import _get_transform
 
 if TYPE_CHECKING:
@@ -87,8 +88,14 @@ class BaseDetector(ABC):
         positions_l = (positions_g - t_arr) @ R_arr
         directions_l = directions_g @ R_arr
 
+        # Per-ray self-intersection accept threshold from the ray's global
+        # coordinate magnitude; see BaseComponent.intersect.
+        abs_g = be.abs(positions_g)
+        t_min = _tol.accept_t_min(
+            be.maximum(be.maximum(abs_g[:, 0], abs_g[:, 1]), abs_g[:, 2])
+        )
         t_hit, normals_l, hit_mask, _n_geom_l = self.geometry.ray_intersect(
-            positions_l, directions_l
+            positions_l, directions_l, eps=t_min
         )
 
         # Geometry may return numpy arrays even in torch-backend mode (geometry
@@ -98,10 +105,9 @@ class BaseDetector(ABC):
         normals_l = be.array(normals_l)
         hit_mask = be.array(hit_mask)
 
-        # T_EPSILON guard: prevent self-intersection
-        T_EPSILON = 1e-9
-        t_hit = be.where(t_hit > T_EPSILON, t_hit, be.full_like(t_hit, be.inf))
-        hit_mask = hit_mask & (t_hit > T_EPSILON)
+        # Guard against self-intersection
+        t_hit = be.where(t_hit > t_min, t_hit, be.full_like(t_hit, be.inf))
+        hit_mask = hit_mask & (t_hit > t_min)
 
         alive_be = be.array(rays.alive)
         t_hit = be.where(alive_be, t_hit, be.full_like(t_hit, be.inf))

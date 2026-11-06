@@ -8,17 +8,41 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+import math
+import re
+import warnings
 from typing import Any
 
 import optiland.backend as be
 from optiland.fileio.zemax.model import ZemaxDataModel
-from optiland.materials import AbbeMaterial, BaseMaterial, Material
+from optiland.materials import (
+    AbbeMaterial,
+    AGFMaterial,
+    BaseMaterial,
+    IdealMaterial,
+    Material,
+    OptilandMaterialWarning,
+)
+from optiland.materials.agf import agf_search_dirs, find_agf_catalog, read_agf
 from optiland.materials.material_spec import MatchPolicy
-from optiland.physical_apertures import OffsetRadialAperture, RadialAperture
+from optiland.materials.registry import MaterialRegistry
+from optiland.physical_apertures import (
+    BaseAperture,
+    DifferenceAperture,
+    EllipticalAperture,
+    OffsetRadialAperture,
+    RadialAperture,
+    RectangularAperture,
+    SpiderAperture,
+    UnionAperture,
+)
 
 # Fraunhofer d-line (um), used to evaluate a candidate glass's index for
 # comparison against the Nd recorded on a GLAS line.
 _WL_D = 0.5875618
+
+# A six-digit MIL glass number, e.g. 517642 or 517.642: nd 1.517, vd 64.2.
+_MIL_NUMBER = re.compile(r"(\d{3})\.?(\d{3})")
 
 
 class ZemaxDataParser:
@@ -26,17 +50,21 @@ class ZemaxDataParser:
 
     Args:
         filename: Path to the .zmx file to parse.
+        agf_dirs: Folders to search for the GCAT catalogs as AGF files; see
+            ``agf_search_dirs``. If None, ``OPTILAND_AGF_PATH`` is used.
 
     Attributes:
         filename: The file path being parsed.
         data_model: The ZemaxDataModel being populated during parsing.
     """
 
-    def __init__(self, filename: str) -> None:
+    def __init__(self, filename: str, agf_dirs=None) -> None:
         self.filename = filename
+        self.agf_dirs = agf_search_dirs(agf_dirs)
         self.data_model = ZemaxDataModel()
         self._current_surf = -1
         self._current_surf_data: dict[str, Any] = {}
+        self._medium = "air"  # the medium before the in-progress surface
         self._current_aperture_offset = (0.0, 0.0)
         self._declared_field_count: int | None = None
         self._declared_wavelength_count: int | None = None
@@ -78,6 +106,14 @@ class ZemaxDataParser:
             "VCYN": self._read_vignette_compress_y,
             "VANN": self._read_vignette_tangent_angle,
             "CLAP": self._read_circular_aperture,
+            "FLAP": self._read_floating_aperture,
+            "OBSC": self._read_obscuration,
+            "SQAP": self._read_rectangular_aperture,
+            "SQOB": self._read_rectangular_obscuration,
+            "ELAP": self._read_elliptical_aperture,
+            "ELOB": self._read_elliptical_obscuration,
+            "SPID": self._read_spider,
+            "USAP": self._read_unsupported_aperture,
             "OBDC": self._read_aperture_decenter,
         }
 
@@ -116,6 +152,7 @@ class ZemaxDataParser:
 
         self._finalize_fields()
         self._finalize_surface()
+        self._resolve_glasses()
         return self.data_model
 
     # ------------------------------------------------------------------
@@ -254,10 +291,10 @@ class ZemaxDataParser:
             )
 
     def _read_surface(self, data: list[str]) -> None:
-        if self._current_surf >= 0:
-            self.data_model.surfaces[self._current_surf] = self._current_surf_data
+        self._store_current_surface()
         self._current_surf += 1
         self._current_aperture_offset = (0.0, 0.0)
+        self._current_aperture_shape = None
         self._current_surf_data = {
             "type": "standard",
             "is_stop": False,
@@ -282,80 +319,143 @@ class ZemaxDataParser:
         self._current_surf_data["conic"] = float(data[1])
 
     def _read_glass(self, data: list[str]) -> None:
+        # GLAS <name> <solve> <?> <nd> <vd> ...: solve 1 marks a model glass.
+        # The name is resolved once the whole file is read, so the result does
+        # not depend on where GCAT appears.
         material_name = data[1]
         if material_name.upper() == "MIRROR":
             self._current_surf_data["material"] = "mirror"
             return
 
         self._current_surf_data["material"] = material_name
+        self._current_surf_data["model_glass"] = (
+            len(data) > 2 and data[2] == "1"
+        ) or material_name == "___BLANK"
         try:
             self._current_surf_data["index"] = float(data[4].replace(",", "."))
             self._current_surf_data["abbe"] = float(data[5].replace(",", "."))
-        except IndexError:
+        except (IndexError, ValueError):
             self._current_surf_data["index"] = None
             self._current_surf_data["abbe"] = None
 
-        resolved = self._resolve_glass_by_catalog_and_index(material_name)
+    def _resolve_glasses(self) -> None:
+        """Replace each surface's glass name with a material.
 
-        if resolved is not None:
-            self._current_surf_data["material"] = resolved
-        else:
-            # Try to resolve to a real Material from the glass catalog
-            try:
-                self._current_surf_data["material"] = Material(material_name)
-            except ValueError:
-                if self.data_model.glass_catalogs:
-                    for mfg in self.data_model.glass_catalogs:
-                        try:
-                            self._current_surf_data["material"] = Material(
-                                material_name, mfg.lower()
-                            )
-                            break
-                        except ValueError:
-                            continue
+        Glasses resolve the way OpticStudio resolves them: the GCAT catalogs
+        are searched by exact name only. A name found in several of them is
+        settled by the nd/vd on the GLAS line, then by GCAT order (see
+        ``_closest_to_line``). A glass found in none of them, a MIL-number
+        name (``517642`` means nd = 1.517, vd = 64.2) and an explicit model
+        glass become a model glass built from nd/vd; vd = 0 gives an
+        undispersed ``IdealMaterial``.
+        A catalog glass that had to be modelled emits a warning. There is no
+        fuzzy search across all catalogs, so ``Material(name)`` lookups are
+        not used here.
 
-        # Fall back to AbbeMaterial if catalog lookup failed
-        if not isinstance(self._current_surf_data["material"], BaseMaterial):
-            self._current_surf_data["material"] = AbbeMaterial(
-                self._current_surf_data["index"],
-                self._current_surf_data["abbe"],
-                model="buchdahl",
-            )
-
-    def _resolve_glass_by_catalog_and_index(
-        self, material_name: str
-    ) -> BaseMaterial | None:
-        """Disambiguate a glass name against the file's declared GCAT catalogs.
-
-        A bare ``Material(name)`` lookup silently returns a single "best
-        match" without regard to which catalogs this file actually declares,
-        so a name present in several catalogs (e.g. "F2" in both Schott and
-        Hikari) can resolve to the wrong one on reload. When the GLAS line
-        carries an Nd/Vd pair, use it to pick whichever catalog candidate is
-        the closest match instead.
-
-        Returns:
-            The resolved material, or None if disambiguation isn't
-            applicable (no declared catalogs, no Nd/Vd on the line, or no
-            candidate found in any declared catalog).
+        A GCAT catalog found as an AGF file in ``agf_dirs`` is searched there
+        instead of in the material database, and its glasses are evaluated
+        from the catalog's own formula and coefficients (``AGFMaterial``).
         """
-        index = self._current_surf_data.get("index")
-        abbe = self._current_surf_data.get("abbe")
-        if not self.data_model.glass_catalogs or index is None or index <= 1.0:
-            return None
-
-        candidates = []
-        for mfg in self.data_model.glass_catalogs:
-            try:
-                candidates.append(
-                    Material(material_name, mfg.lower(), match_policy=MatchPolicy.BEST)
+        known = {c.lower() for c in MaterialRegistry.instance().list_catalogs()}
+        agf: dict[str, dict[str, Any]] = {}
+        catalogs = []
+        for catalog in self.data_model.glass_catalogs or []:
+            path = find_agf_catalog(catalog, self.agf_dirs)
+            if path is not None:
+                glasses = read_agf(path)
+                agf[catalog.lower()] = {g.lower(): v for g, v in glasses.items()}
+                catalogs.append(catalog.lower())
+            elif catalog.lower() in known:
+                catalogs.append(catalog.lower())
+            else:
+                where = "the material database"
+                if self.agf_dirs:
+                    where += " or the AGF folders"
+                warnings.warn(
+                    f"Glass catalog {catalog} is not in {where}; "
+                    "its glasses are modelled from the nd/vd in the file.",
+                    OptilandMaterialWarning,
+                    stacklevel=4,
                 )
-            except ValueError:
-                continue
 
-        if not candidates:
-            return None
-        if len(candidates) == 1:
+        for index, surf in self.data_model.surfaces.items():
+            # Only surfaces with a GLAS line carry "model_glass".
+            if "model_glass" in surf:
+                surf["material"] = self._resolve_glass(
+                    index, surf, surf["material"], catalogs, agf
+                )
+
+    @classmethod
+    def _resolve_glass(
+        cls,
+        surf_index: int,
+        surf: dict[str, Any],
+        name: str,
+        catalogs: list[str],
+        agf: dict[str, dict[str, Any]] | None = None,
+    ) -> BaseMaterial:
+        agf = agf or {}
+        if not surf.get("model_glass"):
+            candidates = []
+            for catalog in catalogs:
+                if catalog in agf:
+                    glass = agf[catalog].get(name.lower())
+                    if glass is not None:
+                        candidates.append(AGFMaterial.from_glass(glass))
+                    continue
+                try:
+                    # reference names the catalog so the writer exports it.
+                    candidates.append(
+                        Material(
+                            name,
+                            reference=catalog,
+                            catalog=catalog,
+                            match_policy=MatchPolicy.STRICT,
+                        )
+                    )
+                except ValueError:
+                    continue
+            if candidates:
+                return cls._closest_to_line(candidates, surf)
+
+        index, abbe = surf.get("index"), surf.get("abbe")
+        model = surf.get("model_glass")
+        mil = _MIL_NUMBER.fullmatch(name)
+        if mil and not model:
+            index = 1.0 + int(mil[1]) / 1000.0
+            abbe = int(mil[2]) / 10.0
+            model = True
+
+        if index is None or abbe is None or index <= 1.0:
+            raise ValueError(
+                f"Surface {surf_index}: glass {name} is not in the GCAT catalogs "
+                f"{catalogs} and the file gives no nd/vd to model it from."
+            )
+        if not model:
+            warnings.warn(
+                f"Surface {surf_index}: glass {name} is not in the GCAT catalogs "
+                f"{catalogs}; modelled from nd = {index}, vd = {abbe}.",
+                OptilandMaterialWarning,
+                stacklevel=5,
+            )
+        if abbe <= 0.0:
+            return IdealMaterial(n=index)
+        return AbbeMaterial(index, abbe, model="buchdahl")
+
+    @staticmethod
+    def _closest_to_line(
+        candidates: list[BaseMaterial], surf: dict[str, Any]
+    ) -> BaseMaterial:
+        """Pick the candidate whose nd/vd best match the GLAS line.
+
+        A name can exist in several declared catalogs (e.g. "F2" in Schott
+        and Hikari), and a .zmx file lists catalogs only once for the whole
+        file. The nd/vd that OpticStudio and the writer store on the GLAS line
+        identify which one a surface used. Without nd/vd, or on a tie, the
+        first catalog in GCAT order wins.
+        """
+        index, abbe = surf.get("index"), surf.get("abbe")
+        if len(candidates) == 1 or index is None or index <= 1.0:
             return candidates[0]
 
         def _scalar(value) -> float:
@@ -377,7 +477,12 @@ class ZemaxDataParser:
         self._current_surf_data["is_stop"] = True
 
     def _read_diameter(self, data: list[str]) -> None:
-        self._current_surf_data["diameter"] = float(data[1])
+        # DIAM <semi-diameter> <solve> ...: solve 1 is a user-fixed ("U")
+        # semi-diameter, 0 an automatic one recomputed by OpticStudio.
+        self._current_surf_data["semi_diameter"] = float(data[1])
+        self._current_surf_data["semi_diameter_fixed"] = (
+            len(data) > 2 and data[2] == "1"
+        )
 
     def _read_mode(self, data: list[str]) -> None:
         if data[1] != "SEQ":
@@ -418,9 +523,84 @@ class ZemaxDataParser:
         self._read_field_column("vignette_tangent_angle", data)
 
     def _read_circular_aperture(self, data: list[str]) -> None:
-        r_min = float(data[1])
-        r_max = float(data[2])
-        self._current_surf_data["aperture"] = self._make_circular_aperture(r_min, r_max)
+        self._set_aperture_shape("circular", float(data[1]), float(data[2]))
+
+    def _read_floating_aperture(self, data: list[str]) -> None:
+        # FLAP stores the clear semi-diameter in its second field; a floating
+        # aperture clips rays outside it just like a circular aperture.
+        self._set_aperture_shape("circular", 0.0, float(data[2]))
+
+    def _read_obscuration(self, data: list[str]) -> None:
+        # OBSC <r_min> <r_max>: the complement of a circular aperture. Rays
+        # between the two radii are blocked; rays inside r_min or outside
+        # r_max pass, with no outer limit.
+        self._set_aperture_shape("obscuration", float(data[1]), float(data[2]))
+
+    def _read_rectangular_aperture(self, data: list[str]) -> None:
+        # SQAP <x_half> <y_half> <pickup>: passes rays inside the rectangle.
+        # A nonzero last field picks the aperture up from that surface; the
+        # half-widths on the line are then the picked-up values.
+        self._set_aperture_shape("rectangular", float(data[1]), float(data[2]))
+
+    def _read_rectangular_obscuration(self, data: list[str]) -> None:
+        # SQOB <x_half> <y_half> <pickup>: blocks rays inside the rectangle.
+        self._set_aperture_shape(
+            "rectangular_obscuration", float(data[1]), float(data[2])
+        )
+
+    def _read_elliptical_aperture(self, data: list[str]) -> None:
+        # ELAP <x_half> <y_half> <pickup>: passes rays inside the ellipse.
+        self._set_aperture_shape("elliptical", float(data[1]), float(data[2]))
+
+    def _read_elliptical_obscuration(self, data: list[str]) -> None:
+        # ELOB <x_half> <y_half> <pickup>: blocks rays inside the ellipse.
+        self._set_aperture_shape(
+            "elliptical_obscuration", float(data[1]), float(data[2])
+        )
+
+    def _read_spider(self, data: list[str]) -> None:
+        # SPID <width> <arms> <pickup>: blocks rays on the arms, half-lines of
+        # the full width given from the centre, the first along local +x;
+        # everything else passes, with no outer limit.
+        self._set_aperture_shape("spider", float(data[1]), float(data[2]))
+
+    def _set_aperture_shape(self, kind: str, first: float, second: float) -> None:
+        self._current_aperture_shape = (kind, first, second)
+        self._current_surf_data["aperture"] = self._build_aperture()
+
+    def _build_aperture(self) -> BaseAperture:
+        kind, first, second = self._current_aperture_shape
+        if kind == "circular":
+            return self._make_circular_aperture(first, second)
+        if kind == "obscuration":
+            # Outside the obscuration: an annulus with no outer edge. Inside
+            # it, when r_min > 0: a disk of radius r_min.
+            r_min, r_max = first, second
+            outside = self._make_circular_aperture(r_max, math.inf)
+            if r_min <= 0.0:
+                return outside
+            return UnionAperture(self._make_circular_aperture(0.0, r_min), outside)
+        offset_x, offset_y = self._current_aperture_offset
+        if kind == "spider":
+            return SpiderAperture(first, round(second), offset_x, offset_y)
+        if kind.startswith("rectangular"):
+            shape = RectangularAperture(
+                x_min=offset_x - first,
+                x_max=offset_x + first,
+                y_min=offset_y - second,
+                y_max=offset_y + second,
+            )
+        else:
+            shape = EllipticalAperture(first, second, offset_x, offset_y)
+        if kind.endswith("_obscuration"):
+            # Everything outside the shape passes, with no outer limit.
+            return DifferenceAperture(RadialAperture(r_min=0.0, r_max=math.inf), shape)
+        return shape
+
+    def _read_unsupported_aperture(self, data: list[str]) -> None:
+        # An aperture type the reader cannot build yet. It still replaces the
+        # fixed semi-diameter clip, as it does in OpticStudio.
+        self._current_surf_data["unsupported_aperture"] = data[0]
 
     def _make_circular_aperture(self, r_min: float, r_max: float) -> RadialAperture:
         offset_x, offset_y = self._current_aperture_offset
@@ -437,12 +617,9 @@ class ZemaxDataParser:
         offset_x = float(data[1])
         offset_y = float(data[2])
         self._current_aperture_offset = (offset_x, offset_y)
-        aperture = self._current_surf_data["aperture"]
-        if aperture is None:
+        if self._current_aperture_shape is None:
             return
-        self._current_surf_data["aperture"] = self._make_circular_aperture(
-            aperture.r_min, aperture.r_max
-        )
+        self._current_surf_data["aperture"] = self._build_aperture()
 
     # ------------------------------------------------------------------
     # Finalizers
@@ -487,5 +664,37 @@ class ZemaxDataParser:
 
     def _finalize_surface(self) -> None:
         """Flush the last in-progress surface into the model."""
-        if self._current_surf >= 0:
-            self.data_model.surfaces[self._current_surf] = self._current_surf_data
+        self._store_current_surface()
+
+    def _store_current_surface(self) -> None:
+        """Store the in-progress surface, applying its fixed semi-diameter.
+
+        OpticStudio vignettes rays at a user-fixed ("U") semi-diameter even
+        when the surface has no explicit aperture, so such a surface gets a
+        circular aperture of that radius. Any surface aperture, including
+        types not imported yet (USAP), replaces that
+        clip. Automatic semi-diameters never clip.
+        """
+        if self._current_surf < 0:
+            return
+        surf = self._current_surf_data
+        semi_diameter = surf.get("semi_diameter", 0.0)
+        # The clip is the edge of a lens or a mirror: a surface with air on
+        # both sides, such as a stop, a dummy or the image, does not clip at
+        # its semi-diameter. A mirror leaves the medium unchanged.
+        material = surf.get("material", "air")
+        medium_before = self._medium
+        if material != "mirror":
+            self._medium = material
+        bounds_solid = material == "mirror" or not (
+            medium_before == "air" and self._medium == "air"
+        )
+        if (
+            surf.get("aperture") is None
+            and "unsupported_aperture" not in surf
+            and surf.get("semi_diameter_fixed")
+            and semi_diameter > 0.0
+            and bounds_solid
+        ):
+            surf["aperture"] = RadialAperture(r_min=0.0, r_max=semi_diameter)
+        self.data_model.surfaces[self._current_surf] = surf

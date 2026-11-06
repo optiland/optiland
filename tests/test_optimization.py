@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 import warnings
 
 import pytest
@@ -353,14 +354,29 @@ class TestLeastSquares:
             input_data=input_data,
         )
         optimizer = optimization.LeastSquares(problem)
-        optimizer.optimize(method_choice="lm", maxiter=5)
-        captured = capsys.readouterr()
-        expected_warning = (
-            "Warning: Method 'lm' (Levenberg-Marquardt) chosen, "
-            "but variable bounds are set. SciPy's 'lm' method does not "
-            "support bounds; bounds will be ignored."
+        with pytest.warns(UserWarning, match="bounds will be ignored") as record:
+            optimizer.optimize(method_choice="lm", maxiter=5)
+        # normcase: Windows may report the drive letter in either case
+        assert any(
+            os.path.normcase(w.filename) == os.path.normcase(__file__) for w in record
         )
-        assert expected_warning in captured.out
+        assert "bounds will be ignored" not in capsys.readouterr().out
+
+    def test_lm_too_few_residuals_warning(self, capsys):
+        lens = Microscope20x()
+        problem = optimization.OptimizationProblem()
+        problem.add_variable(lens, "radius", surface_number=1)
+        problem.add_variable(lens, "radius", surface_number=2)
+        problem.add_operand(
+            operand_type="f2",
+            target=90,
+            weight=1.0,
+            input_data={"optic": lens},
+        )
+        optimizer = optimization.LeastSquares(problem)
+        with pytest.warns(UserWarning, match="Switching to 'trf' method"):
+            optimizer.optimize(method_choice="lm", maxiter=5)
+        assert "Switching to 'trf'" not in capsys.readouterr().out
 
     def test_unknown_method_choice_warning(self, capsys):
         lens = Microscope20x()
@@ -374,13 +390,12 @@ class TestLeastSquares:
             input_data=input_data,
         )
         optimizer = optimization.LeastSquares(problem)
-        optimizer.optimize(method_choice="unknown_method", maxiter=5)
-        captured = capsys.readouterr()
-        expected_warning = (
-            "Warning: Unknown method_choice 'unknown_method'. Defaulting to "
-            "'trf' method."  # Updated expected warning
-        )
-        assert expected_warning in captured.out
+        with pytest.warns(
+            UserWarning,
+            match="Unknown method_choice 'unknown_method'. Defaulting to 'trf'",
+        ):
+            optimizer.optimize(method_choice="unknown_method", maxiter=5)
+        assert "Unknown method_choice" not in capsys.readouterr().out
 
     @pytest.mark.parametrize("x_scale", [None, "jac", 2.0, [2.0]])
     def test_x_scale_forwarding(self, monkeypatch, x_scale):
@@ -470,9 +485,10 @@ class TestLeastSquaresErrorHandling:
         optimizer = optimization.LeastSquares(problem)
         result = optimizer.optimize(maxiter=5)
 
-        # Cost is 0.5 * sum(residuals**2). Residual is sqrt(1e10 / 1) = sqrt(1e10)
-        # So cost = 0.5 * (sqrt(1e10))^2 = 0.5 * 1e10
-        assert be.isclose(result.cost, 0.5 * 1e10)
+        # Non-finite rows get the scale-aware penalty 10 * max(F_last, 1) / sqrt(m).
+        # No evaluation is ever finite, so F_last = 0 and the single residual is
+        # 10; cost = 0.5 * sum(residuals**2) = 50.
+        assert be.isclose(result.cost, 0.5 * 10.0**2)
         # Check that optimization completed without crashing (status might vary)
         assert result.status is not None  # General check for completion
 
@@ -489,7 +505,8 @@ class TestLeastSquaresErrorHandling:
 
         optimizer = optimization.LeastSquares(problem)
         result = optimizer.optimize(maxiter=5)
-        assert be.isclose(result.cost, 0.5 * 1e10)
+        # A failed evaluation yields a full penalty vector: 10 / sqrt(1) per row
+        assert be.isclose(result.cost, 0.5 * 10.0**2)
         assert result.status is not None
 
     def test_optimize_no_operands(self):

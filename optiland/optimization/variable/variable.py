@@ -190,6 +190,9 @@ class Variable:
 
         """
         import optiland.backend as be
+        from optiland import _epoch
+
+        _epoch.assert_writable()
 
         if isinstance(new_value, list | tuple):
             new_value = new_value[0]

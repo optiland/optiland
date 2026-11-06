@@ -30,8 +30,7 @@ def present_2d(viewer, data, context, restyle=False, *, reset=False):
             )
         )
         xlim, ylim = viewer.ax.get_xlim(), viewer.ax.get_ylim()
-        if hasattr(viewer, "_finish_default_pan"):
-            viewer._finish_default_pan()
+        viewer.toolbar.finish_navigation()
         if hasattr(viewer, "clear_2d_highlights"):
             viewer.clear_2d_highlights()
         viewer.ax.clear()
@@ -39,6 +38,7 @@ def present_2d(viewer, data, context, restyle=False, *, reset=False):
         viewer.figure.set_facecolor(background)
         viewer.ax.set_facecolor(background)
         body_artists, surface_artists = {}, {}
+        viewer._chief_ray_artists = []
         identities = context["surface_identities"]
         for item in data["primitives"]:
             owned = tuple(identities[i] for i in item["surfaces"])
@@ -73,6 +73,10 @@ def present_2d(viewer, data, context, restyle=False, *, reset=False):
                 )
                 if role == "surface" and len(owned) == 1:
                     surface_artists[line] = owned[0]
+                elif role == "ray" and item["chief"]:
+                    viewer._chief_ray_artists.append(
+                        (line, color, item["linewidth"], line.get_zorder())
+                    )
         for annotation in data["annotations"]:
             viewer.ax.annotate(
                 "",
@@ -106,6 +110,19 @@ def present_2d(viewer, data, context, restyle=False, *, reset=False):
         viewer._is_plotting = False
 
 
+def style_chief_rays(viewer):
+    """Change retained 2D ray appearance without recalculation or axis changes."""
+    highlight = viewer.chief_ray_checkbox.isChecked()
+    # Keep the chief distinct from the theme's selection/hover accents and
+    # green rays, including under red-green color-vision deficiencies.
+    blue = "#C4CFFF" if viewer.current_theme == "dark" else "#101A78"
+    for line, color, width, order in viewer._chief_ray_artists:
+        line.set_color(blue if highlight else color)
+        line.set_linewidth(1.8 if highlight else width)
+        line.set_zorder(5 if highlight else order)
+    viewer.canvas.draw_idle()
+
+
 def present_3d(viewer, data, context, restyle=False):
     """Install bulk polydata and preserve the user's existing camera."""
     import vtk
@@ -113,6 +130,7 @@ def present_3d(viewer, data, context, restyle=False):
 
     gui_plot_utils.apply_gui_matplotlib_styles(viewer.current_theme)
     theme = get_active_theme().parameters
+    viewer.clear_3d_highlights()
     if not viewer._initialized:
         viewer.iren.Initialize()
         viewer._initialized = True
@@ -120,28 +138,38 @@ def present_3d(viewer, data, context, restyle=False):
     if restyle and hasattr(viewer, "_scene_actor_specs"):
         for actor, mesh in viewer._scene_actor_specs:
             _style_3d_actor(actor, mesh, theme)
+        viewer.install_3d_highlights(viewer._scene_actor_specs, context)
         viewer.vtkWidget.GetRenderWindow().Render()
         return
     actors = []
+    geometry_cache = {}
     for mesh in data["meshes"]:
-        points = vtk.vtkPoints()
-        points.SetData(numpy_to_vtk(mesh["points"], deep=True))
-        polydata = vtk.vtkPolyData()
-        polydata.SetPoints(points)
-        if mesh.get("normals") is not None:
-            polydata.GetPointData().SetNormals(numpy_to_vtk(mesh["normals"], deep=True))
-        for name, (offsets, connectivity) in mesh["cells"].items():
-            cells = vtk.vtkCellArray()
-            cells.SetData(
-                numpy_to_vtkIdTypeArray(offsets, deep=True),
-                numpy_to_vtkIdTypeArray(connectivity, deep=True),
-            )
-            {
-                "polys": polydata.SetPolys,
-                "lines": polydata.SetLines,
-                "verts": polydata.SetVerts,
-                "strips": polydata.SetStrips,
-            }[name](cells)
+        # Pickle preserves these shared array identities: a standalone surface
+        # and its overlay need independent actors/materials, one retained mesh.
+        geometry_key = id(mesh["points"]), id(mesh["cells"]), id(mesh.get("normals"))
+        if geometry_key not in geometry_cache:
+            points = vtk.vtkPoints()
+            points.SetData(numpy_to_vtk(mesh["points"], deep=True))
+            polydata = vtk.vtkPolyData()
+            polydata.SetPoints(points)
+            if mesh.get("normals") is not None:
+                polydata.GetPointData().SetNormals(
+                    numpy_to_vtk(mesh["normals"], deep=True)
+                )
+            for name, (offsets, connectivity) in mesh["cells"].items():
+                cells = vtk.vtkCellArray()
+                cells.SetData(
+                    numpy_to_vtkIdTypeArray(offsets, deep=True),
+                    numpy_to_vtkIdTypeArray(connectivity, deep=True),
+                )
+                {
+                    "polys": polydata.SetPolys,
+                    "lines": polydata.SetLines,
+                    "verts": polydata.SetVerts,
+                    "strips": polydata.SetStrips,
+                }[name](cells)
+            geometry_cache[geometry_key] = polydata
+        polydata = geometry_cache[geometry_key]
         mapper = vtk.vtkPolyDataMapper()
         mapper.SetInputData(polydata)
         actor = vtk.vtkActor()
@@ -149,12 +177,18 @@ def present_3d(viewer, data, context, restyle=False):
         matrix = vtk.vtkMatrix4x4()
         matrix.DeepCopy(mesh["matrix"].ravel())
         actor.SetUserMatrix(matrix)
+        if mesh["role"] in ("face_highlight", "body_edge", "surface_edge"):
+            actor.UseBoundsOff()
+            mapper.SetResolveCoincidentTopologyToPolygonOffset()
+            mapper.SetRelativeCoincidentTopologyPolygonOffsetParameters(-1, -1)
+            mapper.SetRelativeCoincidentTopologyLineOffsetParameters(-1, -1)
         _style_3d_actor(actor, mesh, theme)
         actors.append(actor)
     viewer._scene_actor_specs = list(zip(actors, data["meshes"], strict=True))
     viewer.renderer.RemoveAllViewProps()
     for actor in actors:
         viewer.renderer.AddActor(actor)
+    viewer.install_3d_highlights(viewer._scene_actor_specs, context)
     if (
         not viewer._has_scene
         or getattr(viewer, "_scene_document_id", None) != context["document_id"]
@@ -182,6 +216,9 @@ def _style_3d_actor(actor, mesh, theme):
     prop.SetSpecular(mesh["specular"])
     prop.SetSpecularPower(mesh["power"])
     prop.SetLineWidth(mesh["linewidth"])
+    actor.SetVisibility(
+        mesh["role"] not in ("face_highlight", "body_edge", "surface_edge")
+    )
 
 
 def present_sag(viewer, data, context, restyle=False):
@@ -190,6 +227,7 @@ def present_sag(viewer, data, context, restyle=False):
     from mpl_toolkits.axes_grid1 import make_axes_locatable
 
     gui_plot_utils.apply_gui_matplotlib_styles(viewer.current_theme)
+    viewer.toolbar.update()
     viewer.figure.clear()
     axes = viewer.figure.add_subplot(111)
     divider = make_axes_locatable(axes)

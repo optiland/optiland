@@ -193,24 +193,29 @@ def test_robust_aimer_integration_with_cache(numerical_backend, request):
     # robust aimer reads it to build its aggregate last_report.
     from optiland.rays.ray_aiming.parameterization import SolveReport
 
-    iterative_mock._solve_core.side_effect = lambda *args, **kwargs: (
-        be.array([1.0]),
-        be.array([1.0]),
-        be.array([1.0]),
-        be.array([0.0]),
-        be.array([0.0]),
-        be.array([1.0]),
-        be.array([1.0]) > 0.0,
-        None,
-        SolveReport(
-            seed_residual=0.0,
-            final_residual=0.0,
-            converged=True,
-            iterations=1,
-            num_rays=1,
-            num_converged=1,
-        ),
-    )
+    # Sized to the batch: the edge probes are solved four at a time.
+    def solve_core(*args, **kwargs):
+        n = len(be.as_array_1d(args[0]))
+        return (
+            be.ones(n),
+            be.ones(n),
+            be.ones(n),
+            be.zeros(n),
+            be.zeros(n),
+            be.ones(n),
+            be.ones(n) > 0.0,
+            None,
+            SolveReport(
+                seed_residual=0.0,
+                final_residual=0.0,
+                converged=True,
+                iterations=1,
+                num_rays=n,
+                num_converged=n,
+            ),
+        )
+
+    iterative_mock._solve_core.side_effect = solve_core
     iterative_mock.last_report = SolveReport(
         seed_residual=0.0,
         final_residual=0.0,

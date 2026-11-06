@@ -110,8 +110,13 @@ class TestZemaxDataParser:
         assert self.parser._current_surf_data["conic"] == 0.0
 
     def test_read_glass(self):
+        # Glasses resolve after the whole file is read, against GCAT.
+        self.parser._read_glass_catalog(["GCAT", "SCHOTT"])
+        self.parser._read_surface(["SURF", "0"])
         self.parser._read_glass(["GLAS", "N-BK7", "0", "0", "1.5", "50"])
-        mat = self.parser._current_surf_data["material"]
+        self.parser._finalize_surface()
+        self.parser._resolve_glasses()
+        mat = self.parser.data_model.surfaces[0]["material"]
         assert isinstance(mat, Material)
 
     def test_read_stop(self):
@@ -135,7 +140,8 @@ class TestZemaxDataParser:
 
     def test_read_diameter(self):
         self.parser._read_diameter(["DIAM", "8.5", "1", "0", "0", "1", '""'])
-        assert self.parser._current_surf_data["diameter"] == 8.5
+        assert self.parser._current_surf_data["semi_diameter"] == 8.5
+        assert self.parser._current_surf_data["semi_diameter_fixed"] is True
 
     def test_read_obdc_after_clap(self):
         self.parser._read_surface(["SURF", "0"])
@@ -211,6 +217,26 @@ class TestZemaxDataParser:
         aperture = self.parser._current_surf_data["aperture"]
         assert type(aperture) is RadialAperture
 
+    def test_read_flap(self):
+        self.parser._read_surface(["SURF", "0"])
+        self.parser._operand_table["FLAP"](["FLAP", "0", "7.25", "0"])
+
+        aperture = self.parser._current_surf_data["aperture"]
+        assert type(aperture) is RadialAperture
+        assert aperture.r_min == 0.0
+        assert aperture.r_max == 7.25
+
+    def test_read_obdc_after_flap(self):
+        self.parser._read_surface(["SURF", "0"])
+        self.parser._operand_table["FLAP"](["FLAP", "0", "7.25", "0"])
+        self.parser._operand_table["OBDC"](["OBDC", "1.5", "-2"])
+
+        aperture = self.parser._current_surf_data["aperture"]
+        assert isinstance(aperture, OffsetRadialAperture)
+        assert aperture.r_max == 7.25
+        assert aperture.offset_x == 1.5
+        assert aperture.offset_y == -2.0
+
     def test_read_config_data_legacy_short_ftyp(self):
         # Legacy ZEMAX (e.g. VERS 6133) writes FTYP with only 1-2 tokens
         # while modern files emit 8. Verify the parser falls back to
@@ -268,7 +294,19 @@ class TestEndToEnd:
         optic = load_zemax_file(filename)
         assert isinstance(optic, Optic)
         assert optic.aperture.ap_type == "float_by_stop_size"
-        assert optic.aperture.value == 8.5
+        # The stop's DIAM is a semi-diameter of 8.5.
+        assert optic.aperture.value == 17.0
+
+    def test_load_flap_apertures(self, zemax_dir):
+        filename = os.path.join(zemax_dir, "lens_thorlabs_iso_8859_1.zmx")
+        optic = load_zemax_file(filename)
+        apertures = [surf.aperture for surf in optic.surfaces]
+        assert type(apertures[1]) is RadialAperture
+        assert_allclose(apertures[1].r_max, 9.0)
+        assert type(apertures[2]) is RadialAperture
+        assert_allclose(apertures[2].r_max, 7.258157225112)
+        assert apertures[0] is None
+        assert apertures[3] is None
 
     def test_load_toroidal_surface(self, zemax_dir):
         filename = os.path.join(zemax_dir, "thorlabs_lj1598l1.zmx")

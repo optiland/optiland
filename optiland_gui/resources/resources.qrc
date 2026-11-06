@@ -14,6 +14,7 @@
     <file alias="dark/stop.svg">icons/dark/stop.svg</file>
     <file alias="dark/close.svg">icons/dark/close.svg</file>
     <file alias="dark/maximize_restore.svg">icons/dark/maximize_restore.svg</file>
+    <file alias="dark/maximize.svg">icons/dark/maximize.svg</file>
     <file alias="dark/run_all.svg">icons/dark/run_all.svg</file>
     <file alias="dark/check_apply.svg">icons/dark/check_apply.svg</file>
     <file alias="dark/load_settings.svg">icons/dark/load_settings.svg</file>
@@ -41,6 +42,7 @@
     <file alias="light/stop.svg">icons/light/stop.svg</file>
     <file alias="light/close.svg">icons/light/close.svg</file>
     <file alias="light/maximize_restore.svg">icons/light/maximize_restore.svg</file>
+    <file alias="light/maximize.svg">icons/light/maximize.svg</file>
     <file alias="light/run_all.svg">icons/light/run_all.svg</file>
     <file alias="light/check_apply.svg">icons/light/check_apply.svg</file>
     <file alias="light/load_settings.svg">icons/light/load_settings.svg</file>

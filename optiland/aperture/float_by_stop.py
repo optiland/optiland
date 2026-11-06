@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from optiland.aperture.base import BaseSystemAperture
+from optiland.aperture.base import BaseSystemAperture, aperture_memo
 
 if TYPE_CHECKING:
     from optiland.paraxial import Paraxial
@@ -47,6 +47,7 @@ class FloatByStopAperture(BaseSystemAperture):
     def is_scalable(self) -> bool:
         return True
 
+    @aperture_memo
     def compute_epd(self, paraxial: Paraxial, wavelength: float | None = None) -> float:
         """Compute EPD by paraxial ray tracing through the stop surface.
 

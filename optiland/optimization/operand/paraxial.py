@@ -9,6 +9,12 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from optiland._types import ScalarOrArray
+    from optiland.optic import Optic
+
 
 class ParaxialOperand:
     """A class representing paraxial operands.
@@ -22,6 +28,8 @@ class ParaxialOperand:
     Methods:
         f1(optic): Returns the first focal length of the optic.
         f2(optic): Returns the second focal length of the optic.
+        f2_range(optic, start, end, wavelength): Returns the effective focal
+            length of a range of surfaces (a lens group).
         F1(optic): Returns the first principal plane distance of the optic.
         F2(optic): Returns the second principal plane distance of the optic.
         P1(optic): Returns the first principal point distance of the optic.
@@ -44,6 +52,33 @@ class ParaxialOperand:
     @staticmethod
     def f2(optic):
         return optic.paraxial.f2()
+
+    @staticmethod
+    def f2_range(
+        optic: Optic,
+        start: int,
+        end: int,
+        wavelength: float | None = None,
+    ) -> ScalarOrArray:
+        """Calculate the effective focal length of a range of surfaces.
+
+        The range is treated as a lens group in isolation, as described in
+        :meth:`optiland.paraxial.Paraxial.f2_range`. Use it to target the
+        focal length of one element or lens group while the surrounding
+        system is optimized.
+
+        Args:
+            optic: The optic object.
+            start: Index of the first surface of the range, inclusive.
+            end: Index of the last surface of the range, inclusive.
+            wavelength: Wavelength in micrometers. Defaults to the system's
+                primary wavelength.
+
+        Returns:
+            Effective focal length of the surface range. An afocal range
+                returns infinity.
+        """
+        return optic.paraxial.f2_range(start, end, wavelength)
 
     @staticmethod
     def F1(optic):

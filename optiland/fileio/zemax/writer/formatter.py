@@ -26,6 +26,7 @@ from optiland.fileio.zemax.surfaces import (
     CoordinateBreakSurfaceHandler,
     get_handler_for_optiland_type,
 )
+from optiland.materials.agf import AGFMaterial
 from optiland.materials.data import DataMaterial
 from optiland.materials.material import Material
 
@@ -284,10 +285,11 @@ class OpticToZemaxConverter:
             raw["STOP"] = True
 
         # Semi-aperture (DIAM)
-        # For float_by_stop_size aperture, the stop surface must carry DIAM
+        # For float_by_stop_size aperture, the stop surface must carry DIAM,
+        # which is a semi-diameter; the aperture value is the full diameter.
         ap = self._optic.aperture
         if surface.is_stop and ap is not None and ap.ap_type == "float_by_stop_size":
-            raw["DIAM"] = float(ap.value)
+            raw["DIAM"] = float(ap.value) / 2.0
         elif surface.semi_aperture is not None:
             raw["DIAM"] = float(surface.semi_aperture)
 
@@ -345,16 +347,33 @@ class OpticToZemaxConverter:
         if isinstance(mat, str) and mat.lower() == "mirror":
             return {"name": "MIRROR"}
 
-        # Catalog glass (Material from glass catalog)
-        if isinstance(mat, Material) and mat.reference:
-            catalog = mat.reference.upper()
-            glass_catalogs.append(catalog)
-            n_d, v_d = compute_abbe_number(mat, WL_D)
-            return {"name": mat.name.upper(), "catalog": catalog, "n": n_d, "V": v_d}
-
-        # Named glass without explicit reference — try to use name only
+        # Catalog glass. The reader resolves names strictly against GCAT, so
+        # a Material without a reference exports the glass catalog and name
+        # it resolved to; nd/vd let the reader pick between catalogs or model
+        # the glass if neither is found.
         if isinstance(mat, Material):
-            return {"name": mat.name.upper()}
+            row = getattr(mat, "material_data", None) or {}
+            is_glass = str(row.get("group", "")).lower() == "glass"
+            catalog = mat.reference or (row.get("catalog_dir") if is_glass else None)
+            # The file stem is the bare glass name ("N-BK7"); the name column
+            # can carry a catalog suffix ("N-BK7 (SCHOTT)").
+            stem = row.get("filename_no_ext")
+            name = stem if is_glass and stem else mat.name
+            n_d, v_d = compute_abbe_number(mat, WL_D)
+            entry = {"name": name.upper(), "n": n_d, "V": v_d}
+            if catalog:
+                entry["catalog"] = catalog.upper()
+                glass_catalogs.append(entry["catalog"])
+            return entry
+
+        # A glass read from an AGF catalog exports under that catalog.
+        if isinstance(mat, AGFMaterial):
+            n_d, v_d = compute_abbe_number(mat, WL_D)
+            entry = {"name": mat.name.upper(), "n": n_d, "V": v_d}
+            if mat.catalog:
+                entry["catalog"] = mat.catalog.upper()
+                glass_catalogs.append(entry["catalog"])
+            return entry
 
         # AbbeMaterial or any other material -> MODEL glass
         n_d, v_num = compute_abbe_number(mat, float(self._optic.primary_wavelength))

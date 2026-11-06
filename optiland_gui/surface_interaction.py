@@ -107,9 +107,24 @@ class EditorHoverTracker(QObject):
         self._enable_tracking()
         # Application filtering also sees active cell editors and newly inserted
         # child controls; a viewport-only filter misses their mouse events.
-        QApplication.instance().installEventFilter(self)
+        self._suspended = bool(getattr(editor, "_table_loading", False))
+        if not self._suspended:
+            QApplication.instance().installEventFilter(self)
         self.table.verticalScrollBar().valueChanged.connect(self.refresh)
         self.table.horizontalScrollBar().valueChanged.connect(self.refresh)
+
+    def set_suspended(self, suspended):
+        if suspended == self._suspended:
+            return
+        self._suspended = suspended
+        if suspended:
+            QApplication.instance().removeEventFilter(self)
+            self._refresh_timer.stop()
+            self._tracking_timer.stop()
+            self.editor.interaction_state.set_hover()
+        else:
+            self._enable_tracking()
+            QApplication.instance().installEventFilter(self)
 
     def eventFilter(self, source, event):
         kind = event.type()
@@ -136,7 +151,7 @@ class EditorHoverTracker(QObject):
 
     def update_at(self, global_position):
         state = self.editor.interaction_state
-        if not self.table.isVisible():
+        if self._suspended or not self.table.isVisible() or not self.table.isEnabled():
             state.set_hover()
             return
         target = QApplication.widgetAt(global_position)

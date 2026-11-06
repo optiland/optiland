@@ -25,6 +25,7 @@ import warnings
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Literal
 
+from optiland import _instrument
 from optiland._deprecation import deprecated
 from optiland.aberrations import Aberrations
 from optiland.aperture import BaseSystemAperture, make_system_aperture
@@ -64,6 +65,7 @@ if TYPE_CHECKING:
     from optiland.sequences.sequenced_optic import SequencedOptic
     from optiland.sequences.steps import RawStep
     from optiland.surfaces.standard_surface import Surface
+    from optiland.visualization.coloring import ComponentColorizer, RayColorizer
 
 
 class Optic:
@@ -639,6 +641,10 @@ class Optic:
         projection: Literal["XY", "XZ", "YZ"] = "YZ",
         ax: Axes | None = None,
         show: bool = True,
+        *,
+        component_colorizer: ComponentColorizer | None = None,
+        ray_colorizer: RayColorizer | None = None,
+        show_colorbar: bool = True,
     ) -> tuple[Figure, Axes]:
         """Draw a 2D representation of the optical system.
 
@@ -673,6 +679,13 @@ class Optic:
             show (bool, optional): If True (default), calls plt.show(). Set
                 False for headless use (e.g. saving to file, CI environments)
                 or when embedding in an existing figure via ``ax``.
+            component_colorizer (ComponentColorizer, optional): Strategy that
+                colors lens elements, mirrors and surfaces. Defaults to None,
+                which keeps the theme colors.
+            ray_colorizer (RayColorizer, optional): Strategy that colors rays.
+                Defaults to None, which keeps the default ray colors.
+            show_colorbar (bool, optional): If True (default), shows a colorbar
+                for each colorizer that provides a scale.
 
         Returns:
             tuple[Figure, Axes]: A tuple containing the matplotlib Figure and
@@ -697,6 +710,9 @@ class Optic:
             projection=projection,
             ax=ax,
             show=show,
+            component_colorizer=component_colorizer,
+            ray_colorizer=ray_colorizer,
+            show_colorbar=show_colorbar,
         )
         return fig, ax
 
@@ -710,6 +726,10 @@ class Optic:
         dark_mode: bool = False,
         reference: ReferenceRay | None = None,
         hide_vignetted: bool = False,
+        *,
+        component_colorizer: ComponentColorizer | None = None,
+        ray_colorizer: RayColorizer | None = None,
+        show_colorbar: bool = True,
     ):
         """Draw a 3D representation of the optical system.
 
@@ -731,6 +751,13 @@ class Optic:
                 plot, e.g., 'chief' or 'marginal'. Defaults to None.
             hide_vignetted (bool, optional): If True, rays that vignette at any
                 surface are not shown. Defaults to False.
+            component_colorizer (ComponentColorizer, optional): Strategy that
+                colors lens elements, mirrors and surfaces. Defaults to None,
+                which keeps the theme colors.
+            ray_colorizer (RayColorizer, optional): Strategy that colors rays.
+                Defaults to None, which keeps the default ray colors.
+            show_colorbar (bool, optional): If True (default), shows a colorbar
+                for each colorizer that provides a scale.
 
         """
         from optiland.visualization import OpticViewer3D
@@ -745,6 +772,9 @@ class Optic:
             dark_mode=dark_mode,
             reference=reference,
             hide_vignetted=hide_vignetted,
+            component_colorizer=component_colorizer,
+            ray_colorizer=ray_colorizer,
+            show_colorbar=show_colorbar,
         )
 
     def info(self):
@@ -796,7 +826,10 @@ class Optic:
             wavelength (float): The wavelength of the rays in microns.
             num_rays (int, optional): The sampling parameter that determines the
                 number of rays in the pupil. Its meaning depends on the value of
-                `distribution`. Defaults to 100.
+                `distribution` (see Notes). For 'hexapolar', the default, it is
+                the number of rings N, giving ``1 + 3 * N * (N + 1)`` rays per
+                field point, so the default of 100 traces 30301 rays.
+                Defaults to 100.
             distribution:
                 The distribution of rays. Can be a string identifier (e.g.,
                 'hexapolar', 'uniform') or a `BaseDistribution` object.
@@ -814,11 +847,23 @@ class Optic:
 
         Notes:
             The interpretation of the `num_rays` argument depends on the value of
-            `distribution`. For example, if `distribution` is `hexapolar`, `num_rays`
-            specifies the number of rings, whereas when `distribution` is `uniform`, it
-            specifies the total number of rays per axis.
+            `distribution`:
+
+            - 'hexapolar': the number of rings N; the pupil holds
+              ``1 + 3 * N * (N + 1)`` points (e.g. 8 -> 217, 16 -> 817,
+              32 -> 3169).
+            - 'uniform': the number of grid points per axis n; about
+              ``pi / 4 * n**2`` points remain after masking to the unit disk.
+            - 'cross': the number of points along each axis.
+            - 'random', 'sobol', 'ring', and the 'line' distributions: the
+              total number of points.
+
+            If a `BaseDistribution` object is passed, `num_rays` is ignored and
+            its existing points are used. The returned rays hold one ray per
+            pupil point for every field point; ``len(rays.x)`` gives the count.
 
         """
+        _instrument.count("trace")
         return self.ray_tracer.trace(
             Hx,
             Hy,
@@ -854,6 +899,7 @@ class Optic:
             RealRays: A `RealRays` object containing the traced rays.
 
         """
+        _instrument.count("trace_generic")
         return self.ray_tracer.trace_generic(
             Hx, Hy, Px, Py, wavelength, retain_launch=retain_launch
         )

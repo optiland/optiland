@@ -18,6 +18,7 @@ from .distortion_strategies import (
     create_distortion_model,
 )
 from .field_curvature import FieldCurvature
+from .chromatic_focal_shift import ChromaticFocalShift
 from .rms_vs_field import RmsSpotSizeVsField, RmsWavefrontErrorVsField
 from .pupil_aberration import PupilAberration
 from .irradiance import IncoherentIrradiance
@@ -26,6 +27,7 @@ from .mtf_vs_field import MTFvsField
 from .through_focus_mtf import ThroughFocusMTF
 from .through_focus_spot_diagram import ThroughFocusSpotDiagram
 from .jones_pupil import JonesPupil
+from .gaussian_beam import GaussianBeamAnalysis
 
 import optiland.plugins as _plugins
 

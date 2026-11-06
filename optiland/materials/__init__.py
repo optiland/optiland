@@ -5,9 +5,11 @@ refractiveindex.info data files."""
 from __future__ import annotations
 
 from .abbe import AbbeMaterial, AbbeMaterialE
+from .agf import AGFMaterial
 from .base import BaseMaterial
 from .catalog import MaterialCatalog
 from .data import DataMaterial
+from .gradient_material import GradientMaterial
 from .ideal import IdealMaterial
 from .material import Material
 from .material_file import MaterialFile
@@ -28,8 +30,12 @@ __all__ = [
     # From abbe.py
     "AbbeMaterial",
     "AbbeMaterialE",
+    # From agf.py
+    "AGFMaterial",
     # From base.py
     "BaseMaterial",
+    # From gradient_material.py
+    "GradientMaterial",
     # From ideal.py
     "IdealMaterial",
     "DataMaterial",

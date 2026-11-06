@@ -31,6 +31,7 @@ from optiland.optimization.operand.ray import RayOperand
 METRIC_DICT = {
     "f1": ParaxialOperand.f1,
     "f2": ParaxialOperand.f2,
+    "f2_range": ParaxialOperand.f2_range,
     "F1": ParaxialOperand.F1,
     "F2": ParaxialOperand.F2,
     "P1": ParaxialOperand.P1,
@@ -80,6 +81,7 @@ METRIC_DICT = {
     "real_N": RayOperand.N,
     "rms_spot_size": RayOperand.rms_spot_size,
     "OPD_difference": RayOperand.OPD_difference,
+    "center_thickness": LensOperand.center_thickness,
     "edge_thickness": LensOperand.edge_thickness,
     "AOI": RayOperand.AOI,
 }
