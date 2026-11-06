@@ -70,8 +70,9 @@ class ThinLensInteractionModel(BaseInteractionModel):
             h2 = rays.x**2 + rays.y**2
             rays.opd = rays.opd + self.f - be.copysign(be.sqrt(h2 + self.f**2), self.f)
 
-        n1 = self.material_pre.n(rays.w)
-        n2 = n1 if self.is_reflective else self.material_post.n(rays.w)
+        n1, n2 = self._real_indices(rays)
+        if self.is_reflective:
+            n2 = n1
         # Capture this surface's incident direction, not a previous bend's.
         rays.normalize()
         rays.L0, rays.M0, rays.N0 = (

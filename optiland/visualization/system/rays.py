@@ -17,8 +17,10 @@ from optiland.utils import resolve_fields, resolve_wavelengths
 from optiland.visualization.coloring.rays import RayBundleRef, TracedRays
 from optiland.visualization.system.ray_bundle import RayBundle
 from optiland.visualization.system.ray_path import (
+    curved_segments,
     neutral_reference_mask,
     physical_ray_path,
+    splice_curved_segments,
 )
 from optiland.visualization.system.utils import transform
 
@@ -61,6 +63,7 @@ class Rays2D:
         self.y = None
         self.z = None
         self.i = None
+        self.wavelength = None
 
         n = optic.surfaces.num_surfaces
         self.r_extent = be.zeros(n)
@@ -183,6 +186,7 @@ class Rays2D:
 
         """
         self.optic.trace(*field, wavelength, num_rays, distribution)
+        self.wavelength = wavelength
         self._process_traced_rays()
 
     def _trace_reference(self, field, wavelength, reference):
@@ -204,6 +208,7 @@ class Rays2D:
         else:
             raise ValueError(f"Invalid ray reference type: {reference}")
 
+        self.wavelength = wavelength
         self._process_traced_rays()
 
     def _ray_colors(self, colorizer, indices, bundle, counts, *, is_reference):
@@ -353,16 +358,22 @@ class Rays2D:
 
     def _iter_indexed_paths(self, hide_vignetted=False):
         """Yield ``(ray_index, polyline)`` for each ray with a visible path."""
-        neutral = neutral_reference_mask(list(self.optic.surfaces))
+        surfaces = list(self.optic.surfaces)
+        neutral = neutral_reference_mask(surfaces)
+        segments = curved_segments(surfaces, self.wavelength)
         x, y, z, intensity = (
             be.to_numpy(values) for values in (self.x, self.y, self.z, self.i)
         )
         for index in range(z.shape[1]):
-            path = physical_ray_path(
+            points, ray_intensity, ray_neutral = splice_curved_segments(
                 np.column_stack((x[:, index], y[:, index], z[:, index])),
                 intensity[:, index],
                 neutral,
-                hide_vignetted=hide_vignetted,
+                segments,
+                index,
+            )
+            path = physical_ray_path(
+                points, ray_intensity, ray_neutral, hide_vignetted=hide_vignetted
             )
             if len(path):
                 yield index, path

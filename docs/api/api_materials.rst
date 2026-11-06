@@ -117,6 +117,43 @@ data; the reader works on files you have.
 ``load_zemax_file(..., agf_dirs=[...])`` uses the same reader for the
 catalogs a ``.zmx`` file declares; see :doc:`/zemax_import`.
 
+Gradient-Index Materials
+------------------------
+
+:class:`~optiland.materials.gradient_material.GradientMaterial` describes a
+medium whose index varies with position, following the Gradient 3 law
+
+.. math::
+
+   n(r, z) = n_0 + n_{r2} r^2 + n_{r4} r^4 + n_{r6} r^6
+             + n_{z1} z + n_{z2} z^2 + n_{z3} z^3, \qquad r^2 = x^2 + y^2.
+
+Coordinates are in mm, in the local frame of the surface where the medium
+starts, so the profile moves with that surface. Rays are integrated through the
+medium by :class:`~optiland.propagation.grin.GRINPropagation`, which follows
+the curved path to the next surface, accumulates the optical path and
+evaluates the local index for refraction at both faces. Pass a configured model
+to change the integration step:
+
+.. code-block:: python
+
+   from optiland.materials import GradientMaterial
+   from optiland.propagation.grin import GRINPropagation
+
+   rod = GradientMaterial(
+       n0=1.6, nr2=-0.008, propagation_model=GRINPropagation(step_size=0.05)
+   )
+   lens.surfaces.add(index=1, thickness=15.7, material=rod, is_stop=True)
+
+Current limits: the index does not depend on wavelength and the medium does not
+absorb. Paraxial tracing through the medium raises ``NotImplementedError``, so
+first-order quantities that cross it (for example the exit pupil) are
+unavailable and the aperture stop must lie at or before the medium. The medium
+must sit between two surfaces of a forward sequence, not bounded by phase
+surfaces and not in image space. Rays that do not reach the next surface
+within ``max_steps`` steps are vignetted. Exporters to other formats reject
+GRIN media.
+
 Evaluation and Caching
 ----------------------
 
@@ -165,6 +202,7 @@ lookup when an input or tracked parameter requires a fresh gradient graph.
    materials.abbe
    materials.agf
    materials.ideal
+   materials.gradient_material
    materials.data
    materials.material_file
    materials.material

@@ -9,8 +9,10 @@ import abc
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from optiland._types import BEArray
     from optiland.materials.base import BaseMaterial
     from optiland.rays.real_rays import RealRays
+    from optiland.surfaces.standard_surface import Surface
 
 
 class BasePropagationModel(abc.ABC):
@@ -34,6 +36,76 @@ class BasePropagationModel(abc.ABC):
             t: The distance to propagate along the z-axis.
         """
         raise NotImplementedError
+
+    def propagate_to_surface(self, rays: RealRays, surface: Surface) -> None:
+        """Propagates rays through this medium onto ``surface``.
+
+        The default is straight-line travel: the surface geometry gives the
+        distance, :meth:`propagate` moves the rays and the optical path
+        ``t * n`` is added to ``rays.opd``. Models whose index varies with
+        position override this method and own the optical path themselves.
+
+        Args:
+            rays: The rays, in the local frame of ``surface``. Modified
+                in-place.
+            surface: The surface at the end of this medium.
+        """
+        from optiland.surfaces.standard_surface import _aperture_aware_distance
+
+        t = _aperture_aware_distance(surface, rays)
+        self.propagate(rays, t)
+        # t is oriented along the ray: virtual propagation subtracts OPL.
+        # Real return paths after reflection still have t > 0 and add OPL.
+        rays.opd = rays.opd + t * surface.material_pre.n(rays.w)
+
+    def paraxial_transfer(
+        self, y: BEArray, u: BEArray, t: BEArray
+    ) -> tuple[BEArray, BEArray]:
+        """Transfers paraxial rays an axial distance ``t`` through this medium.
+
+        Args:
+            y: Ray heights.
+            u: Ray slopes.
+            t: The axial distance.
+
+        Returns:
+            The heights and slopes after the transfer.
+        """
+        return y + t * u, u
+
+    def boundary_index(
+        self, rays: RealRays, surface: Surface, entrance: Surface
+    ) -> BEArray:
+        """Returns the refractive index of this medium where rays meet a surface.
+
+        Args:
+            rays: The rays, in the local frame of ``surface``.
+            surface: The surface the rays are on.
+            entrance: The surface where this medium starts, so
+                ``entrance.material_post`` is the medium. Equal to ``surface``
+                on the medium's entrance face.
+
+        Returns:
+            The refractive index for each ray.
+        """
+        return entrance.material_post.n(rays.w)
+
+    def display_path(self, rays: RealRays, surface: Surface) -> BEArray | None:
+        """Returns intermediate points of the ray path through this medium.
+
+        Drawings join recorded surface hits with straight lines. A medium in
+        which rays curve returns the points to draw between those hits.
+
+        Args:
+            rays: The rays leaving the previous surface, in global coordinates.
+                Not modified.
+            surface: The surface at the end of this medium.
+
+        Returns:
+            ``None`` for straight paths (the default), otherwise global points
+            of shape ``(num_samples, num_rays, 3)``, NaN-padded per ray.
+        """
+        return None
 
     def to_dict(self) -> dict[str, Any]:
         """Serializes the propagation model to a dictionary.

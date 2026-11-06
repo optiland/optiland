@@ -8,7 +8,7 @@ refractive index ``n(wavelength, **kwargs)`` and dimensionless extinction
 coefficient ``k(wavelength, **kwargs)``, with wavelength in micrometers. The
 propagation model controls travel through the medium; surface interaction models
 control refraction, reflection and coatings. Neither belongs in a dispersion
-equation. Spatial GRIN propagation remains a separate, unimplemented feature.
+equation. Spatial (GRIN) media are described below.
 
 Choosing and constructing a material
 ------------------------------------
@@ -281,17 +281,21 @@ its choice of model and must preserve all independent model parameters when
 updating one of them. Import/export mappings need explicit, tested semantics;
 sharing an equation does not make different fitted models interchangeable.
 
-A future spatial material is another ``BaseMaterial`` implementation. It can
-compose an existing material as its homogeneous spectral background, without
-forcing its field or propagation controls into ``DataMaterial.definition``.
-Keep position/environment arguments in ``n/k(..., **kwargs)`` and require the
-position needed by the optical law. In an opted-in cache, spatial context must
-participate in the key even when all wavelengths are equal.
+A spatial material is another ``BaseMaterial`` implementation.
+``GradientMaterial`` is the built-in one. It owns only the index law, takes
+position as ``n(wavelength, x=, y=, z=)`` and returns its reference index
+``n0`` without a position, for callers that only need to know the space is
+glass. It does not opt in to the cache. Medium coordinates are the local frame
+of the surface where the medium starts. A future dispersive spatial law can
+compose an existing material as its homogeneous spectral background.
 
-This extension point does not make tracing, paraxial analysis, wavefront launch
-phase, drawings or coatings position-aware. A GRIN implementation must update
-those callers or reject unsupported use, and define medium coordinates,
-boundary events, index/gradient consistency and a single owner of optical-path
-and attenuation integration. Custom propagation must remain explicit so
-homogeneous-only exporters can reject it. A spatial law attached to the default
-homogeneous propagator is not a supported GRIN configuration.
+``GRINPropagation`` traces any material that provides
+``index_and_gradient(x, y, z, wavelength)``. A new spatial law, for example a
+sampled index grid, implements that method and reuses the integrator. The
+propagation model is the single owner of everything that depends on position
+inside the medium: the path to the next surface, the optical path, the index at
+each boundary for refraction, paraxial transfer and drawn path samples (see
+:ref:`propagation_models`). Surfaces and interaction models ask it and never
+test for GRIN. A spatial law attached to the default homogeneous propagator is
+not a supported GRIN configuration, and homogeneous-only exporters reject
+custom propagation.

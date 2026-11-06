@@ -11,6 +11,7 @@ from optiland.geometries import Plane
 from optiland.interactions.refractive_reflective_model import RefractiveReflectiveModel
 from optiland.materials import IdealMaterial
 from optiland.propagation.homogeneous import HomogeneousPropagation
+from optiland.rays.real_rays import RealRays
 from optiland.surfaces.standard_surface import Surface
 
 if TYPE_CHECKING:
@@ -110,3 +111,72 @@ def physical_ray_path(
                 break
             keep.pop(-2)
     return points[keep]
+
+
+def curved_segments(
+    surfaces: Sequence[Surface], wavelength: float | None
+) -> dict[int, np.ndarray]:
+    """Sample ray paths through media whose propagation model curves them.
+
+    Uses the ray state recorded on each surface by the latest trace.
+
+    Args:
+        surfaces: The traced surfaces, in order.
+        wavelength: The traced wavelength in µm. ``None`` (unknown) keeps all
+            segments straight.
+
+    Returns:
+        Map from the index of the surface ending a curved medium to global
+        points of shape ``(num_samples, num_rays, 3)``.
+    """
+    segments = {}
+    if wavelength is None:
+        return segments
+    for index in range(1, len(surfaces)):
+        start, surface = surfaces[index - 1], surfaces[index]
+        if be.size(start.x) == 0:
+            continue
+        rays = RealRays(
+            start.x, start.y, start.z, start.L, start.M, start.N,
+            start.intensity, be.full_like(start.x, wavelength),
+        )  # fmt: skip
+        path = surface.material_pre.propagation_model.display_path(rays, surface)
+        if path is not None:
+            segments[index] = np.asarray(be.to_numpy(path), dtype=float)
+    return segments
+
+
+def splice_curved_segments(
+    points: np.ndarray,
+    intensity: np.ndarray,
+    neutral: np.ndarray,
+    segments: dict[int, np.ndarray],
+    ray: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Insert one ray's interior curved-path samples between its surface hits.
+
+    Inserted points carry the intensity at the start of their medium and are
+    never neutral reference vertices.
+
+    Args:
+        points: Surface hits of the ray, shape ``(num_surfaces, 3)``.
+        intensity: Intensity at each hit.
+        neutral: Removable reference-vertex mask, one entry per hit.
+        segments: Output of :func:`curved_segments`.
+        ray: Index of the ray in the traced bundle.
+
+    Returns:
+        The expanded ``(points, intensity, neutral)``.
+    """
+    rows, values, flags = [], [], []
+    for index in range(len(points)):
+        if index in segments:
+            interior = segments[index][1:-1, ray]
+            interior = interior[np.isfinite(interior).all(axis=1)]
+            rows.append(interior)
+            values.append(np.full(len(interior), intensity[index - 1]))
+            flags.append(np.zeros(len(interior), dtype=bool))
+        rows.append(points[index : index + 1])
+        values.append(intensity[index : index + 1])
+        flags.append(neutral[index : index + 1])
+    return np.concatenate(rows), np.concatenate(values), np.concatenate(flags)
