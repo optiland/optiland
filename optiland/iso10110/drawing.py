@@ -16,6 +16,8 @@ Paper / orientation
 -------------------
 ``paper`` : "A5","A4","A3","A2","A1","LETTER","LEGAL","TABLOID"
 ``orientation`` : "portrait" (default) | "landscape"
+
+Bernhard Lutzer, 2026
 """
 
 from __future__ import annotations

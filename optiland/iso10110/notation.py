@@ -22,6 +22,8 @@ ISO 10110 part mapping
 8/  Surface texture               → SurfaceSpec.roughness
 13/ Transmitted wavefront         → SurfaceSpec.wavefront_deformation
 15/ Assembly surface imperfections→ SurfaceSpec.assembly_imperfections
+
+Bernhard Lutzer, 2026
 """
 
 from __future__ import annotations

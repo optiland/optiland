@@ -21,6 +21,8 @@ whichever renderer is used.
 
 ``border_margin`` is the one absolute (non-scale) field: the sheet border
 margin in mm, identical in both renderers.
+
+Bernhard Lutzer, 2026
 """
 
 from __future__ import annotations

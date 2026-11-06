@@ -20,6 +20,8 @@ Typical workflow
     spec.save_yaml("lens_spec.yaml")
     # later:
     spec = DrawingSpec.load_yaml("lens_spec.yaml", lens)
+
+Bernhard Lutzer, 2026
 """
 
 from __future__ import annotations
