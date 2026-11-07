@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import enum
 import importlib
 import inspect
 import json
@@ -56,6 +57,9 @@ def _iter_module_names() -> list[str]:
 
 def _signature(obj: object) -> str:
     """Return the parameter list of ``obj`` without annotations."""
+    if isinstance(obj, type) and issubclass(obj, enum.Enum):
+        # The signature of an Enum class differs between Python versions.
+        return "(*values)"
     try:
         params = list(inspect.signature(obj).parameters.values())  # type: ignore[arg-type]
     except (TypeError, ValueError):
