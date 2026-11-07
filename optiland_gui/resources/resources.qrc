@@ -26,6 +26,7 @@
     <file alias="dark/flash.svg">icons/dark/flash.svg</file>
     <file alias="dark/add_quick_action.svg">icons/dark/add_quick_action.svg</file>
     <file alias="dark/tool.svg">icons/dark/tool.svg</file>
+    <file alias="dark/menu.svg">icons/dark/menu.svg</file>
     <file alias="dark/minimize.svg">icons/dark/minimize.svg</file>
     <file alias="optiland_icon.png">icons/optiland_icon.png</file>
 
@@ -54,6 +55,7 @@
     <file alias="light/flash.svg">icons/light/flash.svg</file>
     <file alias="light/add_quick_action.svg">icons/light/add_quick_action.svg</file>
     <file alias="light/tool.svg">icons/light/tool.svg</file>
+    <file alias="light/menu.svg">icons/light/menu.svg</file>
     <file alias="light/minimize.svg">icons/light/minimize.svg</file>
 
 </qresource>

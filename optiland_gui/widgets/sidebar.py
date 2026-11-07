@@ -12,10 +12,11 @@ Author: Manuel Fragata Mendes, 2025
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QSize, Qt, Signal
-from PySide6.QtGui import QIcon, QResizeEvent
+from PySide6.QtGui import QHideEvent, QIcon, QResizeEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
-    QLabel,
+    QDockWidget,
+    QMainWindow,
     QSizePolicy,
     QStyle,
     QStyleOptionToolButton,
@@ -68,6 +69,46 @@ class SidebarButton(QToolButton):
         painter.drawComplexControl(QStyle.ComplexControl.CC_ToolButton, option)
 
 
+class SidebarDockWidget(QDockWidget):
+    """Native navigation dock that remembers its width across visibility toggles."""
+
+    def __init__(self, parent: QMainWindow) -> None:
+        super().__init__("NavigationSidebar", parent)
+        self._main_window = parent
+        self._hidden_width: int | None = None
+        self.setObjectName("SidebarDockWidget")
+        self.setFeatures(
+            QDockWidget.DockWidgetClosable
+            | QDockWidget.DockWidgetMovable
+            | QDockWidget.DockWidgetFloatable
+        )
+        self.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self.setTitleBarWidget(QWidget())
+        self.toggleViewAction().triggered.connect(self._restore_width)
+
+    def hideEvent(self, event: QHideEvent) -> None:
+        """Remember an explicit dock hide, excluding ancestor hides and floating."""
+        if self.isHidden() and not self.isFloating():
+            self._hidden_width = self.width()
+        super().hideEvent(event)
+
+    def _restore_width(self, visible: bool) -> None:
+        """Restore on user toggles, leaving Qt workspace restoration authoritative."""
+        if not visible or self.isFloating() or self._hidden_width is None:
+            return
+        minimum, maximum = self.minimumWidth(), self.maximumWidth()
+        width = max(minimum, min(maximum, self._hidden_width))
+        # resizeDocks treats widths as weights and can undershoot. Constrain
+        # this one layout pass, then release the original limits immediately.
+        self.setFixedWidth(width)
+        try:
+            self._main_window.resizeDocks([self], [width], Qt.Horizontal)
+            self._main_window.layout().activate()
+        finally:
+            self.setMinimumWidth(minimum)
+            self.setMaximumWidth(maximum)
+
+
 class SidebarWidget(QWidget):
     """A collapsible sidebar widget for main panel navigation.
 
@@ -109,15 +150,6 @@ class SidebarWidget(QWidget):
         self._main_layout = QVBoxLayout(self)
         self._main_layout.setContentsMargins(5, 10, 5, 10)
         self._main_layout.setSpacing(5)
-
-        self.title_label = QLabel("|||")
-        self.title_label.setObjectName("SidebarTitleLabel")
-        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.title_label.setFixedHeight(30)
-        self.title_label.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
-        self._main_layout.addWidget(self.title_label)
 
         self._buttons_list: list[dict] = []
         self.current_theme = "dark"
@@ -208,13 +240,11 @@ class SidebarWidget(QWidget):
 
         self._is_collapsed = collapsed
         if collapsed:
-            self.title_label.setText("|||")
             for item in self._buttons_list:
                 item["widget"].setText("")
                 item["widget"].setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
                 item["widget"].setToolTip(item["text"])
         else:
-            self.title_label.setText("|||")
             for item in self._buttons_list:
                 item["widget"].setText(item["text"])
                 item["widget"].setToolButtonStyle(
