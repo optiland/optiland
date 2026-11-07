@@ -8,7 +8,7 @@ Guidance for AI coding agents working in this repository. Human contributors: se
 You act on behalf of a human who is accountable for everything you submit. Optiland welcomes AI-assisted contributions, but not unreviewed ones.
 
 - **Do not open an issue or pull request without showing your human operator the complete diff and getting their explicit confirmation.** Never submit unattended.
-- **Open at most one pull request at a time** for a given contributor, and wait for it to be reviewed before opening another. Never submit bulk or batched PRs.
+- **Avoid shotgun submissions.** A few open PRs at once are fine when each is a separate, reviewed logical change. Do not open many at a time, or the same change repeated across many places; get feedback on the first before replicating a pattern.
 - **Link an issue for anything non-trivial** (new features, behavior changes, roughly 100+ lines). Typos, docs tweaks and small obvious fixes don't need one. Search existing issues and PRs for duplicates first.
 - **Keep PRs to one logical change**, ideally under about 400 changed lines excluding tests.
 - **Run the code and the relevant tests yourself** and report what you observed in the PR description. Never claim a check passed that you did not run.
