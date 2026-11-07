@@ -238,6 +238,35 @@ class TestBaseMaterial:
         assert BaseMaterial._requires_grad(1.5) is False
         assert BaseMaterial._requires_grad(np.array(1.5)) is False
 
+    def test_abbe_pgF_and_p_ref_return_zero_for_flat_dispersion(self, set_test_backend):
+        class FlatDispersion(BaseMaterial):
+            def _calculate_n(self, wavelength, **kwargs):
+                return be.array(1.5)
+
+            def _calculate_k(self, wavelength, **kwargs):
+                return be.array(0.0)
+
+        material = FlatDispersion()
+
+        # n_F == n_C -> the guards return 0.0 instead of dividing by zero
+        assert material.abbe() == 0.0
+        assert material.PgF() == 0.0
+        assert material.P_ref(0.6) == 0.0
+
+    def test_dPgF_returns_zero_for_zero_abbe(self, set_test_backend):
+        class ZeroAbbe(BaseMaterial):
+            def _calculate_n(self, wavelength, **kwargs):
+                return be.array(1.5)
+
+            def _calculate_k(self, wavelength, **kwargs):
+                return be.array(0.0)
+
+            def abbe(self):
+                return 0.0
+
+        # flat n -> PgF() == 0.0; Vd == 0.0 -> the dPgF guard returns 0.0
+        assert ZeroAbbe().dPgF() == 0.0
+
 
 @pytest.mark.skipif(
     "torch" not in be.list_available_backends(),
@@ -485,12 +514,12 @@ class TestBaseMaterialTorchCaching:
         assert mat.absorp.grad is not None
 
 
-def build_model(material: BaseMaterial):
+def build_model(material: BaseMaterial, primary: float = 0.550):
     lens = Optic()
 
     lens.fields.set_type("angle")
     lens.fields.add(0, 0)
-    lens.wavelengths.add(0.550)
+    lens.wavelengths.add(primary)
     lens.set_aperture("EPD", 2)
 
     lens.surfaces.add(index=0)
@@ -587,6 +616,220 @@ class TestAbbeMaterial:
         lens = build_model(abbe_material)
 
         lens.trace(Hx=0, Hy=0, wavelength=0.55)
+
+
+class TestModelMaterial:
+    """Tests for the catalogue-glass -> model-glass conversion.
+
+    ``Optic.set_index`` (with ``wavelength=None``) rebuilds the surface material
+    as a ``ModelMaterial`` from the Nd, Vd and dPgF of the current glass. The
+    conversion must keep those three descriptors within a tight tolerance and
+    must not couple them: changing only Nd or only Vd has to leave the other
+    descriptors - and the IR-anchor metadata - untouched.
+    """
+
+    GLASS_NAMES = ("N-BK7", "N-SF11", "N-LAK22")
+    D_LINE = 0.5875618
+
+    @staticmethod
+    def _as_float(value):
+        """Reduce a backend scalar/array to a float, detaching torch tensors."""
+        return np.ravel(be.to_numpy(value)).item()
+
+    @classmethod
+    def _glass_descriptors(cls, lens, surface=1):
+        """Read Nd, Vd and dPgF of the material currently on ``surface``."""
+        material = lens.surfaces[surface].material_post
+        return {
+            "nd": cls._as_float(material.n(cls.D_LINE)),
+            "vd": cls._as_float(material.abbe()),
+            "dPgF": cls._as_float(material.dPgF()),
+        }
+
+    @staticmethod
+    def _model(lens, surface=1):
+        """Return the model glass on ``surface``, asserting the conversion ran."""
+        material = lens.surfaces[surface].material_post
+        assert isinstance(material, materials.ModelMaterial)
+        return material
+
+    @classmethod
+    def _model_parameters(cls, lens, surface=1):
+        """Read the explicit descriptor attributes of the model glass."""
+        material = cls._model(lens, surface)
+        return {
+            "nd": float(material.nd),
+            "vd": float(material.vd),
+            "dPgF": float(material.dPgf),
+            "P_ref": material.p_ref,
+            "lambda_ref": material.lambda_ref,
+        }
+
+    @pytest.mark.parametrize("glass_name", GLASS_NAMES)
+    def test_glass_to_model_material_preserves_descriptors(
+        self, set_test_backend, glass_name
+    ):
+        lens = build_model(materials.Material(glass_name))
+        glass = self._glass_descriptors(lens)
+
+        # wavelength=None rebuilds the material as a ModelMaterial
+        lens.updater.set_index(glass["nd"], 1)
+        model = self._model_parameters(lens)
+
+        # the descriptors are copied verbatim, so the difference is numerical noise
+        assert_allclose(model["nd"], glass["nd"], rtol=0, atol=1e-12)
+        assert_allclose(model["vd"], glass["vd"], rtol=0, atol=1e-12)
+        assert_allclose(model["dPgF"], glass["dPgF"], rtol=0, atol=1e-12)
+
+        # A visible primary wavelength keeps the model on the visible route, so the IR anchor is not set.
+        assert model["P_ref"] is None
+        assert model["lambda_ref"] is None
+
+    def test_converted_material_reproduces_glass_dispersion(self, set_test_backend):
+        lens = build_model(materials.Material("N-BK7"))
+        glass = self._glass_descriptors(lens)
+
+        lens.updater.set_index(glass["nd"], 1)
+        material = self._model(lens)
+
+        # the Buchdahl curve is anchored on the d, F, C and g lines, so the
+        # descriptors recomputed from n(lambda) must return the glass values
+        assert_allclose(material.n(self.D_LINE), glass["nd"], rtol=0, atol=1e-12)
+        assert_allclose(material.abbe(), glass["vd"], rtol=1e-8, atol=1e-8)
+        assert_allclose(material.dPgF(), glass["dPgF"], rtol=1e-8, atol=1e-8)
+
+    def test_set_index_only_updates_nd(self, set_test_backend):
+        lens = build_model(materials.Material("N-BK7"))
+        lens.updater.set_index(self._glass_descriptors(lens)["nd"], 1)
+        before = self._model_parameters(lens)
+
+        lens.updater.set_index(before["nd"] + 0.02, 1)
+        after = self._model_parameters(lens)
+
+        assert_allclose(after["nd"], before["nd"] + 0.02, rtol=0, atol=1e-12)
+        assert_allclose(after["vd"], before["vd"], rtol=0, atol=1e-12)
+        assert_allclose(after["dPgF"], before["dPgF"], rtol=0, atol=1e-12)
+        assert after["P_ref"] == before["P_ref"]
+        assert after["lambda_ref"] == before["lambda_ref"]
+
+    def test_set_abbe_only_updates_vd(self, set_test_backend):
+        lens = build_model(materials.Material("N-SF11"))
+        lens.updater.set_index(self._glass_descriptors(lens)["nd"], 1)
+        before = self._model_parameters(lens)
+
+        lens.updater.set_abbe(before["vd"] + 2.0, 1)
+        after = self._model_parameters(lens)
+
+        assert_allclose(after["vd"], before["vd"] + 2.0, rtol=0, atol=1e-12)
+        assert_allclose(after["nd"], before["nd"], rtol=0, atol=1e-12)
+        assert_allclose(after["dPgF"], before["dPgF"], rtol=0, atol=1e-12)
+        assert after["P_ref"] == before["P_ref"]
+        assert after["lambda_ref"] == before["lambda_ref"]
+
+    def test_set_abbe_without_primary_wavelength(self, set_test_backend):
+        # A prescription can be built before any wavelength is defined.
+        lens = Optic()
+        lens.surfaces.add(index=0)
+        lens.surfaces.add(
+            index=1, material=materials.Material("N-BK7"), radius=50, thickness=5
+        )
+        lens.surfaces.add(index=2)
+        nd_before = self._glass_descriptors(lens)["nd"]
+
+        lens.updater.set_abbe(45.0, 1)
+
+        material = lens.surfaces[1].material_post
+        assert isinstance(material, materials.ModelMaterial)
+        # no wavelength system yet -> visible route, no infrared anchor
+        assert material.p_ref is None
+        assert material.lambda_ref is None
+        # Evaluate the curve: an anchor at the d-line would make the IR system
+        # singular, which only surfaces when the coefficients are solved.
+        assert_allclose(material.n(self.D_LINE), nd_before, rtol=0, atol=1e-12)
+        assert_allclose(material.abbe(), 45.0, rtol=0, atol=1e-8)
+
+    def test_set_index_without_primary_wavelength_keeps_visible_route(
+        self, set_test_backend
+    ):
+        lens = Optic()
+        lens.surfaces.add(index=0)
+        lens.surfaces.add(
+            index=1,
+            material=materials.ModelMaterial(1.5168, 64.17, 0.0),
+            radius=50,
+            thickness=5,
+        )
+        lens.surfaces.add(index=2)
+
+        lens.updater.set_index(1.52, 1)
+
+        material = lens.surfaces[1].material_post
+        assert material.p_ref is None
+        assert material.lambda_ref is None
+        assert_allclose(material.n(self.D_LINE), 1.52, rtol=0, atol=1e-12)
+
+    def test_conversion_at_the_d_line_uses_visible_route(self, set_test_backend):
+        # An infrared anchor exactly at the d-line is degenerate.
+        lens = build_model(materials.Material("N-BK7"), primary=self.D_LINE)
+        lens.updater.set_index(self._glass_descriptors(lens)["nd"], 1)
+
+        material = self._model(lens)
+        assert material.p_ref is None
+        assert material.lambda_ref is None
+        assert_allclose(
+            material.n(0.55),
+            materials.Material("N-BK7").n(0.55),
+            rtol=0,
+            atol=1e-3,
+        )
+
+    def test_ir_primary_adds_the_reference_anchor(self, set_test_backend):
+        lens = build_model(materials.Material("N-BK7"), primary=1.55)
+        glass = materials.Material("N-BK7")
+
+        lens.updater.set_index(self._glass_descriptors(lens)["nd"], 1)
+
+        material = self._model(lens)
+        assert material.lambda_ref == pytest.approx(
+            materials.ModelMaterial.IR_REF_WTH
+        )
+        assert material.p_ref is not None
+        # the anchor reproduces the true glass index at the reference wavelength
+        assert_allclose(
+            material.n(materials.ModelMaterial.IR_REF_WTH),
+            glass.n(1.55),
+            rtol=0,
+            atol=1e-9,
+        )
+
+    def test_existing_anchor_keeps_its_reference_wavelength(self, set_test_backend):
+        lens = build_model(
+            materials.ModelMaterial(1.5168, 64.17, 0.0, P_ref=0.60, lambda_ref=1.0)
+        )
+
+        lens.updater.set_index(1.52, 1)
+
+        material = self._model(lens)
+        # the anchor is defined at 1.0 um and must not be relabelled to 1.55 um
+        assert material.lambda_ref == pytest.approx(1.0)
+        assert material.p_ref == pytest.approx(0.60)
+        # and the curve is re-anchored at that wavelength, not at 1.55 um
+        expected = material.nd + material.p_ref * (material.nd - 1.0) / material.vd
+        assert_allclose(material.n(1.0), expected, rtol=0, atol=1e-10)
+
+    def test_set_abbe_on_ideal_material_raises(self, set_test_backend):
+        lens = Optic()
+        lens.surfaces.add(index=0)
+        lens.surfaces.add(
+            index=1,
+            material=materials.IdealMaterial(n=1.5),
+            radius=10,
+            thickness=5,
+        )
+        lens.surfaces.add(index=2)
+
+        with pytest.raises(ValueError, match="does not have a defined vd"):
+            lens.updater.set_abbe(45.0, 1)
 
 
 class TestMaterialFile:

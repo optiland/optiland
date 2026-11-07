@@ -16,6 +16,7 @@ from optiland._suggest import options_hint
 from optiland.apodization import BaseApodization
 from optiland.geometries import StandardGeometry
 from optiland.materials import IdealMaterial
+from optiland.materials.model_material import ModelMaterial
 
 if TYPE_CHECKING:
     from optiland.materials.base import BaseMaterial
@@ -109,17 +110,176 @@ class OpticUpdater:
                 z = z + (t_prev if hasattr(t_prev, "detach") else be.array(t_prev))
                 surfaces[k].geometry.cs.z = be.array(z)
 
-    def set_index(self, value: float, surface_number: int) -> None:
-        """Set the index of refraction of a surface.
+    def _read_dpgf(self, material, surface_number: int) -> float:
+        """
+        Read dPgF value from a material instance.
+        """
+        if hasattr(material, "dPgf"):
+            return float(material.dPgf)  # type: ignore[attr-defined]
+        if hasattr(material, "dPgF"):
+            dpgf_attr = material.dPgF  # type: ignore[attr-defined]
+            if callable(dpgf_attr):
+                dpgf_value = dpgf_attr()
+                if hasattr(dpgf_value, "item"):
+                    return float(dpgf_value.item())  # type: ignore[attr-defined]
+                return float(dpgf_value)  # type: ignore[arg-type]
+            return float(dpgf_attr)
+        return float(self.optic.surfaces.dPgF()[surface_number])
+
+    def _get_material_params(self, surface_number: int) -> dict[str, float | None]:
+        """
+        Get current material parameters for a surface.
+
+        This intentionally reads from the current optic state every call so optimization
+        iterations always update from the latest material state.
+
+        Returns:
+            dict[str, float | None]: A dictionary containing the material parameters:
+                - "nd": Refractive index at d-line (0.5875618 micrometers).
+                - "vd": Abbe number.
+                - "dPgF": deviation of the g–F partial dispersion from the
+                normal-glass line.
+                - "P_ref": Optional reference partial dispersion at lambda_ref.
+                - "lambda_ref": The optional wavelength corresponding to P_ref in um.
+        """
+        material = self.optic.surfaces[surface_number].material_post
+
+        lambda_ref: float | None
+
+        try:
+            primary_wavelength = float(self.optic.primary_wavelength)
+        except ValueError:
+            # lambda_ref only matters for the infrared anchor. Without a primary
+            # wavelength (for example while assembling a prescription) the model
+            # glass uses the visible route, so leave both anchors unset.
+            lambda_ref = None
+        else:
+            # If the primary wavelength is above the maximum visible wavelength, we use
+            # the Infrared Routing. lambda_ref is set to 1.55 micrometers which is
+            # wavelength used to train the infrared regression matrix. Otherwise, we use
+            # the Visible Routing and lambda_ref is set to None.
+            lambda_ref = (
+                ModelMaterial.IR_REF_WTH
+                if primary_wavelength > ModelMaterial.MAX_VISIBLE_WTH
+                else None
+            )
+
+        # Branch for ModelMaterial which has explicit nd, vd, dPgF attributes
+        if isinstance(material, ModelMaterial):
+            nd = float(material.nd)
+            vd = float(material.vd)
+            dpgf = self._read_dpgf(material, surface_number)
+
+            if material.p_ref is not None:
+                P_ref = material.p_ref
+                lambda_ref = (
+                    material.lambda_ref
+                    if material.lambda_ref is not None
+                    else ModelMaterial.IR_REF_WTH
+                )
+            elif lambda_ref is None:
+                P_ref = None
+            else:
+                P_ref = float(material.P_ref(wavelength=lambda_ref))
+
+        elif isinstance(material, IdealMaterial):
+            nd = float(be.to_numpy(material.index).item())
+            vd = None
+            dpgf = None
+            P_ref = None
+            lambda_ref = None
+
+        else:  # Fallback to reading from optic if material is not ModelMaterial
+            nd = float(self.optic.surfaces.n(wavelength=0.5875618)[surface_number])
+            vd = float(self.optic.surfaces.abbe()[surface_number])
+            dpgf = float(self.optic.surfaces.dPgF()[surface_number])
+            P_ref = (
+                None
+                if lambda_ref is None
+                else float(be.to_numpy(material.P_ref(wavelength=lambda_ref)).item())
+            )
+
+        return {
+            "nd": nd,
+            "vd": vd,
+            "dPgF": dpgf,
+            "P_ref": P_ref,
+            "lambda_ref": lambda_ref,
+        }
+
+    def set_index(
+        self, value: float, surface_number: int, wavelength: float | None = None
+    ) -> None:
+        """Set the refractive index of a surface.
+
+        With ``wavelength=None`` (the default) the surface's post-material is
+        replaced by a ``ModelMaterial`` anchored at the d-line (0.5875618 um),
+        so the index varies with wavelength according to the material's fitted
+        dispersion, within the model's fit error. The conversion needs an Abbe
+        number: an ``IdealMaterial`` cannot become a ``ModelMaterial``, so such
+        a surface keeps a constant index even on this path.
+
+        Passing ``wavelength`` restores the previous behavior and replaces the
+        post-material with an ``IdealMaterial`` holding a constant index at all
+        wavelengths. The value is only used to select that branch; it is not
+        evaluated as a wavelength, so ``value`` is the index everywhere.
 
         Args:
-            value (float): The new refractive index value.
+            value (float): The new refractive index (dimensionless).
+            surface_number (int): The index of the surface whose *post-material*
+                (material after the surface) will be updated. This also updates
+                the *pre-material* of the subsequent surface.
+            wavelength (float | None): Selects the constant-index
+                (``IdealMaterial``) path when not None; ignored otherwise.
+                Defaults to None.
+
+        See Also:
+            ``ModelMaterial`` and these example notebooks:
+            ``docs/examples/Tutorial_3g_Model_Glass_Nd_Vd_Optimization.ipynb``,
+            ``docs/references/IR_Routing.ipynb``,
+            ``docs/references/Visible_Routing.ipynb``.
+        """
+        params = self._get_material_params(surface_number)
+        # IdealMaterial can not be converted to ModelMaterial
+        if wavelength is None and params["vd"] is not None:
+            new_material = ModelMaterial(
+                nd=float(value),
+                vd=params["vd"],
+                dPgF=params["dPgF"],
+                P_ref=params.get("P_ref", None),
+                lambda_ref=params.get("lambda_ref", None),
+            )
+            self.set_material(new_material, surface_number)
+            return
+        else:
+            new_material = IdealMaterial(n=float(value))
+            self.set_material(new_material, surface_number)
+
+    def set_abbe(self, value: float, surface_number: int) -> None:
+        """Set the Abbe number (Vd) of a surface by updating its material.
+
+        Args:
+            value (float): The new Abbe number value.
             surface_number (int): The index of the surface whose *post-material*
                 (material after the surface) will be updated. This also updates
                 the *pre-material* of the subsequent surface.
 
         """
-        new_material = IdealMaterial(n=value, k=0)
+        params = self._get_material_params(surface_number)
+
+        if params["vd"] is None:
+            raise ValueError(
+                f"Surface {surface_number} does not have a defined vd to update. "
+                "Ensure the material is not an IdealMaterial first."
+            )
+
+        new_material = ModelMaterial(
+            nd=params["nd"],
+            vd=float(value),
+            dPgF=params["dPgF"],
+            P_ref=params.get("P_ref", None),
+            lambda_ref=params.get("lambda_ref", None),
+        )
         self.set_material(new_material, surface_number)
 
     def set_material(self, material: BaseMaterial, surface_number: int) -> None:
