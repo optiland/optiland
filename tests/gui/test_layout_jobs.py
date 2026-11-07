@@ -280,7 +280,10 @@ def test_window_close_keeps_qt_owners_until_worker_is_reaped(qapp):
         _calculations_stopped = MainWindow._calculations_stopped
 
     window = Window()
-    window.connector = SimpleNamespace(calculation_jobs=service)
+    # This test owns the calculation shutdown path; no output is pending.
+    window.connector = SimpleNamespace(
+        calculation_jobs=service, output_operations=SimpleNamespace(busy=False)
+    )
     window.panel_manager = SimpleNamespace(
         python_terminal=SimpleNamespace(shutdown_kernel=lambda: closed.append(True))
     )
