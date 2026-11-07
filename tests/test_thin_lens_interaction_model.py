@@ -170,6 +170,66 @@ class TestThinLensInteractionModel:
         # confirm all points at exact same z
         assert_allclose(rays.z, focal_length)
 
+    @pytest.mark.parametrize("rx", [math.pi / 2, -math.pi / 2])
+    def test_paraxial_surface_refraction_survives_fold(self, rx, set_test_backend):
+        """A 45 deg mirror folds the beam onto +y and into a paraxial lens
+        mounted with rx = +/- pi/2 (issue #1108): the beam reaches the lens
+        along its local -z for rx = +pi/2 and along its local +z for
+        rx = -pi/2, and both mounts must focus with f = +25 along the
+        folded arm."""
+        focal_length = 25.0
+        fold_gap = 10.0
+        lens = Optic()
+
+        # object -> 45 deg fold mirror: +z in, +y out
+        lens.surfaces.add(index=0, thickness=be.inf)
+        lens.surfaces.add(
+            index=1,
+            x=0.0,
+            y=0.0,
+            z=0.0,
+            rx=math.pi / 4,
+            material="mirror",
+        )
+        # paraxial focuser on the folded arm, image plane f past it
+        lens.surfaces.add(
+            index=2,
+            surface_type="paraxial",
+            f=focal_length,
+            is_stop=True,
+            x=0.0,
+            y=fold_gap,
+            z=0.0,
+            rx=rx,
+        )
+        lens.surfaces.add(
+            index=3,
+            x=0.0,
+            y=fold_gap + focal_length,
+            z=0.0,
+            rx=-math.pi / 2,
+        )
+
+        lens.set_aperture(aperture_type="EPD", value=10)
+        lens.fields.set_type(field_type="angle")
+        lens.fields.add(y=0)
+
+        lens.wavelengths.add(value=0.55, is_primary=True)
+
+        rays = lens.trace(
+            Hx=0,
+            Hy=0,
+            wavelength=0.55,
+            distribution="uniform",
+            num_rays=32,
+        )
+
+        # the folded axis runs along +y at x = z = 0: every ray lands on the
+        # image plane at y = fold_gap + f, focused back onto the axis
+        assert_allclose(rays.x, 0)
+        assert_allclose(rays.z, 0)
+        assert_allclose(rays.y, fold_gap + focal_length)
+
     @pytest.mark.parametrize(
         "focal_length, n1",
         [
