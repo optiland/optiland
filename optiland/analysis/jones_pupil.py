@@ -14,7 +14,7 @@ import numpy as np
 
 import optiland.backend as be
 from optiland.analysis.base import BaseAnalysis
-from optiland.rays import PolarizationState
+from optiland.rays import PolarizationState, create_polarization
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -30,8 +30,14 @@ class JonesPupil(BaseAnalysis):
     (or image plane) as a function of normalized pupil coordinates. It visualizes
     the real and imaginary parts of the Jones matrix elements (Jxx, Jxy, Jyx, Jyy).
 
-    Attributes:
-        optic: Instance of the optic object to be assessed.
+    Columns are the exit fields for unit incident H and V states in each ray's
+    transverse launch basis. Rows project onto the transverse output basis.
+    Values include launch apodization, scalar attenuation, Jones amplitude
+    effects and clipping; they are not normalized by the surviving intensity.
+    This uses the same field scaling as ``PolarizedRays.get_exit_fields``.
+    The system's selected source polarization does not select or suppress a
+    column. An all-dark ray has a zero matrix, even after a missed surface.
+
     Attributes:
         optic: Instance of the optic object to be assessed.
         field: Field at which data is generated (Hx, Hy).
@@ -112,7 +118,7 @@ class JonesPupil(BaseAnalysis):
         mask = px**2 + py**2 <= 1.0
 
         for col, (name, values) in enumerate(elements):
-            val_np = be.to_numpy(values).reshape(self.grid_size, self.grid_size)
+            val_np = be.to_numpy(values).reshape(self.grid_size, self.grid_size).copy()
             val_np[~mask] = np.nan
 
             # Real part
@@ -186,8 +192,16 @@ class JonesPupil(BaseAnalysis):
             # Fallback if rays are not polarized (should not happen w/ check above)
             raise RuntimeError("Ray tracing did not return polarized rays.")
 
-        # Ray direction vectors (normalized)
+        # Evaluate independent source states through the ray-owned basis and
+        # retained scalar power, rather than assuming Cartesian launch X/Y.
+        P_x_in = rays.get_exit_fields(create_polarization("H"))[0]
+        P_y_in = rays.get_exit_fields(create_polarization("V"))[0]
+
+        # An extinct ray may have missed a later surface. Its zero fields do
+        # not need that invalid output frame; powered invalid fields stay visible.
+        dark = be.all(P_x_in == 0, axis=1) & be.all(P_y_in == 0, axis=1)
         k = be.stack([rays.L, rays.M, rays.N], axis=1)
+        k = be.where(be.unsqueeze_last(dark), be.array([0.0, 0.0, 1.0]), k)
         # Normalize k (should be already, but to be safe)
         k_norm = be.linalg.norm(k, axis=1)
         k = k / be.unsqueeze_last(k_norm)
@@ -201,37 +215,21 @@ class JonesPupil(BaseAnalysis):
         v = be.cross(k, x_axis)
         v_norm = be.linalg.norm(v, axis=1)
 
-        # Avoid division by zero
-        v = v / be.unsqueeze_last(v_norm + 1e-15)
+        # An X-directed output is valid after a fold. Use Y as the reference
+        # only at this basis singularity; do not attenuate near-X fields with
+        # an additive normalization epsilon.
+        y_axis = be.broadcast_to(be.array([0.0, 1.0, 0.0]), k.shape)
+        v = be.where(be.unsqueeze_last(v_norm == 0), be.cross(k, y_axis), v)
+        v = v / be.unsqueeze_last(be.linalg.norm(v, axis=1))
 
         # u ~ X-axis: perpendicular to v and k
         u = be.cross(v, k)
         u_norm = be.linalg.norm(u, axis=1)
-        # Avoid division by zero
-        u = u / be.unsqueeze_last(u_norm + 1e-15)
+        u = u / be.unsqueeze_last(u_norm)
 
-        # Project global P onto local basis (u, v)
-        # Jxx = u . (P . x_in)
-        # Jxy = u . (P . y_in)
-        # Jyx = v . (P . x_in)
-        # Jyy = v . (P . y_in)
-
-        # p has shape (N, 3, 3)
-        # P . x_in is simply the first column of p
-        # P . y_in is simply the second column of p
-
-        P_x_in = rays.p[:, :, 0]  # Shape (N, 3)
-        P_y_in = rays.p[:, :, 1]  # Shape (N, 3)
-
-        # Dot products
-        Jxx = be.sum(u * P_x_in, axis=1)
-        Jxy = be.sum(u * P_y_in, axis=1)
-        Jyx = be.sum(v * P_x_in, axis=1)
-        Jyy = be.sum(v * P_y_in, axis=1)
-
-        # Stack into (N, 2, 2)
-        row1 = be.stack([Jxx, Jxy], axis=1)
-        row2 = be.stack([Jyx, Jyy], axis=1)
-        J = be.stack([row1, row2], axis=1)
+        # Project the scaled H/V output fields onto the transverse output basis.
+        output_basis = be.stack((u, v), axis=1)
+        fields = be.concatenate((P_x_in[:, :, None], P_y_in[:, :, None]), axis=2)
+        J = be.matmul(output_basis, fields)
 
         return {"Px": Px, "Py": Py, "J": J}
