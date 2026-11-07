@@ -81,11 +81,15 @@ class ThinLensInteractionModel(BaseInteractionModel):
         L, M, N = [component / be.abs(rays.N) for component in (rays.L, rays.M, rays.N)]
         if not be.isinf(self.f):
             if self.is_reflective:
+                # A mirror hit from behind (rays.N < 0) needs the mirrored
+                # sign convention introduced in #514.
                 f1 = f2 = -self.f * be.copysign(be.ones_like(rays.N), rays.N)
             else:
-                f = self.f * be.copysign(be.ones_like(rays.N), rays.N)
-                f1 = f * n1
-                f2 = f * n2
+                # The power of a refracting thin lens does not depend on
+                # which local side the beam enters: the transmission-side
+                # sign of the outgoing N is handled by the where() below.
+                f1 = self.f * n1
+                f2 = self.f * n2
             L = L * f1 - rays.x
             M = M * f1 - rays.y
             N = be.where(rays.N > 0, f2, -f2)
