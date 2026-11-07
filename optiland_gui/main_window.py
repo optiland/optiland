@@ -919,22 +919,20 @@ class MainWindow(FramelessWindow):
             self.command_palette._reposition()
 
     def _load_sample_action(self, optic_class: type[Optic]) -> None:
-        """Instantiate and load the selected sample class.
+        """Construct and validate the selected built-in sample in an owned worker.
 
         Args:
             optic_class: The sample :class:`~optiland.optic.Optic` subclass to load.
         """
-        try:
-            optic_instance = optic_class()
-            self.connector.load_optic_from_object(optic_instance)
-            print(f"Loaded sample: {optic_class.__name__}")
-
-        except Exception as e:
-            msg = f"Could not load sample '{optic_class.__name__}': {e}"
-            if self.toast_manager:
-                self.toast_manager.notify(msg, "error")
-            else:
-                QMessageBox.critical(self, "Sample Load Error", msg)
+        if not self._confirm_discard_changes():
+            return
+        self.connector.file_operations.request_load(
+            optic_class.__name__,
+            "sample",
+            load_options={
+                "sample_class": (optic_class.__module__, optic_class.__name__)
+            },
+        )
 
     @Slot(str, str)
     def _resolve_file_candidate(self, identifier, path):
