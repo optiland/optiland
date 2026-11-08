@@ -2,12 +2,13 @@
 
 In an exact 4f relay the entrance and exit pupils are both at infinity. The
 paraxial marginal ray must take its slope from the object-space NA, and the
-chief-ray reference sphere must stay finite.
+chief-ray OPD must be the limit of an infinite reference radius.
 """
 
 from __future__ import annotations
 
 import math
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,21 +16,30 @@ import optiland.backend as be
 from optiland.mtf import FFTMTF
 from optiland.optic import Optic
 from optiland.wavefront import OPD
-from optiland.wavefront.strategy import chief_reference_radius
+from optiland.wavefront.reference_geometry import (
+    SphericalReference,
+    TelecentricSphericalReference,
+)
+from optiland.wavefront.strategy import chief_reference_sphere
 from tests.utils import assert_allclose
 
 NA = 0.02
 
 
-def _relay(shift: float = 0.0, telecentric: bool = True) -> Optic:
-    """4f relay, f1 = 100 and f2 = 50; the stop sits ``shift`` past the focus."""
+def _relay(shift: float = 0.0, telecentric: bool = True, defocus: float = 0.0) -> Optic:
+    """4f relay, f1 = 100 and f2 = 50; the stop sits ``shift`` past the focus.
+
+    ``defocus`` moves the image plane away from the second lens.
+    """
     optic = Optic()
     optic.surfaces.add(index=0, thickness=100.0)
     optic.surfaces.add(
         index=1, surface_type="paraxial", f=100.0, thickness=100.0 + shift
     )
     optic.surfaces.add(index=2, thickness=50.0 - shift, is_stop=True)
-    optic.surfaces.add(index=3, surface_type="paraxial", f=50.0, thickness=50.0)
+    optic.surfaces.add(
+        index=3, surface_type="paraxial", f=50.0, thickness=50.0 + defocus
+    )
     optic.surfaces.add(index=4)
     optic.set_aperture("objectNA", NA)
     optic.fields.set_type("object_height")
@@ -92,28 +102,72 @@ def test_fft_mtf_default_strategy(set_test_backend):
             assert_allclose(a, b, atol=1e-6)
 
 
-def test_chief_reference_radius_finite_pupil(set_test_backend):
-    radius = chief_reference_radius(
+@pytest.mark.parametrize("shift", [-1e-6, 1e-6])
+def test_defocused_chief_ray_opd_is_continuous(set_test_backend, shift):
+    exact = OPD(_relay(defocus=10.0), (0, 1), 0.55, strategy="chief_ray")
+    near = OPD(
+        _relay(shift=shift, telecentric=False, defocus=10.0),
+        (0, 1),
+        0.55,
+        strategy="chief_ray",
+    )
+    assert_allclose(exact.rms(), near.rms(), atol=1e-6, rtol=0)
+
+
+def test_defocused_fft_mtf_is_continuous(set_test_backend):
+    exact = FFTMTF(_relay(defocus=10.0), num_rays=32, max_freq=50)
+    near = FFTMTF(
+        _relay(shift=1e-6, telecentric=False, defocus=10.0), num_rays=32, max_freq=50
+    )
+    for exact_curve, near_curve in zip(exact.mtf, near.mtf, strict=True):
+        for a, b in zip(exact_curve, near_curve, strict=True):
+            assert_allclose(a, b, atol=1e-6)
+
+
+def test_chief_reference_sphere_finite_pupil(set_test_backend):
+    ref = chief_reference_sphere(
         (be.array(0.0), be.array(3.0), be.array(0.0)),
         (be.array(0.0), be.array(0.0), be.array(4.0)),
         be.array(10.0),
         1.0,
     )
-    assert_allclose(radius, 5.0)
+    assert type(ref) is SphericalReference
+    assert_allclose(ref.radius, 5.0)
 
 
-def test_chief_reference_radius_pupil_at_infinity(set_test_backend):
-    radius = chief_reference_radius(
+def test_chief_reference_sphere_pupil_at_infinity(set_test_backend):
+    ref = chief_reference_sphere(
         (be.array(0.0), be.array(0.0), be.array(0.0)),
         (be.array(math.nan), be.array(math.nan), be.array(-math.inf)),
         be.array(-300.0),
         1.5,
     )
-    assert_allclose(radius, 200.0)
+    assert isinstance(ref, TelecentricSphericalReference)
+    # The finite radius only places the pupil samples.
+    assert_allclose(ref.radius, 200.0)
     with pytest.raises(ValueError, match="exit pupil is at infinity"):
-        chief_reference_radius(
+        chief_reference_sphere(
             (be.array(0.0), be.array(0.0), be.array(0.0)),
             (be.array(math.nan), be.array(math.nan), be.array(-math.inf)),
             None,
             1.0,
         )
+
+
+def test_telecentric_reference_is_limit_of_large_sphere(set_test_backend):
+    rays = SimpleNamespace(
+        x=be.array([0.3, -1.2]),
+        y=be.array([2.0, 0.4]),
+        z=be.array([10.0, 10.0]),
+        L=be.array([0.01, -0.02]),
+        M=be.array([0.015, 0.005]),
+        N=be.array(
+            [math.sqrt(1 - 0.01**2 - 0.015**2), math.sqrt(1 - 0.02**2 - 0.005**2)]
+        ),
+    )
+    center = (0.0, 0.5, 0.0)
+    limit = TelecentricSphericalReference(center, 300.0)._relative_path_length(
+        rays, 1.5
+    )
+    large = SphericalReference(center, 1e12)._relative_path_length(rays, 1.5)
+    assert_allclose(limit, large, atol=1e-9)

@@ -42,8 +42,7 @@ from optiland.optimization.block.base import (
     ResidualBlock,
 )
 from optiland.optimization.failure import ConfigurationError
-from optiland.wavefront.reference_geometry import SphericalReference
-from optiland.wavefront.strategy import ChiefRayStrategy, chief_reference_radius
+from optiland.wavefront.strategy import ChiefRayStrategy, chief_reference_sphere
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -292,13 +291,12 @@ class DefaultMeritBlock(ResidualBlock):
             center = chief.x[0], chief.y[0], chief.z[0]
         else:
             center = tuple(_weighted_mean(v, live) for v in (rays.x, rays.y, rays.z))
-        radius = chief_reference_radius(
+        geometry = chief_reference_sphere(
             center,
             tuple(be.ravel(p)[0] for p in strategy.exit_pupil_point),
             chief.opd[0],
             strategy.n_image,
         )
-        geometry = SphericalReference(center, radius)
         n_image = strategy.n_image
         path = rays.opd - geometry._relative_path_length(rays, n_image)
         path = strategy._restore_launch_phase(rays, path, request.wavelength, chief)
