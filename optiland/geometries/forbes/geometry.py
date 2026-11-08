@@ -208,6 +208,37 @@ class ForbesGeometryBase(NewtonRaphsonGeometry):
             else:
                 self._prepare_coeffs()
 
+    def _flip_terms(self, attr: str) -> None:
+        """Flip the radius and the polynomial terms; keep the config in step.
+
+        Shared by the Forbes ``flip`` methods. The coefficient dict named by
+        ``attr`` is never mutated: it may be shared with another geometry (a
+        pickup assigns the source's dict to the target). A new dict holding
+        the negated values is built, bound to this geometry, and assigned to
+        the attribute, and the coefficient cache is marked dirty. The radius
+        is written to ``surface_config`` as a plain float. Under NumPy,
+        ``surface_config.terms`` is then the new dict itself (as the
+        constructor sets it up), so later edits reach ``to_dict``; under
+        torch it is a separate copy of the terms as plain floats.
+
+        Args:
+            attr: Name of the coefficient dict attribute, ``"radial_terms"``
+                or ``"freeform_coeffs"``.
+        """
+        super().flip()
+        old = getattr(self, attr)
+        new = _CoeffCacheDict({k: -v for k, v in old.items()})._bind(self)
+        setattr(self, attr, new)
+        self._coeffs_dirty = True
+
+        self.surface_config.radius = float(be.to_numpy(self.radius))
+        if be.get_backend() != "torch":
+            self.surface_config.terms = new
+        else:
+            self.surface_config.terms = {
+                k: float(be.to_numpy(v)) for k, v in new.items()
+            }
+
     def _base_sag(self, r2):
         """Calculates the sag of the base conic surface.
 
@@ -529,6 +560,15 @@ class ForbesQNormalSlopeGeometry(ForbesGeometryBase):
         # Always return the canonical class, regardless of whether the
         # serialized type was "ForbesQbfsGeometry" or "ForbesQNormalSlopeGeometry"
         return ForbesQNormalSlopeGeometry(cs, surface_config, solver_config)
+
+    def flip(self):
+        """Flip the geometry.
+
+        Changes the sign of the radius of curvature and of every Q (radial)
+        coefficient, and updates ``surface_config`` to match. The conic
+        constant and the normalization radius remain unchanged.
+        """
+        self._flip_terms("radial_terms")
 
     def scale(self, scale_factor: float):
         """Scale the geometry parameters.
@@ -932,6 +972,15 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
         surface_config = ForbesSurfaceConfig(**data["surface_config"])
         solver_config = ForbesSolverConfig(**data.get("solver_config", {}))
         return cls(cs, surface_config, solver_config)
+
+    def flip(self):
+        """Flip the geometry.
+
+        Changes the sign of the radius of curvature and of every Q-2D (freeform)
+        coefficient, and updates ``surface_config`` to match. The conic
+        constant and the normalization radius remain unchanged.
+        """
+        self._flip_terms("freeform_coeffs")
 
     def scale(self, scale_factor: float):
         """Scale the geometry parameters.

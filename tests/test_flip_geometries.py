@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -9,6 +11,10 @@ from optiland.geometries import (
     BiconicGeometry,
     ChebyshevPolynomialGeometry,
     EvenAsphere,
+    ForbesQ2dGeometry,
+    ForbesQbfsGeometry,
+    ForbesQNormalSlopeGeometry,
+    ForbesSurfaceConfig,
     GridSagGeometry,
     OddAsphere,
     Plane,
@@ -299,6 +305,35 @@ def _grid_sag_geometry():
     return GridSagGeometry(CoordinateSystem(), list(axis), list(axis), sag)
 
 
+def _forbes_qns_config():
+    return ForbesSurfaceConfig(
+        radius=25.0,
+        conic=-0.5,
+        norm_radius=8.0,
+        terms={0: 1.0e-3, 1: -5.0e-4, 2: 2.0e-4, 3: -8.0e-5},
+    )
+
+
+def _forbes_q2d_config():
+    return ForbesSurfaceConfig(
+        radius=25.0,
+        conic=-0.5,
+        norm_radius=8.0,
+        terms={
+            ("a", 0, 0): 5.0e-4,
+            ("a", 0, 1): -2.0e-4,
+            ("a", 1, 0): 1.0e-4,
+            ("b", 1, 0): 8.0e-5,
+        },
+    )
+
+
+def _forbes_qbfs():
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        return ForbesQbfsGeometry(CoordinateSystem(), _forbes_qns_config())
+
+
 # Factories run inside each test, after set_test_backend has chosen the backend.
 FLIP_CASES = {
     "standard": lambda: StandardGeometry(CoordinateSystem(), radius=50.0, conic=-0.5),
@@ -343,6 +378,11 @@ FLIP_CASES = {
         CoordinateSystem(), radius_x=40.0, radius_y=60.0, conic_x=-0.3, conic_y=0.2
     ),
     "grid_sag": _grid_sag_geometry,
+    "forbes_q_normal_slope": lambda: ForbesQNormalSlopeGeometry(
+        CoordinateSystem(), _forbes_qns_config()
+    ),
+    "forbes_qbfs_alias": _forbes_qbfs,
+    "forbes_q2d": lambda: ForbesQ2dGeometry(CoordinateSystem(), _forbes_q2d_config()),
 }
 
 # Off-axis points (max radius ~5.4 mm) so non-symmetric terms contribute.
@@ -387,6 +427,42 @@ def test_flip_with_shared_coefficients(set_test_backend, case):
     assert_allclose(target.sag(x, y), -before)
 
 
+_FORBES_CASES = ["forbes_q_normal_slope", "forbes_qbfs_alias", "forbes_q2d"]
+
+
+def _forbes_attr(geom):
+    return "freeform_coeffs" if hasattr(geom, "freeform_coeffs") else "radial_terms"
+
+
+@pytest.mark.parametrize("case", _FORBES_CASES)
+def test_flip_forbes_shared_terms(set_test_backend, case):
+    """Forbes geometries sharing one live dict (as a pickup does) both flip."""
+    source, target = FLIP_CASES[case](), FLIP_CASES[case]()
+    attr = _forbes_attr(source)
+    setattr(target, attr, getattr(source, attr))
+    x, y = be.array(_X), be.array(_Y)
+    src_before = be.to_numpy(source.sag(x, y))  # warms both caches
+    tgt_before = be.to_numpy(target.sag(x, y))
+    source.flip()
+    target.flip()
+    assert_allclose(source.sag(x, y), -src_before)
+    assert_allclose(target.sag(x, y), -tgt_before)
+
+
+@pytest.mark.parametrize("case", _FORBES_CASES)
+def test_flip_forbes_borrower_alone(set_test_backend, case):
+    """Flipping only the geometry that borrowed the dict leaves the source alone."""
+    source, target = FLIP_CASES[case](), FLIP_CASES[case]()
+    attr = _forbes_attr(source)
+    setattr(target, attr, getattr(source, attr))
+    x, y = be.array(_X), be.array(_Y)
+    src_before = be.to_numpy(source.sag(x, y))
+    tgt_before = be.to_numpy(target.sag(x, y))
+    target.flip()
+    assert_allclose(target.sag(x, y), -tgt_before)
+    assert_allclose(source.sag(x, y), src_before)
+
+
 @pytest.mark.parametrize("case", ["polynomial", "chebyshev", "toroidal_poly_y"])
 def test_flip_with_plain_list_terms(set_test_backend, case):
     """Terms re-assigned as plain Python lists after construction still flip."""
@@ -397,6 +473,32 @@ def test_flip_with_plain_list_terms(set_test_backend, case):
     setattr(geom, attr, be.to_numpy(getattr(geom, attr)).tolist())
     geom.flip()
     assert_allclose(geom.sag(x, y), -before)
+
+
+@pytest.mark.parametrize(
+    "case", ["forbes_q_normal_slope", "forbes_qbfs_alias", "forbes_q2d"]
+)
+def test_flip_forbes_round_trip(set_test_backend, case):
+    """surface_config follows the flip, so to_dict/from_dict keeps it."""
+    geom = FLIP_CASES[case]()
+    x, y = be.array(_X), be.array(_Y)
+    geom.flip()
+    if be.get_backend() == "numpy":
+        # the config keeps aliasing the live dict, so later edits reach to_dict
+        live = getattr(geom, "freeform_coeffs", None)
+        if live is None:
+            live = geom.radial_terms
+        assert geom.surface_config.terms is live
+    else:
+        assert all(type(v) is float for v in geom.surface_config.terms.values())
+    flipped_sag = geom.sag(x, y)
+
+    data = geom.to_dict()
+    assert data["surface_config"]["radius"] == -25.0
+    restored = type(geom).from_dict(data)
+
+    assert float(be.to_numpy(restored.radius)) == -25.0
+    assert_allclose(restored.sag(x, y), flipped_sag)
 
 
 def test_optic_flip_mirrors_aspheric_surface(set_test_backend):
