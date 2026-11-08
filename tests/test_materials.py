@@ -86,29 +86,28 @@ class TestBaseMaterial:
 
         material = DummyMaterial()
 
-        small = np.linspace(0.45, 0.65, 1_000, dtype=np.float64)
         large = np.linspace(0.45, 0.65, 200_000, dtype=np.float64)
 
         # Warm up once to reduce one-time effects.
-        material._create_cache_key(small, temperature=25)
         material._create_cache_key(large, temperature=25)
+        tuple(large.tolist())
 
-        small_iters = 200
+        iters = 5
         t0 = time.perf_counter()
-        for _ in range(small_iters):
-            material._create_cache_key(small, temperature=25)
-        small_avg_s = (time.perf_counter() - t0) / small_iters
-
-        large_iters = 5
-        t0 = time.perf_counter()
-        for _ in range(large_iters):
+        for _ in range(iters):
             material._create_cache_key(large, temperature=25)
-        large_avg_s = (time.perf_counter() - t0) / large_iters
+        large_avg_s = (time.perf_counter() - t0) / iters
 
-        ratio = large_avg_s / max(small_avg_s, 1e-9)
-        assert ratio < 40.0, (
+        # Reference: the cheapest per-element key, a tuple of Python floats.
+        t0 = time.perf_counter()
+        for _ in range(iters):
+            tuple(large.tolist())
+        scalar_tuple_avg_s = (time.perf_counter() - t0) / iters
+
+        assert large_avg_s < scalar_tuple_avg_s, (
             "Large-array content checks incur excessive per-element overhead "
-            f"(ratio={ratio:.2f}, small_avg={small_avg_s:.3e}s, large_avg={large_avg_s:.3e}s)"
+            f"(large_avg={large_avg_s:.3e}s, "
+            f"scalar_tuple_avg={scalar_tuple_avg_s:.3e}s)"
         )
 
         # Keys should still be deterministic for repeated calls on same input.

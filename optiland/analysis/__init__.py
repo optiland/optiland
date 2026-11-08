@@ -21,6 +21,7 @@ from .field_curvature import FieldCurvature
 from .chromatic_focal_shift import ChromaticFocalShift
 from .lateral_color import LateralColor
 from .longitudinal_aberration import LongitudinalAberration
+from .seidel_diagram import SeidelDiagram
 from .rms_vs_field import RmsSpotSizeVsField, RmsWavefrontErrorVsField
 from .pupil_aberration import PupilAberration
 from .irradiance import IncoherentIrradiance

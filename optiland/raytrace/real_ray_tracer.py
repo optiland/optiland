@@ -9,9 +9,11 @@ Kramer Harrison, 2025
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import functools
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import optiland.backend as be
+from optiland import _epoch
 from optiland.distribution import create_distribution
 from optiland.rays import PolarizedRays, RayGenerator
 from optiland.raytrace import _resume
@@ -20,9 +22,38 @@ from optiland.raytrace.partial_trace import partial_trace_start
 from optiland.raytrace.snapshot import TraceSnapshot, capture_rays
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from optiland._types import DistributionType
     from optiland.distribution import BaseDistribution
     from optiland.rays import RealRays
+
+T = TypeVar("T")
+
+
+def _within_trace_epoch(method: Callable[..., T]) -> Callable[..., T]:
+    """Run a trace entry point inside an evaluation epoch.
+
+    The optic state cannot change while one trace runs, so per-design
+    quantities (paraxial solves, material indices, ray aiming) are memoized
+    for the duration of the call. An epoch that is already open (an optimizer
+    evaluation, or an outer trace) is reused, so nested calls add nothing.
+
+    Args:
+        method: A ``RealRayTracer`` method whose ``self.optic`` is traced.
+
+    Returns:
+        The wrapped method, with the same signature.
+    """
+
+    @functools.wraps(method)
+    def wrapper(self: RealRayTracer, *args: Any, **kwargs: Any) -> T:
+        if _epoch.current() is not None:
+            return method(self, *args, **kwargs)
+        with _epoch.evaluation_epoch((self.optic,)):
+            return method(self, *args, **kwargs)
+
+    return wrapper
 
 
 class RealRayTracer(BaseRayTracer):
@@ -60,6 +91,7 @@ class RealRayTracer(BaseRayTracer):
             **kwargs,
         }
 
+    @_within_trace_epoch
     def trace(
         self,
         Hx,
@@ -156,6 +188,7 @@ class RealRayTracer(BaseRayTracer):
 
         return rays
 
+    @_within_trace_epoch
     def trace_generic(
         self,
         Hx,
@@ -225,6 +258,7 @@ class RealRayTracer(BaseRayTracer):
         """
         return partial_trace_start(self.optic, variable)
 
+    @_within_trace_epoch
     def _trace(
         self,
         Hx,
@@ -271,6 +305,7 @@ class RealRayTracer(BaseRayTracer):
 
         return rays, TraceSnapshot(tuple(states), tuple(surfaces))
 
+    @_within_trace_epoch
     def _trace_from(
         self, k: int, snapshot: TraceSnapshot, record: bool = True
     ) -> RealRays:
