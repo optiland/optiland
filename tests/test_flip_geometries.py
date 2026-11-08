@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import numpy as np
+import pytest
+
 import optiland.backend as be
 from optiland.coordinate_system import CoordinateSystem
 from optiland.geometries import (
     BiconicGeometry,
     ChebyshevPolynomialGeometry,
     EvenAsphere,
+    GridSagGeometry,
     OddAsphere,
     Plane,
     PolynomialGeometry,
@@ -13,6 +17,8 @@ from optiland.geometries import (
     ToroidalGeometry,
     ZernikePolynomialGeometry,
 )
+from optiland.optic import Optic
+from tests.utils import assert_allclose
 
 # Default coordinate system for tests
 cs = CoordinateSystem()
@@ -98,7 +104,7 @@ def test_flip_chebyshev_geometry():
 
     assert geom.radius == -initial_radius
     assert geom.k == initial_conic
-    assert be.allclose(geom.coefficients, be.array(initial_coeffs))
+    assert be.allclose(geom.coefficients, -be.array(initial_coeffs))
 
 
 def test_flip_even_asphere_geometry():
@@ -117,7 +123,7 @@ def test_flip_even_asphere_geometry():
 
     assert geom.radius == -initial_radius
     assert geom.k == initial_conic
-    assert geom.coefficients == initial_coeffs
+    assert geom.coefficients == [-c for c in initial_coeffs]
 
 
 def test_flip_odd_asphere_geometry():
@@ -159,7 +165,7 @@ def test_flip_polynomial_geometry():
 
     assert geom.radius == -initial_radius
     assert geom.k == initial_conic
-    assert be.allclose(geom.coefficients, be.array(initial_coeffs_list))
+    assert be.allclose(geom.coefficients, -be.array(initial_coeffs_list))
 
 
 def test_flip_toroidal_geometry():
@@ -190,7 +196,7 @@ def test_flip_toroidal_geometry():
     assert geom.R_rot == -initial_r_rot
     assert geom.R_yz == -initial_r_yz
     assert geom.k_yz == initial_k_yz
-    assert be.allclose(geom.coeffs_poly_y, be.array(initial_coeffs_y))
+    assert be.allclose(geom.coeffs_poly_y, -be.array(initial_coeffs_y))
     # Handle comparison for c_yz which might be float or array
     expected_c_yz = (
         -initial_c_yz_val if initial_r_yz != 0 and be.isfinite(initial_r_yz) else 0.0
@@ -222,7 +228,7 @@ def test_flip_zernike_geometry():
 
     assert geom.radius == -initial_radius
     assert geom.k == initial_conic
-    assert be.allclose(geom.coefficients, be.array(initial_coeffs))
+    assert be.allclose(geom.coefficients, -be.array(initial_coeffs))
 
 
 def test_flip_biconic_zero_radius():
@@ -281,3 +287,141 @@ def test_flip_toroidal_inf_radius():
     else:
         assert be.allclose(geom.c_yz, expected_c_yz)
     assert geom.R_rot == -be.inf
+
+
+# --- sag'(x, y) == -sag(x, y) for each geometry in FLIP_CASES (#1103) ---
+
+
+def _grid_sag_geometry():
+    axis = np.linspace(-12.0, 12.0, 25)
+    xx, yy = np.meshgrid(axis, axis)
+    sag = 1e-3 * xx**2 + 2e-3 * yy**2 + 1e-4 * xx * yy
+    return GridSagGeometry(CoordinateSystem(), list(axis), list(axis), sag)
+
+
+# Factories run inside each test, after set_test_backend has chosen the backend.
+FLIP_CASES = {
+    "standard": lambda: StandardGeometry(CoordinateSystem(), radius=50.0, conic=-0.5),
+    "even_asphere": lambda: EvenAsphere(
+        CoordinateSystem(), radius=50.0, conic=-0.5, coefficients=[1e-5, 1e-4, -2e-7]
+    ),
+    "odd_asphere": lambda: OddAsphere(
+        CoordinateSystem(), radius=50.0, conic=-0.5, coefficients=[1e-3, 1e-4, -2e-7]
+    ),
+    "polynomial": lambda: PolynomialGeometry(
+        CoordinateSystem(),
+        radius=120.0,
+        conic=0.5,
+        coefficients=[[1e-4, 2e-4, 1e-3], [5e-4, -3e-4, 2e-4]],
+    ),
+    "chebyshev": lambda: ChebyshevPolynomialGeometry(
+        CoordinateSystem(),
+        radius=100.0,
+        conic=-0.8,
+        coefficients=[[1e-3, 0.01], [0.02, 0.03]],
+        norm_x=10.0,
+        norm_y=10.0,
+    ),
+    "zernike": lambda: ZernikePolynomialGeometry(
+        CoordinateSystem(),
+        radius=300.0,
+        conic=-0.2,
+        coefficients=[1e-3, 2e-3, 0.05, -0.03, 4e-3, -2e-3],
+        norm_radius=10.0,
+    ),
+    "toroidal_poly_y": lambda: ToroidalGeometry(
+        CoordinateSystem(),
+        radius_x=80.0,
+        radius_y=40.0,
+        conic=-0.3,
+        coeffs_poly_y=[1e-4, -2e-7],
+    ),
+    "toroidal_no_poly": lambda: ToroidalGeometry(
+        CoordinateSystem(), radius_x=80.0, radius_y=40.0, conic=-0.3
+    ),
+    "biconic": lambda: BiconicGeometry(
+        CoordinateSystem(), radius_x=40.0, radius_y=60.0, conic_x=-0.3, conic_y=0.2
+    ),
+    "grid_sag": _grid_sag_geometry,
+}
+
+# Off-axis points (max radius ~5.4 mm) so non-symmetric terms contribute.
+_X = [0.0, 3.0, 0.0, 4.0, -5.0, 2.5]
+_Y = [0.0, 0.0, 5.0, 3.0, 2.0, -4.0]
+
+
+@pytest.mark.parametrize("case", list(FLIP_CASES))
+def test_flip_negates_sag(set_test_backend, case):
+    """After flip, sag'(x, y) == -sag(x, y): the surface is mirrored in z."""
+    geom = FLIP_CASES[case]()
+    x, y = be.array(_X), be.array(_Y)
+    before = be.to_numpy(geom.sag(x, y))
+    assert np.max(np.abs(before)) > 1e-3  # guard against a vacuous comparison
+    geom.flip()
+    assert_allclose(geom.sag(x, y), -before)
+
+
+@pytest.mark.parametrize("case", list(FLIP_CASES))
+def test_double_flip_restores_sag(set_test_backend, case):
+    """Flipping twice gives back the original surface."""
+    geom = FLIP_CASES[case]()
+    x, y = be.array(_X), be.array(_Y)
+    before = be.to_numpy(geom.sag(x, y))
+    geom.flip()
+    geom.flip()
+    assert_allclose(geom.sag(x, y), before)
+
+
+@pytest.mark.parametrize(
+    "case", ["even_asphere", "polynomial", "chebyshev", "zernike", "toroidal_poly_y"]
+)
+def test_flip_with_shared_coefficients(set_test_backend, case):
+    """Geometries sharing one coefficient object (as a pickup does) both flip."""
+    attr = "coeffs_poly_y" if case.startswith("toroidal") else "coefficients"
+    source, target = FLIP_CASES[case](), FLIP_CASES[case]()
+    setattr(target, attr, getattr(source, attr))
+    x, y = be.array(_X), be.array(_Y)
+    before = be.to_numpy(target.sag(x, y))
+    source.flip()
+    target.flip()
+    assert_allclose(target.sag(x, y), -before)
+
+
+@pytest.mark.parametrize("case", ["polynomial", "chebyshev", "toroidal_poly_y"])
+def test_flip_with_plain_list_terms(set_test_backend, case):
+    """Terms re-assigned as plain Python lists after construction still flip."""
+    geom = FLIP_CASES[case]()
+    x, y = be.array(_X), be.array(_Y)
+    before = be.to_numpy(geom.sag(x, y))
+    attr = "coeffs_poly_y" if case.startswith("toroidal") else "coefficients"
+    setattr(geom, attr, be.to_numpy(getattr(geom, attr)).tolist())
+    geom.flip()
+    assert_allclose(geom.sag(x, y), -before)
+
+
+def test_optic_flip_mirrors_aspheric_surface(set_test_backend):
+    """The old back surface becomes the new front surface with sag negated."""
+    lens = Optic()
+    lens.surfaces.add(index=0, thickness=be.inf)
+    lens.surfaces.add(
+        index=1, thickness=5.0, radius=40.0, material="N-BK7", is_stop=True
+    )
+    lens.surfaces.add(
+        index=2,
+        thickness=50.0,
+        radius=-60.0,
+        conic=-1.2,
+        surface_type="even_asphere",
+        coefficients=[0.0, 2e-5, -3e-8],
+    )
+    lens.surfaces.add(index=3)
+    lens.set_aperture(aperture_type="EPD", value=20.0)
+    lens.fields.set_type(field_type="angle")
+    lens.fields.add(y=0.0)
+    lens.wavelengths.add(value=0.55, is_primary=True)
+    x, y = be.zeros(3), be.array([0.0, 4.0, 8.0])
+    old_back_sag = lens.surfaces[2].geometry.sag(x, y)
+
+    lens.updater.flip()
+
+    assert_allclose(lens.surfaces[1].geometry.sag(x, y), -old_back_sag)

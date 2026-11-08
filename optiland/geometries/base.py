@@ -102,9 +102,12 @@ class BaseGeometry(ABC):
         """Flip the geometry.
 
         This method should modify the geometry parameters such that the
-        curvature is inverted. For example, the radius of curvature should
-        change sign. Conic constants and polynomial coefficients should not
-        change. The coordinate system of the geometry should not be modified.
+        surface is mirrored in z, as happens when the surface order of a
+        system is reversed: afterwards ``sag(x, y)`` returns the negative of
+        its previous value. The radius of curvature and every aspheric or
+        polynomial sag term should change sign. Conic constants and
+        normalization radii should not change. The coordinate system of the
+        geometry should not be modified.
         """
         pass  # pragma: no cover
 

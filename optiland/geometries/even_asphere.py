@@ -90,6 +90,16 @@ class EvenAsphere(NewtonRaphsonGeometry):
             # C_i' = C_i * s^(1 - 2(i+1))
             self.coefficients[i] *= scale_factor ** (1 - 2 * (i + 1))
 
+    def flip(self):
+        """Flip the geometry.
+
+        Changes the sign of the radius of curvature and of every aspheric
+        coefficient, so that the sag changes sign. The conic constant remains
+        unchanged.
+        """
+        super().flip()
+        self.coefficients = [-c for c in self.coefficients]
+
     def sag(self, x=0, y=0):
         """Calculates the sag of the asphere at the given coordinates.
 

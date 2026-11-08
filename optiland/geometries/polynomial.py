@@ -102,6 +102,19 @@ class PolynomialGeometry(NewtonRaphsonGeometry):
                 # C_ij' = C_ij * s^(1 - (i+j))
                 self.coefficients[i][j] *= scale_factor ** (1 - (i + j))
 
+    def flip(self):
+        """Flip the geometry.
+
+        Changes the sign of the radius of curvature and of every polynomial
+        coefficient, so that the sag changes sign. The conic constant remains
+        unchanged. The negated coefficients are computed first, so the
+        geometry is left unchanged if they cannot be converted (for example
+        when they were assigned as a ragged nested list).
+        """
+        flipped = -be.atleast_2d(self.coefficients)
+        super().flip()
+        self.coefficients = flipped
+
     def sag(self, x=0, y=0):
         """Calculates the sag of the polynomial surface at the given coordinates.
 

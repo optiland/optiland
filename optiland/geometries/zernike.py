@@ -146,6 +146,16 @@ class ZernikePolynomialGeometry(NewtonRaphsonGeometry):
         self.norm_radius = self.norm_radius * scale_factor
         self.coefficients = self.coefficients * scale_factor
 
+    def flip(self):
+        """Flip the geometry.
+
+        Changes the sign of the radius of curvature and of every Zernike
+        coefficient, so that the sag changes sign. The conic constant remains
+        unchanged.
+        """
+        super().flip()
+        self.coefficients = -self.coefficients
+
     def update_normalization(self, semi_aperture: float) -> None:
         if self.normalization_mode == "auto":
             self.norm_radius = semi_aperture * 1.25
