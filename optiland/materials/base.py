@@ -30,6 +30,7 @@ except (ImportError, ModuleNotFoundError):
 
 _TYPE_STR_CACHE: dict = {}
 _TYPE_STR_CACHE_MAX = 256
+_STATE_SCALAR_TYPES = frozenset({str, int, float, bool, type(None)})
 
 
 def _type_str(obj) -> str:
@@ -221,7 +222,7 @@ class BaseMaterial(ABC):
             if size is not None and size <= self._MAX_VALUE_KEY_ARRAY_SIZE:
                 wavelength_key = (
                     "array-values",
-                    tuple(np.ravel(be.to_numpy(wavelength))),
+                    tuple(np.ravel(be.to_numpy(wavelength)).tolist()),
                     tuple(wavelength.shape),
                     _type_str(wavelength.dtype),
                     _type_str(getattr(wavelength, "device", None)),
@@ -230,7 +231,10 @@ class BaseMaterial(ABC):
                 wavelength_key = self._array_metadata_key(wavelength)
         else:
             wavelength_key = (type(wavelength), wavelength)
-        return (wavelength_key, self._state_key(tuple(sorted(kwargs.items()))))
+        kwargs_key = (
+            () if not kwargs else self._state_key(tuple(sorted(kwargs.items())))
+        )
+        return (wavelength_key, kwargs_key)
 
     def _cache_state(self) -> tuple | None:
         """Return a hashable optical-state token, or None to disable caching.
@@ -247,6 +251,34 @@ class BaseMaterial(ABC):
 
     @classmethod
     def _state_key(cls, value) -> tuple | None:
+        """Fingerprint numerical state; unsupported or trainable data disables reuse.
+
+        Exact-type fast paths for the common cases; everything else goes to
+        :meth:`_state_key_generic`, whose result this always equals.
+        """
+        kind = type(value)
+        if kind in _STATE_SCALAR_TYPES:
+            return (kind, value)
+        if kind is tuple or kind is list:
+            items = []
+            for item in value:
+                item_kind = type(item)
+                if item_kind in _STATE_SCALAR_TYPES:
+                    items.append((item_kind, item))
+                    continue
+                key = cls._state_key(item)
+                if key is None:
+                    return None
+                items.append(key)
+            return tuple(items)
+        if kind is np.ndarray:
+            if value.size <= cls._MAX_VALUE_KEY_ARRAY_SIZE:
+                return _array_content_key(value, value.tobytes())
+            return cls._array_metadata_key(value)
+        return cls._state_key_generic(value)
+
+    @classmethod
+    def _state_key_generic(cls, value) -> tuple | None:
         """Fingerprint numerical state; unsupported or trainable data disables reuse."""
         if cls._requires_grad(value):
             return None
@@ -368,7 +400,9 @@ class BaseMaterial(ABC):
         if self._requires_grad(wavelength):
             return self._compute_grad_aware(calculate, wavelength, **kwargs)
         state = self._cache_state() if "_cache_state" in type(self).__dict__ else None
-        kwargs_state = self._state_key(tuple(sorted(kwargs.items())))
+        kwargs_state = (
+            () if not kwargs else self._state_key(tuple(sorted(kwargs.items())))
+        )
         if state is None or kwargs_state is None:
             self._n_cache.clear()
             self._k_cache.clear()
