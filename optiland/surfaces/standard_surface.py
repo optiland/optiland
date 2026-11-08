@@ -343,19 +343,20 @@ class Surface(ObserverMixin):
 
     def reset(self):
         """Resets the recorded information of the surface."""
-        self.y = be.empty(0)
-        self.u = be.empty(0)
-        self.x = be.empty(0)
-        self.y = be.empty(0)
-        self.z = be.empty(0)
+        # One size-0 array serves every attribute: it has no elements to share.
+        empty = be.empty(0)
+        self.y = empty
+        self.u = empty
+        self.x = empty
+        self.z = empty
 
-        self.L = be.empty(0)
-        self.M = be.empty(0)
-        self.N = be.empty(0)
+        self.L = empty
+        self.M = empty
+        self.N = empty
 
-        self.intensity = be.empty(0)
-        self.aoi = be.empty(0)
-        self.opd = be.empty(0)
+        self.intensity = empty
+        self.aoi = empty
+        self.opd = empty
 
     def set_fresnel_coating(self):
         """Sets the coating of the surface to a Fresnel coating."""

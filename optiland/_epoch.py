@@ -8,7 +8,9 @@ that state (material indices, paraxial quantities, ...) can be computed once
 and reused without recomputing state fingerprints.
 
 Rules:
-    - Only evaluators open epochs. Library users never need to.
+    - Evaluators open epochs around a design evaluation, and
+      ``RealRayTracer`` opens one around each trace call (reusing any outer
+      epoch). Library users never need to.
     - Memo keys are ``(id(owner), qualname, key)``. Each entry holds strong
       references to the owner and to any keyed arrays, so their ids cannot be
       recycled while the epoch is alive.
