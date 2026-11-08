@@ -64,9 +64,11 @@ def abbe_number(optic: Optic, ref: ComponentRef) -> float | None:
         return None
     # BaseMaterial.abbe is called explicitly because Abbe-defined materials
     # shadow the method with their stored Abbe number. A non-dispersive
-    # material divides by zero here and is reported as None.
+    # material is reported by BaseMaterial.abbe as 0.0 (or, defensively, a
+    # non-finite value); a real glass always has V_d > 0, so both become None.
     with np.errstate(divide="ignore", invalid="ignore"):
-        return _finite_float(BaseMaterial.abbe(material))
+        value = _finite_float(BaseMaterial.abbe(material))
+    return value if value else None
 
 
 def refractive_index(
