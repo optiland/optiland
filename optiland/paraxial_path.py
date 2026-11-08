@@ -31,13 +31,14 @@ import contextvars
 import math
 import warnings
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 import numpy as np
 
 import optiland.backend as be
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from typing import Any
 
     from optiland._types import BEArray, ScalarOrArray
@@ -700,6 +701,111 @@ def _surface_is_refractive_boundary(surface) -> bool:
         return True
 
 
+class _GlobalZClassification(NamedTuple):
+    """Entry-direction facts that decide whether axial positions equal global z.
+
+    Attributes:
+        entry: Unit entry direction (after the virtual-object override).
+        degenerate_entry: True when the +z default was used for the entry.
+        entry_off_axis: Whether the entry direction leaves the z axis.
+        entry_negative_z: Whether the beam enters along -z.
+        any_mirror_off_axis: Whether any reflective surface has an off-axis normal.
+        positions_are_global_z: The combined predicate.
+    """
+
+    entry: tuple
+    degenerate_entry: bool
+    entry_off_axis: bool
+    entry_negative_z: bool
+    any_mirror_off_axis: bool
+    positions_are_global_z: bool
+
+
+def _classify_global_z(
+    surfaces: list, frame_of: Callable[[int], tuple], mirrors: list[bool]
+) -> _GlobalZClassification:
+    """Classify the entry axis and mirror orientations of a surface chain.
+
+    Shared by :func:`build_paraxial_path` and :func:`require_global_z_geometry`
+    so both use one definition of ``positions_are_global_z``.
+
+    Args:
+        surfaces: Ordered surfaces, object surface first.
+        frame_of: ``frame_of(k)`` returns ``(origin, axis)`` of surface ``k``
+            in the GCS, exactly as ``surface.geometry.cs.frame_in_gcs``.
+        mirrors: Per-surface reflective flags.
+
+    Returns:
+        The classification.
+    """
+    n = len(surfaces)
+    to_float = _float_converter()
+    head = [frame_of(k) for k in range(min(n, 3))]
+
+    entry, degenerate_entry = _entry_direction(head)
+
+    # A finite object authored past the first surface (a virtual object on a
+    # +z chain) reads as a -z first leg off the vertices, but the beam still
+    # travels +z. Only that exact historical case is overridden; a chain
+    # whose physical legs also descend in z is a genuinely -z-entered system.
+    object_is_infinite = (
+        bool(getattr(surfaces[0], "is_infinite", False)) if n else False
+    )
+    if (
+        n >= 3
+        and not object_is_infinite
+        and not degenerate_entry
+        and not _off_axis(entry)
+        and to_float(entry[2]) < 0.0
+    ):
+        first_leg = [head[2][0][k] - head[1][0][k] for k in range(3)]
+        leg_norm = be.sqrt(sum(s * s for s in first_leg))
+        if bool(be.all(be.isfinite(leg_norm))) and to_float(leg_norm) > _AXIS_TOL:
+            leg_dir = tuple(s / leg_norm for s in first_leg)
+            if not _off_axis(leg_dir) and to_float(leg_dir[2]) > 0.0:
+                entry = (be.array(0.0), be.array(0.0), be.array(1.0))
+
+    any_mirror_off_axis = any(
+        is_mirror and _off_axis(frame_of(k)[1]) for k, is_mirror in enumerate(mirrors)
+    )
+    entry_off_axis = _off_axis(entry)
+    entry_negative_z = (not entry_off_axis) and n >= 2 and to_float(entry[2]) < 0.0
+
+    positions_are_global_z = (
+        not entry_off_axis and not entry_negative_z and not any_mirror_off_axis
+    )
+    return _GlobalZClassification(
+        entry,
+        degenerate_entry,
+        entry_off_axis,
+        entry_negative_z,
+        any_mirror_off_axis,
+        positions_are_global_z,
+    )
+
+
+def _positions_are_global_z(surfaces) -> bool:
+    """``build_paraxial_path(surfaces).positions_are_global_z`` without the walk.
+
+    Builds only the frames the predicate reads: the first three surfaces and
+    the reflective ones.
+
+    Args:
+        surfaces: Ordered surfaces (a ``SurfaceGroup`` or a sequence).
+
+    Returns:
+        Whether unfolded axial positions coincide with global z.
+    """
+    surface_list = list(surfaces)
+    mirrors = [
+        bool(getattr(surf.interaction_model, "is_reflective", False))
+        for surf in surface_list
+    ]
+    return _classify_global_z(
+        surface_list, lambda k: surface_list[k].geometry.cs.frame_in_gcs, mirrors
+    ).positions_are_global_z
+
+
 def build_paraxial_path(surfaces: list) -> ParaxialPath:
     """Walk the surface chain once and assemble the shared path metadata.
 
@@ -728,39 +834,12 @@ def build_paraxial_path(surfaces: list) -> ParaxialPath:
     vertices = tuple(frames[k][0] for k in range(n))
     axes = tuple(frames[k][1] for k in range(n))
 
-    entry, degenerate_entry = _entry_direction(frames)
-
-    # A finite object authored past the first surface (a virtual object on a
-    # +z chain) reads as a -z first leg off the vertices, but the beam still
-    # travels +z. Only that exact historical case is overridden; a chain
-    # whose physical legs also descend in z is a genuinely -z-entered system.
-    object_is_infinite = (
-        bool(getattr(surfaces[0], "is_infinite", False)) if n else False
-    )
-    if (
-        n >= 3
-        and not object_is_infinite
-        and not degenerate_entry
-        and not _off_axis(entry)
-        and to_float(entry[2]) < 0.0
-    ):
-        first_leg = [vertices[2][k] - vertices[1][k] for k in range(3)]
-        leg_norm = be.sqrt(sum(s * s for s in first_leg))
-        if bool(be.all(be.isfinite(leg_norm))) and to_float(leg_norm) > _AXIS_TOL:
-            leg_dir = tuple(s / leg_norm for s in first_leg)
-            if not _off_axis(leg_dir) and to_float(leg_dir[2]) > 0.0:
-                entry = (be.array(0.0), be.array(0.0), be.array(1.0))
-
-    any_mirror_off_axis = any(
-        is_mirror and _off_axis(normal)
-        for (_, normal), is_mirror in zip(frames, mirrors, strict=True)
-    )
-    entry_off_axis = _off_axis(entry)
-    entry_negative_z = (not entry_off_axis) and n >= 2 and to_float(entry[2]) < 0.0
-
-    positions_are_global_z = (
-        not entry_off_axis and not entry_negative_z and not any_mirror_off_axis
-    )
+    gz = _classify_global_z(surfaces, frames.__getitem__, mirrors)
+    entry = gz.entry
+    degenerate_entry = gz.degenerate_entry
+    any_mirror_off_axis = gz.any_mirror_off_axis
+    entry_off_axis = gz.entry_off_axis
+    positions_are_global_z = gz.positions_are_global_z
     is_folded_or_off_axis = not positions_are_global_z
 
     ang_tol = angular_tolerance()
@@ -1065,9 +1144,7 @@ def require_global_z_geometry(surfaces, operation: str) -> None:
             does not coincide with global z, so a scalar z-offset mutation
             would move surfaces off their physical legs.
     """
-    surface_list = list(surfaces)
-    path = build_paraxial_path(surface_list)
-    if path.positions_are_global_z:
+    if _positions_are_global_z(surfaces):
         return
     raise UnsupportedParaxialGeometryError(
         f"{operation} mutates surface positions along global z only, but "
