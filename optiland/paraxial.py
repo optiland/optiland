@@ -579,8 +579,7 @@ class Paraxial:
                     raise ValueError(
                         "The entrance pupil is at infinity and the "
                         f"'{self.optic.aperture.ap_type}' aperture does not fix "
-                        "the object-space cone. Use an 'objectNA' or "
-                        "'float_by_stop_size' aperture."
+                        "the object-space cone. Use an 'objectNA' aperture."
                     )
 
         wavelength = self.optic.primary_wavelength

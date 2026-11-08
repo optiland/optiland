@@ -24,7 +24,7 @@ from .reference_geometry import PlanarReference, ReferenceGeometry, SphericalRef
 from .wavefront_data import WavefrontData
 
 if TYPE_CHECKING:
-    from optiland._types import BEArrayT
+    from optiland._types import BEArrayT, ScalarOrArray
     from optiland.distribution import BaseDistribution
     from optiland.optic.optic import Optic
     from optiland.rays.real_rays import RealRays
@@ -37,7 +37,12 @@ WavefrontStrategyType = Literal["chief_ray", "centroid", "best_fit"]
 ReferenceType = Literal["sphere", "plane"]
 
 
-def chief_reference_radius(center, exit_pupil_point, chief_opd, n_image):
+def chief_reference_radius(
+    center: tuple[ScalarOrArray, ScalarOrArray, ScalarOrArray],
+    exit_pupil_point: tuple[ScalarOrArray, ScalarOrArray, ScalarOrArray],
+    chief_opd: ScalarOrArray | None,
+    n_image: ScalarOrArray,
+) -> ScalarOrArray:
     """Radius of the chief-ray reference sphere.
 
     The radius is the distance from the chief-ray image point to the 3-D exit
