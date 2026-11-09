@@ -379,6 +379,17 @@ class SurfaceGroup:
         return be.array([surf.geometry.radius for surf in self.surfaces])
 
     @property
+    def paraxial_radii(self):
+        """be.array: vertex radii seen by paraxial rays, i.e. including any
+        r^2 aspheric term"""
+        return be.array(
+            [
+                getattr(surf.geometry, "paraxial_radius", surf.geometry.radius)
+                for surf in self.surfaces
+            ]
+        )
+
+    @property
     def conic(self):
         """be.array: conic constant of all surfaces"""
         values = []

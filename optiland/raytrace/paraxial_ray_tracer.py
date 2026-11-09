@@ -228,7 +228,7 @@ class ParaxialRayTracer(BaseRayTracer):
         if path is None:
             path = surface_group.build_paraxial_path()
 
-        R = surface_group.radii
+        R = surface_group.paraxial_radii
         n = surface_group.n(wavelength)
         pos = be.ravel(path.axial_positions)
         surfaces = tuple(surface_group.surfaces)

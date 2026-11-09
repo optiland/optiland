@@ -164,17 +164,17 @@ class PhaseInteractionModel(BaseInteractionModel):
         # Apply geometric + gradient deflection
         grad_deflection = paraxial_gradient / k0
 
+        geometry = self.parent_surface.geometry
+        R = getattr(geometry, "paraxial_radius", geometry.radius)
         if self.is_reflective:
             n = n1
-            power = (
-                -2 * n / self.parent_surface.geometry.radius
-            )  # Will be zero for Plane
+            power = -2 * n / R  # Will be zero for Plane
             u_geom = rays.u - y * power / n
             rays.u = u_geom + grad_deflection / n
         else:
             # The sign of grad_deflection is flipped to match the convention
             # in the legacy DiffractiveInteractionModel.
-            power = (n2 - n1) / self.parent_surface.geometry.radius
+            power = (n2 - n1) / R
             u_geom = (n1 / n2) * rays.u - y * power / n2
             rays.u = u_geom - grad_deflection / n2
 

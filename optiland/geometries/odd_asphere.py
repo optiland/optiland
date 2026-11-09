@@ -70,6 +70,8 @@ class OddAsphere(EvenAsphere):
     def __str__(self):
         return "Odd Asphere"
 
+    _r2_index = 1  # coefficients[0] is the r^1 term
+
     def scale(self, scale_factor: float):
         """Scale the geometry parameters.
 

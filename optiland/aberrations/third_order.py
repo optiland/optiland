@@ -171,7 +171,7 @@ class ThirdOrderAberrations:
         ) - self._signed_refractive_indices(long)
 
         self._N: int = self._optic.surfaces.num_surfaces
-        self._C = 1 / self._optic.surfaces.radii
+        self._C = 1 / self._optic.surfaces.paraxial_radii
         self._ya, self._ua = self._optic.paraxial.marginal_ray()
         self._yb, self._ub = self._optic.paraxial.chief_ray()
         self._hp = self._inv / (self._n[-1] * self._ua[-1])

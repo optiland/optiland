@@ -79,6 +79,18 @@ class EvenAsphere(NewtonRaphsonGeometry):
     def __str__(self):
         return "Even Asphere"
 
+    _r2_index = 0  # index of the r^2 coefficient
+
+    @property
+    def paraxial_radius(self):
+        """Vertex radius including the curvature 2*C of the r^2 term."""
+        if len(self.coefficients) <= self._r2_index:
+            return self.radius
+        c2 = self.coefficients[self._r2_index]
+        if c2 == 0:
+            return self.radius
+        return 1 / (1 / self.radius + 2 * c2)
+
     def scale(self, scale_factor: float):
         """Scale the geometry parameters.
 

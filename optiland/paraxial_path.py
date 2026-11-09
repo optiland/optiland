@@ -682,7 +682,8 @@ def _surface_is_powered(surface) -> bool:
     """Whether a surface bends paraxial rays (finite radius or explicit f)."""
     if getattr(surface, "surface_type", None) == "paraxial":
         return True
-    radius = getattr(getattr(surface, "geometry", None), "radius", None)
+    geometry = getattr(surface, "geometry", None)
+    radius = getattr(geometry, "paraxial_radius", getattr(geometry, "radius", None))
     if radius is None:
         return False
     return bool(be.all(be.isfinite(be.array(_to_float(radius)))))
