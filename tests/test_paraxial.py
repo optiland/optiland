@@ -1572,3 +1572,13 @@ def test_asphere_r2_term_adds_paraxial_power(
     # surface-by-surface trace: marginal ray at y = 1 leaves at u = -0.01
     lens.paraxial.trace(0, 1, 0.55)
     assert_allclose(lens.surfaces.u[-1], -0.01)
+
+
+@pytest.mark.parametrize("coefficients", [[], [0.0, 1e-5]])
+def test_asphere_without_r2_term_keeps_base_radius(set_test_backend, coefficients):
+    """Without an r^2 term the paraxial radius is the base radius."""
+    from optiland.coordinate_system import CoordinateSystem
+    from optiland.geometries.even_asphere import EvenAsphere
+
+    geometry = EvenAsphere(CoordinateSystem(), radius=50.0, coefficients=coefficients)
+    assert_allclose(geometry.paraxial_radius, 50.0)
