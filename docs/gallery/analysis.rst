@@ -7,6 +7,7 @@ This section contains examples of typical analysis tasks that can be performed w
 
 .. nbgallery::
     analysis/spot
+    analysis/footprint
     analysis/ray_fan
     analysis/ray_fan_best_fit
     analysis/field_curvature

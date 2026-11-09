@@ -19,6 +19,7 @@ from .distortion_strategies import (
 )
 from .field_curvature import FieldCurvature
 from .chromatic_focal_shift import ChromaticFocalShift
+from .footprint import FootprintDiagram
 from .lateral_color import LateralColor
 from .longitudinal_aberration import LongitudinalAberration
 from .seidel_diagram import SeidelDiagram
