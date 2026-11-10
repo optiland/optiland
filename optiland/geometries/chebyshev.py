@@ -118,6 +118,19 @@ class ChebyshevPolynomialGeometry(NewtonRaphsonGeometry):
         self.norm_y = self.norm_y * scale_factor
         self.coefficients = self.coefficients * scale_factor
 
+    def flip(self):
+        """Flip the geometry.
+
+        Changes the sign of the radius of curvature and of every Chebyshev
+        coefficient, so that the sag changes sign. The conic constant remains
+        unchanged. The negated coefficients are computed first, so the
+        geometry is left unchanged if they cannot be converted (for example
+        when they were assigned as a ragged nested list).
+        """
+        flipped = -be.atleast_2d(self.coefficients)
+        super().flip()
+        self.coefficients = flipped
+
     def update_normalization(self, semi_aperture: float) -> None:
         if self.normalization_mode == "auto":
             self.norm_x = semi_aperture * 1.25

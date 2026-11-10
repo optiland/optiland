@@ -271,9 +271,15 @@ class ToroidalGeometry(NewtonRaphsonGeometry):
     def flip(self):
         """Flip the geometry.
 
-        Changes the sign of the radius of rotation (R_rot) and the base Y-Z radius
-        (R_yz). Updates the Y-Z curvature (c_yz) accordingly.
+        Changes the sign of the radius of rotation (R_rot), the base Y-Z radius
+        (R_yz) and the Y-Z polynomial coefficients (coeffs_poly_y), so that the
+        sag changes sign. Updates the Y-Z curvature (c_yz) accordingly.
+
+        The negated coefficients are computed first, with the converter the
+        constructor uses, so the geometry is left unchanged if they cannot be
+        converted (for example a nested ragged list, which be.asarray rejects).
         """
+        flipped = -be.asarray(self.coeffs_poly_y)
         self.R_rot = -self.R_rot
         self.R_yz = -self.R_yz
 
@@ -281,6 +287,7 @@ class ToroidalGeometry(NewtonRaphsonGeometry):
             1.0 / self.R_yz if be.isfinite(self.R_yz) and self.R_yz != 0 else 0.0
         )
         self.radius = -self.radius
+        self.coeffs_poly_y = flipped
 
     def __str__(self) -> str:
         return "Toroidal"
