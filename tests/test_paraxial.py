@@ -1538,3 +1538,47 @@ def test_f2_range_is_differentiable(set_test_backend):
     grad = lens.surfaces[1].geometry.radius.grad
     assert grad is not None
     assert be.to_numpy(grad) != 0
+
+
+@pytest.mark.parametrize(
+    "surface_type, coefficients",
+    [("even_asphere", [0.01, 1e-5]), ("odd_asphere", [0.0, 0.01, 1e-5])],
+)
+def test_asphere_r2_term_adds_paraxial_power(
+    set_test_backend, surface_type, coefficients
+):
+    """A flat asphere with an r^2 term C has paraxial curvature 2*C."""
+    lens = Optic()
+    lens.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+    lens.surfaces.add(
+        index=1,
+        radius=be.inf,
+        thickness=5.0,
+        material=IdealMaterial(n=1.5),
+        surface_type=surface_type,
+        coefficients=coefficients,
+    )
+    lens.surfaces.add(index=2, radius=be.inf, thickness=100.0, is_stop=True)
+    lens.surfaces.add(index=3)
+    lens.set_aperture(aperture_type="EPD", value=2.0)
+    lens.fields.set_type(field_type="angle")
+    lens.fields.add(y=0)
+    lens.wavelengths.add(value=0.55, is_primary=True)
+
+    # (n' - n) * 2 * C = 0.5 * 0.02 -> f = 100
+    assert_allclose(lens.paraxial.f2(), 100.0)
+    matrix = lens.paraxial.ray_transfer_matrix(1, 2)
+    assert_allclose(matrix[1, 0], -0.01)
+    # surface-by-surface trace: marginal ray at y = 1 leaves at u = -0.01
+    lens.paraxial.trace(0, 1, 0.55)
+    assert_allclose(lens.surfaces.u[-1], -0.01)
+
+
+@pytest.mark.parametrize("coefficients", [[], [0.0, 1e-5]])
+def test_asphere_without_r2_term_keeps_base_radius(set_test_backend, coefficients):
+    """Without an r^2 term the paraxial radius is the base radius."""
+    from optiland.coordinate_system import CoordinateSystem
+    from optiland.geometries.even_asphere import EvenAsphere
+
+    geometry = EvenAsphere(CoordinateSystem(), radius=50.0, coefficients=coefficients)
+    assert_allclose(geometry.paraxial_radius, 50.0)

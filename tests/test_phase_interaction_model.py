@@ -6,6 +6,7 @@ import pytest
 
 from optiland import backend as be
 from optiland.coordinate_system import CoordinateSystem
+from optiland.geometries.even_asphere import EvenAsphere
 from optiland.geometries.plane import Plane
 from optiland.interactions.phase_interaction_model import PhaseInteractionModel
 from optiland.materials.abbe import AbbeMaterial
@@ -212,3 +213,24 @@ def test_unit_conversion_mm_microns(mock_surface):
     interacted_rays = model.interact_real_rays(rays)
 
     assert_allclose(interacted_rays.L, be.array([expected_L]), atol=1e-6)
+
+
+@pytest.mark.parametrize(
+    "is_reflective, expected_u", [(False, -0.01 / 1.5), (True, 0.04)]
+)
+def test_interact_paraxial_rays_uses_asphere_r2_power(
+    mock_surface, is_reflective, expected_u
+):
+    """The r^2 term of a flat asphere (paraxial radius 50) bends paraxial rays."""
+    mock_surface.geometry = EvenAsphere(
+        CoordinateSystem(), radius=be.inf, coefficients=[0.01]
+    )
+    phase_profile = RadialPhaseProfile(coefficients=[0.0])
+    model = PhaseInteractionModel(mock_surface, phase_profile, is_reflective)
+
+    rays = ParaxialRays(
+        y=be.array([1.0]), u=be.array([0.0]), z=be.array([0.0]), wavelength=0.5
+    )
+    interacted_rays = model.interact_paraxial_rays(rays)
+
+    assert_allclose(interacted_rays.u, be.array([expected_u]), atol=1e-12)
