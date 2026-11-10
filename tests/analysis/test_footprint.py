@@ -57,8 +57,8 @@ def test_image_surface_matches_spot_diagram(set_test_backend):
     spot = SpotDiagram(lens, wavelengths="all", num_rings=6, coordinates="local")
 
     assert footprint.surface_index == len(lens.surfaces) - 1
-    for field_fp, field_spot in zip(footprint.data, spot.data):
-        for points, spot_points in zip(field_fp, field_spot):
+    for field_fp, field_spot in zip(footprint.data, spot.data, strict=True):
+        for points, spot_points in zip(field_fp, field_spot, strict=True):
             passed = numpy_mask(points, "reached") & ~numpy_mask(points, "clipped")
             np.testing.assert_array_equal(
                 be.to_numpy(points.x)[passed], be.to_numpy(spot_points.x)
@@ -151,8 +151,8 @@ def test_rays_clipped_upstream_do_not_reach(set_test_backend):
     upstream = FootprintDiagram(lens, 2)
     downstream = FootprintDiagram(lens, 3)
 
-    for field_up, field_down in zip(upstream.data, downstream.data):
-        for up, down in zip(field_up, field_down):
+    for field_up, field_down in zip(upstream.data, downstream.data, strict=True):
+        for up, down in zip(field_up, field_down, strict=True):
             passed_up = numpy_mask(up, "reached") & ~numpy_mask(up, "clipped")
             np.testing.assert_array_equal(numpy_mask(down, "reached"), passed_up)
             assert not numpy_mask(down, "clipped").any()
