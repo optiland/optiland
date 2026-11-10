@@ -151,6 +151,44 @@ class SphericalReference(ReferenceGeometry):
         return self._radius
 
 
+class TelecentricSphericalReference(SphericalReference):
+    """Reference sphere of infinite radius (exit pupil at infinity).
+
+    In an image-space telecentric system the exit-pupil reference sphere is
+    centred on the image point and has an infinite radius. Its optical path
+    difference is the limit ``R -> inf`` of :class:`SphericalReference`:
+    ``n_medium * (u . (P - C))`` for a ray through ``P`` with unit direction
+    ``u``, up to a constant common to every ray. A plane reference is not this
+    limit: it measures along the ray to one plane, not to the far sphere.
+
+    The pupil sample points still need a finite surface. ``path_length`` and
+    ``radius`` therefore use a finite sampling sphere with the same centre;
+    it affects where the samples are placed, not the OPD.
+
+    Args:
+        center: (x, y, z) coordinates of the image point.
+        sampling_radius: Finite radius of the sphere on which the pupil
+            samples are placed.
+    """
+
+    def __init__(self, center: tuple[float, float, float], sampling_radius: float):
+        super().__init__(center, sampling_radius)
+
+    def _relative_path_length(self, rays: RealRaysT, n_medium: float) -> BEArrayT:
+        """Return ``n_medium * (u . (P - C))``, the ``R -> inf`` limit.
+
+        :meth:`SphericalReference._relative_path_length` tends to this value
+        as the radius grows; directions are normalized in the same way.
+        """
+        x, y, z = (
+            rays.x - self.center[0],
+            rays.y - self.center[1],
+            rays.z - self.center[2],
+        )
+        norm = be.sqrt(rays.L**2 + rays.M**2 + rays.N**2)
+        return n_medium * (rays.L * x + rays.M * y + rays.N * z) / norm
+
+
 class PlanarReference(ReferenceGeometry):
     """Planar reference geometry (for afocal systems).
 

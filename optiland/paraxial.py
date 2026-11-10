@@ -569,7 +569,18 @@ class Paraxial:
             obj_z = self.optic.object_surface.geometry.cs.z
             z = self.entrance_pupil_axial_position(path=path) - obj_z
             ya = 0
-            ua = EPD / (2 * z)
+            if bool(be.all(be.isfinite(z))):
+                ua = EPD / (2 * z)
+            else:
+                # Entrance pupil at infinity (object-space telecentric):
+                # EPD / (2 z) is inf / inf. The aperture fixes the slope.
+                ua = self.optic.aperture.object_space_marginal_slope(self)
+                if ua is None:
+                    raise ValueError(
+                        "The entrance pupil is at infinity and the "
+                        f"'{self.optic.aperture.ap_type}' aperture does not fix "
+                        "the object-space cone. Use an 'objectNA' aperture."
+                    )
 
         wavelength = self.optic.primary_wavelength
         return self.trace_generic(ya, ua, obj_z, wavelength, path=path)

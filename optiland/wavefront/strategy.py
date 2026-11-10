@@ -20,11 +20,16 @@ from ..fields.field_types import (
     ParaxialImageHeightField,
     RealImageHeightField,
 )
-from .reference_geometry import PlanarReference, ReferenceGeometry, SphericalReference
+from .reference_geometry import (
+    PlanarReference,
+    ReferenceGeometry,
+    SphericalReference,
+    TelecentricSphericalReference,
+)
 from .wavefront_data import WavefrontData
 
 if TYPE_CHECKING:
-    from optiland._types import BEArrayT
+    from optiland._types import BEArrayT, ScalarOrArray
     from optiland.distribution import BaseDistribution
     from optiland.optic.optic import Optic
     from optiland.rays.real_rays import RealRays
@@ -35,6 +40,51 @@ _COLLIMATED_FIELDS = (AngleField, ParaxialImageHeightField, RealImageHeightField
 
 WavefrontStrategyType = Literal["chief_ray", "centroid", "best_fit"]
 ReferenceType = Literal["sphere", "plane"]
+
+
+def chief_reference_sphere(
+    center: tuple[ScalarOrArray, ScalarOrArray, ScalarOrArray],
+    exit_pupil_point: tuple[ScalarOrArray, ScalarOrArray, ScalarOrArray],
+    chief_opd: ScalarOrArray | None,
+    n_image: ScalarOrArray,
+) -> SphericalReference:
+    """Chief-ray reference sphere centred on the chief-ray image point.
+
+    The radius is the distance from the chief-ray image point to the 3-D exit
+    pupil point. When the exit pupil is at infinity (image-space telecentric
+    system) that distance is not finite, and the reference is a
+    :class:`TelecentricSphericalReference`: its OPD is the limit of an
+    infinite radius, so it is continuous with a nearly telecentric system,
+    also out of focus. Its pupil samples are placed one chief-ray optical
+    path back along each ray (``|opd| / n_image``), the back-propagation the
+    centroid strategy uses for its wavefront points.
+
+    Args:
+        center: Chief-ray image point ``(x, y, z)``.
+        exit_pupil_point: Exit pupil point ``(x, y, z)`` in global coordinates.
+        chief_opd: Optical path of the chief ray at the image, or ``None``.
+        n_image: Refractive index of image space.
+
+    Returns:
+        The reference sphere.
+
+    Raises:
+        ValueError: If the exit pupil is at infinity and no finite chief-ray
+            optical path is available to place the pupil samples.
+    """
+    x, y, z = center
+    xp_x, xp_y, xp_z = exit_pupil_point
+    # Radius = |chief image point - 3-D exit pupil point|; never formed
+    # by adding an axial scalar to global z alone.
+    R = be.sqrt((x - xp_x) ** 2 + (y - xp_y) ** 2 + (z - xp_z) ** 2)
+    if bool(be.all(be.isfinite(R))):
+        return SphericalReference(center, R)
+    if chief_opd is None or not bool(be.all(be.isfinite(chief_opd))):
+        raise ValueError(
+            "The exit pupil is at infinity and the chief ray has no finite "
+            "optical path; use strategy='centroid' or 'best_fit'."
+        )
+    return TelecentricSphericalReference(center, be.abs(chief_opd) / n_image)
 
 
 class ReferenceStrategy(ABC):
@@ -296,14 +346,18 @@ class ChiefRayStrategy(ReferenceStrategy):
             raise ValueError("Chief ray cannot be determined. It must be traced alone.")
 
         if self.reference_type == "sphere":
-            return self._create_spherical_ref(x, y, z)
+            return self._create_spherical_ref(x, y, z, rays.opd)
         elif self.reference_type == "plane":
             return self._create_planar_ref(x, y, z, rays.L, rays.M, rays.N)
         else:
             raise ValueError(f"Unknown reference type: {self.reference_type}")
 
     def _create_spherical_ref(
-        self, x: BEArrayT, y: BEArrayT, z: BEArrayT
+        self,
+        x: BEArrayT,
+        y: BEArrayT,
+        z: BEArrayT,
+        chief_opd: BEArrayT | None = None,
     ) -> SphericalReference:
         """Create a spherical reference geometry.
 
@@ -311,15 +365,17 @@ class ChiefRayStrategy(ReferenceStrategy):
             x (BEArrayT): The x-coordinate of the reference point.
             y (BEArrayT): The y-coordinate of the reference point.
             z (BEArrayT): The z-coordinate of the reference point.
+            chief_opd (BEArrayT, optional): Optical path of the chief ray,
+                used only when the exit pupil is at infinity, to place the
+                pupil samples.
 
         Returns:
             SphericalReference: The spherical reference geometry.
         """
-        # Radius = |chief image point - 3-D exit pupil point|; never formed
-        # by adding an axial scalar to global z alone.
-        xp_x, xp_y, xp_z = self.exit_pupil_point
-        R = be.sqrt((x - xp_x) ** 2 + (y - xp_y) ** 2 + (z - xp_z) ** 2)
-        return SphericalReference((x.item(), y.item(), z.item()), R.item())
+        ref = chief_reference_sphere(
+            (x, y, z), self.exit_pupil_point, chief_opd, self.n_image
+        )
+        return type(ref)((x.item(), y.item(), z.item()), ref.radius.item())
 
     def _calculate_sphere_from_chief_ray(
         self, chief_ray: RealRays
