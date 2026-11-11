@@ -186,6 +186,15 @@ class TorchSummation(HuygensFresnelSummation):
     """Huygens-Fresnel summation using PyTorch for tensor operations."""
 
     def __init__(self, batch_size=1024):
+        """Prepare batched Torch summation on the active backend device.
+
+        Args:
+            batch_size (int, optional): Number of image points processed per
+                Torch batch. Defaults to 1024.
+
+        Raises:
+            ImportError: If the PyTorch backend is not available.
+        """
         if torch is None:
             raise ImportError("PyTorch backend is not available.")
         self.batch_size = batch_size
