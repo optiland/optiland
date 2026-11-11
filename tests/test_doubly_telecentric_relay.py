@@ -119,6 +119,13 @@ def test_stop_size_slope_is_none_for_object_at_infinity(set_test_backend):
     assert optic.aperture.object_space_marginal_slope(optic.paraxial) is None
 
 
+def test_stop_size_slope_requires_object_surface(set_test_backend):
+    optic = _relay(aperture="float_by_stop_size")
+    paraxial = SimpleNamespace(optic=SimpleNamespace(object_surface=None))
+    with pytest.raises(ValueError, match="requires a defined object surface"):
+        optic.aperture.object_space_marginal_slope(paraxial)
+
+
 def test_aperture_without_fixed_cone_raises(set_test_backend):
     optic = _relay(telecentric=False)
     optic.set_aperture("EPD", 4.0)
