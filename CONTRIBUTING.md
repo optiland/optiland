@@ -93,6 +93,10 @@ helps you land a first PR without surprises:
   locally with `pytest tests/regression/`. If you made an intentional numerical change, regenerate
   the fixtures deliberately with `pytest tests/regression/ --update-golden` and explain why in
   the PR description — never regenerate to silence an unexplained diff.
+- **Performance gate** (`benchmarks/perf_regression.py`): times each scenario on the PR and on
+  its merge base on the same runner, and fails when one is more than 5% and more than 2 ms
+  slower. Its module docstring explains how to read the table and how to re-run a flagged
+  scenario.
 - **`vulture` (dead-code scan):** dev-only, **not** part of CI. See "Dead-Code Audits" below.
 
 ## Task Workflow and Coordination

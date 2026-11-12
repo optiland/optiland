@@ -10,24 +10,47 @@ compares ratios:
 
 Both refs are executed from plain source checkouts (git worktrees) against
 the single active environment via ``PYTHONPATH``, which works because
-optiland is pure Python. Each measurement runs in a fresh interpreter, the
-two refs are interleaved to cancel thermal/load drift, and the per-scenario
-statistic is the minimum over repeats (the standard robust estimator for
-wall-clock timing). The gate fails only when a scenario is slower than
-``--fail-ratio`` AND the absolute slowdown exceeds ``--min-delta`` seconds,
-so microsecond-scale jitter can never fail CI.
+optiland is pure Python. Both refs run this copy of the script, so the two
+sides time the same scenario definitions.
+
+Each repeat runs each ref once, in a fresh interpreter. The order alternates
+between repeats, so slow drift and the position in a repeat do not favor
+one ref. Each interpreter runs each scenario once untimed as a warmup.
+Each timed call starts after ``gc.collect()`` and ``gc.freeze()``: the
+cyclic garbage collector then scans only the objects that the call
+creates, so the objects that earlier scenarios left alive do not add a
+collection to the call. The statistic is the minimum
+over all timed calls of all repeats. Timing noise only adds time, so the
+minimum is the best estimate of the cost without noise, but it does not
+show a cost that occurs in only some calls.
+
+A scenario fails only when its ratio (candidate / base) exceeds
+``--fail-ratio`` and its slowdown exceeds ``--min-delta`` seconds, so
+microsecond jitter cannot fail CI. For a base time below
+min_delta / (fail_ratio - 1), 40 ms with the defaults, the min delta and
+not the ratio sets the threshold: a 10 ms scenario fails only above 1.20.
+Give a scenario enough work for more than 40 ms per timed call.
 
 The project policy is zero tolerated regression. A literal 1.00 threshold
-would fail on identical code (an A/A run of the same ref against itself
-measures ratios up to ~1.015 with this protocol), so the default fail
-ratio of 1.05 is that policy expressed with a 3x margin over the measured
-noise floor. Recalibrate with an A/A run (--base X --candidate X) when
-moving to a noisier machine.
+would fail on identical code, because an A/A run (the same ref as base and
+candidate) gives ratios above and below 1.00. The fail ratio must stay
+above the largest A/A ratio, the noise floor. Recalibrate with an A/A run
+(--base X --candidate X) when moving to a noisier machine.
+
+In the table, FAIL marks a scenario that is slower than both limits, and
+the gate exits with 1. warn marks a ratio above ``--warn-ratio`` that does
+not fail. ERROR marks a scenario that raised on the candidate. It fails
+the gate. n/a marks a scenario that is not compared; "n/a (base raised)"
+marks one that raised on the base ref, for example because it needs API
+that the base does not have. An error message follows its row. Timing
+noise can also cause a FAIL or warn, so run the flagged scenarios again
+with ``--only`` and more repeats before you report one.
 
 Usage:
     uv run python benchmarks/perf_regression.py                # vs merge base
     uv run python benchmarks/perf_regression.py --base v0.6.0
     uv run python benchmarks/perf_regression.py --base master --candidate HEAD
+    uv run python benchmarks/perf_regression.py --only iterative_aiming --repeats 10
 
 Limitations: the base ref runs against the candidate's dependency set; a PR
 that changes dependencies compares apples to oranges and should say so in
@@ -39,6 +62,7 @@ Kramer Harrison, 2026
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import math
 import os
@@ -50,10 +74,15 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
+# The result of one child for one scenario: the time in seconds, the error
+# message if the scenario raised, or None if the child has no result for it.
+Sample = float | str | None
+
 # ---------------------------------------------------------------------------
 # Scenarios. Each builds its inputs, then times only the operation named in
-# the key. Builders use long-stable public API only, so the same file can
-# measure any recent ref.
+# the key. Builders use public API where they can, so that the file can
+# measure older refs. A builder that needs newer or private API shows n/a on
+# a base ref that lacks it.
 # ---------------------------------------------------------------------------
 
 
@@ -250,20 +279,58 @@ SCENARIOS = {
 }
 
 
-def measure(out_path: str) -> None:
-    """Run every scenario once (after one warmup) in this interpreter."""
+def _selected(only: str | None) -> list[str]:
+    """Return the scenarios named in ``--only``, or all if it is empty."""
+    if not only:
+        return list(SCENARIOS)
+    names = [n.strip() for n in only.split(",") if n.strip()]
+    unknown = [n for n in names if n not in SCENARIOS]
+    if unknown:
+        raise SystemExit(f"unknown scenarios: {', '.join(unknown)}")
+    return names
+
+
+# The child cuts error messages to this length, so that the table stays short.
+_MAX_ERROR_CHARS = 300
+
+
+def measure(out_path: str, names: list[str]) -> None:
+    """Time the selected scenarios in this interpreter and write the results as JSON.
+
+    Each scenario runs once as a warmup and then once timed. The timed call
+    starts after ``gc.collect()`` and ``gc.freeze()``. Without them, the
+    allocations of all earlier scenarios decide when the cyclic garbage
+    collector runs, and a collection scans every object alive in this
+    interpreter: about 30 ms with all scenarios built. A change in one part
+    of the library could then add or remove a collection in a scenario of
+    another part. After the freeze, a collection in the call scans only the
+    objects that the call creates. ``gc.unfreeze()`` after each scenario
+    lets the next ``gc.collect()`` free them again. A scenario that raises
+    gets its error message instead of a time.
+
+    Args:
+        out_path: Path of the JSON file to write.
+        names: Scenarios to time, in this order.
+    """
     import warnings
 
     warnings.simplefilter("ignore")
     import optiland
 
-    results: dict[str, float] = {}
-    for name, factory in SCENARIOS.items():
-        op = factory()
-        op()  # warmup: caches, imports, first-touch allocations
-        t0 = time.perf_counter()
-        op()
-        results[name] = time.perf_counter() - t0
+    results: dict[str, Sample] = {}
+    for name in names:
+        try:
+            op = SCENARIOS[name]()
+            op()  # warmup: caches, imports, first-touch allocations
+            gc.collect()
+            gc.freeze()
+            t0 = time.perf_counter()
+            op()
+            results[name] = time.perf_counter() - t0
+        except Exception as exc:
+            results[name] = f"{type(exc).__name__}: {exc}"[:_MAX_ERROR_CHARS]
+        finally:
+            gc.unfreeze()
     payload = {"optiland_file": optiland.__file__, "seconds": results}
     Path(out_path).write_text(json.dumps(payload))
 
@@ -279,23 +346,86 @@ def _git(*args: str) -> str:
     ).strip()
 
 
-def _run_child(source_dir: Path, out_file: Path) -> None:
+def _run_child(source_dir: Path, out_file: Path, names: list[str]) -> None:
     env = dict(os.environ)
     env["PYTHONPATH"] = str(source_dir)
-    script = source_dir / "benchmarks" / "perf_regression.py"
-    if not script.exists():
-        # The base ref predates this tool: use the candidate's copy, which
-        # only touches long-stable public API.
-        script = Path(__file__).resolve()
+    # Both refs run this copy of the script, so they time the same scenarios.
+    script = Path(__file__).resolve()
+    only = ",".join(names)
     subprocess.check_call(
-        [sys.executable, str(script), "--measure", str(out_file)],
+        [sys.executable, str(script), "--measure", str(out_file), "--only", only],
         env=env,
         cwd=str(source_dir),
     )
 
 
-def compare(args: argparse.Namespace) -> int:
-    """Measure base and candidate refs interleaved; return the exit code."""
+def _collect_samples(
+    trees: dict[str, Path], names: list[str], repeats: int, tmp_path: Path
+) -> dict[str, dict[str, list[Sample]]]:
+    """Run one child per ref and repeat; return the samples per ref and scenario."""
+    samples: dict[str, dict[str, list[Sample]]] = {
+        role: {name: [] for name in names} for role in trees
+    }
+    roles = list(trees)
+    for r in range(repeats):
+        # The order alternates between repeats, so slow drift and the position
+        # in a repeat do not favor one ref.
+        pair_order = roles if r % 2 == 0 else roles[::-1]
+        for role in pair_order:
+            out = tmp_path / f"{role}-{r}.json"
+            _run_child(trees[role], out, names)
+            seconds = json.loads(out.read_text())["seconds"]
+            for name in names:
+                samples[role][name].append(seconds.get(name))
+    return samples
+
+
+def _report(
+    samples: dict[str, dict[str, list[Sample]]],
+    names: list[str],
+    args: argparse.Namespace,
+) -> list[str]:
+    """Print the comparison table; return one entry per failed scenario."""
+    failures: list[str] = []
+    header = f"{'scenario':30s} {'base [ms]':>10s} {'cand [ms]':>10s} {'ratio':>7s}"
+    print("\n" + header)
+    print("-" * len(header))
+    for name in names:
+        base, cand = samples["base"][name], samples["candidate"][name]
+        cand_error = next((v for v in cand if isinstance(v, str)), None)
+        base_error = next((v for v in base if isinstance(v, str)), None)
+        if cand_error is not None:
+            print(f"{name:30s} {'':>10s} {'ERROR':>10s}")
+            print(f"    {cand_error}")
+            failures.append(f"{name}: error")
+            continue
+        if base_error is not None:
+            print(f"{name:30s} {'n/a (base raised)':>21s}")
+            print(f"    {base_error}")
+            continue
+        if not all(isinstance(v, float) for v in base + cand):
+            print(f"{name:30s} {'n/a':>10s} {'n/a':>10s}")
+            continue
+        t_base = min(base)
+        t_cand = min(cand)
+        ratio = t_cand / t_base if t_base > 0 else math.inf
+        slower = ratio > args.fail_ratio and (t_cand - t_base) > args.min_delta
+        mark = "  FAIL" if slower else ("  warn" if ratio > args.warn_ratio else "")
+        print(
+            f"{name:30s} {t_base * 1e3:10.1f} {t_cand * 1e3:10.1f} {ratio:7.3f}{mark}"
+        )
+        if slower:
+            failures.append(f"{name}: {ratio:.3f}x")
+    return failures
+
+
+def compare(args: argparse.Namespace, names: list[str]) -> int:
+    """Measure base and candidate refs interleaved; return the exit code.
+
+    Args:
+        args: Parsed command-line arguments.
+        names: Scenarios to measure.
+    """
     base_ref = args.base or _git("merge-base", "HEAD", "origin/master")
     base_sha = _git("rev-parse", base_ref)
     with tempfile.TemporaryDirectory(prefix="optiland-perf-") as tmp:
@@ -321,45 +451,14 @@ def compare(args: argparse.Namespace) -> int:
 
             print(f"base: {base_sha[:12]} ({base_ref})   candidate: {cand_label}")
             print(
-                f"repeats: {args.repeats} (interleaved), statistic: min, "
+                f"repeats: {args.repeats} (alternating order), statistic: min, "
                 f"fail ratio: {args.fail_ratio:.2f}, "
                 f"min delta: {args.min_delta * 1e3:.0f} ms"
             )
+            print(f"scenarios: {', '.join(names)}")
 
-            samples: dict[str, dict[str, list[float]]] = {
-                role: {name: [] for name in SCENARIOS} for role in trees
-            }
-            for r in range(args.repeats):
-                for role, tree in trees.items():
-                    out = tmp_path / f"{role}-{r}.json"
-                    _run_child(tree, out)
-                    seconds = json.loads(out.read_text())["seconds"]
-                    for name in SCENARIOS:
-                        samples[role][name].append(seconds[name])
-
-            failures: list[str] = []
-            header = (
-                f"{'scenario':30s} {'base [ms]':>10s} {'cand [ms]':>10s} {'ratio':>7s}"
-            )
-            print("\n" + header)
-            print("-" * len(header))
-            for name in SCENARIOS:
-                t_base = min(samples["base"][name])
-                t_cand = min(samples["candidate"][name])
-                ratio = t_cand / t_base if t_base > 0 else math.inf
-                slower = ratio > args.fail_ratio and (t_cand - t_base) > args.min_delta
-                mark = (
-                    "  FAIL"
-                    if slower
-                    else ("  warn" if ratio > args.warn_ratio else "")
-                )
-                print(
-                    f"{name:30s} {t_base * 1e3:10.1f} {t_cand * 1e3:10.1f} "
-                    f"{ratio:7.3f}{mark}"
-                )
-                if slower:
-                    failures.append(f"{name}: {ratio:.3f}x")
-
+            samples = _collect_samples(trees, names, args.repeats, tmp_path)
+            failures = _report(samples, names, args)
             if failures:
                 print(
                     "\nPerformance regression against "
@@ -391,7 +490,7 @@ def main() -> int:
     parser.add_argument(
         "--measure",
         metavar="OUT_JSON",
-        help="internal: time all scenarios in this interpreter",
+        help="internal: time the selected scenarios in this interpreter",
     )
     parser.add_argument(
         "--base",
@@ -402,6 +501,12 @@ def main() -> int:
         help="git ref to measure as candidate (default: the current tree)",
     )
     parser.add_argument("--repeats", type=int, default=5)
+    parser.add_argument(
+        "--only",
+        metavar="NAMES",
+        help="comma-separated scenarios to run (default: all), for example "
+        "to re-run a flagged scenario with more repeats",
+    )
     parser.add_argument("--fail-ratio", type=float, default=1.05)
     parser.add_argument("--warn-ratio", type=float, default=1.02)
     parser.add_argument(
@@ -411,11 +516,12 @@ def main() -> int:
         help="absolute slowdown [s] a scenario must exceed to fail",
     )
     args = parser.parse_args()
+    names = _selected(args.only)  # rejects unknown names before any checkout
 
     if args.measure:
-        measure(args.measure)
+        measure(args.measure, names)
         return 0
-    return compare(args)
+    return compare(args, names)
 
 
 if __name__ == "__main__":
