@@ -274,12 +274,20 @@ def test_optic_trace_is_identical(calls, monkeypatch, name, hy, record):
 @pytest.mark.parametrize("record", [True, False])
 @pytest.mark.parametrize("n", [1, 7, 255, 256, 257, 1000])
 @pytest.mark.parametrize("name", ["cooke", "double_gauss", "clipped", "tilted"])
-def test_ray_counts_are_identical(calls, monkeypatch, name, n, record):
-    """Blocks of any length: 255, 256 and 257 rays are at the _BLOCK boundary."""
+def test_ray_counts_and_wavelengths_are_identical(calls, monkeypatch, name, n, record):
+    """Blocks of any length, with one wavelength and with all of the system.
+
+    255, 256 and 257 rays are at the _BLOCK boundary. The second fan has the
+    wavelengths of the system, so each glass has one index per ray, which
+    gives rows of per-ray values.
+    """
     build = SYSTEMS[name]
-    with_plan = _trace(build, lambda: _fan(n), record, monkeypatch, True)
-    assert calls == [True]
-    _assert_same(with_plan, _trace(build, lambda: _fan(n), record, monkeypatch, False))
+    wavelengths = [w.value for w in build().wavelengths.wavelengths]
+    for factory in (lambda: _fan(n), lambda: _fan(n, wavelengths)):
+        calls.clear()
+        with_plan = _trace(build, factory, record, monkeypatch, True)
+        assert calls == [True]
+        _assert_same(with_plan, _trace(build, factory, record, monkeypatch, False))
 
 
 @pytest.mark.parametrize("name", ["cooke", "absorbing", "clipped"])
@@ -431,9 +439,16 @@ def test_previous_records_are_released_before_the_kernel(calls, monkeypatch):
             return getattr(kernel, name)
 
         def trace_plan(self, *args):
-            for surface in optic.surfaces.surfaces:
-                sizes.extend(getattr(surface, name).size for name in RECORD_ATTRS)
+            look()
             return kernel.trace_plan(*args)
+
+        def trace_basic_plan(self, *args):
+            look()
+            return kernel.trace_basic_plan(*args)
+
+    def look():
+        for surface in optic.surfaces.surfaces:
+            sizes.extend(getattr(surface, name).size for name in RECORD_ATTRS)
 
     monkeypatch.setattr(plan, "_kernel", Watched)
     optic.surfaces.trace(_fan(40))
@@ -679,32 +694,115 @@ def _with(rays, **arrays):
         lambda: _with(_fan(20), x=np.zeros((20, 1))),
         lambda: _fan(0),
         lambda: _polarized(20),
-        lambda: _fan(20, wavelengths=(0.4861, 0.5876, 0.6563)),
     ],
-    ids=[
-        "unnormalized",
-        "float32",
-        "other_length",
-        "2d",
-        "no_rays",
-        "polarized",
-        "one_index_per_ray",
-    ],
+    ids=["unnormalized", "float32", "other_length", "2d", "no_rays", "polarized"],
 )
 def test_rays_outside_the_domain_use_the_generic_trace(rays):
-    """The domain has normalized RealRays with 1-D float64 arrays of one length.
-
-    The rays of three wavelengths need one index per ray in the glass.
-    """
+    """The domain has normalized RealRays with 1-D float64 arrays of one length."""
     surfaces = CookeTriplet().surfaces.surfaces
     assert plan.trace_with_plan(surfaces, rays(), True) is False
 
 
-def test_absorption_per_ray_uses_the_generic_trace(calls):
-    """With three wavelengths, alpha = 4 pi k / lambda differs from ray to ray."""
-    rays = _fan(20, wavelengths=(0.4861, 0.5876, 0.6563))
-    _absorbing_singlet().surfaces.trace(rays)
-    assert calls == [False]
+@pytest.mark.parametrize("record", [True, False])
+def test_absorption_per_ray_is_identical(calls, monkeypatch, record):
+    """With three wavelengths, alpha = 4 pi k / lambda differs from ray to ray.
+
+    The IdealMaterial has one index for all rays, so only alpha has a row of
+    per-ray values.
+    """
+
+    def rays():
+        return _fan(300, wavelengths=(0.4861, 0.5876, 0.6563))
+
+    with_plan = _trace(_absorbing_singlet, rays, record, monkeypatch, True)
+    assert calls == [True]
+    generic = _trace(_absorbing_singlet, rays, record, monkeypatch, False)
+    _assert_same(with_plan, generic)
+
+
+def test_one_row_per_glass():
+    """Each glass is the medium after one surface and before the next.
+
+    Its indices get one row of per-ray values, not one row per use, and so
+    does its absorption coefficient.
+    """
+    surfaces = CementedAchromat().surfaces.surfaces
+    rays = _fan(50, wavelengths=(0.4861, 0.5876, 0.6563))
+    kernel = plan._kernel()
+    built = plan._build(surfaces, rays, 50, kernel)
+    columns = [kernel.N1_ROW, kernel.N2_ROW, kernel.OPD_INDEX_ROW]
+    index_rows = {int(row) for row in built.ints[:, columns].ravel()} - {-1}
+    alpha_rows = set(built.ints[:, kernel.ALPHA_ROW].tolist()) - {-1}
+    # The achromat has two glasses with k > 0. Air has one index for all
+    # rays and does not absorb.
+    assert len(index_rows) == 2
+    assert len(alpha_rows) == 2
+    assert index_rows | alpha_rows == set(range(built.ray_values.shape[0]))
+
+
+@pytest.fixture
+def kernel_calls(monkeypatch):
+    """The names of the kernels that the traces call, in order."""
+    names = []
+    kernel = plan._kernel()
+
+    def spy(name):
+        original = getattr(kernel, name)
+
+        def counted(*args):
+            names.append(name)
+            return original(*args)
+
+        return counted
+
+    for name in ("trace_plan", "trace_basic_plan"):
+        monkeypatch.setattr(kernel, name, spy(name))
+    return names
+
+
+def test_each_plan_gets_its_kernel(calls, kernel_calls, monkeypatch):
+    """trace_basic_plan for one wavelength, trace_plan for per-ray values."""
+    for wavelengths in ((0.55,), (0.48, 0.55, 0.65)):
+        _trace(CookeTriplet, lambda w=wavelengths: _fan(50, w), True, monkeypatch, True)
+    assert calls == [True, True]
+    assert kernel_calls == ["trace_basic_plan", "trace_plan"]
+
+
+# The paraxial ray aiming warns that it ignores the decenters of "decentered".
+@pytest.mark.filterwarnings("ignore:paraxial ray tracing")
+@pytest.mark.parametrize("name", sorted(SYSTEMS))
+def test_both_kernels_give_the_bits_of_a_basic_plan(
+    calls, kernel_calls, monkeypatch, name
+):
+    """trace_plan and trace_basic_plan compile from one loop nest.
+
+    A trace with one wavelength has a basic plan, which trace_basic_plan
+    traces. Here trace_plan traces it too, with an empty table of per-ray
+    values, and must give the same bits.
+    """
+    kernel = plan._kernel()
+
+    def run():
+        optic = SYSTEMS[name]()
+        rays = optic.trace(
+            Hx=0.0,
+            Hy=1.0,
+            wavelength=optic.primary_wavelength,
+            num_rays=9,
+            distribution="hexapolar",
+            record=True,
+        )
+        return _state(optic, rays)
+
+    def full_kernel(rays_in, ints, floats, *rest):
+        return kernel.trace_plan(rays_in, ints, floats, plan._NO_ROWS, *rest)
+
+    basic = run()
+    monkeypatch.setattr(kernel, "trace_basic_plan", full_kernel)
+    full = run()
+    assert calls == [True, True]
+    assert kernel_calls == ["trace_basic_plan", "trace_plan"]
+    _assert_same(basic, full)
 
 
 def test_torch_backend_uses_the_generic_trace(calls):
