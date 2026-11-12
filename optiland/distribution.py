@@ -199,7 +199,7 @@ class HexagonalDistribution(BaseDistribution):
 
     """
 
-    def generate_points(self, num_rings: int = 6):
+    def generate_points(self, num_rings: int = 6) -> None:
         """Generate points in a hexagonal distribution.
 
         Args:
@@ -207,18 +207,22 @@ class HexagonalDistribution(BaseDistribution):
                 Defaults to 6.
 
         """
-        x = be.zeros([1])
-        y = be.zeros([1])
+        # The center point, then the points of each ring.
+        x_rings: list[BEArray] = [be.zeros([1])]
+        y_rings: list[BEArray] = [be.zeros([1])]
         r = be.linspace(0, 1, num_rings + 1)
 
         for i in range(num_rings):
             num_theta = 6 * (i + 1)
             theta = be.linspace(0, 2 * be.pi, num_theta + 1)[:-1]
-            x = be.concatenate([x, r[i + 1] * be.cos(theta)])
-            y = be.concatenate([y, r[i + 1] * be.sin(theta)])
+            x_rings.append(r[i + 1] * be.cos(theta))
+            y_rings.append(r[i + 1] * be.sin(theta))
 
-        self.x = x
-        self.y = y
+        # Join the rings once. Joining them one by one copies all earlier
+        # points again for each ring, so the number of copies grows with
+        # num_rings**3 instead of num_rings**2.
+        self.x = be.concatenate(x_rings)
+        self.y = be.concatenate(y_rings)
 
 
 class CrossDistribution(BaseDistribution):
