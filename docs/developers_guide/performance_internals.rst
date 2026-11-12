@@ -85,8 +85,9 @@ Overview
      - ``optiland/surfaces/_trace_plan.py`` and
        ``optiland/backend/numpy_backend/_trace_kernel.py``
      - ``SurfaceGroup.trace`` of real rays with the NumPy backend, in the
-       domain listed below, and the propagation past the image surface in
-       ``RealRayTracer``
+       domain listed below, the propagation past the image surface in
+       ``RealRayTracer``, and the resumed partial traces of finite-difference
+       Jacobians
      - Spy on ``optiland.surfaces._trace_plan.trace_with_plan`` (see
        below). Set its private switch ``_ENABLED`` to False to switch it
        off.
@@ -465,13 +466,30 @@ The final step changes what the generic code changes, in the same order:
   normalized rays.
 
 ``SurfaceGroup.trace`` has no final step, so a direct trace of the surfaces
-does not change. The snapshot trace and the resumed traces of partial-trace
-finite differences (``RealRayTracer._trace`` and ``_trace_from``) loop over
-the surfaces themselves, so the plan does not apply to them.
+does not change. A resumed partial trace has a final step too (see below).
 
 The final step is a separate compiled function, not a last step of the
 loop nest. Adding this step to the kernel, after its loop over the
 surfaces, made the sphere trace about 4 percent slower.
+
+Resumed partial traces
+~~~~~~~~~~~~~~~~~~~~~~
+
+Partial-trace finite differences (``optiland/raytrace/_resume.py``) take a
+snapshot of the ray state before each surface once, in
+``RealRayTracer._trace``. For each column of the Jacobian, they resume the
+snapshot at the first surface k that the variable changes, in
+``_trace_from``. ``_trace`` always loops over the surfaces itself, because
+it copies the ray state before each surface.
+
+``_trace_from`` traces the surfaces from k with the plan
+(``_resume_with_plan``), with the propagation past the image surface as the
+final step. It calls ``trace_with_plan`` directly, so that the surfaces
+before k keep their records: ``SurfaceGroup.trace(rays, skip=k)`` would
+reset them. Outside the domain of the plan, or when the tolerance floor of
+an even asphere applies, ``_trace_from`` runs its loop over the surfaces.
+The loop resets the records that the plan has released. The tests are in
+``tests/test_resume_plan.py``.
 
 Two kernels
 ~~~~~~~~~~~
