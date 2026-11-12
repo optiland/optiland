@@ -174,14 +174,10 @@ class RealRayTracer(BaseRayTracer):
                 wavelength,
                 retain_launch=retain_launch,
             )
-            self.optic.surfaces.trace(rays, record=record)
-
-            # Propagate to the image surface
-            if self.optic.image_surface:
-                last_surface = self.optic.surfaces[-1]
-                last_surface.material_post.propagation_model.propagate(
-                    rays, last_surface.thickness
-                )
+            # Trace through all surfaces, then propagate past the image
+            # surface by its thickness (usually 0). The plan does both in one
+            # pass if it can.
+            self.optic.surfaces._trace_with_final_propagation(rays, record=record)
 
             if isinstance(rays, PolarizedRays):
                 rays.update_intensity(self.optic.polarization_state)
@@ -232,13 +228,10 @@ class RealRayTracer(BaseRayTracer):
             rays = self.ray_generator.generate_rays(
                 Hx, Hy, Px, Py, wavelength, retain_launch=retain_launch
             )
-            self.optic.surfaces.trace(rays, record=record)
-
-            # Propagate to the image surface
-            last_surface = self.optic.surfaces[-1]
-            last_surface.material_post.propagation_model.propagate(
-                rays, last_surface.thickness
-            )
+            # Trace through all surfaces, then propagate past the image
+            # surface by its thickness (usually 0). The plan does both in one
+            # pass if it can.
+            self.optic.surfaces._trace_with_final_propagation(rays, record=record)
 
         return rays
 

@@ -21,6 +21,13 @@ The developer page "Performance Internals" lists the domain of the plan,
 with the reason for each limit. Outside the domain, ``trace_with_plan``
 returns False and the generic trace runs.
 
+``RealRayTracer`` traces the rays through all surfaces, then propagates them
+past the image surface by its thickness (usually 0). It gives this
+propagation to the plan as a ``FinalPropagation``. In its domain, the plan
+does both in one pass: the kernel function ``_propagate_past_last_surface``
+moves each part of ``_FINAL_PART`` rays right after the kernel has traced
+it.
+
 With ``be.set_trace_threads(n)`` and n > 1, a bundle of
 ``_MIN_THREADED_RAYS`` rays or more is traced in parts of whole blocks, on
 the calling thread and the threads of a private pool (``_run_kernel`` and
@@ -54,8 +61,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from types import ModuleType
 
+    from optiland._types import ScalarOrArray
     from optiland.geometries import EvenAsphere
     from optiland.materials.base import BaseMaterial
+    from optiland.propagation.base import BasePropagationModel
     from optiland.rays import BaseRays, RealRays
     from optiland.surfaces.standard_surface import Surface
 
@@ -92,6 +101,15 @@ _NO_CLIPS = np.empty((0, 1), dtype=np.bool_)
 # the same reason: an array of 65536 float64 values (512 KiB) stays below the
 # size from which the heap of 64-bit Windows gives memory back to the system.
 _PART = 65536
+
+# Rays per kernel call of a plan with a final step (_FinalStep). The final
+# step reads x, y, z, L, M and N of the rays that the kernel has just
+# written: 768 KiB for 16384 rays, which stay in the L2 or L3 cache between
+# the two calls. A much larger part would leave the cache. A much smaller
+# part would make more calls, and each call has a fixed cost to pass its
+# arguments. A kernel takes only a first ray at a block boundary, so the
+# size is a multiple of the block size (_BLOCK, 256).
+_FINAL_PART = 16384
 
 # Threads of the trace (be.set_trace_threads). The limits come from timings
 # of the first version of this code on a CPU with 12 cores (see #1147).
@@ -185,6 +203,71 @@ def _kernel() -> ModuleType:
     return _trace_kernel
 
 
+@dataclass
+class FinalPropagation:
+    """The propagation past the last surface of a trace by its thickness.
+
+    ``RealRayTracer`` traces the rays through all surfaces, then calls
+    ``model.propagate(rays, t)``: the rays propagate past the image surface
+    by its thickness (usually 0) in the medium after it.
+    ``trace_with_plan`` does this propagation in its pass if it can, and
+    then sets ``applied``. ``finish`` propagates the rays if the plan did
+    not.
+
+    Attributes:
+        model: The propagation model of the medium after the last surface.
+        t: The thickness of the last surface.
+        applied: True if the rays have been propagated.
+    """
+
+    model: BasePropagationModel
+    t: ScalarOrArray
+    applied: bool = False
+
+    @classmethod
+    def after(cls, surface: Surface) -> FinalPropagation:
+        """Return the propagation past ``surface`` by its thickness.
+
+        Args:
+            surface: The last surface of the trace.
+
+        Returns:
+            The propagation, not applied yet.
+        """
+        return cls(surface.material_post.propagation_model, surface.thickness)
+
+    def finish(self, rays: RealRays) -> None:
+        """Propagate ``rays`` past the last surface, unless the plan did it.
+
+        Args:
+            rays: The rays after the last surface. Changed in place.
+        """
+        if not self.applied:
+            self.model.propagate(rays, self.t)
+            self.applied = True
+
+
+class _FinalStep(NamedTuple):
+    """The final step of a plan, in the form that the kernel takes.
+
+    The values are the arguments of ``_propagate_past_last_surface`` after
+    its range of rays.
+
+    Attributes:
+        t: The distance, the thickness of the last surface (mm).
+        absorb_row: The row of the exponents of the medium after the last
+            surface, or NO_ROW if the medium does not absorb.
+        alpha_row: The row of ``ray_values`` with the alpha of each ray, or
+            NO_ROW if all rays have the same alpha.
+        alpha: The alpha of all rays (1/um), when ``alpha_row`` is NO_ROW.
+    """
+
+    t: float
+    absorb_row: int
+    alpha_row: int
+    alpha: float
+
+
 @dataclass(frozen=True)
 class _Plan:
     """The tables of one trace, and the facts about them that the trace needs.
@@ -200,10 +283,13 @@ class _Plan:
             asphere. The kernel ``trace_basic_plan`` then traces the plan.
         moves_rays: False if all surfaces are object surfaces. The rays then
             keep their arrays.
-        absorbing: The number of absorbing media: the rows of the exponents.
+        absorbing: The number of absorbing media, the medium of a final
+            step included: the rows of the exponents.
         clips: The number of apertures: the rows of the clip masks.
         aspheres: The number of even aspheres. With one or more, the kernel
             writes a seed summary for ``_floor_applies``.
+        final_step: The propagation past the last surface, or None if the
+            plan has no final step.
     """
 
     ints: np.ndarray
@@ -216,6 +302,7 @@ class _Plan:
     absorbing: int
     clips: int
     aspheres: int
+    final_step: _FinalStep | None
 
 
 class _Form(NamedTuple):
@@ -418,6 +505,7 @@ class _Builder:
         self.moves_rays = False
         self.absorbing = 0
         self.clips = 0
+        self.final_step: _FinalStep | None = None
         self.values = _PerRayValues()
         # The C_i and i * C_i of each even asphere, by the row of its surface.
         self.coefficients: dict[int, tuple[list[float], list[float]]] = {}
@@ -456,8 +544,30 @@ class _Builder:
         self.float_rows.append(floats)
         return True
 
+    def add_final_step(self, final: FinalPropagation) -> None:
+        """Add the propagation past the last surface, if it is in the domain.
+
+        The domain: exactly ``HomogeneousPropagation``, a thickness that is a
+        number (see ``_number``), an absorption coefficient that the plan can
+        take, and at least one surface step. A plan of object surfaces only
+        gives the rays their own arrays back, so it has no new arrays to
+        propagate. Outside the domain, the plan has no final step, and the
+        caller propagates the rays after the plan.
+
+        Args:
+            final: The propagation past the last surface.
+        """
+        if not self.moves_rays or type(final.model) is not self.types.propagation:
+            return
+        t = _number(final.t)
+        if t is None:
+            return
+        absorption = self._absorption(final.model.material)
+        if absorption is not None:
+            self.final_step = _FinalStep(t, *absorption)
+
     def plan(self) -> _Plan:
-        """Return the plan of the rows added so far."""
+        """Return the plan of the rows and the final step added so far."""
         coef, dcoef = self._coefficient_tables()
         return _Plan(
             ints=np.array(self.int_rows, dtype=np.int64),
@@ -470,6 +580,7 @@ class _Builder:
             absorbing=self.absorbing,
             clips=self.clips,
             aspheres=len(self.coefficients),
+            final_step=self.final_step,
         )
 
     def _coefficient_tables(self) -> tuple[np.ndarray, np.ndarray]:
@@ -613,24 +724,50 @@ class _Builder:
         if type(propagation) is not self.types.propagation:
             return False
         index = self._index(material)
-        k = self._extinction(propagation.material)
-        if index is None or k is None:
+        if index is None:
             return False
         if index.per_ray:
             ints[kernel.OPD_INDEX_ROW] = self.values.row(index.value)
         else:
             floats[kernel.OPD_INDEX] = index.value
-        if _absorbs(k):
-            alpha = self._absorption_coefficient(propagation.material, k)
-            if alpha is None:
-                return False
-            if alpha.per_ray:
-                ints[kernel.ALPHA_ROW] = self.values.row(alpha.value)
-            else:
-                floats[kernel.ALPHA] = alpha.value
-            ints[kernel.ABSORB_ROW] = self.absorbing
-            self.absorbing += 1
+        absorption = self._absorption(propagation.material)
+        if absorption is None:
+            return False
+        absorb_row, alpha_row, alpha = absorption
+        ints[kernel.ABSORB_ROW], ints[kernel.ALPHA_ROW] = absorb_row, alpha_row
+        floats[kernel.ALPHA] = alpha
         return True
+
+    def _absorption(self, material: BaseMaterial) -> tuple[int, int, float] | None:
+        """Return the absorption of a medium, as ABSORB_ROW, ALPHA_ROW, ALPHA.
+
+        ``HomogeneousPropagation.propagate`` absorbs if any k > 0, with
+        alpha = 4 * pi * k / w. An absorbing medium gets the next row of the
+        exponents. alpha goes into ALPHA, or into a row of ``ray_values``
+        (ALPHA_ROW) if it differs from ray to ray.
+
+        Args:
+            material: The material of the propagation model of the medium.
+
+        Returns:
+            The values of the columns ABSORB_ROW, ALPHA_ROW and ALPHA. For a
+            medium that does not absorb, these are the defaults NO_ROW,
+            NO_ROW and 0.0. None outside the domain.
+        """
+        kernel = self.kernel
+        k = self._extinction(material)
+        if k is None:
+            return None
+        if not _absorbs(k):
+            return kernel.NO_ROW, kernel.NO_ROW, 0.0
+        alpha = self._absorption_coefficient(material, k)
+        if alpha is None:
+            return None
+        absorb_row = self.absorbing
+        self.absorbing += 1
+        if alpha.per_ray:
+            return absorb_row, self.values.row(alpha.value), 0.0
+        return absorb_row, kernel.NO_ROW, alpha.value
 
     def _interaction_columns(
         self, surface: Surface, ints: list[int], floats: list[float]
@@ -733,13 +870,32 @@ def _ray_count(rays: RealRays) -> int | None:
 
 
 def _build(
-    surfaces: Sequence[Surface], rays: RealRays, n: int, kernel: ModuleType
+    surfaces: Sequence[Surface],
+    rays: RealRays,
+    n: int,
+    kernel: ModuleType,
+    final: FinalPropagation | None = None,
 ) -> _Plan | None:
-    """Return the plan of a trace, or None outside the domain."""
+    """Return the plan of a trace, or None outside the domain.
+
+    Args:
+        surfaces: The surfaces of the trace.
+        rays: The rays of the trace.
+        n: The number of rays.
+        kernel: The kernel module.
+        final: The propagation past the last surface, or None. The plan
+            gets it as a final step if it is in the domain of that step
+            (see ``_Builder.add_final_step``).
+
+    Returns:
+        The plan, or None if a surface is outside the domain.
+    """
     builder = _Builder(rays, n, _types(), kernel)
     for surface in surfaces:
         if not builder.add(surface):
             return None
+    if final is not None:
+        builder.add_final_step(final)
     return builder.plan()
 
 
@@ -794,10 +950,11 @@ def _absorbed_intensity(
     the clip mask of each aperture. This pass repeats ``RealRays.attenuate``
     and ``RealRays.clip`` in the order of the generic trace, from the
     intensity before the first surface, in parts of at most ``_PART`` rays.
-    With more than one thread, the parts are smaller, so that each thread
-    gets a part. ``numpy.exp`` gives the same value for an element at any
-    position in a contiguous float64 array, so a part of any size gets the
-    values of the whole bundle.
+    The absorption of a final step comes last. With more than one thread,
+    the parts are smaller, so that each thread gets a part. ``numpy.exp``
+    gives the same value for an element at any position in a contiguous
+    float64 array, so a part of any size gets the values of the whole
+    bundle.
 
     Args:
         plan: The plan of the trace.
@@ -810,10 +967,17 @@ def _absorbed_intensity(
         threads: The number of threads of the pass.
 
     Returns:
-        The intensity after the last surface.
+        The intensity after the last surface, and after the final step if
+        the plan has one.
     """
     kernel = _kernel()
     rows = plan.ints[:, [kernel.ABSORB_ROW, kernel.CLIP_ROW]].tolist()
+    # Only the surfaces have a row in intensity_records. The generic trace
+    # records the rays at the last surface, before the final propagation.
+    surface_count = len(rows)
+    final_step = plan.final_step
+    if final_step is not None and final_step.absorb_row != kernel.NO_ROW:
+        rows.append([final_step.absorb_row, kernel.NO_ROW])
     n = intensity.shape[0]
     result = np.empty(n)
     part = min(_PART, _ceil_div(n, threads))
@@ -832,7 +996,7 @@ def _absorbed_intensity(
                 i = i * be.where(i == 0, 0.0, factor)
             if clip_row != kernel.NO_ROW:
                 i = be.where(clipped[clip_row, start:stop], be.zeros_like(i), i)
-            if record:
+            if record and s < surface_count:
                 intensity_records[s, start:stop] = i
         result[start:stop] = i
 
@@ -1025,7 +1189,12 @@ def _store_records(
         surface.u = surface.aoi = blank
 
 
-def trace_with_plan(surfaces: Sequence[Surface], rays: BaseRays, record: bool) -> bool:
+def trace_with_plan(
+    surfaces: Sequence[Surface],
+    rays: BaseRays,
+    record: bool,
+    final: FinalPropagation | None = None,
+) -> bool:
     """Trace ``rays`` through ``surfaces`` with the compiled kernel, if possible.
 
     With ``be.set_trace_threads(n)`` and n > 1, a bundle of
@@ -1035,15 +1204,20 @@ def trace_with_plan(surfaces: Sequence[Surface], rays: BaseRays, record: bool) -
         surfaces: The surfaces to trace, in order.
         rays: The rays to trace. Other ray types than ``RealRays`` get False.
         record: Whether each surface stores the ray state after it.
+        final: The propagation past the last surface, or None. If it is in
+            the domain of the final step, the plan does it after the last
+            surface and sets ``final.applied``. Otherwise the caller
+            propagates the rays after the plan (``FinalPropagation.finish``).
 
     Returns:
         True if ``rays`` and the records of ``surfaces`` now hold the result
-        of the generic trace. False if the trace is outside the domain of the
-        plan: ``rays`` is then unchanged. The records are unchanged too,
-        except when the tolerance floor of an even asphere applies (see
-        ``_floor_applies``): then the kernel has run, and the records of the
-        previous trace are released. After False, the caller resets the
-        records.
+        of the generic trace, and of the final propagation if
+        ``final.applied`` is True. False if the trace is outside the domain
+        of the plan: ``rays`` is then unchanged, and so is ``final``. The
+        records are unchanged too, except when the tolerance floor of an
+        even asphere applies (see ``_floor_applies``): then the kernel has
+        run, and the records of the previous trace are released. After
+        False, the caller resets the records.
     """
     if not _ENABLED or not surfaces or be.get_backend() != "numpy":
         return False
@@ -1058,7 +1232,7 @@ def trace_with_plan(surfaces: Sequence[Surface], rays: BaseRays, record: bool) -
     if n is None:
         return False
     kernel = _kernel()
-    plan = _build(surfaces, rays, n, kernel)
+    plan = _build(surfaces, rays, n, kernel, final)
     if plan is None:
         return False
 
@@ -1070,12 +1244,12 @@ def trace_with_plan(surfaces: Sequence[Surface], rays: BaseRays, record: bool) -
     clipped = np.empty((plan.clips, n), dtype=np.bool_) if plan.clips else _NO_CLIPS
     rays_in = tuple(getattr(rays, name) for name in _RAY_STATE)
     rays_out, record_rows = tuple(outputs.values()), tuple(records.values())
+    final_step = plan.final_step
 
-    # The kernel call for the rays first to last - 1. _run_kernel calls it
-    # once for all rays, or once for each part. Two kernels compile from one
-    # loop nest. trace_basic_plan has no code for per-ray values and even
-    # aspheres (see the kernel module).
-    def trace_range(first: int, last: int, seed_stats: np.ndarray) -> None:
+    # The kernel call for the rays first to last - 1. Two kernels compile
+    # from one loop nest. trace_basic_plan has no code for per-ray values and
+    # even aspheres (see the kernel module).
+    def trace_part(first: int, last: int, seed_stats: np.ndarray) -> None:
         if plan.basic:
             kernel.trace_basic_plan(
                 first,
@@ -1105,6 +1279,30 @@ def trace_with_plan(surfaces: Sequence[Surface], rays: BaseRays, record: bool) -
                 rays_out,
                 record_rows,
                 record,
+            )
+
+    # _run_kernel calls trace_range once for all rays, or once for each part
+    # of a trace on threads. With a final step, trace_range traces its rays
+    # in parts of _FINAL_PART rays. The final step moves each part past the
+    # last surface right after the kernel, while its rays are in the cache.
+    def trace_range(first: int, last: int, seed_stats: np.ndarray) -> None:
+        if final_step is None:
+            trace_part(first, last, seed_stats)
+            return
+        for start in range(first, last, _FINAL_PART):
+            stop = min(start + _FINAL_PART, last)
+            trace_part(start, stop, seed_stats)
+            kernel._propagate_past_last_surface(
+                start,
+                stop,
+                rays_out[:3],
+                rays_out[3:6],
+                final_step.t,
+                final_step.absorb_row,
+                final_step.alpha_row,
+                final_step.alpha,
+                plan.ray_values,
+                exponents,
             )
 
     # The seed summary has one row per surface for a plan with an asphere.
@@ -1137,4 +1335,6 @@ def trace_with_plan(surfaces: Sequence[Surface], rays: BaseRays, record: bool) -
         for name, value in outputs.items():
             setattr(rays, name, value)
     _store_records(surfaces, records, record)
+    if final_step is not None:
+        final.applied = True
     return True
