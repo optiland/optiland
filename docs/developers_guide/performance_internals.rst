@@ -66,6 +66,12 @@ Overview
        or more in runs of 64 rays or more on average
      - Patch ``optiland.fields.field_types.angle.field_runs`` to return
        None, as ``tests/test_ray_generation_paths.py`` does.
+   * - Compiled aim directions
+     - ``optiland/backend/numpy_backend/_aim.py``
+     - The directions of ``ParaxialRayAimer`` on NumPy, for C-contiguous
+       1-D float64 arrays of one length, with Numba and its JIT compiler
+     - Patch ``optiland.backend.numpy_backend._aim.compiled_directions``
+       to return None, as ``tests/test_ray_generation_paths.py`` does.
    * - Traces in parts
      - ``optiland/surfaces/_chunked_trace.py`` and
        ``optiland/_trace_probe.py``
@@ -158,6 +164,44 @@ the same first bad field as the check on one value per ray.
 
 Torch never uses runs. A gradient through a repeated value would add its
 parts in another order.
+
+Compiled aim directions
+-----------------------
+
+Paraxial ray aiming (``ParaxialRayAimer``) sends each ray from its origin
+toward its aim point on the entrance pupil. The direction cosines of a ray
+are the unit vector from the origin to the aim point. The NumPy code makes
+one pass over all rays, with a new array, for each step: the difference
+vector, its length, the unit vector, the zero test and the reversal. With
+the NumPy backend, the kernel ``_directions`` in
+``optiland/backend/numpy_backend/_aim.py`` does all steps for one ray at a
+time. The reference is the NumPy code of
+``ParaxialRayAimer._aim_rays_impl``, in its helper ``_unit_directions``
+(``optiland/rays/ray_aiming/paraxial.py``). The kernel repeats its
+expressions in the same order, so each ray gets the same bits. Compiled
+code can give a NaN another sign bit, so the tests pass
+``ignore_nan_sign=True`` for the directions.
+
+The domain is the NumPy backend, Numba with its JIT compiler, and ray
+origins and aim points that are C-contiguous 1-D float64 arrays of one
+length. There is no limit on the number of rays. ``compiled_directions``
+returns None outside the domain, and the NumPy code runs. The kernel
+handles two special cases as the NumPy code does:
+
+- The zero test: a ray whose aim point is less than ``_MIN_AIM_DISTANCE``
+  (1e-9 mm) from its origin gets the direction (0, 0, 1). Both paths read
+  this one constant. The test comes before the reversal, so the reversal
+  can turn (0, 0, 1) into (-0, -0, -1).
+- The reversal: a finite object can be closer to the lens than its virtual
+  entrance pupil. The pupil is then behind the object, and so is each aim
+  point. Such a ray gets the opposite direction, so that it goes toward the
+  lens on the same line. The test uses the z component of the vector from
+  the origin to the aim point, or its component along the entry axis of a
+  folded system. Each component of the entry axis must be one number.
+
+The kernel does not cover the telecentric launches with an object-space NA
+(``ObjectNAAperture``). They have no aim points: the aimer computes their
+directions from the NA.
 
 Traces in parts
 ---------------
