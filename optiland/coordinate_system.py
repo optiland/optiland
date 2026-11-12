@@ -17,6 +17,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 import optiland.backend as be
+from optiland._host_values import host
 from optiland.rays import RealRays
 
 if TYPE_CHECKING:
@@ -33,9 +34,17 @@ def _needs_rotation(angle: BEArray) -> bool:
     tracked by autograd: a tracked angle must enter the graph even at zero so
     that its gradient is defined. Scalars avoid the ``any()`` call, which
     costs an order of magnitude more than ``bool()`` on a 0-d array.
+
+    In a CUDA trace, a one-element angle is read from the host copy of the
+    host-value scope (:mod:`optiland._host_values`), so the check does not
+    wait for the device. The requires_grad check runs first, so a tracked
+    angle is applied without a host read.
     """
     if getattr(angle, "requires_grad", False):
         return True
+    value = host(angle)
+    if value is not None:
+        return bool(value)
     return bool(angle.any()) if angle.ndim else bool(angle)
 
 
