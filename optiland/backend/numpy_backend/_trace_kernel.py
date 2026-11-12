@@ -118,23 +118,17 @@ Manuel Fragata Mendes, 2026
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING
 
 import numpy as np
-from numba import njit, types
-from numba.extending import intrinsic
+from numba import njit
 
 from optiland.backend._conic import _conic_candidates
+from optiland.backend.numpy_backend._compiled_math import _sqrt
 from optiland.backend.numpy_backend.conic import (
     _FLOAT64_EPS,
     _float64_eps,
     _scalar_where,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from numba.core.typing.templates import Signature
 
 # Rays per block. A block has 15 buffers of 256 float64 values (2 KiB each,
 # 30 KiB in all), so it stays in the L1 or L2 cache. Per-ray values add two
@@ -213,32 +207,6 @@ _DENOM_EPS_MULTIPLIER = 32.0
 # The threshold of _nz_threshold, and of _denominator_threshold before the
 # scale, for float64.
 _DENOM_TAU = _DENOM_EPS_MULTIPLIER * _FLOAT64_EPS
-
-
-@intrinsic
-def _llvm_sqrt(
-    typingctx: object, value: types.Type
-) -> tuple[Signature, Callable] | None:
-    """Square root as the LLVM intrinsic ``llvm.sqrt.f64``."""
-    if value != types.float64:
-        return None
-
-    def codegen(context, builder, signature, args):
-        function = builder.module.declare_intrinsic("llvm.sqrt", [args[0].type])
-        return builder.call(function, args)
-
-    return types.float64(types.float64), codegen
-
-
-@njit(inline="always", error_model="numpy", cache=True)
-def _sqrt(value: float) -> float:
-    """Correctly rounded square root (IEEE 754), as ``numpy.sqrt``.
-
-    Numba lowers ``math.sqrt`` to a call of the C library, which can set
-    errno, so a loop that contains it does not vectorize. The intrinsic gives
-    the same value, and NaN for a negative value.
-    """
-    return _llvm_sqrt(value)
 
 
 @njit(inline="always", error_model="numpy", cache=True)
