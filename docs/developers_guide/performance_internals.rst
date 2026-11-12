@@ -83,6 +83,14 @@ Overview
      - Spy on ``optiland.surfaces._trace_plan.trace_with_plan`` (see
        below). Set its private switch ``_ENABLED`` to False to switch it
        off.
+   * - Threads of the compiled trace
+     - ``optiland/surfaces/_trace_plan.py`` (``_run_kernel`` and
+       ``_run_parts``)
+     - Traces of the compiled trace plan of 8192 rays or more, with
+       ``be.set_trace_threads(n)`` and n > 1
+     - Spy on ``optiland.surfaces._trace_plan._run_kernel`` and read its
+       ``threads`` argument. ``be.set_trace_threads(1)``, the default,
+       switches it off.
    * - Host-value scope of a CUDA trace
      - ``optiland/_host_values.py`` and
        ``optiland/surfaces/surface_group.py``
@@ -257,7 +265,9 @@ A trace with a plan has four steps:
    kernels" below). For each block, each surface runs short loops over the
    rays of the block, one function per step of the generic trace. These
    loops vectorize, and the buffers of a block stay in the L1 or L2 cache
-   while the block goes through all surfaces.
+   while the block goes through all surfaces. With
+   ``be.set_trace_threads(n)`` and n > 1, n threads trace parts of a large
+   bundle (see "Threads" below).
 2. Only if a surface is an even asphere: ``_floor_applies`` checks the
    tolerance of its Newton-Raphson iteration (see "Even aspheres" below).
    If the generic code would raise the tolerance, ``trace_with_plan``
@@ -504,6 +514,78 @@ Add a step to the plan
    systems that do not use the new step. If a basic plan gets slower, put the new step behind
    a flag of the loop nest, so that ``trace_basic_plan`` has no code for it
    (see "Two kernels").
+
+Threads
+-------
+
+``be.set_trace_threads(n)`` with n > 1 lets the compiled trace plan trace a
+bundle of ``_MIN_THREADED_RAYS`` (8192) rays or more on n threads. The
+default is one thread. ``_run_kernel`` in ``optiland/surfaces/_trace_plan.py``
+divides the rays into parts of whole blocks: about ``_PARTS_PER_THREAD`` (4)
+parts for each thread, with at least ``_MIN_PART_BLOCKS`` (8) blocks in a
+part. ``_run_parts`` runs the parts: the calling thread and the n - 1
+threads of a private pool (``concurrent.futures.ThreadPoolExecutor``) take
+the next part from a shared counter until no part is left, so a thread that
+the system slows down does not hold back the others. The kernel releases the
+GIL (``nogil=True``), so the threads trace at the same time. The intensity
+pass of a system that absorbs runs its parts on at most
+``_MAX_INTENSITY_THREADS`` (4) threads, from
+``_MIN_THREADED_INTENSITY_RAYS`` (65536) rays. Each of its NumPy operations
+takes the GIL to start, so with more threads, or with shorter parts, the
+threads wait for the GIL. The limits come from timings of the first version
+on a CPU with 12 cores.
+
+A trace on n threads gives the bits of a trace on one thread:
+
+- Each kernel call traces the rays ``first`` to ``last - 1``, and writes
+  only these entries of each per-ray array and of each row of the exponent,
+  clip and record arrays. The ranges of the parts do not overlap, so there
+  is no data race.
+- ``first`` is a multiple of the block size, so each block of a part holds
+  the rays of a block of a trace on one thread, and runs the same
+  operations on them.
+- No kernel step combines values of several rays. The one exception is the
+  seed summary of an even asphere: a NaN flag and the largest ``abs(t)``.
+  The kernel updates it in place, so each part has its own summary, and the
+  summary of the trace is the maximum over the parts. A maximum does not
+  depend on the order of the parts.
+- The intensity pass applies element-wise NumPy operations to parts of the
+  bundle. As for the traces in parts, an element-wise NumPy function gives
+  the same value for an element at any position in a contiguous float64
+  array.
+
+The pool threads run without the context variables of the calling thread:
+there is no evaluation epoch and no host-value scope, and NumPy has its
+default floating-point error state (``numpy.errstate``). The kernel and the
+intensity pass need no epoch and no scope, because the builder evaluates
+the materials before the kernel runs. Only the parts in the calling thread
+see a changed error state. For example, with ``numpy.seterr(over="raise")``,
+an overflow of ``numpy.exp`` in the intensity pass raises in the calling
+thread, but gives a ``RuntimeWarning`` in a pool thread.
+
+Several Python threads can trace at the same time. They share the pool, and
+each one waits only for its own parts. If a part raises, ``_run_parts``
+waits for all parts and then raises the exception, so no thread writes into
+the outputs after the trace ends. After a fork, the child makes a new pool,
+because the threads of the parent's pool do not exist in the child.
+
+The threads are Python threads around a ``nogil`` kernel, not Numba
+``prange``, for three reasons:
+
+- A ``prange`` kernel is a second compiled kernel. Numba compiles the trace
+  kernel again for it, which added about 23 s to the first threaded trace
+  in a test of the first version.
+- The workqueue threading layer of Numba, which is always available, is not
+  safe when several Python threads call a parallel kernel at the same time.
+- The OpenMP threading layer has known problems with ``fork``.
+
+A pool of Python threads has none of these problems, and the setting does
+not depend on ``numba.set_num_threads`` or ``NUMBA_NUM_THREADS``.
+
+The tests in ``tests/test_trace_threads.py`` set ``_MIN_THREADED_RAYS``,
+``_MIN_PART_BLOCKS`` and ``_MIN_THREADED_INTENSITY_RAYS`` to 1, so that
+small bundles are traced on threads, in parts of one block. They compare 1
+and 3 threads bit for bit for all systems of ``tests/test_trace_plan.py``.
 
 Host-value scope (CUDA)
 -----------------------

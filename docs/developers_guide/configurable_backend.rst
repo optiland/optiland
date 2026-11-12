@@ -49,6 +49,41 @@ The NumPy backend provides pure-CPU execution and leverages Numba JIT compilatio
 
 Because of automatic patching, you do not need to re‑implement any basic routines in the `NumpyBackend` class.
 
+Threads of the compiled trace
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+In its domain, the NumPy backend traces real rays with a compiled kernel
+(see :ref:`performance_internals`). The kernel uses one thread by default.
+To trace large bundles on several threads:
+
+.. code:: python
+
+   be.set_trace_threads(8)    # or -1 for the number of logical CPUs
+   be.get_trace_threads()     # 8
+
+The results are the same, bit for bit, as with one thread. The limits:
+
+- Only bundles of 8192 rays or more use several threads. For a smaller
+  bundle, the threads cost about as much time as they save.
+- The setting has no effect outside the compiled trace: the generic trace,
+  the traces in parts, the ray generation and the PyTorch backend use one
+  thread.
+- For a medium that absorbs (k > 0), the step that applies the absorption
+  to the intensity uses at most 4 threads.
+- ``-1`` sets the number of logical CPUs: ``os.process_cpu_count()`` on
+  Python 3.13 and later, and ``os.cpu_count()`` before. ``os.cpu_count()``
+  counts all CPUs of the system, also those that the CPU affinity mask of
+  the process excludes. The number is fixed when ``set_trace_threads`` is
+  called.
+- The threads are a private pool of Python threads. The setting does not
+  change, and does not depend on, ``numba.set_num_threads``,
+  ``NUMBA_NUM_THREADS``, ``torch.set_num_threads`` or BLAS variables such as
+  ``OMP_NUM_THREADS``.
+- If the program already traces in parallel processes, for example an
+  optimizer with several workers, keep one thread in each process.
+- ``set_trace_threads`` changes global state and is not thread-safe, like
+  ``set_backend``. Call it before other threads start to trace.
+
 PyTorch Backend
 ---------------
 

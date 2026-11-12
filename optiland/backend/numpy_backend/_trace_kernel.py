@@ -30,6 +30,10 @@ operations and does not fuse a multiplication and an addition. With
 A NaN is at the same position as in the generic trace, but compiled code can
 give it another sign bit.
 
+Both kernels trace a range of rays and release the GIL (``nogil=True``), so
+the builder can trace parts of a bundle on several threads at the same time
+(``be.set_trace_threads``).
+
 Table layout
 ------------
 ``ints`` (int64) and ``floats`` (float64) have one row per surface. The
@@ -1135,6 +1139,8 @@ def _store_block(state: tuple, rays_out: tuple, start: int, m: int) -> None:
 
 @njit(inline="always", error_model="numpy", cache=True)
 def _trace_blocks(
+    first: int,
+    last: int,
     rays_in: tuple,
     ints: np.ndarray,
     floats: np.ndarray,
@@ -1162,7 +1168,6 @@ def _trace_blocks(
     True if the kernel takes rows of ``ray_values``, and ``newton``, True if
     it takes even aspheres.
     """
-    n_rays = rays_in[0].shape[0]
     n_surfaces = ints.shape[0]
     bx, by, bz = np.empty(_BLOCK), np.empty(_BLOCK), np.empty(_BLOCK)
     bL, bM, bN = np.empty(_BLOCK), np.empty(_BLOCK), np.empty(_BLOCK)
@@ -1177,8 +1182,8 @@ def _trace_blocks(
     position, direction, incident = (bx, by, bz), (bL, bM, bN), (bL0, bM0, bN0)
     # The buffers in the order of rays_out. The records are the first eight.
     state = (bx, by, bz, bL, bM, bN, bi, bopd, bL0, bM0, bN0)
-    for start in range(0, n_rays, _BLOCK):
-        m = min(_BLOCK, n_rays - start)
+    for start in range(first, last, _BLOCK):
+        m = min(_BLOCK, last - start)
         _load_block(rays_in, state, start, m)
         for s in range(n_surfaces):
             kind = ints[s, KIND]
@@ -1261,8 +1266,10 @@ def _trace_blocks(
         _store_block(state, rays_out, start, m)
 
 
-@njit(error_model="numpy", cache=True)
+@njit(error_model="numpy", nogil=True, cache=True)
 def trace_plan(
+    first: int,
+    last: int,
     rays_in: tuple,
     ints: np.ndarray,
     floats: np.ndarray,
@@ -1276,13 +1283,24 @@ def trace_plan(
     records: tuple,
     record: bool,
 ) -> None:
-    """Trace the rays through all surfaces of a plan.
+    """Trace the rays first <= j < last through all steps of a plan.
+
+    first is a multiple of the block size ``_BLOCK``, so each block of a call
+    holds the rays of a block of one call for all rays. The kernel writes
+    only entries first:last of each per-ray array and of each row of the
+    exponent, clip and record arrays, so calls with separate ranges can run
+    at the same time. It updates ``seed_stats`` in place (running maxima),
+    so each such call needs its own ``seed_stats``. The kernel releases the
+    GIL.
 
     The input arrays are not changed. The intensity in ``rays_out`` and in
     ``records`` includes the clips of the apertures, but not the absorption.
     The builder calls ``trace_basic_plan`` for a basic plan.
 
     Args:
+        first: The first ray to trace, a multiple of ``_BLOCK``.
+        last: The end of the range of rays: the kernel traces the rays
+            first to last - 1.
         rays_in: x, y, z, L, M, N, i and opd of the rays: 1-D float64
             arrays of one length.
         ints: The integer table (see the module docstring).
@@ -1309,6 +1327,8 @@ def trace_plan(
         record: Whether to write ``records``.
     """
     _trace_blocks(
+        first,
+        last,
         rays_in,
         ints,
         floats,
@@ -1326,8 +1346,10 @@ def trace_plan(
     )
 
 
-@njit(error_model="numpy", cache=True)
+@njit(error_model="numpy", nogil=True, cache=True)
 def trace_basic_plan(
+    first: int,
+    last: int,
     rays_in: tuple,
     ints: np.ndarray,
     floats: np.ndarray,
@@ -1343,6 +1365,8 @@ def trace_basic_plan(
     ``coef``, ``dcoef`` and ``seed_stats``.
     """
     _trace_blocks(
+        first,
+        last,
         rays_in,
         ints,
         floats,
