@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 import optiland.backend as be
+import optiland.surfaces._trace_plan as _trace_plan
 import optiland.surfaces.surface_group as surface_group
 from optiland import _epoch, _instrument
 from optiland.rays import RealRays
@@ -99,14 +100,16 @@ def test_each_direct_trace_gets_a_new_epoch(set_test_backend, monkeypatch):
     assert seen[0] is not seen[1]
 
 
-def test_direct_trace_memoizes_materials():
+def test_direct_trace_memoizes_materials(monkeypatch):
     """The epoch runs the regular material evaluation less often.
 
     NumPy only: in the Torch grad mode of the tests, ``be.array`` gives
     tensors that require gradients, and the material memo does not key such
-    wavelengths, so the counts are equal.
+    wavelengths, so the counts are equal. The compiled trace plan evaluates
+    each material once per trace by itself, so it is off here.
     """
     be.set_backend("numpy")
+    monkeypatch.setattr(_trace_plan, "_ENABLED", False)
     optic = CookeTriplet()
     with _instrument.counting() as plain:
         optic.surfaces._trace_surfaces(_fan(), 0, True)

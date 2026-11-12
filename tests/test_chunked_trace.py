@@ -16,6 +16,7 @@ import pytest
 
 import optiland.backend as be
 import optiland.surfaces._chunked_trace as chunked
+import optiland.surfaces._trace_plan as trace_plan
 from optiland.coatings import (
     CartesianJonesCoating,
     PolarizerCoating,
@@ -45,6 +46,12 @@ RAY_ATTRS = ("x", "y", "z", "L", "M", "N", "i", "w", "opd", "L0", "M0", "N0")
 # that a name missing from _RECORDED makes the tests fail.
 RECORD_ATTRS = ("x", "y", "z", "L", "M", "N", "intensity", "aoi", "opd")
 PART = 64  # rays per part in these tests
+
+
+@pytest.fixture(autouse=True)
+def no_trace_plan(monkeypatch):
+    """Test the traces in parts, not the compiled trace plan before them."""
+    monkeypatch.setattr(trace_plan, "_ENABLED", False)
 
 
 @pytest.fixture
