@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from optiland import _trace_probe
 from optiland import backend as be
 from optiland.propagation.base import BasePropagationModel
 
@@ -44,8 +45,11 @@ class HomogeneousPropagation(BasePropagationModel):
         # Handle absorption based on the material's extinction coefficient k
         k = self.material.k(rays.w)
 
-        # Only apply attenuation if there is a non-zero extinction coefficient
-        if be.any(k > 0):
+        # Only apply attenuation if there is a non-zero extinction coefficient.
+        # This decision is taken for all rays of the call, so report it.
+        absorbing = bool(be.any(k > 0))
+        _trace_probe.note_decision("absorption", absorbing)
+        if absorbing:
             # The absorption coefficient alpha is given by 4 * pi * k / lambda
             alpha = 4 * be.pi * k / rays.w
             # Intensity loss is I = I_0 * exp(-alpha * z)
