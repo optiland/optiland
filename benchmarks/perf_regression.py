@@ -31,6 +31,14 @@ min_delta / (fail_ratio - 1), 40 ms with the defaults, the min delta and
 not the ratio sets the threshold: a 10 ms scenario fails only above 1.20.
 Give a scenario enough work for more than 40 ms per timed call.
 
+Timings on shared CI runners are noisy. In two gate runs of the same code
+on GitHub runners, surfaces_trace_conic_oap gave ratios of 1.22 and 0.80.
+A scenario that is slower than both limits therefore runs again, together
+with the other slower scenarios only, with ``--confirm-repeats`` repeats
+(default 10). It fails only if this confirmation run shows it slower too.
+A real regression is slower in both runs. A small regression can still
+pass on CI, so measure a performance change on a quiet local machine too.
+
 The project policy is zero tolerated regression. A literal 1.00 threshold
 would fail on identical code, because an A/A run (the same ref as base and
 candidate) gives ratios above and below 1.00. The fail ratio must stay
@@ -459,6 +467,20 @@ def compare(args: argparse.Namespace, names: list[str]) -> int:
 
             samples = _collect_samples(trees, names, args.repeats, tmp_path)
             failures = _report(samples, names, args)
+            slower = [f.split(":")[0] for f in failures if not f.endswith(": error")]
+            if slower and args.confirm_repeats > 0:
+                # A shared CI runner can be slower for part of a run. A real
+                # regression is slower again, so a scenario fails only if a
+                # second run of the slower scenarios alone confirms it.
+                print(
+                    f"\nConfirmation run of {len(slower)} slower scenario(s): "
+                    f"{args.confirm_repeats} repeats"
+                )
+                samples = _collect_samples(
+                    trees, slower, args.confirm_repeats, tmp_path
+                )
+                confirmed = _report(samples, slower, args)
+                failures = [f for f in failures if f.endswith(": error")] + confirmed
             if failures:
                 print(
                     "\nPerformance regression against "
@@ -501,6 +523,12 @@ def main() -> int:
         help="git ref to measure as candidate (default: the current tree)",
     )
     parser.add_argument("--repeats", type=int, default=5)
+    parser.add_argument(
+        "--confirm-repeats",
+        type=int,
+        default=10,
+        help="repeats of the confirmation run of the slower scenarios (0: none)",
+    )
     parser.add_argument(
         "--only",
         metavar="NAMES",
