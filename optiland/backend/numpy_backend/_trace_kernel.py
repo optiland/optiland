@@ -2,16 +2,24 @@
 (``Surface.trace``) is the reference: it runs on every backend, and this
 module must give its results bit for bit.
 
-This module holds the compiled kernel of the trace plan. The builder,
+This module holds the compiled kernels of the trace plan. The builder,
 ``optiland.surfaces._trace_plan``, writes one row per surface into two
-tables and calls ``trace_plan``. The kernel traces the rays in blocks of
-``_BLOCK`` rays. For each block, each surface runs short loops over the rays
-of the block, one function per step of the generic trace. These loops
-vectorize, and the buffers of a block stay in the L1 or L2 cache while the
-block goes through all surfaces. Numba inlines the step functions into
-``trace_plan`` (``inline="always"``), so the kernel compiles to one loop
-nest. Functions that call ``_roots`` are the exception (see
-``_conic_distance``).
+tables and calls a kernel. A kernel traces the rays in blocks of ``_BLOCK``
+rays. For each block, each surface runs short loops over the rays of the
+block, one function per step of the generic trace. These loops vectorize,
+and the buffers of a block stay in the L1 or L2 cache while the block goes
+through all surfaces. Numba inlines the step functions into the loop nest
+``_trace_blocks`` and the loop nest into each kernel (``inline="always"``),
+so each kernel compiles to one loop nest. Functions that call ``_roots`` are
+the exception (see ``_conic_distance``).
+
+Two kernels compile from the loop nest. ``trace_plan`` traces all plans.
+``trace_basic_plan`` traces a basic plan, a plan without per-ray values
+(see below), for example of a trace with one wavelength. It has no code
+for per-ray values: with that code in the loop nest, a trace with one
+wavelength took 5 to 7 percent more time in the kernel, although it ran
+none of that code. On a basic plan, both kernels run the same steps, so
+they give the same bits. The tests compare them.
 
 Each function repeats the float64 expressions of the generic NumPy trace in
 the same order. No function uses fastmath, so LLVM keeps the order of the
@@ -38,6 +46,10 @@ ROTATE                  ROTATE_X, _Y and _Z flags     -     traced       0
 APERTURE                RADIAL or OFFSET_RADIAL       -     traced       NO_APERTURE
 REFLECT                 1 for a mirror                -     traced       0
 CLIP_ROW                row of ``clipped``            -     aperture     NO_ROW
+N1_ROW                  row of ``ray_values``: n1     -     refracts     NO_ROW
+N2_ROW                  row of ``ray_values``: n2     -     refracts     NO_ROW
+OPD_INDEX_ROW           row of ``ray_values``: n      -     traced       NO_ROW
+ALPHA_ROW               row of ``ray_values``: alpha  -     absorbs      NO_ROW
 ======================  ============================  ====  ===========  ===========
 
 ======================  ============================  ====  ===========  ===========
@@ -62,12 +74,21 @@ COS_Z_OUT, SIN_Z_OUT    cos, sin of rz                -     ROTATE_Z     0.0
 R_MAX_SQUARED           r_max**2 of the aperture      mm2   aperture     0.0
 R_MIN_SQUARED           r_min**2 of the aperture      mm2   aperture     0.0
 OFFSET_X, OFFSET_Y      offset of the aperture        mm    aperture     0.0
+N1, N2                  n1, n2 next to a per-ray row  -     refracts     0.0
 ======================  ============================  ====  ===========  ===========
 
 x, y, z, rx, ry and rz are the values of the ``CoordinateSystem`` of the
 surface. n1 and n2 are the refractive indices before and after the surface.
 ``clipped`` has one row per aperture: the mask of the rays that the aperture
 clips, for the intensity pass of a system that absorbs.
+
+``ray_values`` has one row per material value that differs from ray to ray,
+for example the refractive index of a glass in a bundle of several
+wavelengths. A ``*_ROW`` column that names a row of ``ray_values`` replaces
+a float column: OPD_INDEX_ROW replaces OPD_INDEX, ALPHA_ROW replaces ALPHA,
+and N1_ROW or N2_ROW replace INDEX_RATIO and INDEX_RATIO_SQUARED. The
+kernel then computes u = n1 / n2 and u * u for each ray, with N1 or N2 for
+an index that is the same for all rays.
 
 Manuel Fragata Mendes, 2026
 """
@@ -90,7 +111,8 @@ if TYPE_CHECKING:
     from numba.core.typing.templates import Signature
 
 # Rays per block. A block has 15 buffers of 256 float64 values (2 KiB each,
-# 30 KiB in all), so it stays in the L1 or L2 cache.
+# 30 KiB in all), so it stays in the L1 or L2 cache. Per-ray values add two
+# (the index ratios of trace_plan).
 _BLOCK = 256
 
 # The default of each *_ROW column: the surface has no row in that table.
@@ -117,7 +139,11 @@ ROTATE = 2
 APERTURE = 3
 REFLECT = 4
 CLIP_ROW = 5
-INT_COLUMNS = 6
+N1_ROW = 6
+N2_ROW = 7
+OPD_INDEX_ROW = 8
+ALPHA_ROW = 9
+INT_COLUMNS = 10
 
 # Columns of ``floats``.
 TX_IN, TY_IN, TZ_IN = 0, 1, 2
@@ -129,7 +155,8 @@ INDEX_RATIO, INDEX_RATIO_SQUARED, OPD_INDEX, ALPHA = 10, 11, 12, 13
 COS_X_IN, SIN_X_IN, COS_Y_IN, SIN_Y_IN, COS_Z_IN, SIN_Z_IN = range(14, 20)
 COS_X_OUT, SIN_X_OUT, COS_Y_OUT, SIN_Y_OUT, COS_Z_OUT, SIN_Z_OUT = range(20, 26)
 R_MAX_SQUARED, R_MIN_SQUARED, OFFSET_X, OFFSET_Y = 26, 27, 28, 29
-FLOAT_COLUMNS = 30
+N1, N2 = 30, 31
+FLOAT_COLUMNS = 32
 
 _N_MIN = 1e-14  # N_safe of _conic_intersection_distance
 
@@ -424,6 +451,15 @@ def _absorption_exponents(
 
 
 @njit(inline="always", error_model="numpy", cache=True)
+def _absorption_exponents_per_ray(
+    exponents: np.ndarray, distance: np.ndarray, alphas: np.ndarray, m: int
+) -> None:
+    """``_absorption_exponents`` with the alpha of each ray (ALPHA_ROW)."""
+    for j in range(m):
+        exponents[j] = -alphas[j] * distance[j] * 1e3
+
+
+@njit(inline="always", error_model="numpy", cache=True)
 def _add_optical_path(
     opd: np.ndarray, distance: np.ndarray, row: np.ndarray, m: int
 ) -> None:
@@ -431,6 +467,15 @@ def _add_optical_path(
     index = row[OPD_INDEX]
     for j in range(m):
         opd[j] = opd[j] + distance[j] * index
+
+
+@njit(inline="always", error_model="numpy", cache=True)
+def _add_optical_path_per_ray(
+    opd: np.ndarray, distance: np.ndarray, indices: np.ndarray, m: int
+) -> None:
+    """``_add_optical_path`` with the index n of each ray (OPD_INDEX_ROW)."""
+    for j in range(m):
+        opd[j] = opd[j] + distance[j] * indices[j]
 
 
 @njit(inline="always", error_model="numpy", cache=True)
@@ -486,6 +531,43 @@ def _conic_normal(position: tuple, normal: tuple, row: np.ndarray, m: int) -> No
 
 
 @njit(inline="always", error_model="numpy", cache=True)
+def _refracted(
+    u: float,
+    u2: float,
+    L0: float,
+    M0: float,
+    N0: float,
+    nx: float,
+    ny: float,
+    nz: float,
+) -> tuple[float, float, float]:
+    """The direction of one ray after ``RealRays.refract``.
+
+    Args:
+        u: The index ratio n1 / n2.
+        u2: u**2, as ``RealRays.refract`` computes it.
+        L0: The x direction cosine of the incident ray.
+        M0: The y direction cosine of the incident ray.
+        N0: The z direction cosine of the incident ray.
+        nx: The x component of the surface normal.
+        ny: The y component of the surface normal.
+        nz: The z component of the surface normal.
+
+    Returns:
+        The direction cosines of the refracted ray.
+    """
+    nx, ny, nz, dot = _aligned_normal(L0, M0, N0, nx, ny, nz)
+    # Snell's law in vector form. Total internal reflection gives a negative
+    # radicand and NaN directions, as in RealRays.refract.
+    root = _sqrt(1.0 - u2 * (1.0 - dot * dot))
+    return (
+        u * L0 + nx * root - u * nx * dot,
+        u * M0 + ny * root - u * ny * dot,
+        u * N0 + nz * root - u * nz * dot,
+    )
+
+
+@njit(inline="always", error_model="numpy", cache=True)
 def _refract(
     direction: tuple, incident: tuple, normal: tuple, row: np.ndarray, m: int
 ) -> None:
@@ -501,13 +583,48 @@ def _refract(
     for j in range(m):
         L0, M0, N0 = bL[j], bM[j], bN[j]
         bL0[j], bM0[j], bN0[j] = L0, M0, N0
-        nx, ny, nz, dot = _aligned_normal(L0, M0, N0, bnx[j], bny[j], bnz[j])
-        # Snell's law in vector form. Total internal reflection gives a
-        # negative radicand and NaN directions, as in RealRays.refract.
-        root = _sqrt(1.0 - u2 * (1.0 - dot * dot))
-        bL[j] = u * L0 + nx * root - u * nx * dot
-        bM[j] = u * M0 + ny * root - u * ny * dot
-        bN[j] = u * N0 + nz * root - u * nz * dot
+        nxj, nyj, nzj = bnx[j], bny[j], bnz[j]
+        bL[j], bM[j], bN[j] = _refracted(u, u2, L0, M0, N0, nxj, nyj, nzj)
+
+
+@njit(inline="always", error_model="numpy", cache=True)
+def _index_ratios(
+    ratios: tuple,
+    ray_values: np.ndarray,
+    int_row: np.ndarray,
+    row: np.ndarray,
+    start: int,
+    m: int,
+) -> None:
+    """u = n1 / n2 and u * u for each ray, from N1_ROW, N2_ROW, N1 and N2.
+
+    One index per ray makes u an array in ``RealRays.refract``, and NumPy
+    squares an array as u * u.
+    """
+    ratio, ratio_squared = ratios
+    row1, row2 = int_row[N1_ROW], int_row[N2_ROW]
+    for j in range(m):
+        n1 = ray_values[row1, start + j] if row1 != NO_ROW else row[N1]
+        n2 = ray_values[row2, start + j] if row2 != NO_ROW else row[N2]
+        u = n1 / n2
+        ratio[j] = u
+        ratio_squared[j] = u * u
+
+
+@njit(inline="always", error_model="numpy", cache=True)
+def _refract_per_ray(
+    direction: tuple, incident: tuple, normal: tuple, ratios: tuple, m: int
+) -> None:
+    """``RealRays.refract`` with the index ratios of ``_index_ratios``."""
+    bL, bM, bN = direction
+    bL0, bM0, bN0 = incident
+    bnx, bny, bnz = normal
+    ratio, ratio_squared = ratios
+    for j in range(m):
+        L0, M0, N0 = bL[j], bM[j], bN[j]
+        bL0[j], bM0[j], bN0[j] = L0, M0, N0
+        u, u2, nxj, nyj, nzj = ratio[j], ratio_squared[j], bnx[j], bny[j], bnz[j]
+        bL[j], bM[j], bN[j] = _refracted(u, u2, L0, M0, N0, nxj, nyj, nzj)
 
 
 @njit(inline="always", error_model="numpy", cache=True)
@@ -544,38 +661,28 @@ def _store_block(state: tuple, rays_out: tuple, start: int, m: int) -> None:
         rays_out[k][start:stop] = state[k][:m]
 
 
-@njit(error_model="numpy", cache=True)
-def trace_plan(
+@njit(inline="always", error_model="numpy", cache=True)
+def _trace_blocks(
     rays_in: tuple,
     ints: np.ndarray,
     floats: np.ndarray,
+    ray_values: np.ndarray | None,
     exponents: np.ndarray,
     clipped: np.ndarray,
     rays_out: tuple,
     records: tuple,
     record: bool,
+    per_ray: bool,
 ) -> None:
-    """Trace the rays through all surfaces of a plan.
+    """The loop nest of both kernels, ``trace_plan`` and ``trace_basic_plan``.
 
-    The input arrays are not changed. The intensity in ``rays_out`` and in
-    ``records`` includes the clips of the apertures, but not the absorption.
+    ``per_ray`` is a constant of each kernel. Numba removes the branches that
+    the constant does not take before it compiles the kernel, so
+    ``trace_basic_plan`` has no code for per-ray values and gets None for
+    ``ray_values``. On a basic plan, both kernels run the same steps.
 
-    Args:
-        rays_in: x, y, z, L, M, N, i and opd of the rays: 1-D float64
-            arrays of one length.
-        ints: The integer table (see the module docstring).
-        floats: The float table.
-        exponents: One row per absorbing medium. Row ABSORB_ROW of a surface
-            receives the exponent -alpha * t * 1e3 of each ray in the medium
-            before that surface.
-        clipped: One row per aperture. Row CLIP_ROW of a surface receives
-            True for each ray that its aperture clips.
-        rays_out: Receive x, y, z, L, M, N, i and opd after the last surface,
-            then L0, M0 and N0: the direction of each ray before the last
-            refraction or reflection, in the local frame of that surface.
-        records: x, y, z, L, M, N, intensity and opd, each with one row per
-            surface. Row s receives the ray state after surface s.
-        record: Whether to write ``records``.
+    The arguments are those of ``trace_plan``, and ``per_ray``: True if the
+    kernel takes rows of ``ray_values``.
     """
     n_rays = rays_in[0].shape[0]
     n_surfaces = ints.shape[0]
@@ -584,6 +691,8 @@ def trace_plan(
     bL0, bM0, bN0 = np.empty(_BLOCK), np.empty(_BLOCK), np.empty(_BLOCK)
     bi, bopd, bdist = np.empty(_BLOCK), np.empty(_BLOCK), np.empty(_BLOCK)
     normal = (np.empty(_BLOCK), np.empty(_BLOCK), np.empty(_BLOCK))
+    if per_ray:
+        ratios = (np.empty(_BLOCK), np.empty(_BLOCK))
     position, direction, incident = (bx, by, bz), (bL, bM, bN), (bL0, bM0, bN0)
     # The buffers in the order of rays_out. The records are the first eight.
     state = (bx, by, bz, bL, bM, bN, bi, bopd, bL0, bM0, bN0)
@@ -608,12 +717,24 @@ def trace_plan(
                         position, direction, bdist, row, aperture, m
                     )
                 # HomogeneousPropagation: move, absorb, add the optical path.
+                # Each value is the same for all rays, or comes from a row of
+                # ray_values.
                 _propagate(position, direction, bdist, m)
                 absorb_row = ints[s, ABSORB_ROW]
                 if absorb_row != NO_ROW:
                     block_exponents = exponents[absorb_row, start : start + m]
-                    _absorption_exponents(block_exponents, bdist, row, m)
-                _add_optical_path(bopd, bdist, row, m)
+                    alpha_row = ints[s, ALPHA_ROW]
+                    if per_ray and alpha_row != NO_ROW:
+                        alphas = ray_values[alpha_row, start : start + m]
+                        _absorption_exponents_per_ray(block_exponents, bdist, alphas, m)
+                    else:
+                        _absorption_exponents(block_exponents, bdist, row, m)
+                index_row = ints[s, OPD_INDEX_ROW]
+                if per_ray and index_row != NO_ROW:
+                    indices = ray_values[index_row, start : start + m]
+                    _add_optical_path_per_ray(bopd, bdist, indices, m)
+                else:
+                    _add_optical_path(bopd, bdist, row, m)
                 # BaseAperture.clip.
                 if aperture != NO_APERTURE:
                     block_clipped = clipped[ints[s, CLIP_ROW], start : start + m]
@@ -626,9 +747,93 @@ def trace_plan(
                 # RefractiveReflectiveModel.interact_real_rays.
                 if ints[s, REFLECT]:
                     _reflect(direction, incident, normal, m)
+                elif per_ray and (
+                    ints[s, N1_ROW] != NO_ROW or ints[s, N2_ROW] != NO_ROW
+                ):
+                    _index_ratios(ratios, ray_values, ints[s], row, start, m)
+                    _refract_per_ray(direction, incident, normal, ratios, m)
                 else:
                     _refract(direction, incident, normal, row, m)
                 _globalize(position, direction, row, rotate, m)
             if record:
                 _store_records(state, records, s, start, m)
         _store_block(state, rays_out, start, m)
+
+
+@njit(error_model="numpy", cache=True)
+def trace_plan(
+    rays_in: tuple,
+    ints: np.ndarray,
+    floats: np.ndarray,
+    ray_values: np.ndarray,
+    exponents: np.ndarray,
+    clipped: np.ndarray,
+    rays_out: tuple,
+    records: tuple,
+    record: bool,
+) -> None:
+    """Trace the rays through all surfaces of a plan.
+
+    The input arrays are not changed. The intensity in ``rays_out`` and in
+    ``records`` includes the clips of the apertures, but not the absorption.
+    The builder calls ``trace_basic_plan`` for a basic plan.
+
+    Args:
+        rays_in: x, y, z, L, M, N, i and opd of the rays: 1-D float64
+            arrays of one length.
+        ints: The integer table (see the module docstring).
+        floats: The float table.
+        ray_values: The values that differ from ray to ray, one row each.
+        exponents: One row per absorbing medium. Row ABSORB_ROW of a surface
+            receives the exponent -alpha * t * 1e3 of each ray in the medium
+            before that surface.
+        clipped: One row per aperture. Row CLIP_ROW of a surface receives
+            True for each ray that its aperture clips.
+        rays_out: Receive x, y, z, L, M, N, i and opd after the last surface,
+            then L0, M0 and N0: the direction of each ray before the last
+            refraction or reflection, in the local frame of that surface.
+        records: x, y, z, L, M, N, intensity and opd, each with one row per
+            surface. Row s receives the ray state after surface s.
+        record: Whether to write ``records``.
+    """
+    _trace_blocks(
+        rays_in,
+        ints,
+        floats,
+        ray_values,
+        exponents,
+        clipped,
+        rays_out,
+        records,
+        record,
+        per_ray=True,
+    )
+
+
+@njit(error_model="numpy", cache=True)
+def trace_basic_plan(
+    rays_in: tuple,
+    ints: np.ndarray,
+    floats: np.ndarray,
+    exponents: np.ndarray,
+    clipped: np.ndarray,
+    rays_out: tuple,
+    records: tuple,
+    record: bool,
+) -> None:
+    """``trace_plan`` for a basic plan: a plan without rows in ``ray_values``.
+
+    The arguments are those of ``trace_plan``, without ``ray_values``.
+    """
+    _trace_blocks(
+        rays_in,
+        ints,
+        floats,
+        None,
+        exponents,
+        clipped,
+        rays_out,
+        records,
+        record,
+        per_ray=False,
+    )

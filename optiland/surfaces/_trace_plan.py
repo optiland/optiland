@@ -146,6 +146,10 @@ class _Plan:
     Attributes:
         ints: The integer table, one row per surface (see the kernel).
         floats: The float table, one row per surface.
+        ray_values: The material values that differ from ray to ray, one row
+            each (see ``_PerRayValues``).
+        basic: True if ``ray_values`` has no rows. The kernel
+            ``trace_basic_plan`` then traces the plan.
         moves_rays: False if all surfaces are object surfaces. The rays then
             keep their arrays.
         absorbing: The number of absorbing media: the rows of the exponents.
@@ -154,6 +158,8 @@ class _Plan:
 
     ints: np.ndarray
     floats: np.ndarray
+    ray_values: np.ndarray
+    basic: bool
     moves_rays: bool
     absorbing: int
     clips: int
@@ -282,6 +288,30 @@ def _material_value(evaluate: Callable[[np.ndarray], object], w: np.ndarray) -> 
         return None
 
 
+class _PerRayValues:
+    """The rows of ``ray_values``: material values that differ from ray to ray.
+
+    Examples are the refractive index of a glass in a bundle of several
+    wavelengths, and its absorption coefficient. Each array gets one row.
+    """
+
+    def __init__(self) -> None:
+        self.rows: list[np.ndarray] = []
+        self._row_of: dict[int, tuple[object, int]] = {}
+
+    def row(self, values: np.ndarray) -> int:
+        """Return the row of ``values``, an array of one value per ray."""
+        return _memo(self._row_of, values, self._add)
+
+    def _add(self, values: np.ndarray) -> int:
+        self.rows.append(values)
+        return len(self.rows) - 1
+
+    def table(self) -> np.ndarray:
+        """Return the rows as one C-contiguous table."""
+        return np.stack(self.rows) if self.rows else _NO_ROWS
+
+
 class _Builder:
     """Builds the tables of the plan of one trace, one row per surface.
 
@@ -302,8 +332,10 @@ class _Builder:
         self.moves_rays = False
         self.absorbing = 0
         self.clips = 0
+        self.values = _PerRayValues()
         self._indices: dict[int, tuple[object, _Form | None]] = {}
         self._extinctions: dict[int, tuple[object, _Form | None]] = {}
+        self._alphas: dict[int, tuple[object, _Form | None]] = {}
         # Rows with the defaults of the layout table. Python lists are faster
         # to fill than arrays; plan() converts them once.
         self._empty_ints = [0] * kernel.INT_COLUMNS
@@ -311,6 +343,10 @@ class _Builder:
         self._empty_ints[kernel.ABSORB_ROW] = kernel.NO_ROW
         self._empty_ints[kernel.APERTURE] = kernel.NO_APERTURE
         self._empty_ints[kernel.CLIP_ROW] = kernel.NO_ROW
+        self._empty_ints[kernel.N1_ROW] = kernel.NO_ROW
+        self._empty_ints[kernel.N2_ROW] = kernel.NO_ROW
+        self._empty_ints[kernel.OPD_INDEX_ROW] = kernel.NO_ROW
+        self._empty_ints[kernel.ALPHA_ROW] = kernel.NO_ROW
         self._empty_floats = [0.0] * kernel.FLOAT_COLUMNS
 
     def add(self, surface: Surface) -> bool:
@@ -337,6 +373,8 @@ class _Builder:
         return _Plan(
             ints=np.array(self.int_rows, dtype=np.int64),
             floats=np.array(self.float_rows, dtype=np.float64),
+            ray_values=self.values.table(),
+            basic=not self.values.rows,
             moves_rays=self.moves_rays,
             absorbing=self.absorbing,
             clips=self.clips,
@@ -440,15 +478,21 @@ class _Builder:
             return False
         index = self._index(material)
         k = self._extinction(propagation.material)
-        if index is None or index.per_ray or k is None:
+        if index is None or k is None:
             return False
-        floats[kernel.OPD_INDEX] = index.value
+        if index.per_ray:
+            ints[kernel.OPD_INDEX_ROW] = self.values.row(index.value)
+        else:
+            floats[kernel.OPD_INDEX] = index.value
         if _absorbs(k):
-            alpha = self._absorption_coefficient(k)
+            alpha = self._absorption_coefficient(propagation.material, k)
             if alpha is None:
                 return False
+            if alpha.per_ray:
+                ints[kernel.ALPHA_ROW] = self.values.row(alpha.value)
+            else:
+                floats[kernel.ALPHA] = alpha.value
             ints[kernel.ABSORB_ROW] = self.absorbing
-            floats[kernel.ALPHA] = alpha
             self.absorbing += 1
         return True
 
@@ -476,8 +520,20 @@ class _Builder:
         if type(after.propagation_model) is not self.types.propagation:
             return False
         n1, n2 = self._index(surface.material_pre), self._index(after)
-        if n1 is None or n2 is None or n1.per_ray or n2.per_ray:
+        if n1 is None or n2 is None:
             return False
+        if n1.per_ray or n2.per_ray:
+            # u = n1 / n2 is an array. The kernel computes u and u * u for
+            # each ray, as RealRays.refract computes u and u**2.
+            if n1.per_ray:
+                ints[kernel.N1_ROW] = self.values.row(n1.value)
+            else:
+                floats[kernel.N1] = n1.value
+            if n2.per_ray:
+                ints[kernel.N2_ROW] = self.values.row(n2.value)
+            else:
+                floats[kernel.N2] = n2.value
+            return True
         ratio, ratio_squared = _index_ratio(n1, n2)
         floats[kernel.INDEX_RATIO] = ratio
         floats[kernel.INDEX_RATIO_SQUARED] = ratio_squared
@@ -500,16 +556,24 @@ class _Builder:
         """The form of ``rays.w``, computed at the first absorbing medium."""
         return _form(self.wavelengths, self.n)
 
-    def _absorption_coefficient(self, k: _Form) -> float | None:
+    def _absorption_coefficient(self, material: BaseMaterial, k: _Form) -> _Form | None:
         """Return alpha = 4 * be.pi * k / rays.w of ``HomogeneousPropagation``.
 
-        alpha is in 1/um. Returns None if alpha differs from ray to ray.
+        alpha is in 1/um. It is computed once per material and trace.
         """
+        return _memo(self._alphas, material, lambda _: self._alpha(k))
+
+    def _alpha(self, k: _Form) -> _Form | None:
+        """Return alpha as a float, or as an array of one value per ray."""
         w = self._wavelength
-        if k.per_ray or w.per_ray:
-            return None
         # be.* calls repeat those of the generic trace.
-        return 4 * be.pi * k.value / w.value
+        if not (k.per_ray or w.per_ray):
+            alpha = 4 * be.pi * k.value / w.value
+            return _Form(False, alpha, alpha)
+        alpha = 4 * be.pi * k.returned / self.wavelengths
+        if type(alpha) is not np.ndarray or alpha.shape != (self.n,):
+            return None
+        return _Form(True, alpha, alpha)
 
 
 def _ray_count(rays: RealRays) -> int | None:
@@ -664,16 +728,33 @@ def trace_with_plan(surfaces: Sequence[Surface], rays: BaseRays, record: bool) -
     records = {name: np.empty(shape) if record else _NO_ROWS for name in _RECORDED}
     exponents = np.empty((plan.absorbing, n)) if plan.absorbing else _NO_ROWS
     clipped = np.empty((plan.clips, n), dtype=np.bool_) if plan.clips else _NO_CLIPS
-    kernel.trace_plan(
-        tuple(getattr(rays, name) for name in _RAY_STATE),
-        plan.ints,
-        plan.floats,
-        exponents,
-        clipped,
-        tuple(outputs.values()),
-        tuple(records.values()),
-        record,
-    )
+    rays_in = tuple(getattr(rays, name) for name in _RAY_STATE)
+    rays_out, record_rows = tuple(outputs.values()), tuple(records.values())
+    # Two kernels compile from one loop nest. trace_basic_plan has no code
+    # for per-ray values (see the kernel module).
+    if plan.basic:
+        kernel.trace_basic_plan(
+            rays_in,
+            plan.ints,
+            plan.floats,
+            exponents,
+            clipped,
+            rays_out,
+            record_rows,
+            record,
+        )
+    else:
+        kernel.trace_plan(
+            rays_in,
+            plan.ints,
+            plan.floats,
+            plan.ray_values,
+            exponents,
+            clipped,
+            rays_out,
+            record_rows,
+            record,
+        )
     if plan.absorbing:
         outputs["i"] = _absorbed_intensity(
             plan, rays.i, exponents, clipped, records["intensity"], record

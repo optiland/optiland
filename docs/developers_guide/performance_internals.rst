@@ -245,15 +245,16 @@ changes, and the trace in parts or the generic loop runs.
 
 A trace with a plan has three steps:
 
-1. The kernel ``trace_plan`` traces the rays in blocks of 256 rays. For
-   each block, each surface runs short loops over the rays of the block,
-   one function per step of the generic trace. These loops vectorize, and
-   the buffers of a block stay in the L1 or L2 cache while the block goes
-   through all surfaces.
+1. A compiled kernel traces the rays in blocks of 256 rays (see "Two
+   kernels" below). For each block, each surface runs short loops over the
+   rays of the block, one function per step of the generic trace. These
+   loops vectorize, and the buffers of a block stay in the L1 or L2 cache
+   while the block goes through all surfaces.
 2. Only if a medium absorbs: the kernel writes the exponent
-   ``-alpha * t * 1e3`` of each ray in each absorbing medium and the clip
-   mask of each aperture, and a NumPy pass then computes the intensity from
-   the input intensity with ``numpy.exp`` and the expressions of
+   ``-alpha * t * 1e3`` of each ray in each absorbing medium, with the
+   absorption coefficient of the medium or of the ray, and the clip mask of
+   each aperture. A NumPy pass then computes the intensity from the input
+   intensity with ``numpy.exp`` and the expressions of
    ``RealRays.attenuate`` and ``RealRays.clip``, in the order of the generic
    trace, in parts of 65536 rays. A ray without power keeps ``i = 0``, also
    when a later miss gives a factor that is not finite. Without absorption,
@@ -307,12 +308,13 @@ Each limit has its reason:
   each surface: no GRIN, because the index changes along the path. The
   index at the surface is then ``material.n(w)``, the ``boundary_index`` of
   ``BasePropagationModel``.
-- One refractive index and one absorption coefficient
-  ``alpha = 4 * pi * k / lambda`` per medium: the kernel takes one value per
-  surface. ``n(w)`` and ``k(w)`` are float64 values: a Python float, a NumPy
-  float64, a 0-d array, or a 1-D array of length 1 or of the ray count with
-  one value. A bundle of several wavelengths in a dispersive glass is
-  outside this domain.
+- ``n(w)`` and ``k(w)`` are float64 values: a Python float, a NumPy
+  float64, a 0-d array, or a 1-D array of length 1 or of the ray count. The
+  kernel takes one value per surface or one value per ray. An array with
+  different values, for example the index of a glass in a bundle of several
+  wavelengths, goes into a row of the table of per-ray values, and so does
+  an absorption coefficient ``alpha = 4 * pi * k / lambda`` that differs
+  from ray to ray. Each array gets one row.
 
 The types of the materials are not checked. As for the traces in parts, a
 material must compute the value of a ray from that ray alone, and give the
@@ -339,6 +341,30 @@ record is a row of one array per name, so a record keeps that array alive.
 With ``record=False``, it calls ``Surface.reset``. When it returns False,
 the records are unchanged, and ``SurfaceGroup._trace_surfaces`` resets
 them. The surfaces before ``skip`` are reset before the plan.
+
+Two kernels
+~~~~~~~~~~~
+
+``_trace_kernel.py`` compiles one loop nest, ``_trace_blocks``, into two
+kernels. ``trace_plan`` traces all plans. ``trace_basic_plan`` traces a
+basic plan: a plan without rows of per-ray values, for example of a trace
+with one wavelength. A flag of the loop nest, ``per_ray``, is a constant in
+each kernel. Numba removes the branches that the constant does not take
+before it compiles a kernel, so ``trace_basic_plan`` has no code for
+per-ray values and does not take the table of per-ray values.
+
+The second kernel exists because the code for per-ray values made the
+other steps slower. With that code in its loop nest, the kernel traced the
+Cooke triplet with one wavelength in 5 to 7 percent more time (30000 and
+200000 rays), although it ran none of that code. The branches of that code
+run once per surface and block of 256 rays, and LLVM vectorizes the same
+loops with and without that code. The cause is other machine code of the
+larger loop nest.
+
+Both kernels run the same steps on a basic plan, so they give the same
+bits. Keep it so: a step that a basic plan uses must not depend on a flag.
+``tests/test_trace_plan.py`` checks which kernel each plan gets, and traces
+a basic plan of each system with both kernels and compares the bits.
 
 The scalar rule
 ~~~~~~~~~~~~~~~
@@ -372,12 +398,13 @@ Rules for compiled code
   kernel, as the intensity pass does with ``numpy.exp`` and the builder
   with the cosines and sines of the rotations. ``sqrt`` is correctly
   rounded in both, so the kernel computes it.
-- Write each step as a function that Numba inlines into ``trace_plan``
-  (``inline="always"``). A function that calls an inline overload, such as
-  the conic arithmetic of ``optiland/backend/numpy_backend/conic.py``,
-  stays a separate compiled function: after Numba inlines an overload, it
-  removes code that it finds dead, and in ``trace_plan`` (Numba 0.65) it
-  removed stores into the block buffers.
+- Write each step as a function that Numba inlines into the loop nest
+  ``_trace_blocks`` (``inline="always"``). A function that calls an inline
+  overload, such as the conic arithmetic of
+  ``optiland/backend/numpy_backend/conic.py``, stays a separate compiled
+  function: after Numba inlines an overload, it removes code that it finds
+  dead, and in the kernel (Numba 0.65) it removed stores into the block
+  buffers.
 
 A NaN of the plan is at the same position as in the generic trace, but its
 sign bit can differ. One cause: when both operands of an addition or a
@@ -401,9 +428,11 @@ Add a step to the plan
    ``tests/test_trace_plan.py``. The tests compare the plan with the
    generic trace, bit for bit, for many ray counts, with and without
    records. Add a test for each new fallback.
-5. Run the performance gate (see below). A change to ``trace_plan`` can
-   change how LLVM vectorizes the loops, also for systems that do not use
-   the new step.
+5. Run the performance gate (see below). A change to the loop nest
+   ``_trace_blocks`` can change how LLVM vectorizes the loops, also for
+   systems that do not use the new step. If a basic plan gets slower, put the new step behind
+   a flag of the loop nest, so that ``trace_basic_plan`` has no code for it
+   (see "Two kernels").
 
 How to verify a fast path
 -------------------------
