@@ -18,13 +18,15 @@ RAY_FIELDS = ("x", "y", "z", "L", "M", "N", "opd")
 
 def _record_epoch_during_trace(monkeypatch, optic) -> list:
     seen = []
-    original = optic.surfaces.trace
+    # SurfaceGroup.trace and _trace_with_final_propagation, which
+    # RealRayTracer calls, both trace through SurfaceGroup._trace_in_epoch.
+    original = optic.surfaces._trace_in_epoch
 
     def spy(*args, **kwargs):
         seen.append(_epoch.current())
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(optic.surfaces, "trace", spy)
+    monkeypatch.setattr(optic.surfaces, "_trace_in_epoch", spy)
     return seen
 
 

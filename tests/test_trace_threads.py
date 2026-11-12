@@ -196,6 +196,38 @@ def test_threaded_trace_is_identical(thread_counts, name, record):
     _assert_same(single, multi)
 
 
+@pytest.mark.parametrize("name", ["immersed_image", "thick_image"])
+def test_final_step_in_parts_on_threads_is_identical(thread_counts, monkeypatch, name):
+    """Each part of a thread holds three parts of the final step.
+
+    The final step propagates the rays past the image surface. With parts of
+    three blocks on the threads and of one block for the final step, each
+    thread traces and propagates its part in three kernel calls. The result
+    is that of one thread and that of the generic trace.
+    """
+    monkeypatch.setattr(plan, "_MIN_PART_BLOCKS", 3)
+    monkeypatch.setattr(plan, "_FINAL_PART", 256)
+    kernel = plan._kernel()
+    ranges = []
+    propagate = kernel._propagate_past_last_surface
+
+    def spy(first, last, *args):
+        ranges.append((first, last))
+        return propagate(first, last, *args)
+
+    monkeypatch.setattr(kernel, "_propagate_past_last_surface", spy)
+    single = _hexapolar(SYSTEMS[name], record=True, threads=1)
+    multi = _hexapolar(SYSTEMS[name], record=True, threads=THREADS)
+    assert thread_counts["kernel"] == [1, THREADS]
+    n = single["ray.x"].shape[0]
+    parts = [(first, min(first + 256, n)) for first in range(0, n, 256)]
+    # Two traces: each range of the final step once per trace.
+    assert sorted(ranges) == sorted(parts * 2)
+    _assert_same(single, multi)
+    monkeypatch.setattr(plan, "_ENABLED", False)
+    _assert_same(multi, _hexapolar(SYSTEMS[name], record=True, threads=1))
+
+
 @pytest.mark.parametrize("record", [True, False])
 @pytest.mark.parametrize("n", [1, 255, 256, 257, 1000, 2049])
 def test_ray_counts_and_wavelengths_are_identical(thread_counts, n, record):

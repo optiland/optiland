@@ -85,7 +85,8 @@ Overview
      - ``optiland/surfaces/_trace_plan.py`` and
        ``optiland/backend/numpy_backend/_trace_kernel.py``
      - ``SurfaceGroup.trace`` of real rays with the NumPy backend, in the
-       domain listed below
+       domain listed below, and the propagation past the image surface in
+       ``RealRayTracer``
      - Spy on ``optiland.surfaces._trace_plan.trace_with_plan`` (see
        below). Set its private switch ``_ENABLED`` to False to switch it
        off.
@@ -311,7 +312,8 @@ A trace with a plan has four steps:
    loops vectorize, and the buffers of a block stay in the L1 or L2 cache
    while the block goes through all surfaces. With
    ``be.set_trace_threads(n)`` and n > 1, n threads trace parts of a large
-   bundle (see "Threads" below).
+   bundle (see "Threads" below). A trace of ``RealRayTracer`` can add a final
+   step, the propagation past the image surface (see below).
 2. Only if a surface is an even asphere: ``_floor_applies`` checks the
    tolerance of its Newton-Raphson iteration (see "Even aspheres" below).
    If the generic code would raise the tolerance, ``trace_with_plan``
@@ -417,6 +419,59 @@ of an even asphere gives False after the kernel, and the records of the
 previous trace are then released. After each False,
 ``SurfaceGroup._trace_surfaces`` resets the records. The surfaces before
 ``skip`` are reset before the plan.
+
+Propagation past the image surface
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The surface trace ends on the image surface. ``RealRayTracer.trace`` and
+``trace_generic`` then propagate the rays past the image surface by its
+thickness, usually 0, in the medium after it
+(``HomogeneousPropagation.propagate``). They call
+``SurfaceGroup._trace_with_final_propagation``: trace through all surfaces,
+then propagate past the image surface. The plan does both in one pass if it
+can. It gets the propagation as a ``FinalPropagation``, adds it to the plan
+as a final step, and then sets ``FinalPropagation.applied``. The kernel
+function ``_propagate_past_last_surface`` moves each part of
+``_FINAL_PART`` (16384) rays right after the kernel has traced it, while
+the rays of the part are in the cache. The part size is a multiple of the
+block size, because a kernel takes only a first ray at a block boundary.
+
+The domain of the final step:
+
+- Exactly ``HomogeneousPropagation`` in the medium after the image surface:
+  a subclass can change ``propagate``. A refraction at the image surface
+  already needs this type for its own step, so this limit matters for a
+  mirror.
+- A thickness that is a number: a Python int or float, a NumPy float64, or
+  a 0-d float64 array. The kernel takes one float64 distance for all rays.
+- An absorption coefficient that the plan can take, as for the media before
+  the surfaces.
+- At least one surface step: a plan of object surfaces only gives the rays
+  their own arrays back, so it has no new arrays to move.
+
+Outside this domain, the plan has no final step. It traces the surfaces,
+and then the generic ``propagate`` runs (``FinalPropagation.finish``). When
+``trace_with_plan`` returns False, the generic trace runs, and then the
+generic ``propagate``.
+
+The final step changes what the generic code changes, in the same order:
+
+- The absorption of the medium after the image surface comes last in the
+  intensity pass.
+- The surfaces get no record of the final step, because the generic code
+  records the rays at the image surface before it propagates them.
+- The optical path (``opd``) and ``L0``, ``M0`` and ``N0`` stay as they
+  are: ``propagate`` changes only the positions and the intensity of
+  normalized rays.
+
+``SurfaceGroup.trace`` has no final step, so a direct trace of the surfaces
+does not change. The snapshot trace and the resumed traces of partial-trace
+finite differences (``RealRayTracer._trace`` and ``_trace_from``) loop over
+the surfaces themselves, so the plan does not apply to them.
+
+The final step is a separate compiled function, not a last step of the
+loop nest. Adding this step to the kernel, after its loop over the
+surfaces, made the sphere trace about 4 percent slower.
 
 Two kernels
 ~~~~~~~~~~~
@@ -555,9 +610,10 @@ Add a step to the plan
    records. Add a test for each new fallback.
 5. Run the performance gate (see below). A change to the loop nest
    ``_trace_blocks`` can change how LLVM vectorizes the loops, also for
-   systems that do not use the new step. If a basic plan gets slower, put the new step behind
-   a flag of the loop nest, so that ``trace_basic_plan`` has no code for it
-   (see "Two kernels").
+   systems that do not use the new step. If the gate shows a slower trace, put the new step
+   behind a flag of the loop nest, so that ``trace_basic_plan`` has no code
+   for it (see "Two kernels"), or in a separate compiled function, as
+   ``_propagate_past_last_surface`` does.
 
 Threads
 -------
@@ -583,8 +639,9 @@ A trace on n threads gives the bits of a trace on one thread:
 
 - Each kernel call traces the rays ``first`` to ``last - 1``, and writes
   only these entries of each per-ray array and of each row of the exponent,
-  clip and record arrays. The ranges of the parts do not overlap, so there
-  is no data race.
+  clip and record arrays. The final step writes only the entries of its
+  range too. The ranges of the parts do not overlap, so there is no data
+  race.
 - ``first`` is a multiple of the block size, so each block of a part holds
   the rays of a block of a trace on one thread, and runs the same
   operations on them.
@@ -770,8 +827,10 @@ that it breaks. For a system with an even asphere, a spy on
 ``optiland.surfaces._trace_plan._floor_applies`` shows whether the kernel
 ran and the tolerance floor gave False (``[True]``), or the build stopped
 (no call). With ``NUMBA_DISABLE_JIT=1``, the plan always gives
-``False``. In a test, replace the module attribute with ``monkeypatch``
-instead, for example
+``False``. For ``optic.trace``, the spy also gets the ``FinalPropagation``
+as the argument ``final``: after the call, ``final.applied`` is True if the
+plan propagated the rays past the image surface. In a test, replace the
+module attribute with ``monkeypatch`` instead, for example
 ``monkeypatch.setattr(trace_plan, "trace_with_plan", spy)``, and switch the
 plan off with ``monkeypatch.setattr(trace_plan, "_ENABLED", False)``.
 

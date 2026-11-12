@@ -34,6 +34,11 @@ Both kernels trace a range of rays and release the GIL (``nogil=True``), so
 the builder can trace parts of a bundle on several threads at the same time
 (``be.set_trace_threads``).
 
+``_propagate_past_last_surface`` is the final step of a plan: the rays
+propagate past the last surface by its thickness, as ``RealRayTracer``
+propagates them past the image surface. It runs after the kernel on the
+same range of rays.
+
 Table layout
 ------------
 ``ints`` (int64) and ``floats`` (float64) have one row per surface. The
@@ -1350,3 +1355,67 @@ def trace_basic_plan(
         per_ray=False,
         newton=False,
     )
+
+
+@njit(error_model="numpy", nogil=True, cache=True)
+def _propagate_past_last_surface(
+    first: int,
+    last: int,
+    position: tuple,
+    direction: tuple,
+    t: float,
+    absorb_row: int,
+    alpha_row: int,
+    alpha: float,
+    ray_values: np.ndarray,
+    exponents: np.ndarray,
+) -> None:
+    """``HomogeneousPropagation.propagate(rays, t)`` for the rays first to last - 1.
+
+    The final step of a plan. It runs after the kernel on the same range of
+    rays and moves each ray by t along its direction, in place in the arrays
+    that the kernel wrote. In an absorbing medium, row
+    ``absorb_row`` of ``exponents`` receives the exponent -alpha * t * 1e3 of
+    each ray, as for the media before the surfaces. alpha is in 1/um and t
+    in mm, so the factor 1e3 converts t to um. The intensity pass applies
+    the exponents after the kernel.
+
+    ``HomogeneousPropagation.propagate`` also normalizes the directions of
+    rays that are not normalized. The plan takes only normalized rays, so
+    this step leaves that out.
+
+    This is a separate function, not a last step of the loop nest. Adding
+    this step to the kernel, after its loop over the surfaces, made the
+    sphere trace about 4 percent slower.
+
+    Args:
+        first: The first ray, as for the kernel.
+        last: The end of the range of rays: the step moves the rays first to
+            last - 1.
+        position: The arrays of x, y and z of all rays. Changed in place.
+        direction: The arrays of L, M and N of all rays.
+        t: The distance, the thickness of the last surface (mm).
+        absorb_row: The row of ``exponents`` of the medium after the last
+            surface, or NO_ROW if it does not absorb.
+        alpha_row: The row of ``ray_values`` with the alpha of each ray, or
+            NO_ROW if all rays have the same alpha.
+        alpha: The alpha of all rays (1/um), when ``alpha_row`` is NO_ROW.
+        ray_values: The values that differ from ray to ray, one row each.
+        exponents: One row per absorbing medium.
+    """
+    x, y, z = position
+    L, M, N = direction
+    for j in range(first, last):
+        x[j] = x[j] + t * L[j]
+        y[j] = y[j] + t * M[j]
+        z[j] = z[j] + t * N[j]
+    if absorb_row != NO_ROW:
+        row = exponents[absorb_row]
+        if alpha_row == NO_ROW:
+            exponent = -alpha * t * 1e3
+            for j in range(first, last):
+                row[j] = exponent
+        else:
+            alphas = ray_values[alpha_row]
+            for j in range(first, last):
+                row[j] = -alphas[j] * t * 1e3
