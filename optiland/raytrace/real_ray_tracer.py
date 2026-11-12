@@ -20,13 +20,15 @@ from optiland.raytrace import _resume
 from optiland.raytrace.base import BaseRayTracer
 from optiland.raytrace.partial_trace import partial_trace_start
 from optiland.raytrace.snapshot import TraceSnapshot, capture_rays
+from optiland.surfaces import _trace_plan
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from optiland._types import DistributionType
     from optiland.distribution import BaseDistribution
     from optiland.rays import RealRays
+    from optiland.surfaces import Surface
 
 T = TypeVar("T")
 
@@ -305,12 +307,14 @@ class RealRayTracer(BaseRayTracer):
         """Resume a snapshot trace at surface ``k``.
 
         Private. Starts from the ray state stored before
-        surface ``k`` and traces surfaces ``k`` to the image, writing their
-        surface data exactly as a full trace would. Surfaces before ``k`` keep
-        their recorded data. The result equals a full trace only when nothing
-        before surface ``k`` changed since the snapshot was taken, which
-        :meth:`partial_trace_start` decides. The snapshot is not modified, so
-        it can be resumed any number of times.
+        surface ``k``, traces surfaces ``k`` to the last surface and
+        propagates the rays past it, writing the surface data exactly as a
+        full trace would. Surfaces before ``k`` keep their recorded data.
+        With NumPy, the compiled trace plan does this if it can (see
+        :meth:`_resume_with_plan`). The result equals a full trace only when
+        nothing before surface ``k`` changed since the snapshot was taken,
+        which :meth:`partial_trace_start` decides. The snapshot is not
+        modified, so it can be resumed any number of times.
 
         Args:
             k: The surface index to resume at.
@@ -339,12 +343,41 @@ class RealRayTracer(BaseRayTracer):
 
         with be.no_grad_unless_enabled():
             rays = snapshot.state_before(k)
-            for surface in surfaces[k:]:
-                surface.trace(rays, record=record)
+            if not self._resume_with_plan(rays, surfaces[k:], record):
+                for surface in surfaces[k:]:
+                    surface.trace(rays, record=record)
 
-            self._propagate_to_image(rays)
+                self._propagate_to_image(rays)
 
         return rays
+
+    def _resume_with_plan(
+        self, rays: RealRays, surfaces: Sequence[Surface], record: bool
+    ) -> bool:
+        """Trace ``surfaces`` with the plan, then propagate past the last surface.
+
+        The compiled trace plan gives the rays and the records of the loop in
+        :meth:`_trace_from` followed by :meth:`_propagate_to_image`, bit for
+        bit, apart from the sign bit of NaN. This calls ``trace_with_plan``
+        and not ``SurfaceGroup.trace(rays, skip=k)``: that call resets the
+        records of the surfaces before ``k``, and a resume must keep them.
+
+        Args:
+            rays: The rays before the first of ``surfaces``. Changed in place.
+            surfaces: The surfaces from the resume index to the last surface.
+            record: Whether to store the ray state on each surface.
+
+        Returns:
+            True if the plan traced the rays. False if the caller must run
+            the loop. ``rays`` are then unchanged; the records of
+            ``surfaces`` can be released, and the loop resets them.
+        """
+        final = _trace_plan.FinalPropagation.after(surfaces[-1])
+        # Looked up at each call, so that tests can replace trace_with_plan.
+        if not _trace_plan.trace_with_plan(surfaces, rays, record, final):
+            return False
+        final.finish(rays)
+        return True
 
     def _propagate_to_image(self, rays: RealRays) -> None:
         """Propagate rays by the thickness after the last surface.
