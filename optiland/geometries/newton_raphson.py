@@ -492,13 +492,18 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
         meaningful) the worst residual, without dumping arrays.
         """
 
-        def _count(mask) -> int:
-            return int(be.to_numpy(be.sum(mask)))
-
-        n_nonfinite = _count(state.nonfinite)
-        n_nonconverged = _count(state.nonconverged)
-        n_nz = _count(state.nz_singular)
-        n_tangent = _count(state.near_singular)
+        # One device-to-host copy for the four counts, not four: on a CUDA
+        # device, each copy waits until the device has done all queued work.
+        # Only the Torch path calls this method. torch.stack keeps the int64
+        # counts exact; be.stack would cast them to the float precision.
+        masks = (
+            state.nonfinite,
+            state.nonconverged,
+            state.nz_singular,
+            state.near_singular,
+        )
+        counts = torch.stack([mask.sum() for mask in masks]).tolist()
+        n_nonfinite, n_nonconverged, n_nz, n_tangent = counts
         n_rejected = n_nonfinite + n_nonconverged + n_nz + n_tangent
         if n_rejected == 0:
             return

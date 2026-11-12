@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from optiland import _trace_probe
 from optiland import backend as be
+from optiland._host_values import absorbs
 from optiland.propagation.base import BasePropagationModel
 
 if TYPE_CHECKING:
@@ -47,7 +48,9 @@ class HomogeneousPropagation(BasePropagationModel):
 
         # Only apply attenuation if there is a non-zero extinction coefficient.
         # This decision is taken for all rays of the call, so report it.
-        absorbing = bool(be.any(k > 0))
+        absorbing = absorbs(k)  # the host copy in a CUDA trace
+        if absorbing is None:
+            absorbing = bool(be.any(k > 0))
         _trace_probe.note_decision("absorption", absorbing)
         if absorbing:
             # The absorption coefficient alpha is given by 4 * pi * k / lambda
