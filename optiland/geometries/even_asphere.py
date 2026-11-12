@@ -123,6 +123,8 @@ class EvenAsphere(NewtonRaphsonGeometry):
             be.ndarray or float: The sag value(s) at the given coordinates.
 
         """
+        # The compiled trace plan repeats these expressions (_asphere_sag in
+        # optiland/backend/numpy_backend/_trace_kernel.py). Change both.
         r2 = x**2 + y**2
         z = r2 / (self.radius * (1 + be.sqrt(1 - (1 + self.k) * r2 / self.radius**2)))
         # Use the length: the coefficients can also be an array or a tensor.
@@ -149,6 +151,9 @@ class EvenAsphere(NewtonRaphsonGeometry):
             components (nx, ny, nz).
 
         """
+        # The compiled trace plan repeats these expressions (_asphere_slopes
+        # and _unit_normal in optiland/backend/numpy_backend/_trace_kernel.py).
+        # Change both.
         r2 = x**2 + y**2
 
         denom = self.radius * be.sqrt(1 - (1 + self.k) * r2 / self.radius**2)
