@@ -70,10 +70,19 @@ Overview
      - ``optiland/surfaces/_chunked_trace.py`` and
        ``optiland/_trace_probe.py``
      - NumPy traces of 131072 rays or more, in parts of 65536 rays, for the
-       types of ``_allowed_types``
+       types of ``_allowed_types``, outside the domain of the compiled trace
+       plan
      - Spy on ``optiland.surfaces._chunked_trace.trace_in_parts`` (see
        below). It runs on Windows only (``_ENABLED``). Set ``_MIN_RAYS``
        above the bundle size to switch it off.
+   * - Compiled trace plan
+     - ``optiland/surfaces/_trace_plan.py`` and
+       ``optiland/backend/numpy_backend/_trace_kernel.py``
+     - ``SurfaceGroup.trace`` of real rays with the NumPy backend, in the
+       domain listed below
+     - Spy on ``optiland.surfaces._trace_plan.trace_with_plan`` (see
+       below). Set its private switch ``_ENABLED`` to False to switch it
+       off.
 
 Evaluation epoch of a direct trace
 ----------------------------------
@@ -156,9 +165,11 @@ faster than the whole bundle. So ``trace_in_parts`` runs only on Windows
 tests set ``_ENABLED`` to True, so that they test the parts on each
 platform.
 
-The reference is the loop over the surfaces in
-``SurfaceGroup._trace_surfaces``. It runs on the other backends and each
-time ``trace_in_parts`` returns False. The domain is in ``_allowed_types``:
+``SurfaceGroup._trace_surfaces`` calls ``trace_in_parts`` when the compiled
+trace plan (see below) returns False. The reference is the loop over the
+surfaces in ``SurfaceGroup._trace_surfaces``. It runs on the other backends
+and each time ``trace_in_parts`` returns False. The domain is in
+``_allowed_types``:
 
 - the NumPy backend, and rays of exactly the type ``RealRays`` whose arrays
   are 1-D float64 arrays of one length;
@@ -211,6 +222,180 @@ The tests in ``tests/test_chunked_trace.py`` set ``_CHUNK_SIZE`` and
 ``_MIN_RAYS`` to small values, so that small bundles are traced in many
 parts. They have one system for each allowed type.
 
+The compiled trace plan
+-----------------------
+
+The generic trace runs each step of each surface as NumPy operations on the
+whole bundle. For a small bundle, the Python work of the steps costs more
+than the arithmetic. For a large bundle, each step reads and writes arrays
+of the bundle size. ``SurfaceGroup._trace_surfaces`` therefore first calls
+``trace_with_plan`` (``optiland/surfaces/_trace_plan.py``). In its domain,
+one compiled kernel (``optiland/backend/numpy_backend/_trace_kernel.py``)
+traces the rays through all surfaces, so the Python cost is paid once per
+trace.
+
+At each trace, ``trace_with_plan`` reads the live objects and builds a plan:
+two small tables with one row per surface, an integer table (the kind of
+each step) and a float table (the values of each step). The build reads a
+few attributes per surface, so it costs little compared with the NumPy
+operations of the generic trace. No plan is kept between traces, so a
+change to a surface, a material or a coordinate system applies at the next
+trace. If one object is outside the domain, the build stops, nothing
+changes, and the trace in parts or the generic loop runs.
+
+A trace with a plan has three steps:
+
+1. The kernel ``trace_plan`` traces the rays in blocks of 256 rays. For
+   each block, each surface runs short loops over the rays of the block,
+   one function per step of the generic trace. These loops vectorize, and
+   the buffers of a block stay in the L1 or L2 cache while the block goes
+   through all surfaces.
+2. Only if a medium absorbs: the kernel writes the exponent
+   ``-alpha * t * 1e3`` of each ray in each absorbing medium, and a NumPy
+   pass then computes the intensity from the input intensity with
+   ``numpy.exp`` and the expression of ``RealRays.attenuate``, in the order
+   of the generic trace, in parts of 65536 rays. A ray without power keeps
+   ``i = 0``, also when a later miss gives a factor that is not finite.
+3. The new arrays go to the rays, and the records go to the surfaces.
+
+The first trace compiles the kernel, which takes some seconds. Numba keeps
+the compiled code in its cache on disk, so later processes load it in a
+fraction of a second.
+
+Domain
+~~~~~~
+
+Each limit has its reason:
+
+- The NumPy backend: the kernel works on NumPy arrays, and Torch needs the
+  generic trace for its gradients. The precision float64
+  (``be.set_precision``): the generic trace converts the translations with
+  ``be.array`` to the backend precision. Numba with its JIT compiler: with
+  ``NUMBA_DISABLE_JIT=1``, the kernel would run as Python code.
+- Rays of exactly the type ``RealRays``: other ray types, for example
+  ``PolarizedRays``, have other steps. The arrays ``x``, ``y``, ``z``,
+  ``L``, ``M``, ``N``, ``i``, ``opd`` and ``w`` are 1-D float64
+  ``np.ndarray`` (exact type) of one length, with at least one ray: the
+  kernel reads float64 arrays, and the bit-identity argument is made for
+  float64. ``is_normalized`` is True: otherwise
+  ``HomogeneousPropagation`` normalizes the directions after each
+  propagation.
+- At least one surface: an empty list gives no tables.
+- Surfaces of exactly the types ``Surface``, ``ImageSurface`` and
+  ``ObjectSurface``: no subclass, because it can override a step.
+- Geometries of exactly the types ``StandardGeometry`` and ``Plane``: each
+  other geometry has its own distance and normal. The radius and the conic
+  constant are 0-d float64 arrays: NumPy squares a 0-d array as ``R * R``,
+  and the builder does the same. A NumPy scalar would be squared with
+  ``pow``.
+- A ``CoordinateSystem`` (exact type) without a reference coordinate system,
+  with 0-d float64 coordinates: a reference frame adds transforms.
+- No rotation, no mirror and no aperture: the kernel has no step for them.
+- A ``RefractiveReflectiveModel`` (exact type) whose ``parent_surface`` is
+  the surface: a shared model takes the geometry and the media of another
+  surface. No coating and no BSDF: per-ray NumPy code changes the
+  intensity, the polarization or the direction.
+- ``HomogeneousPropagation`` (exact type) in the media before and after
+  each surface: no GRIN, because the index changes along the path. The
+  index at the surface is then ``material.n(w)``, the ``boundary_index`` of
+  ``BasePropagationModel``.
+- One refractive index and one absorption coefficient
+  ``alpha = 4 * pi * k / lambda`` per medium: the kernel takes one value per
+  surface. ``n(w)`` and ``k(w)`` are float64 values: a Python float, a NumPy
+  float64, a 0-d array, or a 1-D array of length 1 or of the ray count with
+  one value. A bundle of several wavelengths in a dispersive glass is
+  outside this domain.
+
+The types of the materials are not checked. As for the traces in parts, a
+material must compute the value of a ray from that ray alone, and give the
+same value at each call during a trace: the plan evaluates each material
+once per trace. If a material raises an error, the plan returns False, and
+the generic trace raises the error.
+
+Tables and records
+~~~~~~~~~~~~~~~~~~
+
+The docstring of ``_trace_kernel.py`` has the one table of the columns:
+their meaning, unit, the steps that read them and their default. The
+builder starts each row from the defaults, and ``NO_ROW = -1`` is the
+default of each column that names a row of another table. New columns go at
+the end, so a column keeps its number.
+
+``trace_with_plan`` owns the records of the surfaces that it traces. Before
+the kernel runs, it replaces the records of the previous trace with one
+read-only empty array, so a large trace does not hold two sets of records.
+Then it sets the records as the generic trace does: with ``record=True``,
+``x``, ``y``, ``z``, ``L``, ``M``, ``N``, ``intensity`` and ``opd`` get the
+ray state after the surface, and ``u`` and ``aoi`` an empty array. Each
+record is a row of one array per name, so a record keeps that array alive.
+With ``record=False``, it calls ``Surface.reset``. When it returns False,
+the records are unchanged, and ``SurfaceGroup._trace_surfaces`` resets
+them. The surfaces before ``skip`` are reset before the plan.
+
+The scalar rule
+~~~~~~~~~~~~~~~
+
+The builder computes each value of a surface in Python with the expression
+of the generic code, so the kernel gets the same value. Examples are
+``1 + k``, ``R**2``, the ratio ``u = n1 / n2`` of the refractive indices
+and ``u**2``, and the absorption coefficient. Python floats give the same
+bits as NumPy float64 for ``+ - * /``: each is one correctly rounded IEEE
+754 operation. ``x**2`` is different. NumPy computes ``x**2`` as ``x * x``
+only for an array (also a 0-d array). For a NumPy or Python scalar, NumPy
+and Python call the C function ``pow``, which does not promise the rounding
+of ``x * x``. For example, with the C library of Windows, ``pow(u, 2)`` and
+``u * u`` differ in the last bit for about one value in 2000 (``u`` from 0.5
+to 2). In ``RealRays.refract``, ``u`` is an array if one index is an array,
+and a scalar if both indices are scalars, for example the ``numpy.float64``
+that ``IdealMaterial`` returns for one ray. The builder repeats the case
+(``_index_ratio``).
+
+Rules for compiled code
+~~~~~~~~~~~~~~~~~~~~~~~
+
+- Repeat the NumPy expression in the same order (see the equivalence rule).
+- Do not use ``fastmath``. It lets LLVM change the order of the operations
+  and fuse a multiplication and an addition.
+- Use ``error_model="numpy"``, so that a division by zero gives inf or NaN,
+  as in NumPy.
+- Do not compute ``exp``, ``sin``, ``cos`` or ``tan`` in the kernel when
+  the generic code computes them with NumPy: two implementations can
+  differ in the last bit. Compute them with NumPy before or after the
+  kernel, as the intensity pass does with ``numpy.exp``. ``sqrt`` is
+  correctly rounded in both, so the kernel computes it.
+- Write each step as a function that Numba inlines into ``trace_plan``
+  (``inline="always"``). A function that calls an inline overload, such as
+  the conic arithmetic of ``optiland/backend/numpy_backend/conic.py``,
+  stays a separate compiled function: after Numba inlines an overload, it
+  removes code that it finds dead, and in ``trace_plan`` (Numba 0.65) it
+  removed stores into the block buffers.
+
+A NaN of the plan is at the same position as in the generic trace, but its
+sign bit can differ. One cause: when both operands of an addition or a
+multiplication are NaN, x86 returns the first one, and LLVM can swap the
+operands of these operations. A NaN marks a ray that missed a surface, and
+only its position matters. The tests of the plan pass
+``ignore_nan_sign=True`` for this reason.
+
+Add a step to the plan
+~~~~~~~~~~~~~~~~~~~~~~
+
+1. In ``_trace_plan.py``, accept the new type in ``_types()`` with an exact
+   type check, and fill its columns in a ``_*_columns`` method of
+   ``_Builder``. Return False for each value that the kernel cannot take.
+2. In ``_trace_kernel.py``, add the step kind or the columns at the end of
+   the tables, with their rows in the layout table of the docstring, and
+   add the step as a function with the expressions of the generic code.
+3. Extend the domain list on this page. The module docstring of
+   ``_trace_plan.py`` refers to it.
+4. Add a system with the new step to ``SYSTEMS`` in
+   ``tests/test_trace_plan.py``. The tests compare the plan with the
+   generic trace, bit for bit, for many ray counts, with and without
+   records. Add a test for each new fallback.
+5. Run the performance gate (see below). A change to ``trace_plan`` can
+   change how LLVM vectorizes the loops, also for systems that do not use
+   the new step.
+
 How to verify a fast path
 -------------------------
 
@@ -228,10 +413,13 @@ How to verify a fast path
 Check which path a trace takes
 ------------------------------
 
-``SurfaceGroup._trace_surfaces`` looks up ``trace_in_parts`` in its module
-at each trace. A spy on the module attribute
-``optiland.surfaces._chunked_trace.trace_in_parts`` therefore shows whether
-a trace ran in parts of 65536 rays:
+``SurfaceGroup._trace_surfaces`` first calls ``trace_with_plan`` (the
+compiled trace plan) and, if it returns False, ``trace_in_parts``. It looks
+up both functions in their modules at each trace, so a spy on a module
+attribute shows which path traced the rays. This spy on
+``optiland.surfaces._chunked_trace.trace_in_parts`` shows whether a trace
+ran in parts of 65536 rays. The Fresnel coatings put the system outside the
+domain of the compiled trace plan:
 
 .. code:: python
 
@@ -257,13 +445,22 @@ a trace ran in parts of 65536 rays:
            np.zeros(n), np.linspace(-2.0, 2.0, n), np.zeros(n),
            np.zeros(n), np.zeros(n), np.ones(n), np.ones(n), np.full(n, 0.55),
        )
-       CookeTriplet().surfaces.trace(rays)
+       optic = CookeTriplet()
+       optic.surfaces.set_fresnel_coatings()
+       optic.surfaces.trace(rays)
    finally:
        chunked.trace_in_parts = original
    print(results)  # [True] on Windows: the trace ran in parts of 65536 rays
 
-``False`` means that the generic loop traced the whole bundle. In a test,
-use ``monkeypatch.setattr(chunked, "trace_in_parts", spy)`` instead.
+``False`` means that the generic loop traced the whole bundle. A spy on
+``optiland.surfaces._trace_plan.trace_with_plan`` works in the same way: it
+gives ``[True]`` for the Cooke triplet without coatings, and ``[False]``
+with them. Compare a system with the domain of the plan to find the limit
+that it breaks. With ``NUMBA_DISABLE_JIT=1``, the plan always gives
+``False``. In a test, replace the module attribute with ``monkeypatch``
+instead, for example
+``monkeypatch.setattr(trace_plan, "trace_with_plan", spy)``, and switch the
+plan off with ``monkeypatch.setattr(trace_plan, "_ENABLED", False)``.
 
 Measuring performance
 ---------------------
