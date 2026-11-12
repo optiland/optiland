@@ -25,14 +25,19 @@ Table layout
 ``ints`` (int64) and ``floats`` (float64) have one row per surface. The
 builder starts each row from the defaults, so a column that the steps of a
 row do not read holds its default. In the column "Valid when", "traced"
-means that KIND is not OBJECT, and "absorbs" that the medium before the
-surface absorbs (ABSORB_ROW is a row of ``exponents``).
+means that KIND is not OBJECT, "absorbs" that the medium before the surface
+absorbs (ABSORB_ROW is a row of ``exponents``), "refracts" that REFLECT is
+0, and "aperture" that APERTURE is not NO_APERTURE.
 
 ======================  ============================  ====  ===========  ===========
 Column of ``ints``      Meaning                       Unit  Valid when   Default
 ======================  ============================  ====  ===========  ===========
 KIND                    OBJECT, PLANE, CONIC or FLAT  -     always       OBJECT
 ABSORB_ROW              row of ``exponents``          -     absorbs      NO_ROW
+ROTATE                  ROTATE_X, _Y and _Z flags     -     traced       0
+APERTURE                RADIAL or OFFSET_RADIAL       -     traced       NO_APERTURE
+REFLECT                 1 for a mirror                -     traced       0
+CLIP_ROW                row of ``clipped``            -     aperture     NO_ROW
 ======================  ============================  ====  ===========  ===========
 
 ======================  ============================  ====  ===========  ===========
@@ -44,14 +49,25 @@ RADIUS                  radius of curvature R         mm    CONIC, FLAT  0.0
 CONIC_K                 conic constant k              -     CONIC        0.0
 ONE_PLUS_K              1 + k                         -     CONIC, FLAT  0.0
 RADIUS_SQUARED          R * R                         mm2   CONIC, FLAT  0.0
-INDEX_RATIO             u = n1 / n2                   -     traced       0.0
-INDEX_RATIO_SQUARED     u**2 (see the builder)        -     traced       0.0
+INDEX_RATIO             u = n1 / n2                   -     refracts     0.0
+INDEX_RATIO_SQUARED     u**2 (see the builder)        -     refracts     0.0
 OPD_INDEX               n before the surface          -     traced       0.0
 ALPHA                   4 * pi * k / wavelength       1/um  absorbs      0.0
+COS_X_IN, SIN_X_IN      cos, sin of -rx (localize)    -     ROTATE_X     0.0
+COS_Y_IN, SIN_Y_IN      cos, sin of -ry               -     ROTATE_Y     0.0
+COS_Z_IN, SIN_Z_IN      cos, sin of -rz               -     ROTATE_Z     0.0
+COS_X_OUT, SIN_X_OUT    cos, sin of rx (globalize)    -     ROTATE_X     0.0
+COS_Y_OUT, SIN_Y_OUT    cos, sin of ry                -     ROTATE_Y     0.0
+COS_Z_OUT, SIN_Z_OUT    cos, sin of rz                -     ROTATE_Z     0.0
+R_MAX_SQUARED           r_max**2 of the aperture      mm2   aperture     0.0
+R_MIN_SQUARED           r_min**2 of the aperture      mm2   aperture     0.0
+OFFSET_X, OFFSET_Y      offset of the aperture        mm    aperture     0.0
 ======================  ============================  ====  ===========  ===========
 
 x, y, z, rx, ry and rz are the values of the ``CoordinateSystem`` of the
 surface. n1 and n2 are the refractive indices before and after the surface.
+``clipped`` has one row per aperture: the mask of the rays that the aperture
+clips, for the intensity pass of a system that absorbs.
 
 Manuel Fragata Mendes, 2026
 """
@@ -86,17 +102,34 @@ PLANE = 1  # Plane
 CONIC = 2  # StandardGeometry with a finite radius
 FLAT = 3  # StandardGeometry with an infinite radius
 
+# Flags of the rotations (column ROTATE).
+ROTATE_X, ROTATE_Y, ROTATE_Z = 1, 2, 4
+
+# Aperture kinds (column APERTURE).
+NO_APERTURE = 0
+RADIAL = 1  # RadialAperture
+OFFSET_RADIAL = 2  # OffsetRadialAperture
+
 # Columns of ``ints``.
 KIND = 0
 ABSORB_ROW = 1
-INT_COLUMNS = 2
+ROTATE = 2
+APERTURE = 3
+REFLECT = 4
+CLIP_ROW = 5
+INT_COLUMNS = 6
 
 # Columns of ``floats``.
 TX_IN, TY_IN, TZ_IN = 0, 1, 2
 TX_OUT, TY_OUT, TZ_OUT = 3, 4, 5
 RADIUS, CONIC_K, ONE_PLUS_K, RADIUS_SQUARED = 6, 7, 8, 9
 INDEX_RATIO, INDEX_RATIO_SQUARED, OPD_INDEX, ALPHA = 10, 11, 12, 13
-FLOAT_COLUMNS = 14
+# The IN columns hold cos and sin of the negated angle, as localize computes
+# them. Do not derive them from the OUT columns.
+COS_X_IN, SIN_X_IN, COS_Y_IN, SIN_Y_IN, COS_Z_IN, SIN_Z_IN = range(14, 20)
+COS_X_OUT, SIN_X_OUT, COS_Y_OUT, SIN_Y_OUT, COS_Z_OUT, SIN_Z_OUT = range(20, 26)
+R_MAX_SQUARED, R_MIN_SQUARED, OFFSET_X, OFFSET_Y = 26, 27, 28, 29
+FLOAT_COLUMNS = 30
 
 _N_MIN = 1e-14  # N_safe of _conic_intersection_distance
 
@@ -187,6 +220,73 @@ def _translate(position: tuple, dx: float, dy: float, dz: float, m: int) -> None
 
 
 @njit(inline="always", error_model="numpy", cache=True)
+def _rotate_x(position: tuple, direction: tuple, c: float, s: float, m: int) -> None:
+    """``RealRays.rotate_x`` with c = cos(rx) and s = sin(rx)."""
+    _, by, bz = position
+    _, bM, bN = direction
+    for j in range(m):
+        yj, zj, Mj, Nj = by[j], bz[j], bM[j], bN[j]
+        by[j] = yj * c - zj * s
+        bz[j] = yj * s + zj * c
+        bM[j] = Mj * c - Nj * s
+        bN[j] = Mj * s + Nj * c
+
+
+@njit(inline="always", error_model="numpy", cache=True)
+def _rotate_y(position: tuple, direction: tuple, c: float, s: float, m: int) -> None:
+    """``RealRays.rotate_y`` with c = cos(ry) and s = sin(ry)."""
+    bx, _, bz = position
+    bL, _, bN = direction
+    for j in range(m):
+        xj, zj, Lj, Nj = bx[j], bz[j], bL[j], bN[j]
+        bx[j] = xj * c + zj * s
+        bz[j] = -xj * s + zj * c
+        bL[j] = Lj * c + Nj * s
+        bN[j] = -Lj * s + Nj * c
+
+
+@njit(inline="always", error_model="numpy", cache=True)
+def _rotate_z(position: tuple, direction: tuple, c: float, s: float, m: int) -> None:
+    """``RealRays.rotate_z`` with c = cos(rz) and s = sin(rz)."""
+    bx, by, _ = position
+    bL, bM, _ = direction
+    for j in range(m):
+        xj, yj, Lj, Mj = bx[j], by[j], bL[j], bM[j]
+        bx[j] = xj * c - yj * s
+        by[j] = xj * s + yj * c
+        bL[j] = Lj * c - Mj * s
+        bM[j] = Lj * s + Mj * c
+
+
+@njit(inline="always", error_model="numpy", cache=True)
+def _localize(
+    position: tuple, direction: tuple, row: np.ndarray, rotate: int, m: int
+) -> None:
+    """``CoordinateSystem.localize``: translate, then rotate about z, y, x."""
+    _translate(position, row[TX_IN], row[TY_IN], row[TZ_IN], m)
+    if rotate & ROTATE_Z:
+        _rotate_z(position, direction, row[COS_Z_IN], row[SIN_Z_IN], m)
+    if rotate & ROTATE_Y:
+        _rotate_y(position, direction, row[COS_Y_IN], row[SIN_Y_IN], m)
+    if rotate & ROTATE_X:
+        _rotate_x(position, direction, row[COS_X_IN], row[SIN_X_IN], m)
+
+
+@njit(inline="always", error_model="numpy", cache=True)
+def _globalize(
+    position: tuple, direction: tuple, row: np.ndarray, rotate: int, m: int
+) -> None:
+    """``CoordinateSystem.globalize``: rotate about x, y, z, then translate."""
+    if rotate & ROTATE_X:
+        _rotate_x(position, direction, row[COS_X_OUT], row[SIN_X_OUT], m)
+    if rotate & ROTATE_Y:
+        _rotate_y(position, direction, row[COS_Y_OUT], row[SIN_Y_OUT], m)
+    if rotate & ROTATE_Z:
+        _rotate_z(position, direction, row[COS_Z_OUT], row[SIN_Z_OUT], m)
+    _translate(position, row[TX_OUT], row[TY_OUT], row[TZ_OUT], m)
+
+
+@njit(inline="always", error_model="numpy", cache=True)
 def _plane_distance(
     position: tuple, direction: tuple, distance: np.ndarray, m: int
 ) -> None:
@@ -207,6 +307,18 @@ def _flat_distance(
     for j in range(m):
         Nj = bN[j]
         distance[j] = -bz[j] / (Nj if abs(Nj) > _N_MIN else _N_MIN)
+
+
+@njit(inline="always", error_model="numpy", cache=True)
+def _contains(aperture: int, row: np.ndarray, px: float, py: float) -> bool:
+    """``RadialAperture.contains`` or ``OffsetRadialAperture.contains``."""
+    if aperture == RADIAL:
+        radius2 = px * px + py * py
+    else:
+        dx = px - row[OFFSET_X]
+        dy = py - row[OFFSET_Y]
+        radius2 = dx * dx + dy * dy
+    return (radius2 <= row[R_MAX_SQUARED]) & (radius2 >= row[R_MIN_SQUARED])
 
 
 @njit(inline="always", error_model="numpy", cache=True)
@@ -260,6 +372,31 @@ def _conic_distance(
         )
 
 
+@njit(error_model="numpy", cache=True)
+def _conic_distance_in_aperture(
+    position: tuple,
+    direction: tuple,
+    distance: np.ndarray,
+    row: np.ndarray,
+    aperture: int,
+    m: int,
+) -> None:
+    """``be.conic_intersection`` that prefers a root inside the aperture."""
+    bx, by, bz = position
+    bL, bM, bN = direction
+    for j in range(m):
+        xj, yj, Lj, Mj = bx[j], by[j], bL[j], bM[j]
+        roots = _roots(xj, yj, bz[j], Lj, Mj, bN[j], row)
+        # Repeats _select_distance for one ray. Change both together.
+        t1, t2 = roots.first, roots.second
+        in1 = _contains(aperture, row, xj + t1 * Lj, yj + t1 * Mj)
+        in2 = _contains(aperture, row, xj + t2 * Lj, yj + t2 * Mj)
+        prefer1 = roots.first_valid & in1
+        prefer2 = roots.second_valid & in2
+        pick2 = prefer2 | (False if prefer1 else roots.pick_second)
+        distance[j] = (t2 if pick2 else t1) if roots.solvable else math.nan
+
+
 @njit(inline="always", error_model="numpy", cache=True)
 def _propagate(position: tuple, direction: tuple, distance: np.ndarray, m: int) -> None:
     """``HomogeneousPropagation.propagate``: move each ray by t along its path."""
@@ -294,6 +431,26 @@ def _add_optical_path(
     index = row[OPD_INDEX]
     for j in range(m):
         opd[j] = opd[j] + distance[j] * index
+
+
+@njit(inline="always", error_model="numpy", cache=True)
+def _clip(
+    position: tuple,
+    intensity: np.ndarray,
+    clipped: np.ndarray,
+    row: np.ndarray,
+    aperture: int,
+    m: int,
+) -> None:
+    """``BaseAperture.clip``: zero intensity for the rays outside the aperture.
+
+    ``clipped`` (a row of the clip table) receives the mask of these rays.
+    """
+    bx, by, _ = position
+    for j in range(m):
+        outside = not _contains(aperture, row, bx[j], by[j])
+        clipped[j] = outside
+        intensity[j] = 0.0 if outside else intensity[j]
 
 
 @njit(inline="always", error_model="numpy", cache=True)
@@ -354,6 +511,24 @@ def _refract(
 
 
 @njit(inline="always", error_model="numpy", cache=True)
+def _reflect(direction: tuple, incident: tuple, normal: tuple, m: int) -> None:
+    """``RealRays.reflect``.
+
+    The incident directions go to L0, M0 and N0, as in ``RealRays.reflect``.
+    """
+    bL, bM, bN = direction
+    bL0, bM0, bN0 = incident
+    bnx, bny, bnz = normal
+    for j in range(m):
+        L0, M0, N0 = bL[j], bM[j], bN[j]
+        bL0[j], bM0[j], bN0[j] = L0, M0, N0
+        nx, ny, nz, dot = _aligned_normal(L0, M0, N0, bnx[j], bny[j], bnz[j])
+        bL[j] = L0 - 2.0 * dot * nx
+        bM[j] = M0 - 2.0 * dot * ny
+        bN[j] = N0 - 2.0 * dot * nz
+
+
+@njit(inline="always", error_model="numpy", cache=True)
 def _store_records(state: tuple, records: tuple, s: int, start: int, m: int) -> None:
     """``Surface._record_real``: write row ``s`` of each record for a block."""
     stop = start + m
@@ -375,6 +550,7 @@ def trace_plan(
     ints: np.ndarray,
     floats: np.ndarray,
     exponents: np.ndarray,
+    clipped: np.ndarray,
     rays_out: tuple,
     records: tuple,
     record: bool,
@@ -382,7 +558,7 @@ def trace_plan(
     """Trace the rays through all surfaces of a plan.
 
     The input arrays are not changed. The intensity in ``rays_out`` and in
-    ``records`` does not include the absorption.
+    ``records`` includes the clips of the apertures, but not the absorption.
 
     Args:
         rays_in: x, y, z, L, M, N, i and opd of the rays: 1-D float64
@@ -392,9 +568,11 @@ def trace_plan(
         exponents: One row per absorbing medium. Row ABSORB_ROW of a surface
             receives the exponent -alpha * t * 1e3 of each ray in the medium
             before that surface.
+        clipped: One row per aperture. Row CLIP_ROW of a surface receives
+            True for each ray that its aperture clips.
         rays_out: Receive x, y, z, L, M, N, i and opd after the last surface,
             then L0, M0 and N0: the direction of each ray before the last
-            refraction, in the local frame of that surface.
+            refraction or reflection, in the local frame of that surface.
         records: x, y, z, L, M, N, intensity and opd, each with one row per
             surface. Row s receives the ray state after surface s.
         record: Whether to write ``records``.
@@ -416,15 +594,19 @@ def trace_plan(
             kind = ints[s, KIND]
             if kind != OBJECT:
                 row = floats[s]
-                # CoordinateSystem.localize.
-                _translate(position, row[TX_IN], row[TY_IN], row[TZ_IN], m)
+                rotate, aperture = ints[s, ROTATE], ints[s, APERTURE]
+                _localize(position, direction, row, rotate, m)
                 # The distance along each ray to the surface.
                 if kind == PLANE:
                     _plane_distance(position, direction, bdist, m)
                 elif kind == FLAT:
                     _flat_distance(position, direction, bdist, m)
-                else:
+                elif aperture == NO_APERTURE:
                     _conic_distance(position, direction, bdist, row, m)
+                else:
+                    _conic_distance_in_aperture(
+                        position, direction, bdist, row, aperture, m
+                    )
                 # HomogeneousPropagation: move, absorb, add the optical path.
                 _propagate(position, direction, bdist, m)
                 absorb_row = ints[s, ABSORB_ROW]
@@ -432,15 +614,21 @@ def trace_plan(
                     block_exponents = exponents[absorb_row, start : start + m]
                     _absorption_exponents(block_exponents, bdist, row, m)
                 _add_optical_path(bopd, bdist, row, m)
+                # BaseAperture.clip.
+                if aperture != NO_APERTURE:
+                    block_clipped = clipped[ints[s, CLIP_ROW], start : start + m]
+                    _clip(position, bi, block_clipped, row, aperture, m)
                 # The surface normal at each hit point.
                 if kind == PLANE:
                     _plane_normal(normal, m)
                 else:
                     _conic_normal(position, normal, row, m)
-                # RefractiveReflectiveModel.interact_real_rays: refract.
-                _refract(direction, incident, normal, row, m)
-                # CoordinateSystem.globalize.
-                _translate(position, row[TX_OUT], row[TY_OUT], row[TZ_OUT], m)
+                # RefractiveReflectiveModel.interact_real_rays.
+                if ints[s, REFLECT]:
+                    _reflect(direction, incident, normal, m)
+                else:
+                    _refract(direction, incident, normal, row, m)
+                _globalize(position, direction, row, rotate, m)
             if record:
                 _store_records(state, records, s, start, m)
         _store_block(state, rays_out, start, m)

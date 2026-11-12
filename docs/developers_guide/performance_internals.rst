@@ -251,11 +251,13 @@ A trace with a plan has three steps:
    the buffers of a block stay in the L1 or L2 cache while the block goes
    through all surfaces.
 2. Only if a medium absorbs: the kernel writes the exponent
-   ``-alpha * t * 1e3`` of each ray in each absorbing medium, and a NumPy
-   pass then computes the intensity from the input intensity with
-   ``numpy.exp`` and the expression of ``RealRays.attenuate``, in the order
-   of the generic trace, in parts of 65536 rays. A ray without power keeps
-   ``i = 0``, also when a later miss gives a factor that is not finite.
+   ``-alpha * t * 1e3`` of each ray in each absorbing medium and the clip
+   mask of each aperture, and a NumPy pass then computes the intensity from
+   the input intensity with ``numpy.exp`` and the expressions of
+   ``RealRays.attenuate`` and ``RealRays.clip``, in the order of the generic
+   trace, in parts of 65536 rays. A ray without power keeps ``i = 0``, also
+   when a later miss gives a factor that is not finite. Without absorption,
+   the kernel applies the clips to the intensity itself.
 3. The new arrays go to the rays, and the records go to the surfaces.
 
 The first trace compiles the kernel, which takes some seconds. Numba keeps
@@ -269,9 +271,10 @@ Each limit has its reason:
 
 - The NumPy backend: the kernel works on NumPy arrays, and Torch needs the
   generic trace for its gradients. The precision float64
-  (``be.set_precision``): the generic trace converts the translations with
-  ``be.array`` to the backend precision. Numba with its JIT compiler: with
-  ``NUMBA_DISABLE_JIT=1``, the kernel would run as Python code.
+  (``be.set_precision``): the generic trace converts the translations and
+  the rotation angles with ``be.array`` to the backend precision. Numba with
+  its JIT compiler: with ``NUMBA_DISABLE_JIT=1``, the kernel would run as
+  Python code.
 - Rays of exactly the type ``RealRays``: other ray types, for example
   ``PolarizedRays``, have other steps. The arrays ``x``, ``y``, ``z``,
   ``L``, ``M``, ``N``, ``i``, ``opd`` and ``w`` are 1-D float64
@@ -288,12 +291,17 @@ Each limit has its reason:
   constant are 0-d float64 arrays: NumPy squares a 0-d array as ``R * R``,
   and the builder does the same. A NumPy scalar would be squared with
   ``pow``.
-- A ``CoordinateSystem`` (exact type) without a reference coordinate system,
-  with 0-d float64 coordinates: a reference frame adds transforms.
-- No rotation, no mirror and no aperture: the kernel has no step for them.
-- A ``RefractiveReflectiveModel`` (exact type) whose ``parent_surface`` is
-  the surface: a shared model takes the geometry and the media of another
-  surface. No coating and no BSDF: per-ray NumPy code changes the
+- A ``CoordinateSystem`` (exact type) without a reference coordinate
+  system: a reference frame adds transforms. Its coordinates and angles are
+  0-d float64 arrays: the kernel takes one value per surface.
+- No aperture, or exactly a ``RadialAperture`` or an
+  ``OffsetRadialAperture``: each other aperture has its own ``contains``.
+  Its radii and offsets are numbers (Python int or float, NumPy float64, or
+  0-d float64 arrays): the builder computes ``r_max**2`` and ``r_min**2``
+  with the objects of the aperture, as ``contains`` does.
+- A ``RefractiveReflectiveModel`` (exact type, a refraction or a mirror)
+  whose ``parent_surface`` is the surface: a shared model takes the geometry
+  and the media of another surface. No coating and no BSDF: per-ray NumPy code changes the
   intensity, the polarization or the direction.
 - ``HomogeneousPropagation`` (exact type) in the media before and after
   each surface: no GRIN, because the index changes along the path. The
@@ -361,8 +369,9 @@ Rules for compiled code
 - Do not compute ``exp``, ``sin``, ``cos`` or ``tan`` in the kernel when
   the generic code computes them with NumPy: two implementations can
   differ in the last bit. Compute them with NumPy before or after the
-  kernel, as the intensity pass does with ``numpy.exp``. ``sqrt`` is
-  correctly rounded in both, so the kernel computes it.
+  kernel, as the intensity pass does with ``numpy.exp`` and the builder
+  with the cosines and sines of the rotations. ``sqrt`` is correctly
+  rounded in both, so the kernel computes it.
 - Write each step as a function that Numba inlines into ``trace_plan``
   (``inline="always"``). A function that calls an inline overload, such as
   the conic arithmetic of ``optiland/backend/numpy_backend/conic.py``,
