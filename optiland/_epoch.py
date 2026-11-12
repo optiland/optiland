@@ -10,7 +10,10 @@ and reused without recomputing state fingerprints.
 Rules:
     - Evaluators open epochs around a design evaluation, and
       ``RealRayTracer`` opens one around each trace call (reusing any outer
-      epoch). Library users never need to.
+      epoch). ``SurfaceGroup.trace`` opens one for more than 128 rays when
+      none is open. It passes no optics, so the ``OPTILAND_EPOCH_CHECK``
+      guard cannot see a change of the optic. Library users never need to
+      open an epoch.
     - Memo keys are ``(id(owner), qualname, key)``. Each entry holds strong
       references to the owner and to any keyed arrays, so their ids cannot be
       recycled while the epoch is alive.
