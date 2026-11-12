@@ -10,7 +10,8 @@ rays through all surfaces in one loop, so the Python cost is paid once per
 trace. No plan is kept between traces.
 
 The builder computes each per-surface scalar of the generic trace (for
-example 1 + k, R**2, u = n1/n2 and u**2, the absorption coefficient) with
+example the cosines and sines of rotations, 1 + k, R**2, the squared
+aperture radii, u = n1/n2 and u**2, the absorption coefficient) with
 the same IEEE 754 operations in the same order, so the kernel gets the same
 values. Python floats give the bits of NumPy float64 for + - * /. NumPy
 computes ``x**2`` as ``x * x`` only for an array, and calls the C function
@@ -65,9 +66,11 @@ _CLEARED = (*_RECORDED, "u", "aoi")
 _RELEASED = np.empty(0)
 _RELEASED.flags.writeable = False
 
-# A table without rows, for the records of a trace without records and the
-# exponents of a plan without absorption. The kernel never writes into it.
+# Tables without rows, for the records of a trace without records, the
+# exponents of a plan without absorption and the clip masks of a plan without
+# apertures. The kernel never writes into them.
 _NO_ROWS = np.empty((0, 1))
+_NO_CLIPS = np.empty((0, 1), dtype=np.bool_)
 
 # Rays per part of the intensity pass. Each NumPy operation of the pass makes
 # a new array. _chunked_trace uses parts of the same size (_CHUNK_SIZE) for
@@ -85,6 +88,8 @@ class _Types(NamedTuple):
     coordinate_system: type
     plane: type
     standard: type
+    radial: type
+    offset_radial: type
     interaction: type
     propagation: type
 
@@ -101,6 +106,7 @@ def _types() -> _Types:
     from optiland.interactions.refractive_reflective_model import (
         RefractiveReflectiveModel,
     )
+    from optiland.physical_apertures import OffsetRadialAperture, RadialAperture
     from optiland.propagation.homogeneous import HomogeneousPropagation
     from optiland.rays.real_rays import RealRays
     from optiland.surfaces.image_surface import ImageSurface
@@ -114,6 +120,8 @@ def _types() -> _Types:
         coordinate_system=CoordinateSystem,
         plane=Plane,
         standard=StandardGeometry,
+        radial=RadialAperture,
+        offset_radial=OffsetRadialAperture,
         interaction=RefractiveReflectiveModel,
         propagation=HomogeneousPropagation,
     )
@@ -141,12 +149,14 @@ class _Plan:
         moves_rays: False if all surfaces are object surfaces. The rays then
             keep their arrays.
         absorbing: The number of absorbing media: the rows of the exponents.
+        clips: The number of apertures: the rows of the clip masks.
     """
 
     ints: np.ndarray
     floats: np.ndarray
     moves_rays: bool
     absorbing: int
+    clips: int
 
 
 class _Form(NamedTuple):
@@ -192,6 +202,20 @@ def _float64_scalar(value: object) -> float | None:
     if type(value) is np.ndarray and value.ndim == 0 and value.dtype == np.float64:
         return float(value)
     return None
+
+
+def _number(value: object) -> float | None:
+    """Return a Python, NumPy or 0-d float64 number as a float, or None."""
+    if type(value) is int or type(value) is float or type(value) is np.float64:
+        return float(value)
+    return _float64_scalar(value)
+
+
+def _rotation(angle: float) -> tuple[float, float]:
+    """Return cos and sin of ``angle`` as ``RealRays.rotate_x`` computes them."""
+    # be.* calls repeat those of the generic trace.
+    value = be.array(angle)
+    return float(be.cos(value)), float(be.sin(value))
 
 
 def _index_ratio(n1: _Form, n2: _Form) -> tuple[float, float]:
@@ -277,6 +301,7 @@ class _Builder:
         self.float_rows: list[list[float]] = []
         self.moves_rays = False
         self.absorbing = 0
+        self.clips = 0
         self._indices: dict[int, tuple[object, _Form | None]] = {}
         self._extinctions: dict[int, tuple[object, _Form | None]] = {}
         # Rows with the defaults of the layout table. Python lists are faster
@@ -284,6 +309,8 @@ class _Builder:
         self._empty_ints = [0] * kernel.INT_COLUMNS
         self._empty_ints[kernel.KIND] = kernel.OBJECT
         self._empty_ints[kernel.ABSORB_ROW] = kernel.NO_ROW
+        self._empty_ints[kernel.APERTURE] = kernel.NO_APERTURE
+        self._empty_ints[kernel.CLIP_ROW] = kernel.NO_ROW
         self._empty_floats = [0.0] * kernel.FLOAT_COLUMNS
 
     def add(self, surface: Surface) -> bool:
@@ -293,11 +320,11 @@ class _Builder:
         if type(surface) is not self.types.object_surface:
             if not (
                 type(surface) in self.types.surfaces
-                and surface.aperture is None
-                and self._frame_columns(surface, floats)
+                and self._frame_columns(surface, ints, floats)
                 and self._geometry_columns(surface, ints, floats)
+                and self._aperture_columns(surface, ints, floats)
                 and self._medium_columns(surface, ints, floats)
-                and self._refraction_columns(surface, floats)
+                and self._interaction_columns(surface, ints, floats)
             ):
                 return False
             self.moves_rays = True
@@ -312,27 +339,44 @@ class _Builder:
             floats=np.array(self.float_rows, dtype=np.float64),
             moves_rays=self.moves_rays,
             absorbing=self.absorbing,
+            clips=self.clips,
         )
 
-    def _frame_columns(self, surface: Surface, floats: list[float]) -> bool:
-        """``CoordinateSystem.localize`` and ``globalize``: the translations."""
+    def _frame_columns(
+        self, surface: Surface, ints: list[int], floats: list[float]
+    ) -> bool:
+        """``CoordinateSystem.localize`` and ``globalize``.
+
+        CoordinateSystem skips the rotation by an angle of zero, and rotates
+        by any other angle, also by NaN.
+        """
         kernel, cs = self.kernel, surface.geometry.cs
         if type(cs) is not self.types.coordinate_system or cs.reference_cs is not None:
             return False
         x, y, z = _float64_scalar(cs.x), _float64_scalar(cs.y), _float64_scalar(cs.z)
-        angles = (
+        rx, ry, rz = (
             _float64_scalar(cs.rx),
             _float64_scalar(cs.ry),
             _float64_scalar(cs.rz),
         )
-        if None in (x, y, z, *angles):
-            return False
-        # No rotations in this domain. CoordinateSystem skips an angle of
-        # zero, and rotates by any other angle, also by NaN.
-        if any(angles):
+        if None in (x, y, z, rx, ry, rz):
             return False
         floats[kernel.TX_IN], floats[kernel.TY_IN], floats[kernel.TZ_IN] = -x, -y, -z
         floats[kernel.TX_OUT], floats[kernel.TY_OUT], floats[kernel.TZ_OUT] = x, y, z
+        rotate = 0
+        if rx:
+            rotate |= kernel.ROTATE_X
+            floats[kernel.COS_X_IN], floats[kernel.SIN_X_IN] = _rotation(-rx)
+            floats[kernel.COS_X_OUT], floats[kernel.SIN_X_OUT] = _rotation(rx)
+        if ry:
+            rotate |= kernel.ROTATE_Y
+            floats[kernel.COS_Y_IN], floats[kernel.SIN_Y_IN] = _rotation(-ry)
+            floats[kernel.COS_Y_OUT], floats[kernel.SIN_Y_OUT] = _rotation(ry)
+        if rz:
+            rotate |= kernel.ROTATE_Z
+            floats[kernel.COS_Z_IN], floats[kernel.SIN_Z_IN] = _rotation(-rz)
+            floats[kernel.COS_Z_OUT], floats[kernel.SIN_Z_OUT] = _rotation(rz)
+        ints[kernel.ROTATE] = rotate
         return True
 
     def _geometry_columns(
@@ -354,6 +398,32 @@ class _Builder:
         # computes R**2 of an array as R * R.
         floats[kernel.ONE_PLUS_K] = 1.0 + conic
         floats[kernel.RADIUS_SQUARED] = radius * radius
+        return True
+
+    def _aperture_columns(
+        self, surface: Surface, ints: list[int], floats: list[float]
+    ) -> bool:
+        """``BaseAperture.clip`` and the root preference of a radial aperture."""
+        kernel, aperture = self.kernel, surface.aperture
+        if aperture is None:
+            return True
+        if type(aperture) is self.types.radial:
+            ints[kernel.APERTURE] = kernel.RADIAL
+            offsets = (0.0, 0.0)
+        elif type(aperture) is self.types.offset_radial:
+            ints[kernel.APERTURE] = kernel.OFFSET_RADIAL
+            offsets = (_number(aperture.offset_x), _number(aperture.offset_y))
+        else:
+            return False
+        radii = (_number(aperture.r_max), _number(aperture.r_min))
+        if None in offsets or None in radii:
+            return False
+        floats[kernel.OFFSET_X], floats[kernel.OFFSET_Y] = offsets
+        # r_max**2 and r_min**2 of contains(), on the numbers of the aperture.
+        floats[kernel.R_MAX_SQUARED] = float(aperture.r_max**2)
+        floats[kernel.R_MIN_SQUARED] = float(aperture.r_min**2)
+        ints[kernel.CLIP_ROW] = self.clips
+        self.clips += 1
         return True
 
     def _medium_columns(
@@ -382,11 +452,14 @@ class _Builder:
             self.absorbing += 1
         return True
 
-    def _refraction_columns(self, surface: Surface, floats: list[float]) -> bool:
-        """``RefractiveReflectiveModel.interact_real_rays``: a refraction.
+    def _interaction_columns(
+        self, surface: Surface, ints: list[int], floats: list[float]
+    ) -> bool:
+        """``RefractiveReflectiveModel.interact_real_rays``.
 
-        Each index comes from ``boundary_index`` of the propagation model of
-        its medium, which is ``material.n(w)`` for HomogeneousPropagation.
+        A refraction takes each index from ``boundary_index`` of the
+        propagation model of its medium, which is ``material.n(w)`` for
+        HomogeneousPropagation.
         """
         kernel, model = self.kernel, surface.interaction_model
         if (
@@ -394,9 +467,11 @@ class _Builder:
             or model.parent_surface is not surface
             or model.coating is not None
             or model.bsdf is not None
-            or model.is_reflective
         ):
             return False
+        if model.is_reflective:
+            ints[kernel.REFLECT] = 1
+            return True
         after = surface.material_post
         if type(after.propagation_model) is not self.types.propagation:
             return False
@@ -472,22 +547,24 @@ def _absorbed_intensity(
     plan: _Plan,
     intensity: np.ndarray,
     exponents: np.ndarray,
+    clipped: np.ndarray,
     intensity_records: np.ndarray,
     record: bool,
 ) -> np.ndarray:
     """Return the intensity after the last surface, with the absorption.
 
-    The kernel writes the exponent of each ray in each absorbing medium.
-    This pass repeats ``RealRays.attenuate`` in the order of the generic
-    trace, from the intensity before the first surface, in parts of
-    ``_PART`` rays. ``numpy.exp`` gives the same value for an element at any
-    position in a contiguous float64 array, so a part gets the values of the
-    whole bundle.
+    The kernel writes the exponent of each ray in each absorbing medium and
+    the clip mask of each aperture. This pass repeats ``RealRays.attenuate``
+    and ``RealRays.clip`` in the order of the generic trace, from the
+    intensity before the first surface, in parts of ``_PART`` rays.
+    ``numpy.exp`` gives the same value for an element at any position in a
+    contiguous float64 array, so a part gets the values of the whole bundle.
 
     Args:
         plan: The plan of the trace.
         intensity: The intensity of the rays before the first surface.
         exponents: The exponents, one row per absorbing medium.
+        clipped: The clip masks, one row per aperture.
         intensity_records: One row per surface. If ``record`` is True, row s
             receives the intensity after surface s.
         record: Whether to write ``intensity_records``.
@@ -496,19 +573,21 @@ def _absorbed_intensity(
         The intensity after the last surface.
     """
     kernel = _kernel()
-    rows = plan.ints[:, kernel.ABSORB_ROW].tolist()
+    rows = plan.ints[:, [kernel.ABSORB_ROW, kernel.CLIP_ROW]].tolist()
     n = intensity.shape[0]
     result = np.empty(n)
     for start in range(0, n, _PART):
         stop = min(start + _PART, n)
         i = intensity[start:stop]
-        for s, row in enumerate(rows):
-            if row != kernel.NO_ROW:
-                # be.* calls repeat those of the generic trace. A ray without
-                # power stays dark, also when a later miss gives a factor
-                # that is not finite.
-                factor = be.exp(exponents[row, start:stop])
+        for s, (absorb_row, clip_row) in enumerate(rows):
+            # be.* calls repeat those of the generic trace.
+            if absorb_row != kernel.NO_ROW:
+                # A ray without power stays dark, also when a later miss
+                # gives a factor that is not finite.
+                factor = be.exp(exponents[absorb_row, start:stop])
                 i = i * be.where(i == 0, 0.0, factor)
+            if clip_row != kernel.NO_ROW:
+                i = be.where(clipped[clip_row, start:stop], be.zeros_like(i), i)
             if record:
                 intensity_records[s, start:stop] = i
         result[start:stop] = i
@@ -564,9 +643,9 @@ def trace_with_plan(surfaces: Sequence[Surface], rays: BaseRays, record: bool) -
     """
     if not _ENABLED or not surfaces or be.get_backend() != "numpy":
         return False
-    # The generic trace converts the translations with be.array to the
-    # backend precision. Without the JIT compiler, the kernel would run as
-    # Python code.
+    # The generic trace converts the translations and the rotation angles
+    # with be.array to the backend precision. Without the JIT compiler, the
+    # kernel would run as Python code.
     if be.get_precision() != 64 or numba.config.DISABLE_JIT:
         return False
     if type(rays) is not _types().rays or not rays.is_normalized:
@@ -584,20 +663,22 @@ def trace_with_plan(surfaces: Sequence[Surface], rays: BaseRays, record: bool) -
     shape = (len(surfaces), n)
     records = {name: np.empty(shape) if record else _NO_ROWS for name in _RECORDED}
     exponents = np.empty((plan.absorbing, n)) if plan.absorbing else _NO_ROWS
+    clipped = np.empty((plan.clips, n), dtype=np.bool_) if plan.clips else _NO_CLIPS
     kernel.trace_plan(
         tuple(getattr(rays, name) for name in _RAY_STATE),
         plan.ints,
         plan.floats,
         exponents,
+        clipped,
         tuple(outputs.values()),
         tuple(records.values()),
         record,
     )
     if plan.absorbing:
         outputs["i"] = _absorbed_intensity(
-            plan, rays.i, exponents, records["intensity"], record
+            plan, rays.i, exponents, clipped, records["intensity"], record
         )
-    else:
+    elif not plan.clips:
         # Nothing changed the intensity, so the generic trace keeps its array.
         del outputs["i"]
     if plan.moves_rays:

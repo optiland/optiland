@@ -24,11 +24,16 @@ from optiland.geometries import EvenAsphere, StandardGeometry
 from optiland.materials import IdealMaterial
 from optiland.materials.base import BaseMaterial
 from optiland.optic import Optic
-from optiland.physical_apertures import RadialAperture
+from optiland.physical_apertures import (
+    EllipticalAperture,
+    OffsetRadialAperture,
+    RadialAperture,
+)
 from optiland.propagation.homogeneous import HomogeneousPropagation
 from optiland.rays import PolarizedRays, RealRays
 from optiland.samples.objectives import CookeTriplet, DoubleGauss
 from optiland.samples.simple import CementedAchromat, TelescopeDoublet
+from optiland.samples.telescopes import HubbleTelescope
 from optiland.surfaces import ImageSurface, SurfaceGroup
 from optiland.surfaces.standard_surface import Surface
 
@@ -110,6 +115,63 @@ def _absorbing_singlet():
     return optic
 
 
+def _oap():
+    """An off-axis parabolic mirror: decenter, tilt, conic, offset aperture.
+
+    Both roots of the parabola can be hits in front of the ray, and the
+    aperture selects the root on the used part of the mirror.
+    """
+    rfl = 25.4
+    optic = Optic(name="oap")
+    optic.surfaces.add(index=0, z=0, radius=be.inf)
+    optic.surfaces.add(index=1, z=10, is_stop=True)
+    optic.surfaces.add(
+        index=2,
+        z=0,
+        y=-rfl / 2,
+        radius=-rfl,
+        conic=-1,
+        aperture=OffsetRadialAperture(r_max=12.7, offset_y=rfl),
+        material="mirror",
+        rx=np.pi / 2,
+    )
+    optic.surfaces.add(
+        index=3,
+        z=rfl,
+        y=40,
+        radius=be.inf,
+        aperture=OffsetRadialAperture(r_max=12.7, offset_y=0),
+        rx=np.pi / 2,
+    )
+    optic.set_aperture(aperture_type="EPD", value=5.0)
+    optic.fields.set_type("angle")
+    optic.fields.add(y=0)
+    optic.fields.add(y=1)
+    optic.wavelengths.add(0.55, is_primary=True)
+    return optic
+
+
+def _clipped():
+    """The Cooke triplet with radial apertures that clip part of the pupil."""
+    optic = CookeTriplet()
+    surfaces = optic.surfaces.surfaces
+    surfaces[1].aperture = RadialAperture(r_max=9.0)
+    surfaces[3].aperture = RadialAperture(r_max=3.0, r_min=0.5)
+    surfaces[5].aperture = OffsetRadialAperture(r_max=8.0, offset_x=0.4)
+    return optic
+
+
+def _tilted():
+    """The telescope doublet with a surface tilted about x, y and z."""
+    optic = TelescopeDoublet()
+    cs = optic.surfaces.surfaces[2].geometry.cs
+    cs.rx = be.array(0.01)
+    cs.ry = be.array(-0.02)
+    cs.rz = be.array(0.3)
+    cs.x = be.array(0.1)
+    return optic
+
+
 # Systems in the domain of the plan. CookeTriplet has a glass with k > 0
 # (one absorption coefficient), so its traces run the intensity pass.
 SYSTEMS = {
@@ -121,6 +183,10 @@ SYSTEMS = {
     "flat_and_conic": _flat_and_conic,
     "decentered": _decentered,
     "absorbing": _absorbing_singlet,
+    "oap": _oap,
+    "clipped": _clipped,
+    "tilted": _tilted,
+    "hubble": HubbleTelescope,
 }
 
 
@@ -207,7 +273,7 @@ def test_optic_trace_is_identical(calls, monkeypatch, name, hy, record):
 
 @pytest.mark.parametrize("record", [True, False])
 @pytest.mark.parametrize("n", [1, 7, 255, 256, 257, 1000])
-@pytest.mark.parametrize("name", ["cooke", "double_gauss", "decentered"])
+@pytest.mark.parametrize("name", ["cooke", "double_gauss", "clipped", "tilted"])
 def test_ray_counts_are_identical(calls, monkeypatch, name, n, record):
     """Blocks of any length: 255, 256 and 257 rays are at the _BLOCK boundary."""
     build = SYSTEMS[name]
@@ -216,12 +282,12 @@ def test_ray_counts_are_identical(calls, monkeypatch, name, n, record):
     _assert_same(with_plan, _trace(build, lambda: _fan(n), record, monkeypatch, False))
 
 
-@pytest.mark.parametrize("name", ["cooke", "absorbing"])
+@pytest.mark.parametrize("name", ["cooke", "absorbing", "clipped"])
 def test_rays_that_miss_are_identical(calls, monkeypatch, name):
     """Rays far outside the lens give NaN at the same positions.
 
     In an absorbing glass, the exponent of a ray that missed is NaN, so its
-    intensity is NaN.
+    intensity is NaN, unless an aperture clipped the ray before.
     """
 
     def rays():
@@ -230,18 +296,67 @@ def test_rays_that_miss_are_identical(calls, monkeypatch, name):
     with_plan = _trace(SYSTEMS[name], rays, True, monkeypatch, True)
     assert calls == [True]
     assert np.isnan(with_plan["ray.x"]).any()
-    assert np.isnan(with_plan["ray.i"]).any()
+    if name != "clipped":
+        assert np.isnan(with_plan["ray.i"]).any()
     _assert_same(with_plan, _trace(SYSTEMS[name], rays, True, monkeypatch, False))
 
 
 @pytest.mark.parametrize("record", [True, False])
-def test_intensity_pass_in_parts_is_identical(calls, monkeypatch, record):
-    """Three parts of 64 rays and a part of 8 rays give the bits of the bundle."""
+@pytest.mark.parametrize("name", ["cooke", "clipped"])
+def test_intensity_pass_in_parts_is_identical(calls, monkeypatch, name, record):
+    """Three parts of 64 rays and a part of 8 rays give the bits of the bundle.
+
+    The apertures of "clipped" clip rays in the absorbing Cooke triplet.
+    """
     monkeypatch.setattr(plan, "_PART", 64)
-    with_plan = _trace(CookeTriplet, lambda: _fan(200), record, monkeypatch, True)
+
+    def rays():
+        return _fan(200, height=6.0)
+
+    with_plan = _trace(SYSTEMS[name], rays, record, monkeypatch, True)
     assert calls == [True]
-    generic = _trace(CookeTriplet, lambda: _fan(200), record, monkeypatch, False)
-    _assert_same(with_plan, generic)
+    _assert_same(with_plan, _trace(SYSTEMS[name], rays, record, monkeypatch, False))
+
+
+def _clip_then_miss():
+    """An aperture clips a ray, which then misses in an absorbing glass."""
+    optic = Optic(name="clip-then-miss")
+    optic.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+    optic.surfaces.add(
+        index=1,
+        radius=20.0,
+        thickness=5.0,
+        material=IdealMaterial(n=1.5, k=1e-6),
+        aperture=RadialAperture(r_max=3.0),
+        is_stop=True,
+    )
+    optic.surfaces.add(index=2, radius=-4.0, thickness=10.0)
+    optic.surfaces.add(index=3)
+    return optic
+
+
+def test_a_clipped_ray_that_misses_in_an_absorbing_glass_stays_dark(calls, monkeypatch):
+    """RealRays.attenuate keeps i = 0 when a later factor is not finite."""
+
+    def rays():
+        n = 41
+        return RealRays(
+            np.zeros(n),
+            np.linspace(-6.0, 6.0, n),
+            np.zeros(n),
+            np.zeros(n),
+            np.zeros(n),
+            np.ones(n),
+            np.ones(n),
+            np.full(n, 0.55),
+        )
+
+    with_plan = _trace(_clip_then_miss, rays, True, monkeypatch, True)
+    assert calls == [True]
+    _assert_same(with_plan, _trace(_clip_then_miss, rays, True, monkeypatch, False))
+    missed = np.abs(np.linspace(-6.0, 6.0, 41)) > 4.0
+    assert np.isnan(with_plan["ray.x"][missed]).all()
+    assert (with_plan["ray.i"][missed] == 0.0).all()
 
 
 def test_object_surface_alone_records_the_rays(calls, monkeypatch):
@@ -456,16 +571,20 @@ def _reference_frame(optic):
     optic.surfaces.surfaces[2].geometry.cs.reference_cs = CoordinateSystem()
 
 
-def _tilt(optic):
-    optic.surfaces.surfaces[2].geometry.cs.rx = be.array(0.01)
+def _elliptical_aperture(optic):
+    optic.surfaces.surfaces[2].aperture = EllipticalAperture(a=5.0, b=4.0)
 
 
-def _aperture(optic):
-    optic.surfaces.surfaces[2].aperture = RadialAperture(r_max=5.0)
+class _MyAperture(RadialAperture):
+    """A subclass of RadialAperture: it could change contains()."""
 
 
-def _mirror(optic):
-    optic.surfaces.surfaces[2].interaction_model.is_reflective = True
+def _aperture_subclass(optic):
+    optic.surfaces.surfaces[2].aperture = _MyAperture(r_max=5.0)
+
+
+def _array_aperture_radius(optic):
+    optic.surfaces.surfaces[2].aperture = RadialAperture(r_max=np.array([5.0]))
 
 
 def _bsdf(optic):
@@ -518,9 +637,9 @@ def _scalar_radius(optic):
         _even_asphere,
         _coating,
         _reference_frame,
-        _tilt,
-        _aperture,
-        _mirror,
+        _elliptical_aperture,
+        _aperture_subclass,
+        _array_aperture_radius,
         _bsdf,
         _surface_subclass,
         _shared_interaction_model,
