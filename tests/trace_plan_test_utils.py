@@ -213,8 +213,39 @@ def _oap_asphere():
     return optic
 
 
+def _immersed_image():
+    """A singlet whose image surface is followed by 3 mm of absorbing glass (N-SF11).
+
+    optic.trace propagates the rays 3 mm past the image surface, and N-SF11
+    absorbs, so the final step of the plan has an exponent row.
+    """
+    optic = Optic(name="immersed")
+    optic.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+    optic.surfaces.add(
+        index=1, radius=25.84, thickness=4.0, material="N-BK7", is_stop=True
+    )
+    optic.surfaces.add(index=2, radius=be.inf, thickness=40.0)
+    optic.surfaces.add(index=3, material="N-SF11")
+    optic.set_aperture(aperture_type="EPD", value=10.0)
+    optic.fields.set_type("angle")
+    optic.fields.add(y=0.0)
+    optic.fields.add(y=3.0)
+    optic.wavelengths.add(value=0.55, is_primary=True)
+    optic.surfaces[-1].thickness = 3.0
+    return optic
+
+
+def _thick_image():
+    """The Cooke triplet, propagated 2.5 mm past its image surface in air."""
+    optic = CookeTriplet()
+    optic.surfaces[-1].thickness = 2.5
+    return optic
+
+
 # Systems in the domain of the plan. CookeTriplet has a glass with k > 0
-# (one absorption coefficient), so its traces run the intensity pass.
+# (one absorption coefficient), so its traces run the intensity pass. The
+# image surfaces of immersed_image and thick_image have a thickness that is
+# not 0, so optic.trace moves their rays in the final step of the plan.
 SYSTEMS = {
     "cooke": CookeTriplet,
     "double_gauss": DoubleGauss,
@@ -233,6 +264,8 @@ SYSTEMS = {
     "flat_asphere": _flat_asphere,
     "clipped_aspheres": _clipped_aspheres,
     "oap_asphere": _oap_asphere,
+    "immersed_image": _immersed_image,
+    "thick_image": _thick_image,
 }
 
 

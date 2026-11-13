@@ -47,8 +47,10 @@ from .trace_plan_test_utils import (
     _assert_same,
     _decentered,
     _fan,
+    _immersed_image,
     _state,
     _strong_asphere,
+    _thick_image,
 )
 from .utils import assert_bits_equal
 
@@ -110,7 +112,11 @@ def _trace(build, rays, record, monkeypatch, enabled):
 @pytest.mark.parametrize("hy", [0.0, 1.0])
 @pytest.mark.parametrize("name", sorted(SYSTEMS))
 def test_optic_trace_is_identical(calls, monkeypatch, name, hy, record):
-    """optic.trace: ray aiming, the plan, and the propagation to the image."""
+    """optic.trace: ray aiming, the plan, and the final step of the plan.
+
+    The final step propagates the rays past the image surface by its
+    thickness.
+    """
 
     def run(enabled):
         monkeypatch.setattr(plan, "_ENABLED", enabled)
@@ -1049,3 +1055,243 @@ def test_cleared_records_are_the_arrays_of_a_reset_surface():
             if isinstance(value, np.ndarray)
         }
         assert arrays == set(plan._CLEARED), type(surface).__name__
+
+
+# The final step: the propagation past the image surface (FinalPropagation).
+
+
+@pytest.fixture
+def propagations(monkeypatch):
+    """The distances of the calls of HomogeneousPropagation.propagate, in order.
+
+    The generic trace calls propagate for each surface, and then for the
+    propagation past the image surface. The plan calls it for none of them.
+    """
+    distances = []
+    propagate = HomogeneousPropagation.propagate
+
+    def counted(self, rays, t):
+        distances.append(t)
+        return propagate(self, rays, t)
+
+    monkeypatch.setattr(HomogeneousPropagation, "propagate", counted)
+    return distances
+
+
+@pytest.fixture
+def final_ranges(monkeypatch):
+    """The ranges of rays (first, last) of each call of the final step."""
+    kernel = plan._kernel()
+    ranges = []
+    propagate = kernel._propagate_past_last_surface
+
+    def spy(first, last, *args):
+        ranges.append((first, last))
+        return propagate(first, last, *args)
+
+    # trace_with_plan looks up the function in the kernel module at each call.
+    monkeypatch.setattr(kernel, "_propagate_past_last_surface", spy)
+    return ranges
+
+
+def test_the_parts_of_the_final_step_are_whole_blocks():
+    """A kernel takes only a first ray at a block boundary."""
+    assert plan._FINAL_PART % plan._kernel()._BLOCK == 0
+
+
+@pytest.mark.parametrize("name", ["immersed_image", "thick_image", "cooke"])
+def test_the_plan_propagates_past_the_image_surface(
+    calls, monkeypatch, propagations, name
+):
+    """optic.trace propagates past the image surface in the plan, not after it.
+
+    The image surface of "cooke" has the thickness 0. Without the plan, the
+    last call of propagate is the propagation past the image surface.
+    """
+    optic = SYSTEMS[name]()
+    optic.trace(Hx=0.0, Hy=1.0, wavelength=0.55, num_rays=5)
+    assert calls == [True]
+    assert propagations == []
+    monkeypatch.setattr(plan, "_ENABLED", False)
+    optic.trace(Hx=0.0, Hy=1.0, wavelength=0.55, num_rays=5)
+    assert propagations[-1] == optic.surfaces[-1].thickness
+
+
+def test_trace_generic_is_identical(calls, monkeypatch):
+    """optic.trace_generic also propagates past the image surface in the plan."""
+
+    def run(enabled):
+        monkeypatch.setattr(plan, "_ENABLED", enabled)
+        optic = _immersed_image()
+        n = 300
+        rays = optic.trace_generic(
+            Hx=np.zeros(n),
+            Hy=np.linspace(-1.0, 1.0, n),
+            Px=np.linspace(-0.9, 0.9, n),
+            Py=np.zeros(n),
+            wavelength=0.55,
+        )
+        return _state(optic, rays)
+
+    with_plan = run(True)
+    assert calls == [True]
+    _assert_same(with_plan, run(False))
+
+
+@pytest.mark.parametrize("record", [True, False])
+def test_a_polychromatic_final_absorption_is_identical(calls, monkeypatch, record):
+    """With three wavelengths, each ray has its own alpha after the image surface.
+
+    The final step then reads alpha from a row of ray_values, as the media
+    before the surfaces do. The precondition checks that row.
+    """
+    wavelengths = (0.4861, 0.5876, 0.6563)
+    kernel = plan._kernel()
+    surfaces = _immersed_image().surfaces.surfaces
+    final = plan.FinalPropagation.after(surfaces[-1])
+    built = plan._build(
+        surfaces, _fan(300, wavelengths=wavelengths), 300, kernel, final
+    )
+    assert built.final_step.absorb_row != kernel.NO_ROW
+    assert built.final_step.alpha_row != kernel.NO_ROW
+
+    def run(enabled):
+        monkeypatch.setattr(plan, "_ENABLED", enabled)
+        optic = _immersed_image()
+        rays = _fan(300, wavelengths=wavelengths)
+        optic.surfaces._trace_with_final_propagation(rays, record=record)
+        return _state(optic, rays)
+
+    with_plan = run(True)
+    assert calls == [True]
+    _assert_same(with_plan, run(False))
+
+
+@pytest.mark.parametrize("name", ["immersed_image", "thick_image", "asphere_triplet"])
+def test_the_final_step_in_parts_is_identical(calls, monkeypatch, final_ranges, name):
+    """One thread traces and propagates the rays in parts of one block.
+
+    The seed summary of the asphere triplet, a NaN flag and a running
+    maximum, takes the seeds of each part in turn.
+    """
+    monkeypatch.setattr(plan, "_FINAL_PART", 256)
+
+    def run(enabled):
+        monkeypatch.setattr(plan, "_ENABLED", enabled)
+        optic = SYSTEMS[name]()
+        rays = optic.trace(
+            Hx=0.0, Hy=1.0, wavelength=optic.primary_wavelength, num_rays=20
+        )
+        return _state(optic, rays)
+
+    with_plan = run(True)
+    assert calls == [True]
+    n = with_plan["ray.x"].shape[0]
+    assert final_ranges == [(first, min(first + 256, n)) for first in range(0, n, 256)]
+    assert len(final_ranges) > 4
+    _assert_same(with_plan, run(False))
+
+
+def _other_final_model(optic):
+    """A mirror image surface, then a subclass of HomogeneousPropagation.
+
+    A refraction at the image surface needs exactly HomogeneousPropagation
+    in the medium after it, so it would put the whole plan outside the
+    domain. A mirror does not read that medium, so only the final step is
+    outside the domain.
+    """
+    image = optic.surfaces.surfaces[-1]
+    image.material_post = IdealMaterial(n=1.0)
+    image.material_post.propagation_model = _MyPropagation(image.material_post)
+    image.interaction_model.is_reflective = True
+
+
+def _array_thickness(optic):
+    """The thickness of the image surface is an array of one value."""
+    optic.surfaces.surfaces[-1].thickness = np.array([2.5])
+
+
+class _Float32Absorption(BaseMaterial):
+    """A glass whose k(w) is a float32 number, which the plan does not take."""
+
+    def _calculate_n(self, wavelength, **kwargs):
+        return 1.5
+
+    def _calculate_k(self, wavelength, **kwargs):
+        return np.float32(1e-5)
+
+
+def _float32_final_absorption(optic):
+    """The medium after the image surface gives k(w) as a float32 number."""
+    optic.surfaces.surfaces[-1].material_post = _Float32Absorption()
+
+
+@pytest.mark.parametrize(
+    "change", [_other_final_model, _array_thickness, _float32_final_absorption]
+)
+def test_a_final_step_outside_its_domain_runs_after_the_plan(
+    calls, monkeypatch, propagations, change
+):
+    """The plan traces the surfaces, and then the generic propagate runs.
+
+    Each change puts only the propagation past the image surface outside the
+    domain of the final step, so propagate runs once, after the plan.
+    """
+
+    def run(enabled):
+        monkeypatch.setattr(plan, "_ENABLED", enabled)
+        optic = _thick_image()
+        change(optic)
+        rays = optic.trace(Hx=0.0, Hy=1.0, wavelength=0.55, num_rays=6)
+        return _state(optic, rays)
+
+    with_plan = run(True)
+    assert calls == [True]
+    assert len(propagations) == 1
+    _assert_same(with_plan, run(False))
+
+
+def test_object_surfaces_alone_have_no_final_step(calls, monkeypatch, propagations):
+    """A plan of object surfaces only gives the rays their own arrays back.
+
+    It has no new arrays to move, so the generic propagate runs after it.
+    """
+
+    def run(enabled):
+        monkeypatch.setattr(plan, "_ENABLED", enabled)
+        optic = CookeTriplet()
+        optic.surfaces._surfaces = optic.surfaces._surfaces[:1]
+        optic.surfaces.surfaces[0].thickness = 5.0
+        rays = _fan(30)
+        optic.surfaces._trace_with_final_propagation(rays)
+        return _state(optic, rays)
+
+    with_plan = run(True)
+    assert calls == [True]
+    assert propagations == [5.0]
+    _assert_same(with_plan, run(False))
+
+
+def test_the_caller_propagates_after_the_tolerance_floor(
+    calls, floor_checks, final_ranges, propagations, monkeypatch
+):
+    """The kernel ran the final step, but the tolerance floor gives False.
+
+    The generic trace then traces the rays from their input arrays, and
+    the propagation past the image surface runs after it.
+    """
+
+    def run(enabled):
+        monkeypatch.setattr(plan, "_ENABLED", enabled)
+        optic = _asphere_triplet()
+        optic.surfaces.surfaces[4].geometry.tol = 1e-30
+        optic.surfaces.surfaces[-1].thickness = 2.5
+        rays = optic.trace(Hx=0.0, Hy=1.0, wavelength=0.55, num_rays=6)
+        return _state(optic, rays)
+
+    with_plan = run(True)
+    assert calls == [False]
+    assert floor_checks == [True]
+    assert final_ranges
+    assert propagations[-1] == 2.5
+    _assert_same(with_plan, run(False))

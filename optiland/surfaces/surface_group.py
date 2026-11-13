@@ -632,6 +632,55 @@ class SurfaceGroup:
             BaseRays: ``rays``, traced in place.
 
         """
+        return self._trace_in_epoch(rays, skip, record, None)
+
+    def _trace_with_final_propagation(
+        self, rays: BaseRays, record: bool = True
+    ) -> BaseRays:
+        """Trace through all surfaces, then propagate past the last surface.
+
+        The rays propagate past the last surface (the image surface) by its
+        thickness, usually 0, in the medium after it. This is
+        ``trace(rays, record=record)`` followed by ``propagate`` of the
+        propagation model of that medium, as ``RealRayTracer`` needs it. The
+        compiled trace plan does both in one pass if it can.
+
+        Args:
+            rays: The rays to trace. They are changed in place.
+            record: Whether to store the ray state on each surface. The
+                propagation past the last surface has no record.
+
+        Returns:
+            ``rays``, traced and propagated in place.
+        """
+        final = _trace_plan.FinalPropagation.after(self.surfaces[-1])
+        self._trace_in_epoch(rays, 0, record, final)
+        final.finish(rays)
+        return rays
+
+    def _trace_in_epoch(
+        self,
+        rays: BaseRays,
+        skip: int,
+        record: bool,
+        final: _trace_plan.FinalPropagation | None,
+    ) -> BaseRays:
+        """Trace ``rays`` through the surfaces in an evaluation epoch.
+
+        The shared body of :meth:`trace` and
+        :meth:`_trace_with_final_propagation`. It reuses an open epoch, and
+        opens none for up to ``_MAX_RAYS_WITHOUT_EPOCH`` rays.
+
+        Args:
+            rays: The rays to trace. They are changed in place.
+            skip: The number of surfaces to skip before tracing.
+            record: Whether to store the ray state on each surface.
+            final: The propagation past the last surface, or None (see
+                :meth:`_trace_surfaces`).
+
+        Returns:
+            ``rays``, traced in place.
+        """
         # Trace inside an evaluation epoch, so that each material is
         # evaluated once per wavelength array. A trace changes only the ray
         # records of the surfaces, and no memoized value depends on them.
@@ -639,11 +688,17 @@ class SurfaceGroup:
         # is checked first only to skip the cost of entering it. See
         # _MAX_RAYS_WITHOUT_EPOCH for the size limit.
         if _epoch.current() is not None or be.size(rays.w) <= _MAX_RAYS_WITHOUT_EPOCH:
-            return self._trace_surfaces(rays, skip, record)
+            return self._trace_surfaces(rays, skip, record, final)
         with _epoch.evaluation_epoch():
-            return self._trace_surfaces(rays, skip, record)
+            return self._trace_surfaces(rays, skip, record, final)
 
-    def _trace_surfaces(self, rays: BaseRays, skip: int, record: bool) -> BaseRays:
+    def _trace_surfaces(
+        self,
+        rays: BaseRays,
+        skip: int,
+        record: bool,
+        final: _trace_plan.FinalPropagation | None = None,
+    ) -> BaseRays:
         """Reset the records and trace ``rays`` through the surfaces.
 
         Called without an open epoch, this is the reference for the epoch of
@@ -653,6 +708,10 @@ class SurfaceGroup:
             rays: The rays to trace. They are changed in place.
             skip: The number of surfaces to skip before tracing.
             record: Whether to store the ray state on each surface.
+            final: The propagation past the last surface, or None. The
+                compiled trace plan does it if it can and then sets
+                ``final.applied``. Otherwise the caller must apply it
+                (``final.finish``).
 
         Returns:
             ``rays``, traced in place.
@@ -664,7 +723,7 @@ class SurfaceGroup:
         # optiland.surfaces._trace_plan). trace_with_plan owns the records of
         # ``surfaces``; on False the caller resets them. Looked up at each
         # call, so that tests can replace trace_with_plan.
-        if _trace_plan.trace_with_plan(surfaces, rays, record):
+        if _trace_plan.trace_with_plan(surfaces, rays, record, final):
             return rays
         for surface in surfaces:
             surface.reset()
