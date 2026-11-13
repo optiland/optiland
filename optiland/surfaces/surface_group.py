@@ -11,7 +11,7 @@ Kramer Harrison, 2024
 from __future__ import annotations
 
 import copy
-from contextlib import suppress
+from contextlib import nullcontext, suppress
 from copy import deepcopy
 from functools import cached_property
 from typing import TYPE_CHECKING
@@ -19,7 +19,9 @@ from typing import TYPE_CHECKING
 import optiland.backend as be
 from optiland import _epoch
 from optiland._epoch import epoch_memo
+from optiland._host_values import host_scope, on_scope_device
 from optiland.coatings import BaseCoatingPolarized
+from optiland.materials import BaseMaterial
 from optiland.paraxial_path import (
     ParaxialPath,
     build_paraxial_path,
@@ -27,6 +29,7 @@ from optiland.paraxial_path import (
     shared_path,
     transverse_basis,
 )
+from optiland.propagation.homogeneous import HomogeneousPropagation
 from optiland.surfaces import _chunked_trace, _trace_plan
 from optiland.surfaces.factories.surface_factory import SurfaceFactory
 from optiland.surfaces.standard_surface import Surface
@@ -44,9 +47,62 @@ from optiland.surfaces.standard_surface import Surface
 _MAX_RAYS_WITHOUT_EPOCH = 128
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from contextlib import AbstractContextManager
+
     from optiland._types import SurfaceType
-    from optiland.materials import BaseMaterial
     from optiland.rays import BaseRays
+
+
+def _host_value_scope(
+    surfaces: Sequence[Surface], rays: BaseRays
+) -> AbstractContextManager[None]:
+    """Return the host-value scope of a trace, or a null scope.
+
+    The scope opens only for rays on a CUDA device. It holds the values that
+    the trace checks in Python: the rotation angles of each coordinate
+    system and of its reference systems, the radius of each geometry, and k
+    of each homogeneous medium for the check any(k > 0). ``host_scope``
+    copies them to the host in one device-to-host copy (see
+    ``optiland._host_values``).
+
+    Args:
+        surfaces: The surfaces of the trace.
+        rays: The rays of the trace.
+
+    Returns:
+        The host-value scope, or ``nullcontext()`` if the rays are not on a
+        CUDA device.
+    """
+    if not on_scope_device(getattr(rays, "x", None)):
+        return nullcontext()
+    # The material memo of the epoch gives the trace the same k array again,
+    # so the prefetch does not evaluate k a second time. The memo applies
+    # when BaseMaterial._epoch_key gives a key: in an epoch, and for
+    # wavelengths that do not require gradients.
+    prefetch_k = (
+        _epoch.current() is not None and BaseMaterial._epoch_key(rays.w, {}) is not None
+    )
+    scalars: list[object] = []
+    absorption: list[object] = []
+    for surface in surfaces:
+        # A custom surface or geometry can lack these attributes.
+        geometry = getattr(surface, "geometry", None)
+        cs = getattr(geometry, "cs", None)
+        while cs is not None:
+            scalars += (cs.rx, cs.ry, cs.rz)
+            cs = cs.reference_cs
+        scalars.append(getattr(geometry, "radius", None))
+        material = getattr(surface, "material_pre", None)
+        model = getattr(material, "propagation_model", None)
+        # The type check is exact: a subclass can override propagate() and
+        # check another k.
+        if prefetch_k and type(model) is HomogeneousPropagation:
+            # If k() raises here, skip it. The trace calls k() again and
+            # raises the error there.
+            with suppress(Exception):
+                absorption.append(model.material.k(rays.w))
+    return host_scope(scalars, absorption)
 
 
 class SurfaceGroup:
@@ -615,8 +671,10 @@ class SurfaceGroup:
         # A large NumPy bundle is traced in parts of 65536 rays when that
         # gives the bits of this loop (see optiland.surfaces._chunked_trace).
         if not _chunked_trace.trace_in_parts(surfaces, rays, record):
-            for surface in surfaces:
-                surface.trace(rays, record=record)
+            # On a CUDA device, the checks of the loop read host copies.
+            with _host_value_scope(surfaces, rays):
+                for surface in surfaces:
+                    surface.trace(rays, record=record)
         return rays
 
     def add(

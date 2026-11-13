@@ -83,6 +83,14 @@ Overview
      - Spy on ``optiland.surfaces._trace_plan.trace_with_plan`` (see
        below). Set its private switch ``_ENABLED`` to False to switch it
        off.
+   * - Host-value scope of a CUDA trace
+     - ``optiland/_host_values.py`` and
+       ``optiland/surfaces/surface_group.py``
+     - The generic trace in ``SurfaceGroup.trace`` of rays on a CUDA
+       device
+     - Spy on ``optiland._host_values._copy`` to count the copies. Set the
+       private switch ``_ENABLED`` of ``optiland._host_values`` to False
+       to switch it off.
 
 Evaluation epoch of a direct trace
 ----------------------------------
@@ -496,6 +504,81 @@ Add a step to the plan
    systems that do not use the new step. If a basic plan gets slower, put the new step behind
    a flag of the loop nest, so that ``trace_basic_plan`` has no code for it
    (see "Two kernels").
+
+Host-value scope (CUDA)
+-----------------------
+
+The trace checks some tensor values in Python, with ``bool()`` or
+``math.isinf()``. On a CUDA device, each such check copies the value to the
+host, and the copy waits until the device has done all queued work (a CUDA
+synchronization). ``SurfaceGroup._trace_surfaces`` therefore opens a
+host-value scope (``optiland/_host_values.py``) around the loop of the
+generic trace when the rays are on a CUDA device. The scope copies the
+values of these checks to the host in one device-to-host copy, and the
+checks read the copies.
+
+``_host_value_scope`` in ``optiland/surfaces/surface_group.py`` collects
+the values:
+
+- the rotation angles of each coordinate system and of its reference
+  coordinate systems, for ``_needs_rotation`` in
+  ``optiland/coordinate_system.py``;
+- the radius of each geometry, for ``_is_radius_infinite`` in
+  ``optiland/geometries/standard.py``;
+- k of each medium with exactly ``HomogeneousPropagation``, for the check
+  ``any(k > 0)`` in ``HomogeneousPropagation.propagate``.
+
+The scope copies ``any(k > 0)`` only inside an evaluation epoch and when the
+wavelengths do not require gradients, that is when
+``BaseMaterial._epoch_key`` gives a key. Only then does the material memo of
+the epoch give the trace the same k array again, so k is not evaluated
+twice. Otherwise each absorption check still waits. The Newton-Raphson
+warning of the Torch path (``_warn_rejected_rays``) also copies its four
+counts in one copy, without the scope.
+
+The invariants:
+
+- A check that reads a copy takes the branch that it takes on the tensor,
+  so the results and the gradients do not change. float64 holds each
+  float32 and float64 value exactly, so a copy has the truth value, the
+  sign and the infinity of its tensor.
+- ``_needs_rotation`` checks ``requires_grad`` first, so an angle that
+  requires a gradient is applied, also at zero, without a host read.
+- The copies are taken when the scope opens and are not updated. Code in
+  the scope must not change these tensors in place. The Optiland trace does
+  not, and a custom geometry, material or surface must not either.
+- A value without a copy keeps its own check: ``host`` and ``absorbs``
+  return None, and the caller checks the value as before. NumPy arrays, CPU
+  tensors, complex tensors, tensors with more than one element (for
+  ``host``) and tensors on another device than the first CUDA tensor have
+  no copy.
+- The scope keeps each copied tensor alive, so no other object can get its
+  id while the scope is open. The scope lives in a context variable, so
+  other threads do not see it.
+
+To batch a new check:
+
+1. Find the check in the trace: ``bool(x)``, ``float(x)``, ``x.item()``,
+   or a backend call such as ``be.any(x)``, on a tensor ``x``.
+2. Add ``x`` to the values in ``_host_value_scope``: to ``scalars`` for a
+   one-element value, or to a new kind of copy in ``_copy`` for another
+   reduction, as ``absorbs`` does for ``any(k > 0)``.
+3. In the check, read the copy first (``host(x)``). If it is None, check
+   the tensor as before.
+4. Add the check to ``test_a_cuda_trace_does_not_wait_in_the_batched_checks``
+   in ``tests/test_host_values.py``, and a system that takes both branches
+   of the check to the bit tests there.
+
+The tests run without a GPU. They add the CPU to ``_DEVICE_TYPES``, so the
+scope copies CPU tensors with the same code. Each test computes a trace or a
+gradient with the scope and without it (``_ENABLED = False``) and compares
+the bits. The tests do not use the ``set_test_backend`` fixture, because it
+switches grad mode on: the wavelengths then require gradients, and the
+scope does not copy ``any(k > 0)``. Only
+``test_a_cuda_trace_does_not_wait_in_the_batched_checks`` needs a CUDA
+device. It finds the source of each CUDA synchronization with
+``torch.cuda.set_sync_debug_mode("warn")`` and checks that no
+synchronization comes from a batched check.
 
 How to verify a fast path
 -------------------------
