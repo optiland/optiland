@@ -60,11 +60,26 @@ def test_random(set_test_backend, num_points):
     assert_allclose(d.y, y)
 
 
-@pytest.mark.parametrize("num_rings", [3, 7, 15, 220])
+def _assert_same_bits(actual: be.ndarray, expected: be.ndarray) -> None:
+    """Assert that two arrays have the same dtype, shape and bytes."""
+    actual, expected = be.to_numpy(actual), be.to_numpy(expected)
+    assert actual.dtype == expected.dtype
+    assert actual.shape == expected.shape
+    assert actual.tobytes() == expected.tobytes()
+
+
+@pytest.mark.parametrize("num_rings", [0, 1, 3, 7, 15, 220])
 def test_hexapolar(set_test_backend, num_rings):
+    """The points have the bits of the old algorithm.
+
+    The old algorithm joined each ring to the points before it. The new one
+    joins all rings once. Both join the same numbers in the same order, so the
+    test compares the dtype, the shape and every bit, not a tolerance.
+    """
     d = distribution.create_distribution("hexapolar")
     d.generate_points(num_rings=num_rings)
 
+    # The old algorithm, as the reference.
     x = be.zeros(1)
     y = be.zeros(1)
     r = be.linspace(0, 1, num_rings + 1)
@@ -75,8 +90,8 @@ def test_hexapolar(set_test_backend, num_rings):
         x = be.concatenate([x, r[i + 1] * be.cos(theta)])
         y = be.concatenate([y, r[i + 1] * be.sin(theta)])
 
-    assert_allclose(d.x, x)
-    assert_allclose(d.y, y)
+    _assert_same_bits(d.x, x)
+    _assert_same_bits(d.y, y)
 
 
 @pytest.mark.parametrize("num_points", [15, 56, 161, 621])
