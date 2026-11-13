@@ -93,6 +93,10 @@ New to these concepts? See the :ref:`glossary` first.
    be.set_backend("torch")    # enable PyTorch (autograd, GPU)
    be.set_backend("numpy")    # revert to NumPy (default)
 
+   # Threads of the compiled NumPy trace, for 8192 rays or more
+   # (default 1; -1 for the number of logical CPUs)
+   be.set_trace_threads(8)
+
    # GPU and precision (PyTorch only)
    be.set_device("cuda")
    be.set_precision("float64")

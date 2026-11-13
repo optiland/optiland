@@ -21,13 +21,25 @@ The developer page "Performance Internals" lists the domain of the plan,
 with the reason for each limit. Outside the domain, ``trace_with_plan``
 returns False and the generic trace runs.
 
+With ``be.set_trace_threads(n)`` and n > 1, a bundle of
+``_MIN_THREADED_RAYS`` rays or more is traced in parts of whole blocks, on
+the calling thread and the threads of a private pool (``_run_kernel`` and
+``_run_parts``). Each kernel call writes only the rays of its part. No
+kernel step combines values of several rays. The one exception, the Newton
+seed summary, is a NaN flag and a maximum, which do not depend on the order
+of the parts. So each number of threads gives the bits of one thread.
+
 Manuel Fragata Mendes, 2026
 """
 
 from __future__ import annotations
 
+import concurrent.futures
 import functools
+import itertools
 import math
+import os
+import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple, TypeVar
 
@@ -70,8 +82,8 @@ _RELEASED.flags.writeable = False
 
 # Tables without rows, for the records of a trace without records, the
 # exponents of a plan without absorption, the clip masks of a plan without
-# apertures, and the coefficients and seed summary of a plan without an even
-# asphere. The kernel never writes into them.
+# apertures, and the coefficients of a plan without an even asphere. The
+# kernel never writes into them.
 _NO_ROWS = np.empty((0, 1))
 _NO_CLIPS = np.empty((0, 1), dtype=np.bool_)
 
@@ -80,6 +92,28 @@ _NO_CLIPS = np.empty((0, 1), dtype=np.bool_)
 # the same reason: an array of 65536 float64 values (512 KiB) stays below the
 # size from which the heap of 64-bit Windows gives memory back to the system.
 _PART = 65536
+
+# Threads of the trace (be.set_trace_threads). The limits come from timings
+# of the first version of this code on a CPU with 12 cores (see #1147).
+# Measure them again when the kernel changes.
+
+# The smallest bundle that the kernel traces on several threads. For a
+# smaller bundle, the pool threads cost about as much time as they save.
+_MIN_THREADED_RAYS = 8192
+# The parts of a bundle for each thread. A thread takes the next part when
+# it completes one, so a thread that the system slows down does not hold
+# back the others.
+_PARTS_PER_THREAD = 4
+# The fewest blocks of rays in a part (8 blocks are 2048 rays). A smaller
+# part costs about as much to hand to a thread as it saves.
+_MIN_PART_BLOCKS = 8
+# The smallest bundle whose intensity pass runs on several threads. Each
+# NumPy operation of the pass takes the GIL to start, so the parts of a
+# smaller bundle are too short to gain.
+_MIN_THREADED_INTENSITY_RAYS = 65536
+# The most threads of the intensity pass. With more threads, its NumPy
+# operations wait for the GIL.
+_MAX_INTENSITY_THREADS = 4
 
 # machine_eps of a float64 array, as _effective_tolerance uses it:
 # np.finfo(np.float64).eps, written as a number so that importing this module
@@ -751,15 +785,19 @@ def _absorbed_intensity(
     clipped: np.ndarray,
     intensity_records: np.ndarray,
     record: bool,
+    *,
+    threads: int,
 ) -> np.ndarray:
     """Return the intensity after the last surface, with the absorption.
 
     The kernel writes the exponent of each ray in each absorbing medium and
     the clip mask of each aperture. This pass repeats ``RealRays.attenuate``
     and ``RealRays.clip`` in the order of the generic trace, from the
-    intensity before the first surface, in parts of ``_PART`` rays.
-    ``numpy.exp`` gives the same value for an element at any position in a
-    contiguous float64 array, so a part gets the values of the whole bundle.
+    intensity before the first surface, in parts of at most ``_PART`` rays.
+    With more than one thread, the parts are smaller, so that each thread
+    gets a part. ``numpy.exp`` gives the same value for an element at any
+    position in a contiguous float64 array, so a part of any size gets the
+    values of the whole bundle.
 
     Args:
         plan: The plan of the trace.
@@ -769,6 +807,7 @@ def _absorbed_intensity(
         intensity_records: One row per surface. If ``record`` is True, row s
             receives the intensity after surface s.
         record: Whether to write ``intensity_records``.
+        threads: The number of threads of the pass.
 
     Returns:
         The intensity after the last surface.
@@ -777,8 +816,12 @@ def _absorbed_intensity(
     rows = plan.ints[:, [kernel.ABSORB_ROW, kernel.CLIP_ROW]].tolist()
     n = intensity.shape[0]
     result = np.empty(n)
-    for start in range(0, n, _PART):
-        stop = min(start + _PART, n)
+    part = min(_PART, _ceil_div(n, threads))
+    starts = range(0, n, part)
+
+    def run(k: int) -> None:
+        start = starts[k]
+        stop = min(start + part, n)
         i = intensity[start:stop]
         for s, (absorb_row, clip_row) in enumerate(rows):
             # be.* calls repeat those of the generic trace.
@@ -792,7 +835,160 @@ def _absorbed_intensity(
             if record:
                 intensity_records[s, start:stop] = i
         result[start:stop] = i
+
+    _run_parts(len(starts), threads, run)
     return result
+
+
+def _ceil_div(a: int, b: int) -> int:
+    """Return the smallest integer that is not less than a / b."""
+    return -(-a // b)
+
+
+def _run_kernel(
+    trace_range: Callable[[int, int, np.ndarray], None],
+    n: int,
+    seed_rows: int,
+    *,
+    threads: int,
+) -> np.ndarray:
+    """Trace the n rays of a plan with ``trace_range``, on ``threads`` threads.
+
+    With one thread, one call traces all rays. With more threads, the rays
+    are divided into parts of whole blocks: about ``_PARTS_PER_THREAD`` parts
+    for each thread, of at least ``_MIN_PART_BLOCKS`` blocks. The kernel
+    updates the seed summary in place, so each part has its own.
+
+    Args:
+        trace_range: ``trace_range(first, last, seed_stats)`` traces the
+            rays first to last - 1 (see ``trace_plan``).
+        n: The number of rays.
+        seed_rows: The rows of the seed summary: one per surface for a plan
+            with an even asphere, else 0.
+        threads: The number of threads.
+
+    Returns:
+        The seed summary of all rays. With several parts, its NaN flag and
+        its largest abs(t) are the maxima over the parts, which do not
+        depend on the order of the parts.
+    """
+    kernel = _kernel()
+    if threads == 1:
+        seed_stats = np.zeros((seed_rows, kernel.SEED_COLUMNS))
+        trace_range(0, n, seed_stats)
+        return seed_stats
+    blocks = _ceil_div(n, kernel._BLOCK)
+    part_blocks = max(_MIN_PART_BLOCKS, _ceil_div(blocks, threads * _PARTS_PER_THREAD))
+    # Whole blocks, so that each part starts at a block boundary.
+    span = part_blocks * kernel._BLOCK
+    parts = _ceil_div(n, span)
+    part_seeds = np.zeros((parts, seed_rows, kernel.SEED_COLUMNS))
+
+    def run(k: int) -> None:
+        first = k * span
+        trace_range(first, min(first + span, n), part_seeds[k])
+
+    _run_parts(parts, threads, run)
+    return part_seeds.max(axis=0)
+
+
+class _Pool(NamedTuple):
+    """The helper threads of the trace in one process.
+
+    Attributes:
+        pid: The process that made the threads. The threads of a parent
+            process do not exist in a forked child, so the child makes its
+            own pool.
+        workers: The number of threads, ``be.get_trace_threads() - 1``: the
+            calling thread also traces parts.
+        executor: The thread pool.
+    """
+
+    pid: int
+    workers: int
+    executor: concurrent.futures.ThreadPoolExecutor
+
+
+# The pool of this process, made at the first trace that needs it. The lock
+# lets one thread make the pool when several threads need it at once.
+_pool: _Pool | None = None
+_pool_lock = threading.Lock()
+
+
+def _executor() -> concurrent.futures.ThreadPoolExecutor:
+    """Return the pool of helper threads of the trace.
+
+    The pool has ``be.get_trace_threads() - 1`` threads. It is made at the
+    first call, and again in a forked child or after a change of the number
+    of threads. An old pool of this process finishes its queued parts and
+    then stops.
+    """
+    global _pool
+    workers = be.get_trace_threads() - 1
+    with _pool_lock:
+        pid = os.getpid()
+        pool = _pool
+        if pool is None or pool.pid != pid or pool.workers != workers:
+            if pool is not None and pool.pid == pid:
+                pool.executor.shutdown(wait=False)
+            executor = concurrent.futures.ThreadPoolExecutor(
+                workers, thread_name_prefix="optiland-trace"
+            )
+            pool = _pool = _Pool(pid, workers, executor)
+        return pool.executor
+
+
+def _run_parts(parts: int, threads: int, run: Callable[[int], None]) -> None:
+    """Call ``run(k)`` once for each part k in ``range(parts)``, on threads.
+
+    The calling thread and up to ``threads - 1`` helper threads of the pool
+    take the next part from a shared counter until no part is left.
+    ``next()`` on the counter, an ``itertools.count``, is atomic under the
+    GIL, so each part goes to one thread. The pool has
+    ``be.get_trace_threads() - 1`` threads, and traces in several Python
+    threads share it. With one thread or one part, the calling thread runs
+    all parts in order, and no pool is made.
+
+    ``run`` runs in the pool threads without the context variables of the
+    caller: there is no evaluation epoch and no host-value scope, and NumPy
+    has its default floating-point error state (``numpy.errstate``). The
+    kernel and the intensity pass need no epoch and no scope.
+
+    Args:
+        parts: The number of parts.
+        threads: The most threads that run parts at the same time, with the
+            calling thread. At most ``be.get_trace_threads()`` are used.
+        run: Runs part k. It must write only the entries of part k.
+
+    Raises:
+        Exception: The exception of a part, raised when all threads have
+            stopped. If a part in the calling thread raised, it is that
+            exception. Otherwise, it is the exception of the first helper,
+            in the order of submission, whose part raised.
+    """
+    helpers = min(threads, parts, be.get_trace_threads()) - 1
+    if helpers < 1:
+        for k in range(parts):
+            run(k)
+        return
+    counter = itertools.count()
+
+    def take_parts() -> None:
+        for k in counter:
+            if k >= parts:
+                return
+            run(k)
+
+    executor = _executor()
+    futures = [executor.submit(take_parts) for _ in range(helpers)]
+    try:
+        take_parts()
+    finally:
+        # Also after an exception here: no helper may write into the outputs
+        # after this function ends.
+        concurrent.futures.wait(futures)
+    for future in futures:
+        future.result()  # raises the exception of the helper, if any
 
 
 def _release_records(surfaces: Sequence[Surface]) -> None:
@@ -831,6 +1027,9 @@ def _store_records(
 
 def trace_with_plan(surfaces: Sequence[Surface], rays: BaseRays, record: bool) -> bool:
     """Trace ``rays`` through ``surfaces`` with the compiled kernel, if possible.
+
+    With ``be.set_trace_threads(n)`` and n > 1, a bundle of
+    ``_MIN_THREADED_RAYS`` rays or more is traced on n threads.
 
     Args:
         surfaces: The surfaces to trace, in order.
@@ -871,43 +1070,65 @@ def trace_with_plan(surfaces: Sequence[Surface], rays: BaseRays, record: bool) -
     clipped = np.empty((plan.clips, n), dtype=np.bool_) if plan.clips else _NO_CLIPS
     rays_in = tuple(getattr(rays, name) for name in _RAY_STATE)
     rays_out, record_rows = tuple(outputs.values()), tuple(records.values())
-    # Two kernels compile from one loop nest. trace_basic_plan has no code
-    # for per-ray values and even aspheres (see the kernel module).
-    if plan.basic:
-        kernel.trace_basic_plan(
-            rays_in,
-            plan.ints,
-            plan.floats,
-            exponents,
-            clipped,
-            rays_out,
-            record_rows,
-            record,
-        )
-    else:
-        seed_shape = (len(surfaces), kernel.SEED_COLUMNS)
-        seed_stats = np.zeros(seed_shape) if plan.aspheres else _NO_ROWS
-        kernel.trace_plan(
-            rays_in,
-            plan.ints,
-            plan.floats,
-            plan.ray_values,
-            plan.coef,
-            plan.dcoef,
-            exponents,
-            clipped,
-            seed_stats,
-            rays_out,
-            record_rows,
-            record,
-        )
-        # The kernel iterated with the tolerance of each asphere. If the
-        # generic solve raises a tolerance, the generic trace runs instead.
-        if plan.aspheres and _floor_applies(plan, seed_stats):
-            return False
+
+    # The kernel call for the rays first to last - 1. _run_kernel calls it
+    # once for all rays, or once for each part. Two kernels compile from one
+    # loop nest. trace_basic_plan has no code for per-ray values and even
+    # aspheres (see the kernel module).
+    def trace_range(first: int, last: int, seed_stats: np.ndarray) -> None:
+        if plan.basic:
+            kernel.trace_basic_plan(
+                first,
+                last,
+                rays_in,
+                plan.ints,
+                plan.floats,
+                exponents,
+                clipped,
+                rays_out,
+                record_rows,
+                record,
+            )
+        else:
+            kernel.trace_plan(
+                first,
+                last,
+                rays_in,
+                plan.ints,
+                plan.floats,
+                plan.ray_values,
+                plan.coef,
+                plan.dcoef,
+                exponents,
+                clipped,
+                seed_stats,
+                rays_out,
+                record_rows,
+                record,
+            )
+
+    # The seed summary has one row per surface for a plan with an asphere.
+    seed_rows = len(surfaces) if plan.aspheres else 0
+    threads = be.get_trace_threads() if n >= _MIN_THREADED_RAYS else 1
+    seed_stats = _run_kernel(trace_range, n, seed_rows, threads=threads)
+    # The kernel iterated with the tolerance of each asphere. If the generic
+    # solve raises a tolerance, the generic trace runs instead.
+    if plan.aspheres and _floor_applies(plan, seed_stats):
+        return False
     if plan.absorbing:
+        intensity_threads = (
+            min(threads, _MAX_INTENSITY_THREADS)
+            if n >= _MIN_THREADED_INTENSITY_RAYS
+            else 1
+        )
         outputs["i"] = _absorbed_intensity(
-            plan, rays.i, exponents, clipped, records["intensity"], record
+            plan,
+            rays.i,
+            exponents,
+            clipped,
+            records["intensity"],
+            record,
+            threads=intensity_threads,
         )
     elif not plan.clips:
         # Nothing changed the intensity, so the generic trace keeps its array.
