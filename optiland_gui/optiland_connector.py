@@ -25,6 +25,7 @@ from optiland_gui.services.file_service import (
 )
 from optiland_gui.services.history_service import HistoryService
 from optiland_gui.services.optimization_service import OptimizationService
+from optiland_gui.services.surface_placement import SurfacePlacement
 from optiland_gui.services.surface_service import SurfaceService
 from optiland_gui.services.system_service import SystemService
 from optiland_gui.undo_redo_manager import UndoRedoManager
@@ -92,6 +93,7 @@ class OptilandConnector(QObject):
         self._optic = Optic("Default System")
         self._undo_redo_manager = UndoRedoManager(self)
         self.history = HistoryService(self)
+        self.placement = SurfacePlacement(self)
 
         # Instantiate services — order does not matter; each receives *self*.
         self._file_service = FileService(self)

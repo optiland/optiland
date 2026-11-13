@@ -406,7 +406,18 @@ class SurfaceService:
         optic = self._connector._optic
         row = optic.surfaces.surfaces.index(surface)
         if row < self.get_surface_count() - 1:
+            self._check_thickness_origin()
             optic.updater.set_thickness(float(value), row)
+
+    def _check_thickness_origin(self):
+        optic = self._connector._optic
+        if any(s.geometry.cs.reference_cs is not None for s in optic.surfaces) or (
+            len(optic.surfaces) > 1 and float(optic.surfaces[1].geometry.cs.z) != 0
+        ):
+            raise ValueError(
+                "Thickness rebuilding requires an unreferenced first surface at Z=0. "
+                "Use Surface Properties > Placement for this positioned design."
+            )
 
     def _set_semi_diameter_data(self, surface: object, value: str) -> None:
         """Set the semi-diameter aperture on *surface*.
@@ -477,6 +488,8 @@ class SurfaceService:
         """
         if not (0 <= row < self.get_surface_count()):
             return
+        if col_idx == self._connector.COL_THICKNESS:
+            self._check_thickness_origin()
         if col_idx == self._connector.COL_COMMENT and not (
             self._connector._optic.pickups or self._connector._optic.solves
         ):
