@@ -24,9 +24,17 @@ from optiland.wavefront.strategy import chief_reference_sphere
 from tests.utils import assert_allclose
 
 NA = 0.02
+# Stop diameter that sets the same object-space cone as NA: the stop sits at the
+# back focal plane of L1 (f1 = 100), so its semi-diameter is f1 * tan(u).
+STOP_DIAMETER = 4.0
 
 
-def _relay(shift: float = 0.0, telecentric: bool = True, defocus: float = 0.0) -> Optic:
+def _relay(
+    shift: float = 0.0,
+    telecentric: bool = True,
+    defocus: float = 0.0,
+    aperture: str = "objectNA",
+) -> Optic:
     """4f relay, f1 = 100 and f2 = 50; the stop sits ``shift`` past the focus.
 
     ``defocus`` moves the image plane away from the second lens.
@@ -41,7 +49,10 @@ def _relay(shift: float = 0.0, telecentric: bool = True, defocus: float = 0.0) -
         index=3, surface_type="paraxial", f=50.0, thickness=50.0 + defocus
     )
     optic.surfaces.add(index=4)
-    optic.set_aperture("objectNA", NA)
+    if aperture == "objectNA":
+        optic.set_aperture("objectNA", NA)
+    else:
+        optic.set_aperture("float_by_stop_size", STOP_DIAMETER)
     optic.fields.set_type("object_height")
     optic.obj_space_telecentric = telecentric
     optic.fields.add(y=0.0)
@@ -71,6 +82,48 @@ def test_marginal_ray_slope_from_object_na(set_test_backend):
     assert_allclose(ya[1], 100.0 * slope, atol=1e-12)
     assert_allclose(ya[-1], 0.0, atol=1e-12)
     assert bool(be.all(be.isfinite(ya))) and bool(be.all(be.isfinite(ua)))
+
+
+def test_marginal_ray_slope_from_stop_size(set_test_backend):
+    ya, ua = _relay(aperture="float_by_stop_size").paraxial.marginal_ray()
+    assert_allclose(ua[0], STOP_DIAMETER / 2 / 100.0, atol=1e-15)
+    assert_allclose(ya[2], STOP_DIAMETER / 2, atol=1e-12)
+    assert_allclose(ya[-1], 0.0, atol=1e-12)
+    assert bool(be.all(be.isfinite(ya))) and bool(be.all(be.isfinite(ua)))
+
+
+def test_stop_size_magnification_is_finite(set_test_backend):
+    optic = _relay(aperture="float_by_stop_size")
+    assert_allclose(optic.paraxial.magnification(), -0.5, atol=1e-12)
+
+
+@pytest.mark.parametrize("shift", [-1e-6, 1e-6])
+def test_stop_size_marginal_ray_continuous_with_near_telecentric(
+    set_test_backend, shift
+):
+    _, exact = _relay(aperture="float_by_stop_size").paraxial.marginal_ray()
+    near = _relay(shift=shift, telecentric=False, aperture="float_by_stop_size")
+    _, ua = near.paraxial.marginal_ray()
+    assert_allclose(exact[0], ua[0], rtol=1e-6)
+
+
+def test_stop_size_slope_is_none_for_object_at_infinity(set_test_backend):
+    optic = Optic()
+    optic.surfaces.add(index=0, thickness=be.inf)
+    optic.surfaces.add(index=1, surface_type="paraxial", f=100.0, thickness=100.0)
+    optic.surfaces.add(index=2, is_stop=True)
+    optic.set_aperture("float_by_stop_size", STOP_DIAMETER)
+    optic.fields.set_type("angle")
+    optic.fields.add(y=0.0)
+    optic.wavelengths.add(0.55, is_primary=True)
+    assert optic.aperture.object_space_marginal_slope(optic.paraxial) is None
+
+
+def test_stop_size_slope_requires_object_surface(set_test_backend):
+    optic = _relay(aperture="float_by_stop_size")
+    paraxial = SimpleNamespace(optic=SimpleNamespace(object_surface=None))
+    with pytest.raises(ValueError, match="requires a defined object surface"):
+        optic.aperture.object_space_marginal_slope(paraxial)
 
 
 def test_aperture_without_fixed_cone_raises(set_test_backend):
