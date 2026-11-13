@@ -161,6 +161,13 @@ the same native core as ``minimize(problem, "dls")``; ``callback``, ``plot`` and
 ``disp`` work as before. Use ``minimize()`` when you want observers, a stopping
 criterion, a cancel token or hard constraints on a typical run.
 
+For ``method_choice="lm"``, ``"trf"`` and ``"dogbox"``, SciPy receives its
+Jacobians from the same finite-difference evaluator, with the steps of SciPy's
+own ``"2-point"`` scheme, so a run takes the same path as before while the
+columns reuse the baseline traces. Pass ``aim_policy="frozen"`` to
+``optimize()`` to reuse the baseline ray aiming in every column; with
+iterative ray aiming this makes each Jacobian several times cheaper.
+
 Stopping, observers and cancellation
 ------------------------------------
 
