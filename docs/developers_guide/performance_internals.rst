@@ -66,6 +66,14 @@ Overview
        or more in runs of 64 rays or more on average
      - Patch ``optiland.fields.field_types.angle.field_runs`` to return
        None, as ``tests/test_ray_generation_paths.py`` does.
+   * - Traces in parts
+     - ``optiland/surfaces/_chunked_trace.py`` and
+       ``optiland/_trace_probe.py``
+     - NumPy traces of 131072 rays or more, in parts of 65536 rays, for the
+       types of ``_allowed_types``
+     - Spy on ``optiland.surfaces._chunked_trace.trace_in_parts`` (see
+       below). It runs on Windows only (``_ENABLED``). Set ``_MIN_RAYS``
+       above the bundle size to switch it off.
 
 Evaluation epoch of a direct trace
 ----------------------------------
@@ -126,6 +134,83 @@ the same first bad field as the check on one value per ray.
 Torch never uses runs. A gradient through a repeated value would add its
 parts in another order.
 
+Traces in parts
+---------------
+
+Each step of the generic trace makes new arrays of the bundle size. On
+64-bit Windows, the heap gets blocks of about 1 MB or more from the
+operating system (VirtualAlloc) and gives them back when they are freed.
+Each new array of that size then pays a page fault for each page. A bundle
+of 131072 rays (1 MiB per float64 array) is the smallest power of two above
+that limit, and a part of 65536 rays (512 KiB per array) stays below it. So
+``trace_in_parts`` traces a NumPy bundle of 131072 rays or more through all
+surfaces in parts of 65536 rays. A trace of one million rays is then about
+three times faster on Windows.
+
+On Linux, the parts cost time instead. glibc gives the memory of each part
+back to the system after the part, so each new part pays the page faults.
+With the scenarios of the performance gate, a trace in parts took 1.4 to 1.6
+times the time of the whole bundle, and with that memory kept, it was not
+faster than the whole bundle. So ``trace_in_parts`` runs only on Windows
+(``_ENABLED``), and returns False on Linux and macOS (not measured). The
+tests set ``_ENABLED`` to True, so that they test the parts on each
+platform.
+
+The reference is the loop over the surfaces in
+``SurfaceGroup._trace_surfaces``. It runs on the other backends and each
+time ``trace_in_parts`` returns False. The domain is in ``_allowed_types``:
+
+- the NumPy backend, and rays of exactly the type ``RealRays`` whose arrays
+  are 1-D float64 arrays of one length;
+- the surfaces ``Surface``, ``ObjectSurface`` and ``ImageSurface``;
+- the geometries ``StandardGeometry``, ``Plane``, ``EvenAsphere``,
+  ``OddAsphere``, ``PolynomialGeometry``, ``BiconicGeometry`` and
+  ``ToroidalGeometry``;
+- the interaction models ``RefractiveReflectiveModel`` and
+  ``ThinLensInteractionModel``, with no BSDF;
+- no coating, or a ``SimpleCoating``, ``FresnelCoating``,
+  ``ThinFilmCoating``, ``PolarizerCoating``, ``RetarderCoating`` or
+  ``CartesianJonesCoating``;
+- no aperture, or a ``RadialAperture``, ``OffsetRadialAperture``,
+  ``EllipticalAperture`` or ``RectangularAperture``;
+- ``HomogeneousPropagation`` in each medium.
+
+The type checks are exact (``type(x) is T``), because a subclass can add a
+step. Each type in this list traces each ray independently, or reports each
+decision that uses all rays through the probe (``optiland._trace_probe``).
+A step can take one decision for all rays of a call only if both outcomes
+give each ray the same bits, as the early exit and the plane seed of the
+Newton-Raphson solver do. Two decisions can change the bits. The tolerance
+floor of the Newton-Raphson solver depends on the largest ``|t|`` of the
+start values, so a part that uses it asks for the whole bundle
+(``require_whole_bundle``). Absorption applies only if a ray has k > 0, so
+each part reports this decision (``note_decision``), and the whole bundle is
+traced if the parts report different decisions.
+
+The ray arrays must be float64. For contiguous float64 arrays, one NumPy
+build and one CPU, an element-wise NumPy function gives the same value for
+an element at any position in an array, so a part gets the values that its
+rays get in the whole bundle. The part size is also chosen for 8-byte
+values.
+
+The types of the materials are not checked, only their propagation models.
+A material must compute the value of a ray from that ray alone, as the
+built-in ones do. A part can have one wavelength while the whole bundle has
+several. The part is then evaluated at one element and broadcast, and the
+whole bundle element by element. Each built-in coating also computes the
+value of a ray from that ray alone.
+
+No step may write into a ray array in place. Each part holds read-only views
+of the input arrays, so such a write raises. Each fallback runs the generic
+loop on the whole bundle from the unchanged input: after an exception in a
+part, a request for the whole bundle, different decisions, or a part whose
+arrays differ from those of the first part. Nothing is written to the rays
+or to the surfaces until all parts are traced.
+
+The tests in ``tests/test_chunked_trace.py`` set ``_CHUNK_SIZE`` and
+``_MIN_RAYS`` to small values, so that small bundles are traced in many
+parts. They have one system for each allowed type.
+
 How to verify a fast path
 -------------------------
 
@@ -139,6 +224,46 @@ How to verify a fast path
    two operations, and check that the test fails. Then undo the fault.
 4. Run the performance gate (see below) to check that the fast path is
    faster.
+
+Check which path a trace takes
+------------------------------
+
+``SurfaceGroup._trace_surfaces`` looks up ``trace_in_parts`` in its module
+at each trace. A spy on the module attribute
+``optiland.surfaces._chunked_trace.trace_in_parts`` therefore shows whether
+a trace ran in parts of 65536 rays:
+
+.. code:: python
+
+   import numpy as np
+
+   import optiland.surfaces._chunked_trace as chunked
+   from optiland.rays import RealRays
+   from optiland.samples.objectives import CookeTriplet
+
+   results = []
+   original = chunked.trace_in_parts
+
+
+   def spy(surfaces, rays, record):
+       results.append(original(surfaces, rays, record))
+       return results[-1]
+
+
+   chunked.trace_in_parts = spy
+   try:
+       n = 200_000
+       rays = RealRays(
+           np.zeros(n), np.linspace(-2.0, 2.0, n), np.zeros(n),
+           np.zeros(n), np.zeros(n), np.ones(n), np.ones(n), np.full(n, 0.55),
+       )
+       CookeTriplet().surfaces.trace(rays)
+   finally:
+       chunked.trace_in_parts = original
+   print(results)  # [True] on Windows: the trace ran in parts of 65536 rays
+
+``False`` means that the generic loop traced the whole bundle. In a test,
+use ``monkeypatch.setattr(chunked, "trace_in_parts", spy)`` instead.
 
 Measuring performance
 ---------------------

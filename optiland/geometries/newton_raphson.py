@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import optiland.backend as be
+from optiland import _trace_probe
 from optiland.coordinate_system import CoordinateSystem
 from optiland.geometries.standard import StandardGeometry
 from optiland.utils import machine_eps
@@ -135,6 +136,10 @@ def _effective_tolerance(tol, t):
     """
     scale = float(be.to_numpy(be.max(be.abs(t))))
     floor = _CONV_EPS_MULTIPLIER * machine_eps(t) * max(1.0, scale)
+    if floor > float(tol):
+        # The tolerance now depends on the largest |t| of the call, so a part
+        # of a bundle can get another tolerance than the whole bundle.
+        _trace_probe.require_whole_bundle("Newton-Raphson tolerance floor")
     return max(float(tol), floor)
 
 
