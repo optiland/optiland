@@ -54,6 +54,10 @@ that the base does not have. An error message follows its row. Timing
 noise can also cause a FAIL or warn, so run the flagged scenarios again
 with ``--only`` and more repeats before you report one.
 
+A scenario whose builder needs a missing optional dependency (Torch, CUDA)
+shows a plain n/a. CI installs no torch, so the Torch and CUDA scenarios
+show n/a there, and a change to the Torch backend needs a local run.
+
 Usage:
     uv run python benchmarks/perf_regression.py                # vs merge base
     uv run python benchmarks/perf_regression.py --base v0.6.0
@@ -78,13 +82,21 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from optiland.optic import Optic
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # The result of one child for one scenario: the time in seconds, the error
 # message if the scenario raised, or None if the child has no result for it.
 Sample = float | str | None
+
+# A scenario builder returns the operation to time: a call without arguments.
+Operation = Callable[[], None]
 
 # ---------------------------------------------------------------------------
 # Scenarios. Each builds its inputs, then times only the operation named in
@@ -94,18 +106,38 @@ Sample = float | str | None
 # ---------------------------------------------------------------------------
 
 
-def _spherical_stack():
+# Even-asphere coefficients per surface of the lens stack, for the asphere
+# scenarios.
+_ASPHERES = {1: [-2.0e-6, 1.5e-9, -3.0e-12], 6: [4.0e-6, -2.0e-9, 1.0e-12]}
+
+
+def _lens_stack(name: str, aspheres: dict[int, list[float]] | None = None) -> Optic:
+    """Four air-spaced N-BK7 singlets (8 surfaces) with the stop on surface 4.
+
+    Args:
+        name: Name of the optic.
+        aspheres: Even-asphere coefficients per surface index. These surfaces
+            get conic -0.5. All other surfaces are spherical.
+    """
     import optiland.backend as be
     from optiland.optic import Optic
 
-    optic = Optic(name="bench-spherical")
+    aspheres = aspheres or {}
+    optic = Optic(name=name)
     optic.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
     radii = [55.0, -260.0, 34.0, 190.0, -45.0, 28.0, -32.0, -85.0]
     thick = [4.0, 0.5, 5.0, 3.0, 1.0, 6.0, 2.5, 60.0]
     for i, (r, t) in enumerate(zip(radii, thick, strict=True), start=1):
         mat = "N-BK7" if i % 2 == 1 else "air"
+        shape = {}
+        if i in aspheres:
+            shape = {
+                "surface_type": "even_asphere",
+                "conic": -0.5,
+                "coefficients": aspheres[i],
+            }
         optic.surfaces.add(
-            index=i, radius=r, thickness=t, material=mat, is_stop=(i == 4)
+            index=i, radius=r, thickness=t, material=mat, is_stop=(i == 4), **shape
         )
     optic.surfaces.add(index=9)
     optic.set_aperture(aperture_type="EPD", value=18.0)
@@ -170,9 +202,9 @@ def _explicit_fan(n, angle_max_rad, wavelength):
     )
 
 
-def scenario_surfaces_trace_spherical():
+def scenario_surfaces_trace_spherical() -> Operation:
     """Forward propagation through 8 spherical surfaces (no aiming layer)."""
-    optic = _spherical_stack()
+    optic = _lens_stack("bench-spherical")
     n = 180_000
 
     def op():
@@ -181,7 +213,7 @@ def scenario_surfaces_trace_spherical():
     return op
 
 
-def scenario_surfaces_trace_conic_oap():
+def scenario_surfaces_trace_conic_oap() -> Operation:
     """Forward propagation through the off-axis parabola (conic root path)."""
     optic = _oap_collimator()
     n = 360_000
@@ -192,9 +224,9 @@ def scenario_surfaces_trace_conic_oap():
     return op
 
 
-def scenario_optic_trace_generation():
+def scenario_optic_trace_generation() -> Operation:
     """Full optic.trace: field/pupil generation plus propagation."""
-    optic = _spherical_stack()
+    optic = _lens_stack("bench-spherical")
 
     def op():
         for hy in (0.0, 1.0):
@@ -209,9 +241,9 @@ def scenario_optic_trace_generation():
     return op
 
 
-def scenario_iterative_aiming():
+def scenario_iterative_aiming() -> Operation:
     """optic.trace with the iterative Newton aimer on a straight system."""
-    optic = _spherical_stack()
+    optic = _lens_stack("bench-spherical")
     optic.ray_tracer.set_aiming("iterative", max_iter=50, tol=1e-9)
 
     def op():
@@ -227,9 +259,9 @@ def scenario_iterative_aiming():
     return op
 
 
-def scenario_first_order_ops():
+def scenario_first_order_ops() -> Operation:
     """Repeated scalar first-order queries (path construction cost)."""
-    optic = _spherical_stack()
+    optic = _lens_stack("bench-spherical")
 
     def op():
         for _ in range(60):
@@ -240,12 +272,13 @@ def scenario_first_order_ops():
     return op
 
 
-def scenario_optimization_merit():
+def scenario_optimization_merit() -> Operation:
     """Merit evaluations of a small optimization problem (issue #934).
 
-    One evaluation runs one first-order operand and nine traces, as an
-    optimizer does for each function evaluation. Per-call costs that are
-    small alone add up here.
+    One evaluation runs one first-order operand and nine spot-size operands
+    (3 fields x 3 wavelengths), as an optimizer does for each function
+    evaluation. Per-call costs that are small alone add up here. The design
+    does not change between the evaluations.
     """
     from optiland.optimization import OptimizationProblem
     from optiland.samples.objectives import CookeTriplet
@@ -277,6 +310,277 @@ def scenario_optimization_merit():
     return op
 
 
+def _use_torch(device: str = "cpu", grad: bool = False) -> bool:
+    """Switch to the Torch backend in float64, or return False if unavailable.
+
+    The measure loop restores the NumPy backend after every scenario.
+    """
+    try:
+        import torch
+    except ImportError:
+        return False
+    if device == "cuda" and not torch.cuda.is_available():
+        return False
+    import optiland.backend as be
+
+    be.set_backend("torch")
+    be.set_device(device)
+    be.set_precision("float64")
+    if grad:
+        be.grad_mode.enable()
+    return True
+
+
+def _synchronized(op: Operation) -> Operation:
+    """Wait for queued CUDA work at the end of each timed call."""
+    import torch
+
+    def run():
+        op()
+        torch.cuda.synchronize()
+
+    return run
+
+
+def _restore_defaults() -> None:
+    """Switch back to the NumPy backend in float64 after a scenario.
+
+    Each backend stores its own precision, so set_precision runs both before
+    and after the switch.
+    """
+    import optiland.backend as be
+
+    if be.get_backend() == "torch":
+        be.grad_mode.disable()
+        be.set_device("cpu")
+        be.set_precision("float64")
+    be.set_backend("numpy")
+    be.set_precision("float64")
+
+
+def scenario_surfaces_trace_large() -> Operation:
+    """Forward propagation of 500k rays through 8 spherical surfaces."""
+    optic = _lens_stack("bench-spherical")
+    n = 500_000
+
+    def op():
+        optic.surfaces.trace(_explicit_fan(n, 0.05, 0.55))
+
+    return op
+
+
+def scenario_surfaces_trace_asphere() -> Operation:
+    """Forward propagation through two even aspheres (Newton intersections)."""
+    optic = _lens_stack("bench-asphere", _ASPHERES)
+    n = 100_000
+
+    def op():
+        optic.surfaces.trace(_explicit_fan(n, 0.05, 0.55))
+
+    return op
+
+
+def scenario_surfaces_trace_small() -> Operation:
+    """Many small traces: the per-call overhead of the trace loop."""
+    optic = _lens_stack("bench-spherical")
+
+    def op():
+        for _ in range(100):
+            optic.surfaces.trace(_explicit_fan(64, 0.05, 0.55))
+
+    return op
+
+
+def _torch_trace(device: str, n: int) -> Operation | None:
+    """Trace of ``n`` rays through the asphere stack on Torch, gradients off."""
+    if not _use_torch(device):
+        return None
+    optic = _lens_stack("bench-asphere", _ASPHERES)
+
+    def op():
+        optic.surfaces.trace(_explicit_fan(n, 0.05, 0.55))
+
+    return _synchronized(op) if device == "cuda" else op
+
+
+def _torch_fwd_bwd(device: str) -> Operation | None:
+    """Two Adam steps: forward trace, backward pass, parameter update.
+
+    Each call builds the optic and the problem again, so each call starts
+    from the same design. The time includes this setup.
+    """
+    if not _use_torch(device, grad=True):
+        return None
+    from optiland.optimization import OptimizationProblem, TorchAdamOptimizer
+
+    def op():
+        optic = _lens_stack("bench-asphere", _ASPHERES)
+        problem = OptimizationProblem()
+        for hy in (0.0, 1.0):
+            problem.add_operand(
+                "rms_spot_size",
+                target=0.0,
+                weight=1.0,
+                input_data={
+                    "optic": optic,
+                    "surface_number": -1,
+                    "Hx": 0.0,
+                    "Hy": hy,
+                    "num_rays": 32,
+                    "wavelength": 0.55,
+                    "distribution": "hexapolar",
+                },
+            )
+        for i in (1, 2, 3, 6):
+            problem.add_variable(optic, "radius", surface_number=i)
+        TorchAdamOptimizer(problem).optimize(n_steps=2, lr=1e-3, disp=False)
+
+    return _synchronized(op) if device == "cuda" else op
+
+
+def scenario_torch_cpu_trace_nograd() -> Operation | None:
+    """Torch CPU, gradients off: 100k rays through the asphere stack."""
+    return _torch_trace("cpu", 100_000)
+
+
+def scenario_torch_cpu_fwd_bwd() -> Operation | None:
+    """Torch CPU, gradients on: two optimizer steps on spot-size operands."""
+    return _torch_fwd_bwd("cpu")
+
+
+def scenario_cuda_trace_nograd() -> Operation | None:
+    """Torch CUDA, gradients off: 500k rays through the asphere stack."""
+    return _torch_trace("cuda", 500_000)
+
+
+def scenario_cuda_fwd_bwd() -> Operation | None:
+    """Torch CUDA, gradients on: two optimizer steps on spot-size operands."""
+    return _torch_fwd_bwd("cuda")
+
+
+def scenario_least_squares_e2e() -> Operation:
+    """A complete small LeastSquares run (finite-difference Jacobian).
+
+    Each call builds the optic and the problem again; otherwise the timed
+    call starts from the design that the warmup optimized and stops earlier.
+    All weights are 1, so the merit does not depend on how field and
+    wavelength weights are applied.
+    """
+    from optiland.optimization import LeastSquares, OptimizationProblem
+    from optiland.samples.objectives import CookeTriplet
+
+    def op():
+        optic = CookeTriplet()
+        problem = OptimizationProblem()
+        problem.add_operand("f2", target=50.0, weight=1.0, input_data={"optic": optic})
+        for hy in (0.0, 0.7, 1.0):
+            problem.add_operand(
+                "rms_spot_size",
+                target=0.0,
+                weight=1.0,
+                input_data={
+                    "optic": optic,
+                    "surface_number": -1,
+                    "Hx": 0.0,
+                    "Hy": hy,
+                    "num_rays": 5,
+                    "wavelength": optic.primary_wavelength,
+                    "distribution": "hexapolar",
+                },
+            )
+        for i in (1, 3, 5):
+            problem.add_variable(optic, "radius", surface_number=i)
+        LeastSquares(problem).optimize(maxiter=12)
+
+    return op
+
+
+def scenario_merit_paraxial_seidel() -> Operation:
+    """Five merit evaluations of paraxial and Seidel operands (no real-ray trace).
+
+    One evaluation computes f2, EPL, XPL and TSC, TCC, TAC, PC of 8 surfaces
+    (35 operands) and takes less than 40 ms. Below 40 ms the 2 ms min delta
+    and not the 5% fail ratio sets the threshold, so the timed call runs five
+    evaluations.
+    """
+    from optiland.optimization import OptimizationProblem
+
+    optic = _lens_stack("bench-spherical")
+    problem = OptimizationProblem()
+    for name in ("f2", "EPL", "XPL"):
+        problem.add_operand(name, target=0.0, weight=1.0, input_data={"optic": optic})
+    for name in ("TSC", "TCC", "TAC", "PC"):
+        for surface in range(8):
+            problem.add_operand(
+                name,
+                target=0.0,
+                weight=1.0,
+                input_data={"optic": optic, "surface_number": surface},
+            )
+
+    def op():
+        for _ in range(5):
+            problem.sum_squared()
+
+    return op
+
+
+# Step of the forward differences, scaled by max(1, |x|), as in
+# benchmarks/optimization/harness.py.
+_FD_STEP = 1e-8
+
+
+def _fd_jacobian(problem_name: str) -> Operation:
+    """One forward-difference Jacobian of a ``benchmarks/optimization`` problem.
+
+    The problem comes from the copy of ``problems.py`` next to this script,
+    so both refs time the same problem. The steps are those of
+    ``benchmarks/optimization/harness.py`` (``time_fd_jacobian``). Each
+    residual vector comes from ``LeastSquares._compute_residuals_vector``,
+    the function that SciPy calls for each column. The design changes for
+    every column, so caches that hold the results of one design (ray aiming,
+    paraxial values) cannot answer.
+    """
+    import importlib.util
+
+    import numpy as np
+
+    import optiland.backend as be
+    from optiland.optimization import LeastSquares
+
+    path = Path(__file__).resolve().parent / "optimization" / "problems.py"
+    spec = importlib.util.spec_from_file_location("_gate_problems", path)
+    problems = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(problems)
+    _, problem = problems.PROBLEMS[problem_name]()
+    optimizer = LeastSquares(problem)
+    x0 = np.asarray(be.to_numpy([v.value for v in problem.variables]), dtype=float)
+
+    def op():
+        # The first call also sets the design back to x0.
+        optimizer._compute_residuals_vector(x0)
+        for j in range(x0.size):
+            x = x0.copy()
+            x[j] += _FD_STEP * max(1.0, abs(x0[j]))
+            optimizer._compute_residuals_vector(x)
+
+    return op
+
+
+def scenario_fd_jacobian_cooke() -> Operation:
+    """Forward-difference Jacobian, Cooke triplet: 12 variables, paraxial aiming."""
+    return _fd_jacobian("cooke")
+
+
+def scenario_fd_jacobian_wide_asphere() -> Operation:
+    """Forward-difference Jacobian, wide-angle asphere lens: 20 variables.
+
+    This problem uses iterative ray aiming. In each column the aimer solves
+    again for the changed design, and this solve takes most of the time.
+    """
+    return _fd_jacobian("wide_asphere")
+
+
 SCENARIOS = {
     "surfaces_trace_spherical": scenario_surfaces_trace_spherical,
     "surfaces_trace_conic_oap": scenario_surfaces_trace_conic_oap,
@@ -284,6 +588,28 @@ SCENARIOS = {
     "iterative_aiming": scenario_iterative_aiming,
     "first_order_ops": scenario_first_order_ops,
     "optimization_merit": scenario_optimization_merit,
+    "surfaces_trace_large": scenario_surfaces_trace_large,
+    "surfaces_trace_asphere": scenario_surfaces_trace_asphere,
+    "surfaces_trace_small": scenario_surfaces_trace_small,
+    "least_squares_e2e": scenario_least_squares_e2e,
+    "merit_paraxial_seidel": scenario_merit_paraxial_seidel,
+    "fd_jacobian_cooke": scenario_fd_jacobian_cooke,
+    "fd_jacobian_wide_asphere": scenario_fd_jacobian_wide_asphere,
+    "torch_cpu_trace_nograd": scenario_torch_cpu_trace_nograd,
+    "torch_cpu_fwd_bwd": scenario_torch_cpu_fwd_bwd,
+    "cuda_trace_nograd": scenario_cuda_trace_nograd,
+    "cuda_fwd_bwd": scenario_cuda_fwd_bwd,
+}
+
+# One call of these scenarios has a fast and a slow mode. The child times
+# each of them this many times and keeps the minimum, so that one slow call
+# does not decide the result. Each entry names the cause of its slow mode.
+TIMED_CALLS = {
+    "surfaces_trace_asphere": 3,  # seen in A/A runs, cause not known
+    "torch_cpu_trace_nograd": 5,  # Torch CPU thread scheduling
+    "cuda_trace_nograd": 5,  # GPU work from the display
+    "torch_cpu_fwd_bwd": 3,  # Torch CPU thread scheduling
+    "cuda_fwd_bwd": 3,  # GPU work from the display
 }
 
 
@@ -305,7 +631,8 @@ _MAX_ERROR_CHARS = 300
 def measure(out_path: str, names: list[str]) -> None:
     """Time the selected scenarios in this interpreter and write the results as JSON.
 
-    Each scenario runs once as a warmup and then once timed. The timed call
+    Each scenario runs once as a warmup and then once timed, or as often as
+    ``TIMED_CALLS`` says, and the child keeps the minimum. Each timed call
     starts after ``gc.collect()`` and ``gc.freeze()``. Without them, the
     allocations of all earlier scenarios decide when the cyclic garbage
     collector runs, and a collection scans every object alive in this
@@ -314,7 +641,8 @@ def measure(out_path: str, names: list[str]) -> None:
     another part. After the freeze, a collection in the call scans only the
     objects that the call creates. ``gc.unfreeze()`` after each scenario
     lets the next ``gc.collect()`` free them again. A scenario that raises
-    gets its error message instead of a time.
+    gets its error message instead of a time, and one whose builder returns
+    None gets None.
 
     Args:
         out_path: Path of the JSON file to write.
@@ -329,16 +657,23 @@ def measure(out_path: str, names: list[str]) -> None:
     for name in names:
         try:
             op = SCENARIOS[name]()
+            if op is None:  # an optional dependency is missing
+                results[name] = None
+                continue
             op()  # warmup: caches, imports, first-touch allocations
-            gc.collect()
-            gc.freeze()
-            t0 = time.perf_counter()
-            op()
-            results[name] = time.perf_counter() - t0
+            best = math.inf
+            for _ in range(TIMED_CALLS.get(name, 1)):
+                gc.collect()
+                gc.freeze()
+                t0 = time.perf_counter()
+                op()
+                best = min(best, time.perf_counter() - t0)
+            results[name] = best
         except Exception as exc:
             results[name] = f"{type(exc).__name__}: {exc}"[:_MAX_ERROR_CHARS]
         finally:
             gc.unfreeze()
+            _restore_defaults()
     payload = {"optiland_file": optiland.__file__, "seconds": results}
     Path(out_path).write_text(json.dumps(payload))
 
