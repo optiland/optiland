@@ -17,6 +17,7 @@ from functools import cached_property
 from typing import TYPE_CHECKING
 
 import optiland.backend as be
+from optiland import _epoch
 from optiland._epoch import epoch_memo
 from optiland.coatings import BaseCoatingPolarized
 from optiland.paraxial_path import (
@@ -29,9 +30,22 @@ from optiland.paraxial_path import (
 from optiland.surfaces.factories.surface_factory import SurfaceFactory
 from optiland.surfaces.standard_surface import Surface
 
+# A direct trace of up to this many rays opens no evaluation epoch. Inside
+# the epoch, a constant wavelength array is evaluated at one element and
+# broadcast. The bits are the same because the material formulas are
+# element-wise. For a small bundle, the regular material cache key is a
+# short tuple of the wavelengths, which costs less than the bookkeeping of
+# an epoch. Measured with the 8-surface system of the gate scenario
+# surfaces_trace_small (NumPy, time with an epoch / time without): 1.09 at
+# 64 rays, 1.01 at 128, 0.91 at 192 and 0.79 at 512. Measure again when the
+# trace changes. The epoch opened here passes no optics, so the
+# OPTILAND_EPOCH_CHECK guard cannot see a change of the optic.
+_MAX_RAYS_WITHOUT_EPOCH = 128
+
 if TYPE_CHECKING:
     from optiland._types import SurfaceType
     from optiland.materials import BaseMaterial
+    from optiland.rays import BaseRays
 
 
 class SurfaceGroup:
@@ -557,6 +571,34 @@ class SurfaceGroup:
                 full-size arrays alive per surface; pass False when only the
                 rays returned at the image are needed. Defaults to True.
 
+        Returns:
+            BaseRays: ``rays``, traced in place.
+
+        """
+        # Trace inside an evaluation epoch, so that each material is
+        # evaluated once per wavelength array. A trace changes only the ray
+        # records of the surfaces, and no memoized value depends on them.
+        # evaluation_epoch() reuses an open epoch by itself; _epoch.current()
+        # is checked first only to skip the cost of entering it. See
+        # _MAX_RAYS_WITHOUT_EPOCH for the size limit.
+        if _epoch.current() is not None or be.size(rays.w) <= _MAX_RAYS_WITHOUT_EPOCH:
+            return self._trace_surfaces(rays, skip, record)
+        with _epoch.evaluation_epoch():
+            return self._trace_surfaces(rays, skip, record)
+
+    def _trace_surfaces(self, rays: BaseRays, skip: int, record: bool) -> BaseRays:
+        """Reset the records and trace ``rays`` through the surfaces.
+
+        Called without an open epoch, this is the reference for the epoch of
+        :meth:`trace`.
+
+        Args:
+            rays: The rays to trace. They are changed in place.
+            skip: The number of surfaces to skip before tracing.
+            record: Whether to store the ray state on each surface.
+
+        Returns:
+            ``rays``, traced in place.
         """
         self.reset()
         for surface in self.surfaces[skip:]:
