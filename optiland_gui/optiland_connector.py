@@ -96,6 +96,7 @@ class OptilandConnector(QObject):
         # Instantiate services — order does not matter; each receives *self*.
         self._file_service = FileService(self)
         self.file_operations = self._file_service.operations
+        self.output_operations = self._file_service.output_operations
         self._surface_service = SurfaceService(self)
         self._system_service = SystemService(self)
         self._analysis_runner = AnalysisRunner(self)
