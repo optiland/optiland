@@ -85,6 +85,7 @@ def run_torch_first_order(
     except StopIteration:
         stopped = True
         x = np.array([float(p.item()) for p in optimizer.params])
+        problem.variables.release_graphs()
         for var, value in zip(problem.variables, optimizer.params, strict=True):
             var.update(value)
         problem.update_optics()

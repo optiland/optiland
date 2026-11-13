@@ -99,6 +99,10 @@ class OpticalSystemModule(nn.Module if nn is not None else object):
         Pushes the current tensor values from the nn.Parameters into the problem
         variables. This operation is part of the computation graph.
         """
+        # Drop the graph of the last forward pass from shared arrays first,
+        # so that this pass's backward does not run into it.
+        for var in self._original_variables:
+            var.release_graph()
         for i, param in enumerate(self.params):
             var = self._original_variables[i]
             var.update(param)
