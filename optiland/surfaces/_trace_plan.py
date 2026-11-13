@@ -409,7 +409,7 @@ def _newton_values(
     The coefficients are a list or a 1-D array of numbers (see ``_number``),
     ``tol`` is a number, and ``max_iter`` is an int that fits the int64
     table. The products i * C_i use the objects of the geometry, as
-    ``EvenAsphere._surface_normal`` does, so they get its bits.
+    ``EvenAsphere._slopes_from_terms`` does, so they get its bits.
 
     Args:
         geometry: An EvenAsphere.
