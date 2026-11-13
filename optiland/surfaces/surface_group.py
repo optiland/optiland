@@ -27,7 +27,7 @@ from optiland.paraxial_path import (
     shared_path,
     transverse_basis,
 )
-from optiland.surfaces import _chunked_trace
+from optiland.surfaces import _chunked_trace, _trace_plan
 from optiland.surfaces.factories.surface_factory import SurfaceFactory
 from optiland.surfaces.standard_surface import Surface
 
@@ -601,8 +601,17 @@ class SurfaceGroup:
         Returns:
             ``rays``, traced in place.
         """
-        self.reset()
         surfaces = self.surfaces[skip:]
+        for surface in self.surfaces[:skip]:
+            surface.reset()
+        # The compiled trace plan traces NumPy rays in its domain (see
+        # optiland.surfaces._trace_plan). trace_with_plan owns the records of
+        # ``surfaces``; on False the caller resets them. Looked up at each
+        # call, so that tests can replace trace_with_plan.
+        if _trace_plan.trace_with_plan(surfaces, rays, record):
+            return rays
+        for surface in surfaces:
+            surface.reset()
         # A large NumPy bundle is traced in parts of 65536 rays when that
         # gives the bits of this loop (see optiland.surfaces._chunked_trace).
         if not _chunked_trace.trace_in_parts(surfaces, rays, record):
