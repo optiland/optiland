@@ -366,6 +366,24 @@ class ZernikePolynomialGeometry(NewtonRaphsonGeometry):
 
         return (nx, ny, nz)
 
+    def _sag_and_terms(self, x: Any, y: Any) -> tuple[Any, _ZernikePointTables]:
+        """Return the sag at (x, y) and the point tables for the slopes.
+
+        The sag has the bits of :meth:`sag`. See
+        :meth:`NewtonRaphsonGeometry._sag_and_terms`.
+        """
+        tables = self._point_tables(x, y, validate=True)
+        return self._sag_from_tables(tables), tables
+
+    def _slopes_from_terms(
+        self, x: Any, y: Any, terms: _ZernikePointTables
+    ) -> tuple[Any, Any]:
+        """Return dz/dx and dz/dy from the point tables of ``_sag_and_terms``.
+
+        See :meth:`NewtonRaphsonGeometry._slopes_from_terms`.
+        """
+        return self._slopes_from_tables(terms)
+
     def _point_tables(
         self, x: Any, y: Any, validate: bool = False
     ) -> _ZernikePointTables:

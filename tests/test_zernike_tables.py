@@ -432,6 +432,44 @@ def test_shared_tables_give_the_bits_of_sag_and_normal(set_test_backend):
         assert_bits_equal(a, b)
 
 
+def test_the_newton_loop_takes_the_point_tables(set_test_backend, monkeypatch):
+    """The Newton loop evaluates the tables once per iterate (_sag_and_terms)."""
+    from optiland.geometries import newton_raphson
+    from optiland.rays import RealRays
+
+    geometry = _geometry("fringe37")
+    assert newton_raphson._shares_terms(geometry)
+    x, y = (be.array(v) for v in _points(200, seed=7))
+    sag, tables = geometry._sag_and_terms(x, y)
+    assert_bits_equal(sag, geometry.sag(x, y))
+    expected = geometry._slopes_from_tables(geometry._point_tables(x, y))
+    for a, b in zip(geometry._slopes_from_terms(x, y, tables), expected, strict=True):
+        assert_bits_equal(a, b)
+
+    def rays():
+        n = 301
+        y0 = np.linspace(-9.0, 9.0, n)
+        return RealRays(
+            0.4 * np.sin(5.0 * y0),
+            y0,
+            np.full(n, -5.0),
+            np.full(n, 0.02),
+            np.full(n, 0.05),
+            np.full(n, math.sqrt(1.0 - 0.02**2 - 0.05**2)),
+            np.ones(n),
+            np.full(n, 0.55),
+        )
+
+    shared = geometry._solve_distance_primal(rays())
+    monkeypatch.setattr(newton_raphson, "_shares_terms", lambda geometry: False)
+    plain = geometry._solve_distance_primal(rays())
+    assert shared.final is not None
+    assert plain.final is None
+    assert shared.iterations == plain.iterations
+    np.testing.assert_array_equal(_numpy(shared.converged), _numpy(plain.converged))
+    np.testing.assert_allclose(_numpy(shared.t), _numpy(plain.t), rtol=0, atol=1e-12)
+
+
 def test_validation_is_as_master(set_test_backend):
     geometry = _geometry("fringe37")
     x, y = be.array([0.0, 12.5]), be.array([0.0, 0.0])
