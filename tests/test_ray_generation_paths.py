@@ -1,24 +1,30 @@
-"""Tests for the field runs of angle-field ray generation.
+"""Tests for the fast paths of paraxial ray generation.
 
 The field runs (``optiland.fields.field_types._runs``) are a fast path of
-``AngleField.get_ray_origins``. They exist only on the NumPy backend, so
-these tests run on NumPy. A fast path must give the bits of the generic
-code, so the tests compare the rays with and without runs bit for bit.
+``AngleField.get_ray_origins``, and the compiled aim directions
+(``optiland.backend.numpy_backend._aim``) are a fast path of
+``ParaxialRayAimer``. They exist only on the NumPy backend, so these tests
+run on NumPy. A fast path must give the bits of the generic code, so the
+tests compare the rays with and without the fast paths bit for bit. A
+tolerance would hide an operation in another order.
 
 Manuel Fragata Mendes, 2026
 """
 
 from __future__ import annotations
 
+import numba
 import numpy as np
 import pytest
 
 import optiland.backend as be
+import optiland.backend.numpy_backend._aim as aim
 import optiland.fields.field_types._runs as runs
 import optiland.fields.field_types.angle as angle
 from optiland.materials import IdealMaterial
 from optiland.optic import Optic
 from optiland.paraxial_path import UnsupportedParaxialGeometryError
+from optiland.rays.ray_aiming.paraxial import _MIN_AIM_DISTANCE, _unit_directions
 from optiland.samples.objectives import CookeTriplet
 from tests.test_entrance_pupil_behind_object import _pupil_behind_object
 from tests.test_folded_paraxial import straight
@@ -72,17 +78,24 @@ FIELDS = [(0.0, 0.0), (0.0, 0.5), (0.3, 1.0), (-0.0, 0.0), (0.0, 0.0)]
 
 @pytest.fixture
 def paths(monkeypatch):
-    """Select field runs or one value per ray, and count the uses of runs.
+    """Select the fast paths or the generic code, and count the fast paths.
 
-    ``paths(True)`` lets every bundle use runs; ``paths(False)`` makes
-    ``field_runs`` return None, so the per-ray expressions run.
+    ``paths(True)`` lets every bundle use field runs and the compiled aim
+    directions. ``paths(False)`` makes ``field_runs`` and
+    ``compiled_directions`` return None, so the NumPy expressions run.
+    ``paths.used`` counts the calls that gave a result.
     """
-    used = {"runs": 0}
-    field_runs = runs.field_runs
+    used = {"runs": 0, "directions": 0}
+    field_runs, compiled_directions = runs.field_runs, aim.compiled_directions
 
     def counted_runs(*args):
         result = field_runs(*args)
         used["runs"] += result is not None
+        return result
+
+    def counted_directions(*args):
+        result = compiled_directions(*args)
+        used["directions"] += result is not None
         return result
 
     def none(*args):
@@ -92,8 +105,12 @@ def paths(monkeypatch):
         if fast:
             monkeypatch.setattr(runs, "_MIN_RAYS", 1)
             monkeypatch.setattr(runs, "_MIN_RUN", 1)
-        # angle.py holds field_runs under its own name.
+        # angle.py holds field_runs under its own name. ParaxialRayAimer
+        # looks up compiled_directions in its module at each call.
         monkeypatch.setattr(angle, "field_runs", counted_runs if fast else none)
+        monkeypatch.setattr(
+            aim, "compiled_directions", counted_directions if fast else none
+        )
 
     select.used = used
     return select
@@ -126,14 +143,118 @@ def _generate(optic, fields=FIELDS):
 @pytest.mark.filterwarnings("ignore:paraxial ray tracing")
 @pytest.mark.parametrize("name", sorted(SYSTEMS))
 def test_generated_rays_are_identical(paths, name):
-    """Rays generated with field runs have the bits of the per-ray rays."""
+    """Rays generated with the fast paths have the bits of the generic rays.
+
+    The telecentric system has an object-space NA, so its rays have no aim
+    points, and the compiled directions do not apply.
+    """
     paths(False)
     generic = _generate(SYSTEMS[name]())
     paths(True)
     fast = _generate(SYSTEMS[name]())
     for attr in RAY_ATTRS:
-        assert_bits_equal(fast[attr], generic[attr])
+        # Compiled code can give a NaN another sign bit (see the developer
+        # page on performance internals).
+        compiled = attr in ("L", "M", "N")
+        assert_bits_equal(fast[attr], generic[attr], ignore_nan_sign=compiled)
     assert paths.used["runs"] == (0 if name in OBJECT_HEIGHT_SYSTEMS else 1)
+    assert paths.used["directions"] == (0 if name == "telecentric" else 1)
+
+
+def test_the_pupil_behind_the_object_reverses_rays(paths):
+    """The compiled directions reverse the rays that the expressions reverse.
+
+    The entrance pupil of this finite object is behind it, so each aim
+    point is behind its origin. Without the reversal, N would be negative.
+    """
+    paths(True)
+    rays = _generate(_pupil_behind_object(), fields=[(0.0, 0.0), (0.0, 1.0)])
+    assert (rays["N"] > 0).all()
+    assert paths.used["directions"] == 1
+
+
+def _aim_cases():
+    """Origins and aim points for the special cases of the directions.
+
+    Ray 0 starts at its aim point, and ray 4 is 1e-12 from it: both have a
+    zero distance. Ray 6 also has a zero distance, with an aim point behind
+    its origin, so the reversal changes (0, 0, 1) to (-0, -0, -1). Ray 2 has
+    a NaN coordinate and ray 5 an infinite one, so both give NaN. The aim
+    point of ray 3 is behind its origin.
+    """
+    x0 = np.array([0.0, 1.0, np.nan, 2.0, -0.0, 3.0, 0.0])
+    y0 = np.array([0.0, 2.0, 0.0, 2.0, 0.0, np.inf, 0.0])
+    z0 = np.array([0.0, -5.0, 0.0, 1.0, 0.0, 0.0, 1e-12])
+    x1 = np.array([0.0, 1.0, 1.0, 2.0, 1e-12, 3.0, 0.0])
+    y1 = np.array([0.0, 2.5, 0.0, 2.0, 0.0, 0.0, 0.0])
+    z1 = np.array([0.0, 5.0, 3.0, -4.0, 0.0, 1.0, 0.0])
+    return x0, y0, z0, x1, y1, z1
+
+
+@pytest.mark.parametrize(
+    ("flip", "axis"),
+    [
+        pytest.param(False, None, id="no_reversal"),
+        pytest.param(True, None, id="z_axis"),
+        pytest.param(True, (np.array([0.6]), 0.0, np.float64(0.8)), id="entry_axis"),
+    ],
+)
+def test_compiled_directions_match_the_expressions_at_zero_distance_and_nan(flip, axis):
+    """The kernel gives the bits of ``_unit_directions`` in special cases.
+
+    The components of the entry axis have three types: a 1-D array of one
+    value, a Python float and a NumPy float64.
+    """
+    coordinates = _aim_cases()
+    compiled = aim.compiled_directions(*coordinates, flip, axis, _MIN_AIM_DISTANCE)
+    with np.errstate(invalid="ignore"):
+        expected = _unit_directions(*coordinates, flip, axis)
+    for value, reference in zip(compiled, expected, strict=True):
+        assert_bits_equal(value, reference, ignore_nan_sign=True)
+    L, M, N = compiled
+    assert np.isnan(L[2]) and np.isnan(M[5])
+    sign = -1.0 if flip else 1.0
+    assert_bits_equal(np.array([L[6], M[6], N[6]]), sign * np.array([0.0, 0.0, 1.0]))
+
+
+def test_compiled_directions_need_float64_vectors():
+    """Only C-contiguous 1-D float64 arrays of one length are in the domain.
+
+    Each component of the entry axis must be one number. Outside the
+    domain, compiled_directions returns None, and the NumPy code runs.
+    """
+    v = np.zeros(3)
+    directions = aim.compiled_directions
+    d = _MIN_AIM_DISTANCE
+    assert directions(v, v, v, v, v, v[:2], False, None, d) is None
+    assert directions(v, v, v, v, v, v.astype(np.float32), False, None, d) is None
+    assert directions(v, v, v, v, v, np.zeros(6)[::2], False, None, d) is None
+    assert directions(np.zeros(()), v, v, v, v, v, False, None, d) is None
+    assert directions(v.tolist(), v, v, v, v, v, False, None, d) is None
+    assert directions(v, v, v, v, v, v, True, (v, 0.0, 1.0), d) is None
+    assert directions(v, v, v, v, v, v, True, (np.ones((1, 1)), 0.0, 1.0), d) is None
+    assert directions(v, v, v, v, v, v, False, None, d) is not None
+    empty = np.zeros(0)
+    assert all(len(c) == 0 for c in directions(*(empty,) * 6, True, None, d))
+
+
+def test_compiled_directions_need_the_jit_compiler(monkeypatch):
+    """With NUMBA_DISABLE_JIT=1, the kernel would run as Python code."""
+    monkeypatch.setattr(numba.config, "DISABLE_JIT", True)
+    v = np.zeros(3)
+    assert aim.compiled_directions(*(v,) * 6, False, None, _MIN_AIM_DISTANCE) is None
+
+
+def test_torch_uses_the_expressions(paths):
+    """The Torch backend never calls the compiled directions."""
+    pytest.importorskip("torch")
+    paths(True)
+    be.set_backend("torch")
+    try:
+        CookeTriplet().trace(Hx=0.0, Hy=1.0, wavelength=0.55, num_rays=3)
+    finally:
+        be.set_backend("numpy")
+    assert paths.used["directions"] == 0
 
 
 class TestFieldRuns:
