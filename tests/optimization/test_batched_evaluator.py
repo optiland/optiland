@@ -579,6 +579,27 @@ class TestNonRayOperands:
 
         assert batched == pytest.approx(standard, rel=1e-6)
 
+    @pytest.mark.parametrize("method", ["fun_array", "residual_vector"])
+    def test_edge_thickness_with_batching_off(self, set_test_backend, method):
+        """With batching off, be.stack joins edge_thickness and a scalar."""
+        lens = CookeTriplet()
+        problem = optimization.OptimizationProblem()
+        for operand_type in ("edge_thickness", "center_thickness"):
+            problem.add_operand(
+                operand_type=operand_type,
+                target=1.0,
+                weight=1.0,
+                input_data={"optic": lens, "surface_number": 1},
+            )
+
+        batched = be.to_numpy(getattr(problem, method)())
+        problem.disable_batching()
+        unbatched = be.to_numpy(getattr(problem, method)())
+
+        assert unbatched.shape == batched.shape == (2,)
+        assert unbatched.dtype == batched.dtype
+        assert unbatched.tobytes() == batched.tobytes()
+
     def test_aberration_operand(self):
         lens = CookeTriplet()
         problem = optimization.OptimizationProblem()

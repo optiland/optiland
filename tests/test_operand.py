@@ -675,7 +675,31 @@ class TestLensOperand:
 
         assert self.optic.surfaces[2].semi_aperture is not None
         assert self.optic.surfaces[3].semi_aperture is not None
-        assert be.size(edge_thickness) == 1
+        assert be.to_numpy(edge_thickness).ndim == 0
+
+    @pytest.mark.skipif(
+        "torch" not in be.list_available_backends(), reason="Requires the Torch backend"
+    )
+    @pytest.mark.parametrize("set_test_backend", ["torch"], indirect=True)
+    def test_edge_thickness_gradient(self, set_test_backend):
+        """The scalar keeps the Torch graph from the radius."""
+        import torch
+
+        self.optic.surfaces.add(index=2, radius=50.0, thickness=5.0, material="N-BK7")
+        self.optic.surfaces.add(index=3, radius=-50.0, thickness=100.0, material="air")
+        self.optic.surfaces.add(index=4)
+        self.optic.surfaces[2].semi_aperture = 10.0
+        self.optic.surfaces[3].semi_aperture = 10.0
+        radius = torch.tensor(50.0, dtype=torch.float64, requires_grad=True)
+        self.optic.surfaces[2].geometry.radius = radius
+
+        edge_thickness = LensOperand.edge_thickness(self.optic, surface_number=2)
+        (gradient,) = torch.autograd.grad(edge_thickness, radius)
+
+        # At the semi-aperture h, the edge thickness is
+        # t - (R - sqrt(R**2 - h**2)) + sag2. Its derivative with respect to
+        # R is R / sqrt(R**2 - h**2) - 1.
+        assert_allclose(gradient, 50.0 / be.sqrt(50.0**2 - 10.0**2) - 1.0)
 
     def test_edge_thickness_plano_concave(self, set_test_backend):
         self.optic.surfaces.add(index=2, radius=be.inf, thickness=2.0, material="N-BK7")
