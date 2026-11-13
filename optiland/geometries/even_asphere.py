@@ -125,8 +125,14 @@ class EvenAsphere(NewtonRaphsonGeometry):
         """
         r2 = x**2 + y**2
         z = r2 / (self.radius * (1 + be.sqrt(1 - (1 + self.k) * r2 / self.radius**2)))
-        for i, Ci in enumerate(self.coefficients):
-            z = z + Ci * r2 ** (i + 1)
+        # Use the length: the coefficients can also be an array or a tensor.
+        n = len(self.coefficients)
+        if n > 0:
+            # Horner's method: r2 * (C1 + r2 * (C2 + ... + r2 * Cn)).
+            polynomial = self.coefficients[n - 1]
+            for i in range(n - 2, -1, -1):
+                polynomial = self.coefficients[i] + r2 * polynomial
+            z = z + r2 * polynomial
 
         return z
 
@@ -149,9 +155,16 @@ class EvenAsphere(NewtonRaphsonGeometry):
         dfdx = x / denom
         dfdy = y / denom
 
-        for i, Ci in enumerate(self.coefficients):
-            dfdx = dfdx + 2 * (i + 1) * x * Ci * r2**i
-            dfdy = dfdy + 2 * (i + 1) * y * Ci * r2**i
+        n = len(self.coefficients)
+        if n > 0:
+            # d(sag)/d(r2) of the polynomial, C1 + 2 C2 r2 + ... + n Cn r2^(n-1),
+            # with Horner's method. It serves both slopes, because
+            # d(sag)/dx = 2 x d(sag)/d(r2) and d(sag)/dy = 2 y d(sag)/d(r2).
+            derivative = n * self.coefficients[n - 1]
+            for i in range(n - 1, 0, -1):
+                derivative = i * self.coefficients[i - 1] + r2 * derivative
+            dfdx = dfdx + 2 * x * derivative
+            dfdy = dfdy + 2 * y * derivative
 
         mag = be.sqrt(dfdx**2 + dfdy**2 + 1)
 
