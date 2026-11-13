@@ -243,14 +243,18 @@ change to a surface, a material or a coordinate system applies at the next
 trace. If one object is outside the domain, the build stops, nothing
 changes, and the trace in parts or the generic loop runs.
 
-A trace with a plan has three steps:
+A trace with a plan has four steps:
 
 1. A compiled kernel traces the rays in blocks of 256 rays (see "Two
    kernels" below). For each block, each surface runs short loops over the
    rays of the block, one function per step of the generic trace. These
    loops vectorize, and the buffers of a block stay in the L1 or L2 cache
    while the block goes through all surfaces.
-2. Only if a medium absorbs: the kernel writes the exponent
+2. Only if a surface is an even asphere: ``_floor_applies`` checks the
+   tolerance of its Newton-Raphson iteration (see "Even aspheres" below).
+   If the generic code would raise the tolerance, ``trace_with_plan``
+   returns False.
+3. Only if a medium absorbs: the kernel writes the exponent
    ``-alpha * t * 1e3`` of each ray in each absorbing medium, with the
    absorption coefficient of the medium or of the ray, and the clip mask of
    each aperture. A NumPy pass then computes the intensity from the input
@@ -259,7 +263,7 @@ A trace with a plan has three steps:
    trace, in parts of 65536 rays. A ray without power keeps ``i = 0``, also
    when a later miss gives a factor that is not finite. Without absorption,
    the kernel applies the clips to the intensity itself.
-3. The new arrays go to the rays, and the records go to the surfaces.
+4. The new arrays go to the rays, and the records go to the surfaces.
 
 The first trace compiles the kernel, which takes some seconds. Numba keeps
 the compiled code in its cache on disk, so later processes load it in a
@@ -287,11 +291,18 @@ Each limit has its reason:
 - At least one surface: an empty list gives no tables.
 - Surfaces of exactly the types ``Surface``, ``ImageSurface`` and
   ``ObjectSurface``: no subclass, because it can override a step.
-- Geometries of exactly the types ``StandardGeometry`` and ``Plane``: each
-  other geometry has its own distance and normal. The radius and the conic
-  constant are 0-d float64 arrays: NumPy squares a 0-d array as ``R * R``,
-  and the builder does the same. A NumPy scalar would be squared with
-  ``pow``.
+- Geometries of exactly the types ``StandardGeometry``, ``EvenAsphere`` and
+  ``Plane``: each other geometry has its own distance and normal. The
+  radius and the conic constant are 0-d float64 arrays: NumPy squares a 0-d
+  array as ``R * R``, and the builder does the same. A NumPy scalar would
+  be squared with ``pow``.
+- For an ``EvenAsphere``, the coefficients are a 1-D float64 array or a
+  list of float64 numbers (Python int or float, NumPy float64, or 0-d
+  float64 arrays), ``tol`` is such a number, and ``max_iter`` is a Python
+  int in the range of int64: the kernel takes float64 values and an int64
+  iteration limit. ``OddAsphere`` is a subclass of ``EvenAsphere`` with
+  another sag, so it uses the generic trace, as the other Newton-Raphson
+  geometries do.
 - A ``CoordinateSystem`` (exact type) without a reference coordinate
   system: a reference frame adds transforms. Its coordinates and angles are
   0-d float64 arrays: the kernel takes one value per surface.
@@ -338,28 +349,36 @@ Then it sets the records as the generic trace does: with ``record=True``,
 ``x``, ``y``, ``z``, ``L``, ``M``, ``N``, ``intensity`` and ``opd`` get the
 ray state after the surface, and ``u`` and ``aoi`` an empty array. Each
 record is a row of one array per name, so a record keeps that array alive.
-With ``record=False``, it calls ``Surface.reset``. When it returns False,
-the records are unchanged, and ``SurfaceGroup._trace_surfaces`` resets
-them. The surfaces before ``skip`` are reset before the plan.
+With ``record=False``, it calls ``Surface.reset``. When it returns False
+before the kernel runs, the records are unchanged. Only the tolerance floor
+of an even asphere gives False after the kernel, and the records of the
+previous trace are then released. After each False,
+``SurfaceGroup._trace_surfaces`` resets the records. The surfaces before
+``skip`` are reset before the plan.
 
 Two kernels
 ~~~~~~~~~~~
 
 ``_trace_kernel.py`` compiles one loop nest, ``_trace_blocks``, into two
 kernels. ``trace_plan`` traces all plans. ``trace_basic_plan`` traces a
-basic plan: a plan without rows of per-ray values, for example of a trace
-with one wavelength. A flag of the loop nest, ``per_ray``, is a constant in
-each kernel. Numba removes the branches that the constant does not take
-before it compiles a kernel, so ``trace_basic_plan`` has no code for
-per-ray values and does not take the table of per-ray values.
+basic plan: a plan without rows of per-ray values and without even
+aspheres, for example of a trace with one wavelength through spheres and
+conics. Two flags of the loop nest, ``per_ray`` and ``newton``, are
+constants in each kernel. Numba removes the branches that the constants do
+not take before it compiles a kernel, so ``trace_basic_plan`` has no code
+for per-ray values and for the Newton-Raphson iteration. It does not take
+the tables of per-ray values, coefficients and seeds, and does not allocate
+the buffers of the iteration.
 
-The second kernel exists because the code for per-ray values made the
-other steps slower. With that code in its loop nest, the kernel traced the
+The second kernel exists because this code made the other steps slower.
+With the code for per-ray values in its loop nest, the kernel traced the
 Cooke triplet with one wavelength in 5 to 7 percent more time (30000 and
-200000 rays), although it ran none of that code. The branches of that code
-run once per surface and block of 256 rays, and LLVM vectorizes the same
-loops with and without that code. The cause is other machine code of the
-larger loop nest.
+200000 rays), although it ran none of that code. The code of the
+Newton-Raphson iteration added about 1 percent at 200000 rays, and 1 us
+to each kernel call of 64 rays, 0.2 us of it for its three tables and its
+two buffers. The branches of that code run once per surface and block of
+256 rays, and LLVM vectorizes the same loops with and without that code.
+The cause is other machine code of the larger loop nest.
 
 Both kernels run the same steps on a basic plan, so they give the same
 bits. Keep it so: a step that a basic plan uses must not depend on a flag.
@@ -384,6 +403,44 @@ and a scalar if both indices are scalars, for example the ``numpy.float64``
 that ``IdealMaterial`` returns for one ray. The builder repeats the case
 (``_index_ratio``).
 
+Even aspheres
+~~~~~~~~~~~~~
+
+An ``EvenAsphere`` has no closed-form intersection with a ray.
+``NewtonRaphsonGeometry._solve_distance_primal`` starts at a seed and runs a
+Newton-Raphson iteration on the ray parameter t. The kernel repeats this
+solve (``_newton`` in ``_trace_kernel.py``):
+
+- The seed is the distance to the base conic, as
+  ``StandardGeometry.distance`` computes it: with ``geometry.radius``, not
+  ``paraxial_radius``, and with the root preference of the aperture.
+- A ray that misses the base conic starts on the vertex plane z = 0. The
+  ray is kept only if the iteration converges to a root in front of it,
+  t > 0. Otherwise it misses the surface.
+- The rays of a block iterate together, with the rules of the generic
+  solve: the residual F(t) = sag(x + t L, y + t M) - (z + t N), the slopes
+  of the sag from the normalized surface normal, the floors of n_z and of
+  dF/dt, the strict test ``abs(F) < tol``, the early exit when no ray is
+  active, ``max_iter``, and NaN for a ray with a NaN residual. A ray that
+  converged, or that has a NaN residual, takes no more steps, so each ray
+  takes the steps that it takes in the generic solve.
+
+The sag and its slopes use Horner's method, as ``EvenAsphere`` does. The
+builder computes the products i * C_i in Python, with the objects of the
+geometry, as ``EvenAsphere._surface_normal`` does.
+
+One value depends on all rays. ``_effective_tolerance`` raises ``tol`` to
+the round-off floor ``8 * eps * max(1, max|t|)``, with the largest
+``abs(t)`` over the seeds of all rays of the call. If one seed is NaN,
+NumPy's max is NaN, and Python's ``max(1.0, nan)`` is 1.0, so the floor is
+``8 * eps``. The kernel iterates with ``tol`` and writes a summary of the
+seeds of each asphere: a flag for a NaN seed, and the largest ``abs(t)`` of
+the other seeds. After the kernel, ``_floor_applies`` computes the floor.
+It is above ``tol`` only if a seed is above ``tol / (8 * eps)``: about
+5.6e4 mm for the default ``tol = 1e-10``, and 563 mm for ``tol = 1e-12``.
+Then ``trace_with_plan`` returns False and the generic trace runs, so such
+a trace pays for both traces.
+
 Rules for compiled code
 ~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -398,6 +455,12 @@ Rules for compiled code
   kernel, as the intensity pass does with ``numpy.exp`` and the builder
   with the cosines and sines of the rotations. ``sqrt`` is correctly
   rounded in both, so the kernel computes it.
+- Do not use a power function in an expression of the generic code that
+  the kernel repeats, for example ``r2**i`` with i > 2. NumPy calls the
+  ``pow`` of its C library for each element, and compiled code computes a
+  power in another way, so the last bit can differ. ``EvenAsphere`` uses
+  Horner's method, which needs only multiplications and additions, and the
+  kernel repeats it.
 - Write each step as a function that Numba inlines into the loop nest
   ``_trace_blocks`` (``inline="always"``). A function that calls an inline
   overload, such as the conic arithmetic of
@@ -494,7 +557,10 @@ domain of the compiled trace plan:
 ``optiland.surfaces._trace_plan.trace_with_plan`` works in the same way: it
 gives ``[True]`` for the Cooke triplet without coatings, and ``[False]``
 with them. Compare a system with the domain of the plan to find the limit
-that it breaks. With ``NUMBA_DISABLE_JIT=1``, the plan always gives
+that it breaks. For a system with an even asphere, a spy on
+``optiland.surfaces._trace_plan._floor_applies`` shows whether the kernel
+ran and the tolerance floor gave False (``[True]``), or the build stopped
+(no call). With ``NUMBA_DISABLE_JIT=1``, the plan always gives
 ``False``. In a test, replace the module attribute with ``monkeypatch``
 instead, for example
 ``monkeypatch.setattr(trace_plan, "trace_with_plan", spy)``, and switch the

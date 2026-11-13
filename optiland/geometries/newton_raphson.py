@@ -346,6 +346,12 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
             _DistanceSolveResult: Distance, final residual, per-ray
             convergence mask and iteration count.
         """
+        # The compiled trace plan repeats this solve for an EvenAsphere, with
+        # _surface_residual, _surface_residual_dt, _regularize_signed and
+        # _effective_tolerance (_newton in
+        # optiland/backend/numpy_backend/_trace_kernel.py, and _floor_applies
+        # in optiland/surfaces/_trace_plan.py). Change both.
+
         # Better initial guess via base conic intersection. The seed decides
         # which root's basin the iteration converges in, so it must already
         # be the physical branch.

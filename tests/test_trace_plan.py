@@ -18,9 +18,10 @@ import numpy as np
 import pytest
 
 import optiland.backend as be
+import optiland.geometries.newton_raphson as newton_raphson
 import optiland.surfaces._chunked_trace as chunked
 import optiland.surfaces._trace_plan as plan
-from optiland.geometries import EvenAsphere, StandardGeometry
+from optiland.geometries import EvenAsphere, OddAsphere, StandardGeometry
 from optiland.materials import IdealMaterial
 from optiland.materials.base import BaseMaterial
 from optiland.optic import Optic
@@ -32,7 +33,7 @@ from optiland.physical_apertures import (
 from optiland.propagation.homogeneous import HomogeneousPropagation
 from optiland.rays import PolarizedRays, RealRays
 from optiland.samples.objectives import CookeTriplet, DoubleGauss
-from optiland.samples.simple import CementedAchromat, TelescopeDoublet
+from optiland.samples.simple import AsphericSinglet, CementedAchromat, TelescopeDoublet
 from optiland.samples.telescopes import HubbleTelescope
 from optiland.surfaces import ImageSurface, SurfaceGroup
 from optiland.surfaces.standard_surface import Surface
@@ -172,6 +173,60 @@ def _tilted():
     return optic
 
 
+def _asphere_triplet():
+    """The Cooke triplet with two even aspheres (two and six coefficients)."""
+    optic = CookeTriplet()
+    surfaces = optic.surfaces.surfaces
+    for index, coefficients in (
+        (1, [2e-4, -3e-6]),
+        (4, [-1e-4, 2e-6, -3e-8, 4e-10, -5e-12, 6e-14]),
+    ):
+        geometry = surfaces[index].geometry
+        surfaces[index].geometry = EvenAsphere(
+            geometry.cs, geometry.radius, -0.3, coefficients=coefficients
+        )
+    return optic
+
+
+def _flat_asphere():
+    """The Cooke triplet with a flat even asphere: R = inf, with coefficients.
+
+    The base conic is the plane z = 0, so the seed is the distance of FLAT.
+    """
+    optic = CookeTriplet()
+    surface = optic.surfaces.surfaces[3]
+    surface.geometry = EvenAsphere(
+        surface.geometry.cs, be.inf, coefficients=[1e-3, -2e-5]
+    )
+    return optic
+
+
+def _clipped_aspheres():
+    """The asphere triplet with an aperture on each asphere.
+
+    Each aperture takes part in the conic seed and clips rays.
+    """
+    optic = _asphere_triplet()
+    surfaces = optic.surfaces.surfaces
+    surfaces[1].aperture = RadialAperture(r_max=6.0)
+    surfaces[4].aperture = OffsetRadialAperture(r_max=4.0, offset_y=0.3)
+    return optic
+
+
+def _oap_asphere():
+    """The off-axis parabolic mirror of ``_oap``, with even asphere terms.
+
+    A decentered and tilted asphere mirror with an offset aperture.
+    """
+    optic = _oap()
+    surface = optic.surfaces.surfaces[2]
+    geometry = surface.geometry
+    surface.geometry = EvenAsphere(
+        geometry.cs, geometry.radius, -1.0, coefficients=[2e-6, -1e-9]
+    )
+    return optic
+
+
 # Systems in the domain of the plan. CookeTriplet has a glass with k > 0
 # (one absorption coefficient), so its traces run the intensity pass.
 SYSTEMS = {
@@ -187,6 +242,11 @@ SYSTEMS = {
     "clipped": _clipped,
     "tilted": _tilted,
     "hubble": HubbleTelescope,
+    "aspheric_singlet": AsphericSinglet,
+    "asphere_triplet": _asphere_triplet,
+    "flat_asphere": _flat_asphere,
+    "clipped_aspheres": _clipped_aspheres,
+    "oap_asphere": _oap_asphere,
 }
 
 
@@ -205,6 +265,25 @@ def calls(monkeypatch):
         return results[-1]
 
     monkeypatch.setattr(plan, "trace_with_plan", spy)
+    return results
+
+
+@pytest.fixture
+def floor_checks(monkeypatch):
+    """The results of the calls of _floor_applies, in order.
+
+    trace_with_plan calls it after the kernel, for a plan with an even
+    asphere. So it tells a False of the build (no call) from a False after
+    the kernel (True).
+    """
+    results = []
+    original = plan._floor_applies
+
+    def spy(*args):
+        results.append(original(*args))
+        return results[-1]
+
+    monkeypatch.setattr(plan, "_floor_applies", spy)
     return results
 
 
@@ -273,7 +352,9 @@ def test_optic_trace_is_identical(calls, monkeypatch, name, hy, record):
 
 @pytest.mark.parametrize("record", [True, False])
 @pytest.mark.parametrize("n", [1, 7, 255, 256, 257, 1000])
-@pytest.mark.parametrize("name", ["cooke", "double_gauss", "clipped", "tilted"])
+@pytest.mark.parametrize(
+    "name", ["cooke", "double_gauss", "clipped", "tilted", "asphere_triplet"]
+)
 def test_ray_counts_and_wavelengths_are_identical(calls, monkeypatch, name, n, record):
     """Blocks of any length, with one wavelength and with all of the system.
 
@@ -290,7 +371,7 @@ def test_ray_counts_and_wavelengths_are_identical(calls, monkeypatch, name, n, r
         _assert_same(with_plan, _trace(build, factory, record, monkeypatch, False))
 
 
-@pytest.mark.parametrize("name", ["cooke", "absorbing", "clipped"])
+@pytest.mark.parametrize("name", ["cooke", "absorbing", "clipped", "asphere_triplet"])
 def test_rays_that_miss_are_identical(calls, monkeypatch, name):
     """Rays far outside the lens give NaN at the same positions.
 
@@ -570,10 +651,343 @@ def test_scalar_indices_square_the_ratio_with_pow(calls, monkeypatch):
     assert table[1, kernel.INDEX_RATIO_SQUARED] == u**2
 
 
-def _even_asphere(optic):
+# Even aspheres: the Newton-Raphson iteration of NewtonRaphsonGeometry.
+
+
+def _strong_asphere(coefficients=(-1e-2, 2e-5), max_iter=100):
+    """A singlet whose first surface (at z = 3) is a strong even asphere.
+
+    The polynomial bends the surface away from its base conic (R = 6,
+    k = -0.5), so some steep rays hit the asphere but miss the base conic.
+    """
+    optic = Optic()
+    optic.surfaces.add(index=0, z=0.0)
+    optic.surfaces.add(index=1, z=3.0, material="N-BK7")
+    optic.surfaces.add(index=2, z=8.0)
+    surface = optic.surfaces.surfaces[1]
+    surface.geometry = EvenAsphere(
+        surface.geometry.cs,
+        6.0,
+        -0.5,
+        max_iter=max_iter,
+        coefficients=list(coefficients),
+    )
+    return optic
+
+
+def _steep_fan(n, height, angle):
+    """n rays from z = 0 in the y-z plane, with heights and angles up to these."""
+    ang = np.linspace(-angle, angle, n)
+    return RealRays(
+        np.zeros(n),
+        np.linspace(-height, height, n),
+        np.zeros(n),
+        np.zeros(n),
+        np.sin(ang),
+        np.cos(ang),
+        np.ones(n),
+        np.full(n, 0.55),
+    )
+
+
+def _at_strong_asphere(rays):
+    """The rays in the frame of the asphere of ``_strong_asphere``."""
+    rays.z = rays.z - 3.0
+    return rays
+
+
+def test_plane_seeded_rays_are_identical(calls, monkeypatch):
+    """A ray that misses the base conic starts on the vertex plane z = 0.
+
+    It is kept only if the iteration converges to a root in front of it.
+    The fan has rays of both kinds.
+    """
+
+    def rays():
+        return _steep_fan(400, 9.0, 1.2)
+
+    geometry = _strong_asphere().surfaces.surfaces[1].geometry
+    seed = StandardGeometry.distance(geometry, _at_strong_asphere(rays()))
+    hit = geometry.distance(_at_strong_asphere(rays()))
+    assert (np.isnan(seed) & np.isfinite(hit)).any()
+    assert (np.isnan(seed) & np.isnan(hit)).any()
+
+    with_plan = _trace(_strong_asphere, rays, True, monkeypatch, True)
+    assert calls == [True]
+    _assert_same(with_plan, _trace(_strong_asphere, rays, True, monkeypatch, False))
+
+
+def _mirror_section():
+    """A concave asphere mirror with an aperture off the axis.
+
+    The base conic is a parabola (R = 20, k = -1). A ray along y at z = 5
+    crosses it twice, near y = -14 and y = 14. The aperture holds only the
+    second crossing, so it selects the seed of the iteration.
+    """
+    optic = Optic()
+    optic.surfaces.add(index=0, z=0.0)
+    optic.surfaces.add(
+        index=1,
+        z=0.0,
+        surface_type="even_asphere",
+        radius=20.0,
+        conic=-1.0,
+        coefficients=[1e-5],
+        material="mirror",
+        aperture=OffsetRadialAperture(r_max=4.0, offset_y=14.0),
+    )
+    optic.surfaces.add(index=2, z=30.0)
+    return optic
+
+
+def _side_fan():
+    """60 rays from y = -20 at heights z = 3 to 6, nearly along the y axis."""
+    n = 60
+    ang = np.linspace(-0.05, 0.05, n)
+    return RealRays(
+        np.linspace(-1.0, 1.0, n),
+        np.full(n, -20.0),
+        np.linspace(3.0, 6.0, n),
+        np.zeros(n),
+        np.cos(ang),
+        np.sin(ang),
+        np.ones(n),
+        np.full(n, 0.55),
+    )
+
+
+def test_the_aperture_selects_the_seed_of_an_asphere(calls, monkeypatch):
+    """The seed is the root of the base conic that the aperture prefers.
+
+    The precondition checks that the aperture changes the seed of some
+    rays: without it, the seed would be the nearer crossing.
+    """
+    surface = _mirror_section().surfaces.surfaces[1]
+    preferred = StandardGeometry.distance(
+        surface.geometry, _side_fan(), aperture=surface.aperture
+    )
+    nearest = StandardGeometry.distance(surface.geometry, _side_fan())
+    assert (preferred > nearest).any()
+
+    with_plan = _trace(_mirror_section, _side_fan, True, monkeypatch, True)
+    assert calls == [True]
+    generic = _trace(_mirror_section, _side_fan, True, monkeypatch, False)
+    _assert_same(with_plan, generic)
+
+
+def _newton_fan():
+    """701 rays; ray 350, in the second block, runs along the axis."""
+    return _steep_fan(701, 5.0, 0.9)
+
+
+def _solve(max_iter):
+    """``_solve_distance_primal`` of the strong asphere for ``_newton_fan``."""
+    geometry = _strong_asphere(max_iter=max_iter).surfaces.surfaces[1].geometry
+    return geometry._solve_distance_primal(_at_strong_asphere(_newton_fan()))
+
+
+def test_the_rays_of_a_block_take_different_numbers_of_steps():
+    """The precondition of test_newton_steps_are_identical.
+
+    In the second block of _newton_fan (rays 256 to 511), some rays converge
+    at the seed, and one step and two steps give different distances.
+    """
+    block = slice(256, 512)
+    at_seed = _solve(0).converged[block]
+    assert at_seed.any()
+    assert not at_seed.all()
+    one, two = _solve(1).t[block], _solve(2).t[block]
+    assert not np.array_equal(one, two, equal_nan=True)
+
+
+@pytest.mark.parametrize(
+    ("coefficients", "max_iter"),
+    [
+        pytest.param((), 100, id="no_coefficients"),
+        pytest.param((-1e-2, 2e-5), 100, id="converged"),
+        pytest.param((-1e-2, 2e-5), 2, id="two_steps"),
+        pytest.param((-1e-2, 2e-5), 1, id="one_step"),
+        pytest.param((-1e-2, 2e-5), 0, id="no_steps"),
+    ],
+)
+def test_newton_steps_are_identical(calls, monkeypatch, coefficients, max_iter):
+    """The rays of a block take different numbers of steps, up to max_iter.
+
+    Without coefficients, the asphere is its base conic, and the kernel
+    uses the conic normal.
+    """
+    build = functools.partial(_strong_asphere, coefficients, max_iter)
+    with_plan = _trace(build, _newton_fan, True, monkeypatch, True)
+    assert calls == [True]
+    generic = _trace(build, _newton_fan, True, monkeypatch, False)
+    _assert_same(with_plan, generic)
+    if coefficients and max_iter < 100:
+        # max_iter stops rays before they converge.
+        converged = _trace(_strong_asphere, _newton_fan, True, monkeypatch, False)
+        assert not np.array_equal(generic["s1.z"], converged["s1.z"], equal_nan=True)
+
+
+@pytest.mark.parametrize(
+    "coefficients",
+    [
+        pytest.param([2e-4, -3e-6, 4e-8], id="floats"),
+        pytest.param([0, 0, 0], id="ints"),
+        pytest.param([np.float64(2e-4), np.float64(-3e-6)], id="numpy_floats"),
+        pytest.param([np.array(2e-4), np.array(-3e-6)], id="arrays_0d"),
+        pytest.param(np.array([2e-4, -3e-6, 4e-8]), id="array"),
+    ],
+)
+def test_coefficient_types_are_identical(calls, monkeypatch, coefficients):
+    """Each form of the coefficients gives the bits of the generic trace.
+
+    The builder computes i * C_i with the objects of the geometry, as
+    EvenAsphere._surface_normal does. The optimizer stores the coefficients
+    in an array when it pads them.
+    """
+
+    def build():
+        optic = CookeTriplet()
+        surface = optic.surfaces.surfaces[1]
+        geometry = surface.geometry
+        surface.geometry = EvenAsphere(geometry.cs, geometry.radius)
+        surface.geometry.coefficients = coefficients
+        return optic
+
+    with_plan = _trace(build, lambda: _fan(300), True, monkeypatch, True)
+    assert calls == [True]
+    _assert_same(with_plan, _trace(build, lambda: _fan(300), True, monkeypatch, False))
+
+
+def test_tolerance_floor_uses_the_generic_trace(calls, floor_checks, monkeypatch):
+    """Below the round-off floor, the tolerance depends on the seeds of all rays.
+
+    The kernel runs, then _floor_applies gives True, and the generic trace
+    traces the rays.
+    """
+
+    def build():
+        optic = _asphere_triplet()
+        optic.surfaces.surfaces[4].geometry.tol = 1e-30
+        return optic
+
+    with_plan = _trace(build, lambda: _fan(100), True, monkeypatch, True)
+    assert calls == [False]
+    assert floor_checks == [True]
+    _assert_same(with_plan, _trace(build, lambda: _fan(100), True, monkeypatch, False))
+
+
+def _far_asphere():
+    """A sphere in air (R = 5), then an even asphere with tol = 1e-13 at 100 mm.
+
+    A ray more than 5 mm from the axis misses the sphere, so its seed at the
+    asphere is NaN.
+    """
+    optic = Optic()
+    optic.surfaces.add(index=0, z=0.0)
+    optic.surfaces.add(index=1, z=1.0, radius=5.0)
+    optic.surfaces.add(
+        index=2,
+        z=101.0,
+        surface_type="even_asphere",
+        radius=50.0,
+        coefficients=[1e-6],
+        tol=1e-13,
+    )
+    optic.surfaces.add(index=3, z=110.0)
+    return optic
+
+
+@pytest.mark.parametrize(
+    ("first_height", "floor_applies"),
+    [
+        pytest.param(4.0, True, id="finite_seeds"),
+        pytest.param(6.0, False, id="nan_seed"),
+    ],
+)
+def test_a_nan_seed_gives_the_lowest_floor(
+    calls, floor_checks, monkeypatch, first_height, floor_applies
+):
+    """The floor 8 * eps * max(1, max|t|) when one seed is NaN.
+
+    The seeds at the asphere are near 100 mm, so the floor is about
+    1.8e-13, above tol = 1e-13. NumPy's max of the seeds is NaN if one seed
+    is NaN, and Python's max(1.0, nan) is 1.0, so the floor is then 8 * eps,
+    and the plan traces. The first ray, in the first of three blocks, has
+    the NaN seed, so the seed summary must keep it over the blocks. A spy
+    on _effective_tolerance shows the decision of the generic solve.
+    """
+
+    def rays():
+        n = 600
+        heights = np.linspace(-4.0, 4.0, n)
+        heights[0] = first_height
+        return RealRays(
+            np.zeros(n),
+            heights,
+            np.zeros(n),
+            np.zeros(n),
+            np.zeros(n),
+            np.ones(n),
+            np.ones(n),
+            np.full(n, 0.55),
+        )
+
+    tolerances = []
+    effective_tolerance = newton_raphson._effective_tolerance
+
+    def spy(tol, t):
+        tolerances.append(effective_tolerance(tol, t))
+        return tolerances[-1]
+
+    monkeypatch.setattr(newton_raphson, "_effective_tolerance", spy)
+    generic = _trace(_far_asphere, rays, True, monkeypatch, False)
+    assert (tolerances[0] > 1e-13) == floor_applies
+    calls.clear()
+    with_plan = _trace(_far_asphere, rays, True, monkeypatch, True)
+    assert floor_checks == [floor_applies]
+    assert calls == [not floor_applies]
+    _assert_same(with_plan, generic)
+
+
+def test_kernel_thresholds_match_newton_raphson():
+    """The kernel repeats _DENOM_EPS_MULTIPLIER of newton_raphson.py.
+
+    Numba compiles a global as a constant, and its cache does not see a
+    change in another module, so the kernel cannot import the value.
+    """
+    kernel = plan._kernel()
+    assert kernel._DENOM_EPS_MULTIPLIER == newton_raphson._DENOM_EPS_MULTIPLIER
+    nz = np.zeros(1)
+    assert newton_raphson._nz_threshold(nz) == kernel._DENOM_TAU
+    assert newton_raphson._denominator_threshold(nz) == kernel._DENOM_TAU
+
+
+def _odd_asphere(optic):
+    """An OddAsphere: a subclass of EvenAsphere with another sag."""
     surface = optic.surfaces.surfaces[1]
     geometry = surface.geometry
-    surface.geometry = EvenAsphere(geometry.cs, geometry.radius, coefficients=[1e-6])
+    surface.geometry = OddAsphere(
+        geometry.cs, geometry.radius, coefficients=[1e-6, 1e-7]
+    )
+
+
+def _asphere_with(**attributes):
+    """Return a change that makes surface 1 an EvenAsphere with ``attributes``.
+
+    The attributes are set after the constructor, which makes a list of the
+    coefficients.
+    """
+
+    def change(optic):
+        surface = optic.surfaces.surfaces[1]
+        geometry = surface.geometry
+        surface.geometry = EvenAsphere(
+            geometry.cs, geometry.radius, coefficients=[1e-6]
+        )
+        for name, value in attributes.items():
+            setattr(surface.geometry, name, value)
+
+    return change
 
 
 def _coating(optic):
@@ -649,7 +1063,14 @@ def _scalar_radius(optic):
 @pytest.mark.parametrize(
     "change",
     [
-        _even_asphere,
+        _odd_asphere,
+        pytest.param(_asphere_with(coefficients=(1e-6,)), id="coefficient_tuple"),
+        pytest.param(
+            _asphere_with(coefficients=[np.float32(1e-6)]), id="float32_coefficient"
+        ),
+        pytest.param(_asphere_with(tol=np.float32(1e-10)), id="float32_tol"),
+        pytest.param(_asphere_with(max_iter=np.int64(100)), id="numpy_max_iter"),
+        pytest.param(_asphere_with(max_iter=2**63), id="max_iter_above_int64"),
         _coating,
         _reference_frame,
         _elliptical_aperture,
@@ -664,14 +1085,19 @@ def _scalar_radius(optic):
         _scalar_radius,
     ],
 )
-def test_systems_outside_the_domain_use_the_generic_trace(calls, change):
-    """Each limit of the domain on the developer page gives the generic trace."""
+def test_systems_outside_the_domain_use_the_generic_trace(calls, floor_checks, change):
+    """Each limit of the domain on the developer page gives the generic trace.
+
+    The build stops, so the kernel does not run, and the tolerance floor of
+    an even asphere is not checked.
+    """
     optic = CookeTriplet()
     change(optic)
     rays = _fan(20)
     x = rays.x
     optic.surfaces.trace(rays)
     assert calls == [False]
+    assert floor_checks == []
     assert rays.x is not x
 
 
@@ -760,12 +1186,22 @@ def kernel_calls(monkeypatch):
     return names
 
 
+def _has_asphere(optic):
+    """Return True if a surface of ``optic`` is an even asphere."""
+    return any(type(s.geometry) is EvenAsphere for s in optic.surfaces.surfaces)
+
+
 def test_each_plan_gets_its_kernel(calls, kernel_calls, monkeypatch):
-    """trace_basic_plan for one wavelength, trace_plan for per-ray values."""
+    """trace_basic_plan for a basic plan, trace_plan for the other plans.
+
+    A basic plan has no per-ray values and no even asphere: here the Cooke
+    triplet with one wavelength. Three wavelengths give per-ray values.
+    """
     for wavelengths in ((0.55,), (0.48, 0.55, 0.65)):
         _trace(CookeTriplet, lambda w=wavelengths: _fan(50, w), True, monkeypatch, True)
-    assert calls == [True, True]
-    assert kernel_calls == ["trace_basic_plan", "trace_plan"]
+    _trace(_asphere_triplet, lambda: _fan(50), True, monkeypatch, True)
+    assert calls == [True, True, True]
+    assert kernel_calls == ["trace_basic_plan", "trace_plan", "trace_plan"]
 
 
 # The paraxial ray aiming warns that it ignores the decenters of "decentered".
@@ -776,9 +1212,11 @@ def test_both_kernels_give_the_bits_of_a_basic_plan(
 ):
     """trace_plan and trace_basic_plan compile from one loop nest.
 
-    A trace with one wavelength has a basic plan, which trace_basic_plan
-    traces. Here trace_plan traces it too, with an empty table of per-ray
-    values, and must give the same bits.
+    A trace with one wavelength through a system without an even asphere has
+    a basic plan, which trace_basic_plan traces. Here trace_plan traces it
+    too, with empty tables of per-ray values, coefficients and seeds, and
+    must give the same bits. A system with an even asphere has no basic
+    plan, so trace_plan traces it both times.
     """
     kernel = plan._kernel()
 
@@ -794,14 +1232,17 @@ def test_both_kernels_give_the_bits_of_a_basic_plan(
         )
         return _state(optic, rays)
 
-    def full_kernel(rays_in, ints, floats, *rest):
-        return kernel.trace_plan(rays_in, ints, floats, plan._NO_ROWS, *rest)
+    def full_kernel(rays_in, ints, floats, exponents, clipped, *rest):
+        no_rows = plan._NO_ROWS
+        tables = (no_rows, no_rows, no_rows, exponents, clipped, no_rows)
+        return kernel.trace_plan(rays_in, ints, floats, *tables, *rest)
 
     basic = run()
     monkeypatch.setattr(kernel, "trace_basic_plan", full_kernel)
     full = run()
+    first = "trace_plan" if _has_asphere(SYSTEMS[name]()) else "trace_basic_plan"
     assert calls == [True, True]
-    assert kernel_calls == ["trace_basic_plan", "trace_plan"]
+    assert kernel_calls == [first, "trace_plan"]
     _assert_same(basic, full)
 
 

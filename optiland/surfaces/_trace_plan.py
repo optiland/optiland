@@ -11,11 +11,11 @@ trace. No plan is kept between traces.
 
 The builder computes each per-surface scalar of the generic trace (for
 example the cosines and sines of rotations, 1 + k, R**2, the squared
-aperture radii, u = n1/n2 and u**2, the absorption coefficient) with
-the same IEEE 754 operations in the same order, so the kernel gets the same
-values. Python floats give the bits of NumPy float64 for + - * /. NumPy
-computes ``x**2`` as ``x * x`` only for an array, and calls the C function
-``pow`` for a scalar (see ``_index_ratio``).
+aperture radii, u = n1/n2 and u**2, the absorption coefficient, i * C_i of
+an even asphere) with the same IEEE 754 operations in the same order, so
+the kernel gets the same values. Python floats give the bits of NumPy
+float64 for + - * /. NumPy computes ``x**2`` as ``x * x`` only for an
+array, and calls the C function ``pow`` for a scalar (see ``_index_ratio``).
 
 The developer page "Performance Internals" lists the domain of the plan,
 with the reason for each limit. Outside the domain, ``trace_with_plan``
@@ -35,12 +35,14 @@ import numba
 import numpy as np
 
 import optiland.backend as be
+from optiland.geometries.newton_raphson import _CONV_EPS_MULTIPLIER
 from optiland.surfaces._chunked_trace import _RECORDED
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from types import ModuleType
 
+    from optiland.geometries import EvenAsphere
     from optiland.materials.base import BaseMaterial
     from optiland.rays import BaseRays, RealRays
     from optiland.surfaces.standard_surface import Surface
@@ -67,8 +69,9 @@ _RELEASED = np.empty(0)
 _RELEASED.flags.writeable = False
 
 # Tables without rows, for the records of a trace without records, the
-# exponents of a plan without absorption and the clip masks of a plan without
-# apertures. The kernel never writes into them.
+# exponents of a plan without absorption, the clip masks of a plan without
+# apertures, and the coefficients and seed summary of a plan without an even
+# asphere. The kernel never writes into them.
 _NO_ROWS = np.empty((0, 1))
 _NO_CLIPS = np.empty((0, 1), dtype=np.bool_)
 
@@ -77,6 +80,13 @@ _NO_CLIPS = np.empty((0, 1), dtype=np.bool_)
 # the same reason: an array of 65536 float64 values (512 KiB) stays below the
 # size from which the heap of 64-bit Windows gives memory back to the system.
 _PART = 65536
+
+# machine_eps of a float64 array, as _effective_tolerance uses it:
+# np.finfo(np.float64).eps, written as a number so that importing this module
+# needs no NumPy value (the docs build replaces NumPy with a mock).
+_FLOAT64_EPS = 2.0**-52
+# The range of max_iter that fits the int64 table.
+_INT64 = np.iinfo(np.int64)
 
 
 class _Types(NamedTuple):
@@ -88,6 +98,7 @@ class _Types(NamedTuple):
     coordinate_system: type
     plane: type
     standard: type
+    even_asphere: type
     radial: type
     offset_radial: type
     interaction: type
@@ -102,7 +113,7 @@ def _types() -> _Types:
     ``optiland.surfaces`` is still being imported.
     """
     from optiland.coordinate_system import CoordinateSystem
-    from optiland.geometries import Plane, StandardGeometry
+    from optiland.geometries import EvenAsphere, Plane, StandardGeometry
     from optiland.interactions.refractive_reflective_model import (
         RefractiveReflectiveModel,
     )
@@ -120,6 +131,7 @@ def _types() -> _Types:
         coordinate_system=CoordinateSystem,
         plane=Plane,
         standard=StandardGeometry,
+        even_asphere=EvenAsphere,
         radial=RadialAperture,
         offset_radial=OffsetRadialAperture,
         interaction=RefractiveReflectiveModel,
@@ -148,21 +160,28 @@ class _Plan:
         floats: The float table, one row per surface.
         ray_values: The material values that differ from ray to ray, one row
             each (see ``_PerRayValues``).
-        basic: True if ``ray_values`` has no rows. The kernel
-            ``trace_basic_plan`` then traces the plan.
+        coef: The coefficients C_i of each even asphere, one row per surface.
+        dcoef: The products i * C_i, one row per surface.
+        basic: True if ``ray_values`` has no rows and no surface is an even
+            asphere. The kernel ``trace_basic_plan`` then traces the plan.
         moves_rays: False if all surfaces are object surfaces. The rays then
             keep their arrays.
         absorbing: The number of absorbing media: the rows of the exponents.
         clips: The number of apertures: the rows of the clip masks.
+        aspheres: The number of even aspheres. With one or more, the kernel
+            writes a seed summary for ``_floor_applies``.
     """
 
     ints: np.ndarray
     floats: np.ndarray
     ray_values: np.ndarray
+    coef: np.ndarray
+    dcoef: np.ndarray
     basic: bool
     moves_rays: bool
     absorbing: int
     clips: int
+    aspheres: int
 
 
 class _Form(NamedTuple):
@@ -261,6 +280,39 @@ def _absorbs(k: _Form) -> bool:
     return k.value > 0
 
 
+def _newton_values(
+    geometry: EvenAsphere,
+) -> tuple[list[float], list[float], int, float] | None:
+    """Return the values of the Newton-Raphson iteration of an even asphere.
+
+    The coefficients are a list or a 1-D array of numbers (see ``_number``),
+    ``tol`` is a number, and ``max_iter`` is an int that fits the int64
+    table. The products i * C_i use the objects of the geometry, as
+    ``EvenAsphere._surface_normal`` does, so they get its bits.
+
+    Args:
+        geometry: An EvenAsphere.
+
+    Returns:
+        The coefficients C_i, the products i * C_i, ``max_iter`` and ``tol``,
+        or None outside the domain.
+    """
+    values = geometry.coefficients
+    if type(values) is not list and not (
+        type(values) is np.ndarray and values.ndim == 1
+    ):
+        return None
+    coefficients = [_number(c) for c in values]
+    tol = _number(geometry.tol)
+    max_iter = geometry.max_iter
+    if None in coefficients or tol is None or type(max_iter) is not int:
+        return None
+    if not _INT64.min <= max_iter <= _INT64.max:
+        return None
+    derivatives = [float(i * c) for i, c in enumerate(values, start=1)]
+    return coefficients, derivatives, max_iter, tol
+
+
 def _memo(
     memo: dict[int, tuple[object, _T]], key: object, compute: Callable[[object], _T]
 ) -> _T:
@@ -333,6 +385,8 @@ class _Builder:
         self.absorbing = 0
         self.clips = 0
         self.values = _PerRayValues()
+        # The C_i and i * C_i of each even asphere, by the row of its surface.
+        self.coefficients: dict[int, tuple[list[float], list[float]]] = {}
         self._indices: dict[int, tuple[object, _Form | None]] = {}
         self._extinctions: dict[int, tuple[object, _Form | None]] = {}
         self._alphas: dict[int, tuple[object, _Form | None]] = {}
@@ -370,15 +424,35 @@ class _Builder:
 
     def plan(self) -> _Plan:
         """Return the plan of the rows added so far."""
+        coef, dcoef = self._coefficient_tables()
         return _Plan(
             ints=np.array(self.int_rows, dtype=np.int64),
             floats=np.array(self.float_rows, dtype=np.float64),
             ray_values=self.values.table(),
-            basic=not self.values.rows,
+            coef=coef,
+            dcoef=dcoef,
+            basic=not self.values.rows and not self.coefficients,
             moves_rays=self.moves_rays,
             absorbing=self.absorbing,
             clips=self.clips,
+            aspheres=len(self.coefficients),
         )
+
+    def _coefficient_tables(self) -> tuple[np.ndarray, np.ndarray]:
+        """Return the tables ``coef`` and ``dcoef``, one row per surface.
+
+        Row s holds the C_i or the i * C_i of the even asphere of surface s,
+        padded with zeros. The rows of other surfaces are zero.
+        """
+        if not self.coefficients:
+            return _NO_ROWS, _NO_ROWS
+        width = max(len(c) for c, _ in self.coefficients.values())
+        coef = np.zeros((len(self.int_rows), width))
+        dcoef = np.zeros_like(coef)
+        for s, (c, d) in self.coefficients.items():
+            coef[s, : len(c)] = c
+            dcoef[s, : len(d)] = d
+        return coef, dcoef
 
     def _frame_columns(
         self, surface: Surface, ints: list[int], floats: list[float]
@@ -420,12 +494,17 @@ class _Builder:
     def _geometry_columns(
         self, surface: Surface, ints: list[int], floats: list[float]
     ) -> bool:
-        """The step kind, and the values of the distance and the normal."""
+        """The step kind, and the values of the distance and the normal.
+
+        An EvenAsphere gets the columns of its base conic, because its
+        Newton-Raphson iteration starts at the distance to the base conic.
+        """
         kernel, geometry = self.kernel, surface.geometry
         if type(geometry) is self.types.plane:
             ints[kernel.KIND] = kernel.PLANE
             return True
-        if type(geometry) is not self.types.standard:
+        is_asphere = type(geometry) is self.types.even_asphere
+        if type(geometry) is not self.types.standard and not is_asphere:
             return False
         radius, conic = _float64_scalar(geometry.radius), _float64_scalar(geometry.k)
         if radius is None or conic is None:
@@ -436,6 +515,29 @@ class _Builder:
         # computes R**2 of an array as R * R.
         floats[kernel.ONE_PLUS_K] = 1.0 + conic
         floats[kernel.RADIUS_SQUARED] = radius * radius
+        if is_asphere:
+            return self._newton_columns(geometry, ints, floats)
+        return True
+
+    def _newton_columns(
+        self, geometry: EvenAsphere, ints: list[int], floats: list[float]
+    ) -> bool:
+        """The Newton-Raphson iteration of an EvenAsphere.
+
+        Fills NEWTON, NCOEF, MAX_ITER and TOL, and keeps the coefficients for
+        the rows of ``coef`` and ``dcoef``.
+        """
+        values = _newton_values(geometry)
+        if values is None:
+            return False
+        coefficients, derivatives, max_iter, tol = values
+        kernel = self.kernel
+        ints[kernel.NEWTON] = 1
+        ints[kernel.NCOEF] = len(coefficients)
+        ints[kernel.MAX_ITER] = max_iter
+        floats[kernel.TOL] = tol
+        # add() appends the row of this surface after its columns.
+        self.coefficients[len(self.int_rows)] = (coefficients, derivatives)
         return True
 
     def _aperture_columns(
@@ -607,6 +709,41 @@ def _build(
     return builder.plan()
 
 
+def _floor_applies(plan: _Plan, seed_stats: np.ndarray) -> bool:
+    """Return True if the generic solve raises the tolerance of an asphere.
+
+    The kernel iterates with the tolerance of the geometry, TOL.
+    ``_effective_tolerance`` raises it to the round-off floor
+    8 * eps * max(1, max|t|), with the largest abs(t) over the seeds of all
+    rays of the call. The floor is above TOL only for a seed above
+    TOL / (8 * eps): about 5.6e4 mm for TOL = 1e-10, and 563 mm for
+    TOL = 1e-12. NumPy's max is NaN if one seed is NaN, and Python's
+    ``max(1.0, nan)`` is 1.0, so the floor is then 8 * eps.
+
+    Up to the first asphere where the floor applies, the kernel has the
+    generic rays, so one True is enough.
+
+    Args:
+        plan: The plan of the trace.
+        seed_stats: The seed summary that the kernel wrote, one row per
+            surface (columns SEED_NAN and SEED_MAX).
+
+    Returns:
+        True if the floor is above TOL for an asphere of the plan. The
+        generic trace must then run.
+    """
+    kernel = _kernel()
+    for s in np.flatnonzero(plan.ints[:, kernel.NEWTON]):
+        if seed_stats[s, kernel.SEED_NAN]:
+            largest = math.nan
+        else:
+            largest = float(seed_stats[s, kernel.SEED_MAX])
+        floor = _CONV_EPS_MULTIPLIER * _FLOAT64_EPS * max(1.0, largest)
+        if floor > plan.floats[s, kernel.TOL]:
+            return True
+    return False
+
+
 def _absorbed_intensity(
     plan: _Plan,
     intensity: np.ndarray,
@@ -703,7 +840,11 @@ def trace_with_plan(surfaces: Sequence[Surface], rays: BaseRays, record: bool) -
     Returns:
         True if ``rays`` and the records of ``surfaces`` now hold the result
         of the generic trace. False if the trace is outside the domain of the
-        plan: ``rays`` and the records are then unchanged.
+        plan: ``rays`` is then unchanged. The records are unchanged too,
+        except when the tolerance floor of an even asphere applies (see
+        ``_floor_applies``): then the kernel has run, and the records of the
+        previous trace are released. After False, the caller resets the
+        records.
     """
     if not _ENABLED or not surfaces or be.get_backend() != "numpy":
         return False
@@ -731,7 +872,7 @@ def trace_with_plan(surfaces: Sequence[Surface], rays: BaseRays, record: bool) -
     rays_in = tuple(getattr(rays, name) for name in _RAY_STATE)
     rays_out, record_rows = tuple(outputs.values()), tuple(records.values())
     # Two kernels compile from one loop nest. trace_basic_plan has no code
-    # for per-ray values (see the kernel module).
+    # for per-ray values and even aspheres (see the kernel module).
     if plan.basic:
         kernel.trace_basic_plan(
             rays_in,
@@ -744,17 +885,26 @@ def trace_with_plan(surfaces: Sequence[Surface], rays: BaseRays, record: bool) -
             record,
         )
     else:
+        seed_shape = (len(surfaces), kernel.SEED_COLUMNS)
+        seed_stats = np.zeros(seed_shape) if plan.aspheres else _NO_ROWS
         kernel.trace_plan(
             rays_in,
             plan.ints,
             plan.floats,
             plan.ray_values,
+            plan.coef,
+            plan.dcoef,
             exponents,
             clipped,
+            seed_stats,
             rays_out,
             record_rows,
             record,
         )
+        # The kernel iterated with the tolerance of each asphere. If the
+        # generic solve raises a tolerance, the generic trace runs instead.
+        if plan.aspheres and _floor_applies(plan, seed_stats):
+            return False
     if plan.absorbing:
         outputs["i"] = _absorbed_intensity(
             plan, rays.i, exponents, clipped, records["intensity"], record
