@@ -30,6 +30,31 @@ def run_page(panel, name="Ray Fan"):
     return page
 
 
+@pytest.mark.parametrize(("annotation", "value"), [(int, 37), (float, 1.25)])
+def test_numeric_settings_restore_with_protected_editors(panel, annotation, value):
+    widget = panel._create_widget_for_param("sample_value", annotation, 0)
+    try:
+        editor = widget.lineEdit()
+        assert editor._spinbox_hit_area_guard.parent() is editor
+        panel._set_widget_value(widget, value, "sample_value")
+        assert widget.value() == value
+        panel._set_widget_value(widget, None, "sample_value")
+        assert widget.value() == value
+        widget.setProperty("allowNone", True)
+        panel._set_widget_value(widget, None, "sample_value")
+        assert widget.value() == widget.minimum()
+    finally:
+        widget.deleteLater()
+
+
+def test_settings_restore_leaves_unsupported_controls_unchanged(panel):
+    from PySide6.QtWidgets import QLabel
+
+    label = QLabel("Unchanged", panel)
+    panel._set_widget_value(label, 37, "sample_value")
+    assert label.text() == "Unchanged"
+
+
 def test_pending_page_immediate_and_late_result_does_not_steal_focus(panel):
     first = run_page(panel)
     second = run_page(panel)
