@@ -60,6 +60,12 @@ Overview
      - Spy on ``SurfaceGroup._trace_surfaces`` and read
        ``optiland._epoch.current()``. Call ``_trace_surfaces`` to trace
        without an epoch.
+   * - Field runs
+     - ``optiland/fields/field_types/_runs.py``
+     - ``AngleField.get_ray_origins`` on NumPy with float64, for 4096 rays
+       or more in runs of 64 rays or more on average
+     - Patch ``optiland.fields.field_types.angle.field_runs`` to return
+       None, as ``tests/test_ray_generation_paths.py`` does.
 
 Evaluation epoch of a direct trace
 ----------------------------------
@@ -93,6 +99,32 @@ trace passes no optics, so the guard cannot see changes to the optic during
 a direct trace. To check a trace with the guard, trace inside
 ``with _epoch.evaluation_epoch((optic,)):``. The trace then reuses that
 epoch.
+
+Field runs
+----------
+
+``RealRayTracer.trace`` repeats each field point for each pupil point, so a
+large bundle has few different field points, in long runs.
+``AngleField.get_ray_origins`` is the only user of these runs. For each run
+of equal field points, it computes the validity checks of the field angles,
+their tangents and the launch distances once. ``FieldRuns.expand`` then
+repeats the results to one value per ray. The pupil offsets are computed
+per ray. For a finite object, the values are repeated to one value per ray
+before the sag of the object surface and the coordinate transform, because
+these take any geometry.
+
+The domain is the NumPy backend with float64, 1-D float64 arrays of one
+length, at least 4096 rays (``_MIN_RAYS``) and an average run of at least
+64 rays (``_MIN_RUN``). The runs are found by the bits of the field
+coordinates, not by their values: ``-0.0 == 0.0``, but the tangent of
+``-0.0`` is ``-0.0``. The reference is the per-ray expressions of
+``AngleField.get_ray_origins``. NumPy computes each element of a contiguous
+float64 array with the same loop, whatever its length, so each ray gets the
+same bits. The runs keep the order of the rays, so a validity check reports
+the same first bad field as the check on one value per ray.
+
+Torch never uses runs. A gradient through a repeated value would add its
+parts in another order.
 
 How to verify a fast path
 -------------------------

@@ -15,6 +15,7 @@ from optiland.paraxial_path import (
 )
 from optiland.utils import globalize_coordinates
 
+from ._runs import expander, field_runs
 from .base import BaseFieldDefinition
 
 # Below this angle (degrees) a field component is treated as zero for the
@@ -93,8 +94,17 @@ class AngleField(BaseFieldDefinition):
         obj = optic.object_surface
         EPL = optic.paraxial.EPL()
         max_field = be.array(optic.fields.max_field)
-        field_x = max_field * be.array(Hx)
-        field_y = max_field * be.array(Hy)
+        # With runs of equal field points, the arithmetic on the field angles
+        # runs once for each run, and expand repeats its results to one value
+        # per ray. Without runs, it runs on one value per ray.
+        runs = field_runs(Hx, Hy, Px, Py)
+        expand = expander(runs)
+        if runs is None:
+            field_x = max_field * be.array(Hx)
+            field_y = max_field * be.array(Hy)
+        else:
+            field_x = max_field * be.array(runs.hx)
+            field_y = max_field * be.array(runs.hy)
 
         if obj.is_infinite:
             _validate_unambiguous_field(field_x, field_y)
@@ -113,14 +123,21 @@ class AngleField(BaseFieldDefinition):
             theta_total = be.sqrt(field_x**2 + field_y**2)
             s = be.where(be.cos(be.radians(theta_total)) < 0, -1.0, 1.0)
 
+            # field_runs accepts only 1-D float64 arrays, so Px and Py need
+            # no copy.
+            if runs is None:
+                pupil_x, pupil_y = be.array(Px), be.array(Py)
+            else:
+                pupil_x, pupil_y = Px, Py
+
             frame = optic.surfaces._entry_frame()
             if frame is None:
                 z_pupil = optic.paraxial.entrance_pupil_axial_position()
-                x = -s * be.tan(be.radians(field_x)) * d
-                y = -s * be.tan(be.radians(field_y)) * d
-                z = z_pupil - s * d
-                x0 = be.array(Px) * EPD / 2 * be.array(vx) + x
-                y0 = be.array(Py) * EPD / 2 * be.array(vy) + y
+                x = expand(-s * be.tan(be.radians(field_x)) * d)
+                y = expand(-s * be.tan(be.radians(field_y)) * d)
+                z = expand(z_pupil - s * d)
+                x0 = pupil_x * EPD / 2 * be.array(vx) + x
+                y0 = pupil_y * EPD / 2 * be.array(vy) + y
                 z0 = be.zeros_like(Px) + z
             else:
                 # The beam path is folded off the z axis: launch on the
@@ -132,14 +149,12 @@ class AngleField(BaseFieldDefinition):
                 # defined. See SurfaceGroup._entry_frame.
                 anchor, axial, d0, u0, v0 = frame
                 ep = optic.paraxial.entrance_pupil_axial_position()
-                back = ep - axial - s * d
-                tu = (
-                    be.array(Px) * EPD / 2 * be.array(vx)
-                    - s * be.tan(be.radians(field_x)) * d
+                back = expand(ep - axial - s * d)
+                tu = pupil_x * EPD / 2 * be.array(vx) - expand(
+                    s * be.tan(be.radians(field_x)) * d
                 )
-                tv = (
-                    be.array(Py) * EPD / 2 * be.array(vy)
-                    - s * be.tan(be.radians(field_y)) * d
+                tv = pupil_y * EPD / 2 * be.array(vy) - expand(
+                    s * be.tan(be.radians(field_y)) * d
                 )
                 x0 = anchor[0] + back * d0[0] + tu * u0[0] + tv * v0[0]
                 y0 = anchor[1] + back * d0[1] + tu * u0[1] + tv * v0[1]
@@ -152,8 +167,15 @@ class AngleField(BaseFieldDefinition):
                 optic.paraxial.entrance_pupil_axial_position()
                 - optic.surfaces.positions[0]
             )
-            x_local = be.atleast_1d(be.array(-be.tan(be.radians(field_x)) * dist_to_ep))
-            y_local = be.atleast_1d(be.array(-be.tan(be.radians(field_y)) * dist_to_ep))
+            x_local = -be.tan(be.radians(field_x)) * dist_to_ep
+            y_local = -be.tan(be.radians(field_y)) * dist_to_ep
+            # Repeat to one value per ray before the sag and
+            # globalize_coordinates. They take any geometry, so we do not
+            # assume that one value per run gives the same bits.
+            if runs is not None:
+                x_local, y_local = runs.per_ray(x_local), runs.per_ray(y_local)
+            x_local = be.atleast_1d(be.array(x_local))
+            y_local = be.atleast_1d(be.array(y_local))
             z_local = obj.geometry.sag(x_local, y_local)
 
             # Globalize the local coordinates
