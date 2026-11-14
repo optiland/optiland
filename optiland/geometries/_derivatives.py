@@ -39,6 +39,28 @@ def derivative_requested(value) -> bool:
     return _is_wrapped(value, torch) or _has_tangent(value, torch)
 
 
+def can_carry_derivative(value) -> bool:
+    """Return True if ``value`` can carry a derivative in some evaluation.
+
+    This check does not look at gradient recording. Use it for values that a
+    geometry prepares once and uses in many evaluations, some of them inside
+    ``torch.no_grad`` and some not.
+
+    Args:
+        value: A tensor, an array or a number.
+
+    Returns:
+        bool: True for tensors that require grad, are wrapped by a
+        ``torch.func`` transform, or have a forward-mode tangent.
+    """
+    if not hasattr(value, "requires_grad"):
+        return False
+    torch = sys.modules["torch"]
+    if value.requires_grad:
+        return True
+    return _is_wrapped(value, torch) or _has_tangent(value, torch)
+
+
 def reverse_mode_only() -> bool:
     """Return True if a derivative can be requested only in reverse mode now.
 

@@ -38,6 +38,17 @@ try:
 except (ImportError, ModuleNotFoundError):
     torch = None
 
+from ._zero_terms import (
+    KEEP,
+    REVERSE,
+    q2d_cartesian_weights,
+    q2d_polar_weights,
+    q2d_sum_weights,
+    q2d_vertex_weights,
+    sum_and_slope_weights,
+    sum_weights,
+    zero_terms,
+)
 from .qpoly import (
     _q2d_cartesian_eval,
     _trim_trailing_zeros,
@@ -51,6 +62,73 @@ from .qpoly import (
 )
 
 _EPSILON = 1e-12
+
+
+def _conic_correction(r2, radius, k):
+    """Return the Forbes conic correction factor and its derivative.
+
+    See ``ForbesGeometryBase._conic_correction_factor``.
+
+    Args:
+        r2 (float or array_like): The squared radial coordinate (rho^2).
+        radius (float or array_like): The vertex radius of curvature.
+        k (float or array_like): The conic constant.
+
+    Returns:
+        tuple: The factor and its derivative with respect to rho.
+    """
+    if be.isinf(radius):
+        return 1.0, 0.0
+
+    c2 = (1.0 / radius) ** 2
+    rho = be.sqrt(r2)
+    num_arg = 1 - k * c2 * r2
+    den_arg = 1 - (k + 1) * c2 * r2
+
+    safe_num_arg = be.where(num_arg > 0, num_arg, 1e-12)
+    safe_den_arg = be.where(den_arg > 0, den_arg, 1e-12)
+    N = be.sqrt(safe_num_arg)
+    D = be.sqrt(safe_den_arg)
+
+    factor = N / D
+    derivative = (c2 * rho) / (N * D**3)
+    return factor, derivative
+
+
+def _qbfs_slope_chain_weights(saved, gradients, families):
+    """Weights of the zero terms for dz/drho of a Q (slope-orthogonal) surface.
+
+    ``ForbesQNormalSlopeGeometry._surface_normal_analytical`` adds the slope
+    of the departure, where(u >= 1, 0, a S(x) + b dS/dx) with x = u^2, to the
+    slope of the base conic. With
+    a = dprefactor/drho phi + (x - x^2) dphi/drho and
+    b = (x - x^2) phi 2 u / R, for the conic correction factor phi. If the
+    trimming keeps no coefficient, the departure is zero and the method does
+    not compute it. This function gives the weights of its derivative for
+    ``ZeroTerms.attach``; saved (rho, rho^2, R, radius, k).
+
+    Args:
+        saved (tuple): The saved positions and parameters, without a graph.
+        gradients (tuple): The gradient of dz/drho.
+        families (tuple): The one m = 0 family.
+
+    Returns:
+        tuple: The variable x of the basis and the weights of the family.
+    """
+    rho, r2, norm_radius, radius, k = saved
+    (gradient,) = gradients
+    u = rho / norm_radius
+    usq = u**2
+    factor, factor_slope = _conic_correction(r2, radius, k)
+    envelope = usq - usq**2
+    outside = u >= 1
+    a = torch.where(
+        outside,
+        0.0,
+        (2 * u - 4 * u**3) / norm_radius * factor + envelope * factor_slope,
+    )
+    b = torch.where(outside, 0.0, envelope * factor * (2 * u) / norm_radius)
+    return usq, [(gradient * a, gradient * b)]
 
 
 class _CoeffCacheDict(dict):
@@ -188,6 +266,20 @@ class ForbesGeometryBase(NewtonRaphsonGeometry):
         # evaluation time and does not enter coefficient preparation, so
         # ``update_normalization`` does not invalidate this cache.
         self._coeffs_dirty = True
+        # The trimmed zero coefficients that can carry a derivative (see
+        # ``_zero_terms.py``). ``_prepare_coeffs`` sets it.
+        self._zero_terms = None
+
+    def _zero_term_mode(self):
+        """Return how the trimmed zero terms get their derivative now.
+
+        Returns:
+            str or None: ``REVERSE``, ``KEEP``, or None if no derivative with
+            respect to a trimmed coefficient can be requested now. See
+            ``ZeroTerms.mode``.
+        """
+        terms = self._zero_terms
+        return None if terms is None else terms.mode()
 
     def _ensure_coeffs(self) -> None:
         """Rebuild cached coefficient containers only when invalidated.
@@ -288,22 +380,7 @@ class ForbesGeometryBase(NewtonRaphsonGeometry):
                 - derivative (float or array_like): The derivative of the
                                                         factor with respect to rho.
         """
-        if be.isinf(self.radius):
-            return 1.0, 0.0
-
-        c2 = (1.0 / self.radius) ** 2
-        rho = be.sqrt(r2)
-        num_arg = 1 - self.k * c2 * r2
-        den_arg = 1 - (self.k + 1) * c2 * r2
-
-        safe_num_arg = be.where(num_arg > 0, num_arg, 1e-12)
-        safe_den_arg = be.where(den_arg > 0, den_arg, 1e-12)
-        N = be.sqrt(safe_num_arg)
-        D = be.sqrt(safe_den_arg)
-
-        factor = N / D
-        derivative = (c2 * rho) / (N * D**3)
-        return factor, derivative
+        return _conic_correction(r2, self.radius, self.k)
 
 
 class ForbesQNormalSlopeGeometry(ForbesGeometryBase):
@@ -381,12 +458,17 @@ class ForbesQNormalSlopeGeometry(ForbesGeometryBase):
         ``_all_coeffs_zero`` flag consumed by the hot ``sag``/``_surface_normal``
         paths, so that trailing-zero trimming (and its CUDA synchronization)
         happens here -- once per coefficient change -- rather than on every
-        evaluation. Clears the dirty flag.
+        evaluation. The trimmed coefficients that can carry a derivative go
+        to ``_zero_terms``, and ``_full_radial_coeffs`` keeps the trailing
+        zeros for evaluations in forward mode and in ``torch.func``
+        transforms. Clears the dirty flag.
         """
         if not self.radial_terms:
             self.coeffs_n, self.coeffs_c = [], be.array([])
             self._prepared_radial_coeffs = []
             self._all_coeffs_zero = True
+            self._zero_terms = None
+            self._full_radial_coeffs = []
             self._coeffs_dirty = False
             return
 
@@ -403,7 +485,31 @@ class ForbesQNormalSlopeGeometry(ForbesGeometryBase):
 
         self._prepared_radial_coeffs = _trim_trailing_zeros(self.coeffs_c)
         self._all_coeffs_zero = len(self._prepared_radial_coeffs) == 0
+        # An absent coefficient (None) has no derivative to carry.
+        sources = [self.radial_terms.get(n) for n in range(len(self.coeffs_n))]
+        self._zero_terms = zero_terms(
+            [("m0", 0, sources, len(self._prepared_radial_coeffs))], self.coeffs_c
+        )
+        self._full_radial_coeffs = (
+            self._prepared_radial_coeffs
+            if self._zero_terms is None
+            else [self.coeffs_c[n] for n in range(len(self.coeffs_n))]
+        )
         self._coeffs_dirty = False
+
+    def _radial_coeffs(self, mode):
+        """Return the radial coefficients for an evaluation in ``mode``.
+
+        Args:
+            mode (str or None): The result of ``_zero_term_mode``.
+
+        Returns:
+            list: The coefficients with the trailing zeros for ``KEEP``, and
+            the trimmed coefficients otherwise.
+        """
+        if mode == KEEP:
+            return self._full_radial_coeffs
+        return self._prepared_radial_coeffs
 
     def sag(self, x=0, y=0):
         """Calculate the sag of the Forbes Q (slope-orthogonal) surface.
@@ -422,7 +528,10 @@ class ForbesQNormalSlopeGeometry(ForbesGeometryBase):
 
         usq = r2 / (self.norm_radius**2)
 
-        poly_sum_m0 = clenshaw_qbfs(self._prepared_radial_coeffs, usq, _no_trim=True)
+        mode = self._zero_term_mode()
+        poly_sum_m0 = clenshaw_qbfs(self._radial_coeffs(mode), usq, _no_trim=True)
+        if mode == REVERSE:
+            (poly_sum_m0,) = self._zero_terms.attach(sum_weights, (usq,), poly_sum_m0)
         prefactor = usq * (1 - usq)
         conic_correction_factor, _ = self._conic_correction_factor(r2)
         departure = prefactor * conic_correction_factor * poly_sum_m0
@@ -485,14 +594,26 @@ class ForbesQNormalSlopeGeometry(ForbesGeometryBase):
 
         ds_base_d_rho = self._base_sag_derivative(rho_safe, r2_safe)
 
-        if self._all_coeffs_zero:
+        mode = self._zero_term_mode()
+        radial_coeffs = self._radial_coeffs(mode)
+        if len(radial_coeffs) == 0:
             df_d_rho = ds_base_d_rho
+            if mode == REVERSE:
+                (df_d_rho,) = self._zero_terms.attach(
+                    _qbfs_slope_chain_weights,
+                    (rho_safe, r2_safe, self.norm_radius, self.radius, self.k),
+                    df_d_rho,
+                )
         else:
             u = rho_safe / self.norm_radius
 
             poly_val, dpoly_d_u = compute_z_zprime_qbfs(
-                self._prepared_radial_coeffs, u, u**2, _no_trim=True
+                radial_coeffs, u, u**2, _no_trim=True
             )
+            if mode == REVERSE:
+                poly_val, dpoly_d_u = self._zero_terms.attach(
+                    sum_and_slope_weights, (u,), poly_val, dpoly_d_u
+                )
             dprefactor_d_rho = (2 * u - 4 * u**3) / self.norm_radius
             dpoly_d_rho = dpoly_d_u / self.norm_radius
             conic_factor, dconic_factor_d_rho = self._conic_correction_factor(r2_safe)
@@ -686,6 +807,7 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
         if not self.freeform_coeffs:
             self.coeffs_n, self.coeffs_c = [], be.array([])
             self.cm0_coeffs, self.ams_coeffs, self.bms_coeffs = [], [], []
+            self._coeff_sources = []
             self._refresh_prepared_coeffs()
             self._coeffs_dirty = False
             return
@@ -716,6 +838,8 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
             coeffs_n,
             be.stack(coeffs_c) if coeffs_c else be.array([]),
         )
+        # The coefficients as the dict holds them, in the order of coeffs_n.
+        self._coeff_sources = coeffs_c
         if self.coeffs_n:
             self.cm0_coeffs, self.ams_coeffs, self.bms_coeffs = (
                 q2d_nm_coeffs_to_ams_bms(self.coeffs_n, self.coeffs_c)
@@ -729,11 +853,49 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
 
         Trailing exact-zero trimming is done once here (the ``bool(v == 0)``
         checks force a CUDA sync) so the per-evaluation Clenshaw passes can
-        run with ``_no_trim=True``.
+        run with ``_no_trim=True``. The trimmed coefficients that can carry a
+        derivative go to ``_zero_terms``.
         """
         self._prepared_cm0_coeffs = _trim_trailing_zeros(self.cm0_coeffs)
         self._prepared_ams_coeffs = [_trim_trailing_zeros(a) for a in self.ams_coeffs]
         self._prepared_bms_coeffs = [_trim_trailing_zeros(b) for b in self.bms_coeffs]
+        self._zero_terms = None
+        sources = getattr(self, "_coeff_sources", [])
+        if sources:
+            # The same families as cm0_coeffs, ams_coeffs and bms_coeffs, with
+            # the coefficients as the dict holds them. An absent coefficient
+            # is a float zero and has no derivative to carry.
+            cm0, ams, bms = q2d_nm_coeffs_to_ams_bms(self.coeffs_n, sources)
+            families = [("m0", 0, cm0, len(self._prepared_cm0_coeffs))]
+            for role, groups, prepared in (
+                ("cos", ams, self._prepared_ams_coeffs),
+                ("sin", bms, self._prepared_bms_coeffs),
+            ):
+                families.extend(
+                    (role, m, family, len(kept))
+                    for m, (family, kept) in enumerate(
+                        zip(groups, prepared, strict=True), start=1
+                    )
+                )
+            self._zero_terms = zero_terms(families, self.coeffs_c)
+
+    def _q2d_coeffs(self, mode):
+        """Return the (cm0, ams, bms) coefficients for an evaluation in ``mode``.
+
+        Args:
+            mode (str or None): The result of ``_zero_term_mode``.
+
+        Returns:
+            tuple: The m = 0, cosine and sine coefficient families, with the
+            trailing zeros for ``KEEP`` and trimmed otherwise.
+        """
+        if mode == KEEP:
+            return self.cm0_coeffs, self.ams_coeffs, self.bms_coeffs
+        return (
+            self._prepared_cm0_coeffs,
+            self._prepared_ams_coeffs,
+            self._prepared_bms_coeffs,
+        )
 
     def sag(self, x, y):
         """Calculate the sag of the Forbes Q2D freeform surface.
@@ -756,14 +918,14 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
         safe_x = be.where(rho < _EPSILON, x + 1e-12, x)
         theta = be.arctan2(y, safe_x)
 
+        mode = self._zero_term_mode()
         poly_sum_m0, poly_sum_m_gt0 = compute_z_q2d(
-            self._prepared_cm0_coeffs,
-            self._prepared_ams_coeffs,
-            self._prepared_bms_coeffs,
-            u,
-            theta,
-            _no_trim=True,
+            *self._q2d_coeffs(mode), u, theta, _no_trim=True
         )
+        if mode == REVERSE:
+            poly_sum_m0, poly_sum_m_gt0 = self._zero_terms.attach(
+                q2d_sum_weights, (u, y, safe_x), poly_sum_m0, poly_sum_m_gt0
+            )
         conic_correction_factor, _ = self._conic_correction_factor(r2)
         usq = u**2
         prefactor_m0 = usq * (1 - usq)
@@ -799,20 +961,58 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
         safe_mag = be.where(mag < _EPSILON, 1.0, mag)
         return df_dx / safe_mag, df_dy / safe_mag, -1.0 / safe_mag
 
-    def _surface_normal_analytical_vertex(self):
-        """Computes the stable analytical derivative exactly at the vertex."""
+    def _surface_normal_analytical_vertex(self, ams_coeffs=None, bms_coeffs=None):
+        """Computes the stable analytical derivative exactly at the vertex.
+
+        Args:
+            ams_coeffs (list, optional): The cosine families. Defaults to the
+                trimmed families.
+            bms_coeffs (list, optional): The sine families. Defaults to the
+                trimmed families.
+
+        Returns:
+            tuple: The slopes (df_dx, df_dy) at the vertex.
+        """
+        if ams_coeffs is None:
+            ams_coeffs = self._prepared_ams_coeffs
+        if bms_coeffs is None:
+            bms_coeffs = self._prepared_bms_coeffs
         df_dx_vertex, df_dy_vertex = 0.0, 0.0
-        if self._prepared_ams_coeffs and self._prepared_ams_coeffs[0]:
-            a_coeffs = self._prepared_ams_coeffs[0]
+        if ams_coeffs and ams_coeffs[0]:
+            a_coeffs = ams_coeffs[0]
             alphas_a = clenshaw_q2d(a_coeffs, m=1, usq=0.0, _no_trim=True)
             sum_a1 = q2d_sum_from_alphas(alphas_a, m=1, num_coeffs=len(a_coeffs))
             df_dx_vertex = sum_a1 / self.norm_radius
-        if self._prepared_bms_coeffs and self._prepared_bms_coeffs[0]:
-            b_coeffs = self._prepared_bms_coeffs[0]
+        if bms_coeffs and bms_coeffs[0]:
+            b_coeffs = bms_coeffs[0]
             alphas_b = clenshaw_q2d(b_coeffs, m=1, usq=0.0, _no_trim=True)
             sum_b1 = q2d_sum_from_alphas(alphas_b, m=1, num_coeffs=len(b_coeffs))
             df_dy_vertex = sum_b1 / self.norm_radius
         return df_dx_vertex, df_dy_vertex
+
+    def _vertex_with_zero_terms(self, df_dx_vertex, df_dy_vertex):
+        """Return the vertex slopes with the derivative of the trimmed terms.
+
+        At the vertex, only the family m = 1 has a slope. A slope from an
+        empty family is the float 0.0; it becomes a zero tensor, which gives
+        the same values in ``be.where``.
+
+        Args:
+            df_dx_vertex (float or torch.Tensor): The slope dz/dx.
+            df_dy_vertex (float or torch.Tensor): The slope dz/dy.
+
+        Returns:
+            tuple: The slopes.
+        """
+        terms = self._zero_terms
+        if not any(family.m == 1 for family in terms.families):
+            return df_dx_vertex, df_dy_vertex
+        zero = self.coeffs_c.new_zeros(())
+        slopes = [
+            value if hasattr(value, "detach") else zero
+            for value in (df_dx_vertex, df_dy_vertex)
+        ]
+        return terms.attach(q2d_vertex_weights, (self.norm_radius, zero), *slopes)
 
     def _surface_normal_analytical_cartesian(self, x_in, y_in):
         """Direct-Cartesian surface-derivative path for ``ForbesQ2dGeometry``.
@@ -839,14 +1039,14 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
         Y = y_in / self.norm_radius
         u2 = X * X + Y * Y
 
+        mode = self._zero_term_mode()
         P, dP_dX, dP_dY = _q2d_cartesian_eval(
-            X,
-            Y,
-            self._prepared_cm0_coeffs,
-            self._prepared_ams_coeffs,
-            self._prepared_bms_coeffs,
-            _no_trim=True,
+            X, Y, *self._q2d_coeffs(mode), _no_trim=True
         )
+        if mode == REVERSE:
+            P, dP_dX, dP_dY = self._zero_terms.attach(
+                q2d_cartesian_weights, (X, Y), P, dP_dX, dP_dY
+            )
         # Convert dP/dX, dP/dY (w.r.t. normalized coords) to physical.
         dP_dx = dP_dX / self.norm_radius
         dP_dy = dP_dY / self.norm_radius
@@ -892,7 +1092,15 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
         if self._use_cartesian_normal:
             return self._surface_normal_analytical_cartesian(x_in, y_in)
 
-        df_dx_vertex, df_dy_vertex = self._surface_normal_analytical_vertex()
+        mode = self._zero_term_mode()
+        cm0_coeffs, ams_coeffs, bms_coeffs = self._q2d_coeffs(mode)
+        df_dx_vertex, df_dy_vertex = self._surface_normal_analytical_vertex(
+            ams_coeffs, bms_coeffs
+        )
+        if mode == REVERSE:
+            df_dx_vertex, df_dy_vertex = self._vertex_with_zero_terms(
+                df_dx_vertex, df_dy_vertex
+            )
 
         r2 = x_in**2 + y_in**2
         rho = be.sqrt(r2)
@@ -903,13 +1111,10 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
         theta = be.arctan2(y_in, x_in)
 
         vals = compute_z_zprime_q2d(
-            self._prepared_cm0_coeffs,
-            self._prepared_ams_coeffs,
-            self._prepared_bms_coeffs,
-            u,
-            theta,
-            _no_trim=True,
+            cm0_coeffs, ams_coeffs, bms_coeffs, u, theta, _no_trim=True
         )
+        if mode == REVERSE:
+            vals = self._zero_terms.attach(q2d_polar_weights, (u, y_in, x_in), *vals)
         poly_sum_m0, d_poly_m0_du, poly_sum_m_gt0, dr_poly_m_gt0_du, dt_poly_m_gt0 = (
             vals
         )
