@@ -25,6 +25,8 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+from typing import Any, NamedTuple
+
 import optiland.backend as be
 from optiland.coordinate_system import CoordinateSystem
 from optiland.geometries._derivatives import (
@@ -44,6 +46,19 @@ except (ImportError, ModuleNotFoundError):
 _BROADCAST_LIMIT = 2**24
 # Points per part of a matrix product that ``_product_sum`` splits on a CPU.
 _POINTS_PER_PART = 2048
+
+
+class _ChebyshevTerms(NamedTuple):
+    """The values that the sag and the slopes of one evaluation share."""
+
+    x_norm: Any
+    y_norm: Any
+    r2: Any
+    root: Any
+    terms: list
+    add_zero_terms: bool
+    tx: list | None
+    ty: list | None
 
 
 class ChebyshevPolynomialGeometry(NewtonRaphsonGeometry):
@@ -164,31 +179,7 @@ class ChebyshevPolynomialGeometry(NewtonRaphsonGeometry):
             be.ndarray or float: The sag value(s) at the given coordinates.
 
         """
-        x_norm = x / self.norm_x
-        y_norm = y / self.norm_y
-
-        self._validate_inputs(x_norm, y_norm)
-
-        r2 = x**2 + y**2
-        z = r2 / (self.radius * (1 + be.sqrt(1 - (1 + self.k) * r2 / self.radius**2)))
-
-        if not derivative_requested(self.coefficients):
-            for i, j in self._nonzero_terms():
-                z = z + self.coefficients[i, j] * self._chebyshev(
-                    i, x_norm
-                ) * self._chebyshev(j, y_norm)
-            return z
-
-        # A derivative can be requested: the zero terms must carry it.
-        terms, add_zero_terms = self._derivative_terms()
-        if terms:
-            tx = self._chebyshev_values(max(i for i, _ in terms), x_norm)
-            ty = self._chebyshev_values(max(j for _, j in terms), y_norm)
-            for i, j in terms:
-                z = z + self.coefficients[i, j] * tx[i] * ty[j]
-        if add_zero_terms:
-            (z,) = self._with_zero_terms(x_norm, y_norm, z)
-        return z
+        return self._sag_and_terms(x, y)[0]
 
     def _surface_normal(self, x, y):
         """Calculates the surface normal of the Chebyshev polynomial surface at
@@ -203,55 +194,7 @@ class ChebyshevPolynomialGeometry(NewtonRaphsonGeometry):
             components (nx, ny, nz).
 
         """
-        x_norm = x / self.norm_x
-        y_norm = y / self.norm_y
-
-        self._validate_inputs(x_norm, y_norm)
-
-        r2 = x**2 + y**2
-        denom = self.radius * be.sqrt(1 - (1 + self.k) * r2 / self.radius**2)
-        dzdx = x / denom
-        dzdy = y / denom
-
-        # Chain rule: d/dx T_i(x / norm_x) = T_i'(x / norm_x) / norm_x, so the
-        # sag and normal derivatives describe the same surface for any
-        # normalization.
-        if not derivative_requested(self.coefficients):
-            for i, j in self._nonzero_terms():
-                dzdx = dzdx + (
-                    self._chebyshev_derivative(i, x_norm)
-                    / self.norm_x
-                    * self.coefficients[i, j]
-                    * self._chebyshev(j, y_norm)
-                )
-                dzdy = dzdy + (
-                    self._chebyshev_derivative(j, y_norm)
-                    / self.norm_y
-                    * self.coefficients[i, j]
-                    * self._chebyshev(i, x_norm)
-                )
-        else:
-            # A derivative can be requested: the zero terms must carry it.
-            terms, add_zero_terms = self._derivative_terms()
-            if terms:
-                n_x = max(i for i, _ in terms)
-                n_y = max(j for _, j in terms)
-                tx = self._chebyshev_values(n_x, x_norm)
-                ty = self._chebyshev_values(n_y, y_norm)
-                dtx = [
-                    d / self.norm_x
-                    for d in self._chebyshev_derivative_values(n_x, x_norm)
-                ]
-                dty = [
-                    d / self.norm_y
-                    for d in self._chebyshev_derivative_values(n_y, y_norm)
-                ]
-                for i, j in terms:
-                    coefficient = self.coefficients[i, j]
-                    dzdx = dzdx + (dtx[i] * coefficient * ty[j])
-                    dzdy = dzdy + (dty[j] * coefficient * tx[i])
-            if add_zero_terms:
-                dzdx, dzdy = self._with_zero_terms(x_norm, y_norm, dzdx, dzdy)
+        dzdx, dzdy = self._slopes_from_terms(x, y, self._terms(x, y))
 
         norm = be.sqrt(dzdx**2 + dzdy**2 + 1)
         nx = dzdx / norm
@@ -259,6 +202,85 @@ class ChebyshevPolynomialGeometry(NewtonRaphsonGeometry):
         nz = -1 / norm
 
         return nx, ny, nz
+
+    def _terms(self, x, y):
+        """Return the values that the sag and its slopes share at (x, y).
+
+        One pass of the recurrence gives T_0 to T_n of each coordinate, up to
+        the largest degree of the terms. Each value has the bits of
+        ``_chebyshev(n, x)``, so the sums keep their bits.
+
+        Args:
+            x (be.ndarray): The x-coordinate(s).
+            y (be.ndarray): The y-coordinate(s).
+
+        Returns:
+            _ChebyshevTerms: The shared values.
+        """
+        x_norm = x / self.norm_x
+        y_norm = y / self.norm_y
+
+        self._validate_inputs(x_norm, y_norm)
+
+        r2 = x**2 + y**2
+        root = be.sqrt(1 - (1 + self.k) * r2 / self.radius**2)
+
+        if derivative_requested(self.coefficients):
+            # A derivative can be requested: the zero terms must carry it.
+            terms, add_zero_terms = self._derivative_terms()
+        else:
+            terms, add_zero_terms = self._nonzero_terms(), False
+        tx = ty = None
+        if terms:
+            tx = self._chebyshev_values(max(i for i, _ in terms), x_norm)
+            ty = self._chebyshev_values(max(j for _, j in terms), y_norm)
+        return _ChebyshevTerms(x_norm, y_norm, r2, root, terms, add_zero_terms, tx, ty)
+
+    def _sag_and_terms(self, x, y):
+        """Return the sag at (x, y), and the terms that its slopes share.
+
+        See :meth:`NewtonRaphsonGeometry._sag_and_terms`. The terms are the
+        normalized coordinates, r**2, the conic root and the values
+        T_0 to T_n of each coordinate.
+        """
+        terms = self._terms(x, y)
+        z = terms.r2 / (self.radius * (1 + terms.root))
+        for i, j in terms.terms:
+            z = z + self.coefficients[i, j] * terms.tx[i] * terms.ty[j]
+        if terms.add_zero_terms:
+            (z,) = self._with_zero_terms(terms.x_norm, terms.y_norm, z)
+        return z, terms
+
+    def _slopes_from_terms(self, x, y, terms):
+        """Return d(sag)/dx and d(sag)/dy from the terms of ``_sag_and_terms``.
+
+        See :meth:`NewtonRaphsonGeometry._slopes_from_terms`. Chain rule:
+        d/dx T_i(x / norm_x) = T_i'(x / norm_x) / norm_x, so the sag and the
+        slopes describe the same surface for any normalization. One pass of
+        the recurrence of the second kind gives T_0' to T_n' of each
+        coordinate.
+        """
+        denom = self.radius * terms.root
+        dzdx = x / denom
+        dzdy = y / denom
+
+        if terms.terms:
+            tx, ty = terms.tx, terms.ty
+            dtx = [
+                d / self.norm_x
+                for d in self._chebyshev_derivative_values(len(tx) - 1, terms.x_norm)
+            ]
+            dty = [
+                d / self.norm_y
+                for d in self._chebyshev_derivative_values(len(ty) - 1, terms.y_norm)
+            ]
+            for i, j in terms.terms:
+                coefficient = self.coefficients[i, j]
+                dzdx = dzdx + (dtx[i] * coefficient * ty[j])
+                dzdy = dzdy + (dty[j] * coefficient * tx[i])
+        if terms.add_zero_terms:
+            dzdx, dzdy = self._with_zero_terms(terms.x_norm, terms.y_norm, dzdx, dzdy)
+        return dzdx, dzdy
 
     def _nonzero_terms(self):
         """Return the degrees (i, j) of the non-zero coefficients, row by row.
