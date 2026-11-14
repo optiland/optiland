@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import optiland.backend as be
 from optiland.coordinate_system import CoordinateSystem
+from optiland.geometries._derivatives import derivative_requested
 from optiland.geometries.newton_raphson import NewtonRaphsonGeometry
 
 
@@ -88,7 +89,13 @@ class EvenAsphere(NewtonRaphsonGeometry):
             return self.radius
         c2 = self.coefficients[self._r2_index]
         if c2 == 0:
-            return self.radius
+            if not derivative_requested(c2) or bool(be.isinf(self.radius)):
+                return self.radius
+            # A derivative with respect to c2 can be requested (for example,
+            # c2 is an optimization variable that starts at zero).
+            # R / (1 + 2 c2 R) is exactly R at c2 = 0, and its derivative
+            # there is -2 R^2. A flat base keeps its infinite radius.
+            return self.radius / (1 + 2 * c2 * self.radius)
         return 1 / (1 / self.radius + 2 * c2)
 
     def scale(self, scale_factor: float):
