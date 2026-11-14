@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 
 # Set a backend before importing optiland modules
@@ -12,7 +14,7 @@ from optiland.optic import Optic
 from optiland.rays import RealRays
 from optiland.samples.objectives import DoubleGauss
 from optiland.wavefront import OPD
-from optiland.wavefront.reference_geometry import SphericalReference
+from optiland.wavefront.reference_geometry import PlanarReference, SphericalReference
 from optiland.wavefront.strategy import (
     BestFitSphereStrategy,
     CentroidReferenceSphereStrategy,
@@ -288,6 +290,54 @@ class TestChiefRayStrategy:
         assert_allclose(wavefront_data.intensity, be.array([1.0, 0.0]))
 
 
+def _rays_at(z, L, N):
+    """Rays at x = y = 0 with the given z and direction cosines L, N (M = 0)."""
+    zeros = be.zeros_like(be.array(z))
+    return SimpleNamespace(
+        x=zeros, y=zeros, z=be.array(z), L=be.array(L), M=zeros, N=be.array(N)
+    )
+
+
+def test_planar_reference_path_length_is_signed_and_unclamped(set_test_backend):
+    """Rays (anti)parallel to the plane get no fabricated intersection (#866)."""
+    plane = PlanarReference(point=(0.0, 0.0, 0.0), normal=(0.0, 0.0, 1.0))
+    # parallel off the plane, parallel in the plane, near-parallel, normal
+    N = [0.0, 0.0, 5e-13, 1.0]
+    rays = _rays_at([1.0, 0.0, -1.0, 1.0], [(1 - n**2) ** 0.5 for n in N], N)
+
+    path = be.to_numpy(plane.path_length(rays, 1.5))
+
+    assert np.isnan(path).tolist() == [True, False, False, False]
+    # the ray in the plane is its own intersection; the near-parallel ray
+    # meets the plane 2e12 ahead of it (negative), not 1e12 behind it
+    assert_allclose(path[1:], [0.0, 1.5 * -2e12, 1.5 * 1.0])
+
+    # rescaling or reversing the normal leaves the plane, and so the path, as is
+    for normal in [(0.0, 0.0, 1e-13), (0.0, 0.0, -2.0)]:
+        scaled = PlanarReference(point=(0.0, 0.0, 0.0), normal=normal)
+        assert_allclose(be.to_numpy(scaled.path_length(rays, 1.5))[1:], path[1:])
+
+
+def test_planar_reference_parallel_ray_keeps_gradients_finite(set_test_backend):
+    """A parallel ray in the batch does not put NaN in the other rays' gradients."""
+    if be.get_backend() != "torch":
+        pytest.skip("gradients need the torch backend")
+    import torch
+
+    plane = PlanarReference(point=(0.0, 0.0, 0.0), normal=(0.0, 0.0, 1.0))
+    z = torch.tensor([1.0, 2.0], dtype=torch.float64, requires_grad=True)
+    n_medium = torch.tensor(1.5, dtype=torch.float64, requires_grad=True)
+    rays = _rays_at([0.0, 0.0], [1.0, 0.0], [0.0, 1.0])
+    rays.z = z
+
+    path = plane.path_length(rays, n_medium)
+    path[1].backward()
+
+    assert torch.isnan(path[0])
+    assert_allclose(z.grad, [0.0, 1.5])
+    assert_allclose(n_medium.grad, 2.0)
+
+
 class TestCentroidReferenceSphereStrategy:
     """Tests for the CentroidReferenceSphereStrategy."""
 
@@ -417,6 +467,41 @@ class TestCentroidReferenceSphereStrategy:
         assert isinstance(wavefront_data.radius, float)
         assert wavefront_data.radius > 0
         assert wavefront_data.reference_center is not None
+
+    def test_ray_missing_the_reference_is_not_a_sample(self, set_test_backend):
+        """A ray parallel to the reference plane is left out of the piston and
+        carries no NaN into the wavefront data."""
+        optic = MagicMock()
+        optic.primary_wavelength = 0.55
+        optic.surfaces.n.return_value = be.array([1.0])
+        optic.fields.field_definition = object()
+
+        # rays 0 and 1 cross the plane z = 0 with optical paths 0.002 and
+        # 0.004 behind it; ray 2 runs parallel to it
+        rays = MagicMock()
+        rays.x = be.array([0.0, 0.0, 0.0])
+        rays.y = be.array([0.0, 0.0, 0.0])
+        rays.z = be.array([1.0, 2.0, 1.0])
+        rays.L = be.array([0.0, 0.0, 1.0])
+        rays.M = be.array([0.0, 0.0, 0.0])
+        rays.N = be.array([1.0, 1.0, 0.0])
+        rays.opd = be.array([1.002, 2.004, 1.0])
+        rays.i = be.array([1.0, 1.0, 1.0])
+        rays.p = None
+        rays.get_exit_fields = None
+        optic.trace.return_value = rays
+
+        plane = PlanarReference(point=(0.0, 0.0, 0.0), normal=(0.0, 0.0, 1.0))
+        strategy = CentroidReferenceSphereStrategy(optic, MagicMock())
+        strategy._generate_chief_launch = MagicMock()
+        strategy._create_reference_geometry = MagicMock(return_value=plane)
+
+        data = strategy.compute_wavefront_data((0.0, 0.0), 0.5)
+
+        # piston from rays 0 and 1 only: OPD = (mean - opd) / 0.5e-3
+        assert_allclose(data.opd, [2.0, -2.0, 0.0])
+        assert_allclose(data.pupil_z, [0.0, 0.0, 0.0])
+        assert_allclose(data.intensity, [1.0, 1.0, 0.0])
 
 
 def test_create_strategy(optic, distribution, set_test_backend):
