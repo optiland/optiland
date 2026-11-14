@@ -25,12 +25,14 @@ This module implements two types of Forbes surfaces:
 
 from __future__ import annotations
 
+import operator
 import warnings
 from dataclasses import asdict, dataclass
 from typing import Any
 
 import optiland.backend as be
 from optiland.coordinate_system import CoordinateSystem
+from optiland.geometries._derivatives import is_transformed
 from optiland.geometries.newton_raphson import NewtonRaphsonGeometry
 
 try:
@@ -62,6 +64,21 @@ from .qpoly import (
 )
 
 _EPSILON = 1e-12
+# The state of a coefficient tensor that shows a change in place (#1175).
+_STATE = operator.attrgetter("_version", "requires_grad")
+
+
+def _watchable(value):
+    """Return True for a tensor whose state can show a change in place.
+
+    Args:
+        value: A coefficient as the dict holds it.
+
+    Returns:
+        bool: False for numbers, NumPy arrays and tensors of a ``torch.func``
+        transform.
+    """
+    return hasattr(value, "requires_grad") and not is_transformed(value)
 
 
 def _conic_correction(r2, radius, k):
@@ -269,6 +286,40 @@ class ForbesGeometryBase(NewtonRaphsonGeometry):
         # The trimmed zero coefficients that can carry a derivative (see
         # ``_zero_terms.py``). ``_prepare_coeffs`` sets it.
         self._zero_terms = None
+        # The coefficient tensors of the last preparation and their state
+        # (see ``_watch_coeffs``).
+        self._watched = ()
+        self._watched_state = ()
+
+    def _watch_coeffs(self, values) -> None:
+        """Remember the coefficient tensors of a preparation and their state.
+
+        The prepared containers are copies (a stack of the coefficients). A
+        change of a coefficient tensor in place, for example by a
+        ``torch.optim`` step, does not reach them, and neither does a later
+        ``requires_grad_()``. The state of each tensor, its version counter
+        and its requires_grad flag, shows such a change (issue #1175).
+        ``_ensure_coeffs`` then prepares again.
+
+        Args:
+            values (Iterable): The coefficients as the dict holds them.
+                Numbers and NumPy arrays have no state to watch, and neither
+                has a tensor of a ``torch.func`` transform.
+        """
+        watched = tuple(value for value in values if _watchable(value))
+        self._watched = watched
+        self._watched_state = tuple(map(_STATE, watched))
+
+    def _coeffs_changed(self) -> bool:
+        """Return True if a watched coefficient tensor changed its state.
+
+        The check reads attributes of a few tensors and no tensor values, so
+        it costs little in each evaluation and never waits for a GPU.
+
+        Returns:
+            bool: True if a version counter or a requires_grad flag changed.
+        """
+        return tuple(map(_STATE, self._watched)) != self._watched_state
 
     def _zero_term_mode(self):
         """Return how the trimmed zero terms get their derivative now.
@@ -292,8 +343,11 @@ class ForbesGeometryBase(NewtonRaphsonGeometry):
         afterwards cannot reconnect them. Force grad recording on while
         (re)building the cache so it stays differentiable regardless of the
         ambient grad context of the caller.
+
+        A coefficient tensor that changed in place, or that requires grad
+        only now, also starts a new preparation (see ``_watch_coeffs``).
         """
-        if self._coeffs_dirty:
+        if self._coeffs_dirty or (self._watched and self._coeffs_changed()):
             if torch is not None and be.get_backend() == "torch":
                 with torch.enable_grad():
                     self._prepare_coeffs()
@@ -469,6 +523,7 @@ class ForbesQNormalSlopeGeometry(ForbesGeometryBase):
             self._all_coeffs_zero = True
             self._zero_terms = None
             self._full_radial_coeffs = []
+            self._watch_coeffs(())
             self._coeffs_dirty = False
             return
 
@@ -495,6 +550,7 @@ class ForbesQNormalSlopeGeometry(ForbesGeometryBase):
             if self._zero_terms is None
             else [self.coeffs_c[n] for n in range(len(self.coeffs_n))]
         )
+        self._watch_coeffs(self.radial_terms.values())
         self._coeffs_dirty = False
 
     def _radial_coeffs(self, mode):
@@ -812,6 +868,7 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
             self.cm0_coeffs, self.ams_coeffs, self.bms_coeffs = [], [], []
             self._coeff_sources = []
             self._refresh_prepared_coeffs()
+            self._watch_coeffs(())
             self._coeffs_dirty = False
             return
 
@@ -849,6 +906,7 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
             )
 
         self._refresh_prepared_coeffs()
+        self._watch_coeffs(self.freeform_coeffs.values())
         self._coeffs_dirty = False
 
     def _refresh_prepared_coeffs(self) -> None:
