@@ -207,11 +207,8 @@ class AngleField(BaseFieldDefinition):
         require_nonsingular_tangent_angles(
             field_y, operation="paraxial object-position construction"
         )
-        y = -be.tan(be.radians(field_y)) * EPL
-        z = optic.surfaces.positions[1]
-        y0 = y1 + y
-        z0 = be.ones_like(y1) * z
-        return y0, z0
+        u = be.tan(be.radians(field_y))
+        return self._paraxial_start_at_infinity(optic, u, y1, EPL)
 
     def scale_chief_ray_for_field(self, optic, y_obj_unit, u_obj_unit, y_img_unit):
         """Calculates the scaling factor for a unit chief ray based on the field

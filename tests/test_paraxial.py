@@ -1582,3 +1582,52 @@ def test_asphere_without_r2_term_keeps_base_radius(set_test_backend, coefficient
 
     geometry = EvenAsphere(CoordinateSystem(), radius=50.0, coefficients=coefficients)
     assert_allclose(geometry.paraxial_radius, 50.0)
+
+
+@pytest.mark.parametrize(
+    "lens_cls", [CementedAchromat, TelescopeDoublet, CookeTriplet, Telephoto]
+)
+@pytest.mark.parametrize(
+    "field_type", ["angle", "paraxial_image_height", "real_image_height"]
+)
+def test_trace_at_infinity_matches_marginal_and_chief_ray(
+    set_test_backend, lens_cls, field_type
+):
+    """trace() from an object at infinity gives the marginal and the chief ray
+    at every surface, also when the entrance pupil is at the first surface
+    (CementedAchromat, TelescopeDoublet: stop on surface 1), where the start
+    slope was 0/0 (#1082). A ray through the edge of both is their sum."""
+    lens = lens_cls()
+    if field_type != "angle":
+        lens.fields.set_type(field_type)
+    wl = lens.primary_wavelength
+    ya, ua = lens.paraxial.marginal_ray()
+    yc, uc = lens.paraxial.chief_ray()
+    for Hy, Py, y_ref, u_ref in (
+        (0, 1, ya, ua),
+        (1, 0, yc, uc),
+        (1, 1, ya + yc, ua + uc),
+    ):
+        lens.paraxial.trace(Hy, Py, wl)
+        y = lens.surfaces.y
+        u = lens.surfaces.u
+        assert be.all(be.isfinite(y)) and be.all(be.isfinite(u))
+        assert_allclose(y[1:], y_ref[1:], atol=1e-9)
+        assert_allclose(u[1:], u_ref[1:], atol=1e-9)
+
+
+def test_paraxial_start_at_infinity_avoids_the_entrance_pupil(set_test_backend):
+    """The start plane is 10 in front of both the first surface and the
+    entrance pupil, so it is never the entrance pupil, wherever that lies."""
+    from optiland.fields.field_types.base import BaseFieldDefinition
+
+    lens = CementedAchromat()
+    z1 = lens.surfaces.positions[1]
+    for EPL in (-25.0, -10.0, 0.0, 7.5):
+        y0, z0 = BaseFieldDefinition._paraxial_start_at_infinity(
+            lens, 0.1, be.array([2.0]), be.array(EPL)
+        )
+        z_ep = z1 + EPL
+        assert_allclose(z0, min(z1, z_ep) - 10.0)
+        # the ray reaches height 2 in the entrance pupil with slope 0.1
+        assert_allclose(y0 + 0.1 * (z_ep - z0), 2.0)
