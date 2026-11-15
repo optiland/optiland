@@ -467,8 +467,11 @@ class CentroidStrategy(ReferenceStrategy):
         opd_img = geometry.path_length(rays, self.n_image)
         opd = rays.opd - geometry._relative_path_length(rays, self.n_image)
 
-        # 5. Remove piston by subtracting mean OPD
-        valid_mask = rays.i > 0
+        # 5. Remove piston by subtracting mean OPD. A ray that does not meet
+        # the reference (NaN path, e.g. parallel to a reference plane) is not
+        # a sample of the wavefront.
+        meets_reference = be.isfinite(opd) & be.isfinite(opd_img)
+        valid_mask = (rays.i > 0) & meets_reference
         if be.any(valid_mask):
             mean_opd = be.mean(opd[valid_mask])
         else:
@@ -482,6 +485,16 @@ class CentroidStrategy(ReferenceStrategy):
         pupil_x = rays.x - t * rays.L
         pupil_y = rays.y - t * rays.M
         pupil_z = rays.z - t * rays.N
+
+        # Keep one entry per ray, but give the rays that miss the reference
+        # zero data and zero intensity, as the chief-ray strategy does, so no
+        # NaN reaches the intensity-weighted fits downstream.
+        zero = be.zeros_like(opd_waves)
+        opd_waves = be.where(meets_reference, opd_waves, zero)
+        pupil_x = be.where(meets_reference, pupil_x, zero)
+        pupil_y = be.where(meets_reference, pupil_y, zero)
+        pupil_z = be.where(meets_reference, pupil_z, zero)
+        intensity = be.where(meets_reference, rays.i, be.zeros_like(rays.i))
 
         # 7. Handle polarization data if available
         kwargs = {}
@@ -497,7 +510,7 @@ class CentroidStrategy(ReferenceStrategy):
             pupil_y=pupil_y,
             pupil_z=pupil_z,
             opd=opd_waves,
-            intensity=rays.i,
+            intensity=intensity,
             radius=geometry.radius,
             reference_center=(
                 geometry.center if isinstance(geometry, SphericalReference) else None

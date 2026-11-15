@@ -204,6 +204,12 @@ class PlanarReference(ReferenceGeometry):
         self.normal = normal
 
     def path_length(self, rays: RealRaysT, n_medium: float) -> BEArrayT:
+        """Return ``n_medium * t`` for the backward ray ``position - t * direction``.
+
+        ``t`` is signed: negative when the plane lies ahead of the ray. A ray
+        parallel to the plane has no intersection and returns NaN, unless it
+        lies in the plane, where it returns zero (the ray's own position).
+        """
         # Intersection of line P = P0 + t*D with plane (P - PlanePt) . Normal = 0
         # (P0 + t*D - PlanePt) . Normal = 0
         # t * (D . Normal) + (P0 - PlanePt) . Normal = 0
@@ -218,12 +224,14 @@ class PlanarReference(ReferenceGeometry):
         num = (xr - px) * nx + (yr - py) * ny + (zr - pz) * nz
         den = L * nx + M * ny + N * nz
 
-        # Avoid division by zero
-        den = be.where(be.abs(den) < 1e-12, 1e-12, den)
+        # Divide only where the denominator is nonzero, so that neither the
+        # value nor the gradient of the parallel rays is computed from 0 / 0.
+        parallel = den == 0
+        t = -be.where(parallel, 0.0, num) / be.where(parallel, 1.0, den)
+        path = n_medium * t
 
-        t = -num / den
-
-        return n_medium * t
+        # A parallel ray off the plane never meets it.
+        return be.where(parallel & (num != 0), be.nan, path)
 
     @property
     def radius(self) -> float:
