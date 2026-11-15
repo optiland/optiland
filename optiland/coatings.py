@@ -22,7 +22,7 @@ from optiland.jones import (
 from optiland.materials import BaseMaterial
 from optiland.rays import PolarizedRays
 from optiland.thin_film import ThinFilmStack
-from optiland.thin_film.core import _complex_index
+from optiland.thin_film.core import _complex_index, _incident_index
 
 if TYPE_CHECKING:
     from optiland._types import BEArray
@@ -621,7 +621,7 @@ class JonesThinFilm(BaseJones):
             # the stack's t is the ratio of the tangential fields; the p field
             # is tilted by theta from the surface, so the full field ratio is
             # t_p * cos(theta_i) / cos(theta_t)
-            n0 = _complex_index(self.stack.incident_material, wl_um)
+            n0 = _incident_index(self.stack.incident_material, wl_um)
             ns = _complex_index(self.stack.substrate_material, wl_um)
             cos_t = be.sqrt(1 - (n0 * be.sin(th) / ns) ** 2)
             jones[:, 0, 0] = t_s
