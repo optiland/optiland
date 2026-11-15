@@ -319,6 +319,21 @@ class TestEndToEnd:
         assert_allclose(surf2.geometry.R_yz, be.inf)
         assert_allclose(surf2.geometry.R_rot, be.inf)
 
+    def test_load_toroidal_radius_of_rotation(self, zemax_dir, tmp_path):
+        # In a .zmx file, PARM 1 of a TOROIDAL surface is the radius of
+        # rotation and PARM 2 the coefficient on y^2.
+        with open(os.path.join(zemax_dir, "thorlabs_lj1598l1.zmx")) as f:
+            text = f.read()
+        text = text.replace("  PARM 1 0\n", "  PARM 1 5.0E+001\n")
+        text = text.replace("  PARM 2 0\n", "  PARM 2 1.0E-003\n")
+        filename = tmp_path / "toroid.zmx"
+        filename.write_text(text)
+        optic = load_zemax_file(str(filename))
+        for surf in (optic.surfaces[1], optic.surfaces[2]):
+            assert_allclose(surf.geometry.R_rot, 50.0)
+            assert_allclose(surf.geometry.coeffs_poly_y[0], 1.0e-3)
+            assert_allclose(surf.geometry.coeffs_poly_y[1:], 0.0)
+
 
 # ---------------------------------------------------------------------------
 # ZemaxToOpticConverter extended tests
@@ -441,8 +456,8 @@ class TestZemaxToOpticConverterExtended:
                 0: {
                     "type": "toroidal",
                     "radius": 50.0,
-                    "param_1": 60.0,
-                    "param_2": 0.1,
+                    "param_0": 60.0,
+                    "param_1": 0.1,
                     "thickness": 5.0,
                     "conic": 0.0,
                     "material": "Air",
@@ -457,6 +472,52 @@ class TestZemaxToOpticConverterExtended:
         assert isinstance(surf.geometry, ToroidalGeometry)
         assert surf.geometry.R_yz == 50.0
         assert surf.geometry.R_rot == 60.0
+        assert_allclose(surf.geometry.coeffs_poly_y[0], 0.1)
+
+    def test_configure_surfaces_toroidal_with_coordinate_break(self):
+        # A coordinate break sends the toroid through the CB code path, which
+        # must read PARM 1 (param_0) as the radius of rotation too.
+        zemax_data = {
+            "surfaces": {
+                0: {
+                    "type": "standard",
+                    "radius": be.inf,
+                    "thickness": be.inf,
+                    "conic": 0.0,
+                    "material": "Air",
+                },
+                1: {
+                    "type": "coordinate_break",
+                    "thickness": 0.0,
+                    "conic": 0.0,
+                },
+                2: {
+                    "type": "toroidal",
+                    "radius": 50.0,
+                    "param_0": 60.0,
+                    "param_1": 0.1,
+                    "thickness": 5.0,
+                    "conic": 0.0,
+                    "is_stop": True,
+                    "material": "Air",
+                },
+                3: {
+                    "type": "standard",
+                    "radius": be.inf,
+                    "thickness": 0.0,
+                    "conic": 0.0,
+                    "material": "Air",
+                },
+            },
+            "aperture": {"EPD": 10},
+            "fields": {"type": "angle", "x": [0], "y": [0]},
+            "wavelengths": {"primary_index": 0, "data": [0.55]},
+        }
+        optic = ZemaxToOpticConverter(zemax_data).convert()
+        surf = optic.surfaces[1]
+        assert isinstance(surf.geometry, ToroidalGeometry)
+        assert surf.geometry.R_rot == 60.0
+        assert_allclose(surf.geometry.coeffs_poly_y[0], 0.1)
 
     def test_configure_surfaces_paraxial(self):
         # PARAXIAL surface in zemax → 'paraxial' surface_type in Optiland.
@@ -604,6 +665,17 @@ class TestZemaxSurfaces:
         # Test _curvature helper (Optiland RAD → Zemax CURV)
         assert _curvature(float(be.inf)) == 0.0
         assert _curvature(50.0) == 0.02
+
+    def test_toroidal_surface_handler_parse(self):
+        from optiland.fileio.zemax.surfaces import ToroidalSurfaceHandler
+
+        params = ToroidalSurfaceHandler().parse(
+            {"radius": 20.0, "param_0": 50.0, "param_1": 1e-3, "param_2": 2e-5}
+        )
+        assert params["radius_y"] == 20.0
+        assert params["radius_x"] == 50.0
+        assert params["toroidal_coeffs_poly_y"][:3] == [1e-3, 2e-5, 0.0]
+        assert len(params["toroidal_coeffs_poly_y"]) == 8
 
     def test_standard_surface_handler_defaults(self):
         from optiland.fileio.zemax.surfaces import StandardSurfaceHandler

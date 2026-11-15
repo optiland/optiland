@@ -171,7 +171,8 @@ class ZemaxToOpticConverter(BaseOpticReader):
         if surf["type"] == "toroidal":
             surface_params["radius_y"] = surf["radius"]
             surface_params["toroidal_coeffs_poly_y"] = coeffs
-            radius_x = surf.get("param_1", 0.0)
+            # PARM 1 (param_0) is the radius of rotation; 0 means infinite.
+            radius_x = surf.get("param_0", 0.0)
             if radius_x == 0.0:
                 radius_x = be.inf
             surface_params["radius_x"] = radius_x
@@ -245,7 +246,8 @@ class ZemaxToOpticConverter(BaseOpticReader):
             surface_params["order_flag"] = data.get("param_5", 0.0)
 
         if data["type"] == "toroidal":
-            radius_x = data.get("param_1", 0.0)
+            # PARM 1 (param_0) is the radius of rotation; 0 means infinite.
+            radius_x = data.get("param_0", 0.0)
             if radius_x == 0.0:
                 radius_x = be.inf
             surface_params["radius_y"] = data["radius"]
@@ -275,7 +277,9 @@ class ZemaxToOpticConverter(BaseOpticReader):
             return None
 
         if surf_type in ("even_asphere", "odd_asphere", "toroidal"):
-            start = 2 if surf_type == "toroidal" else 0
+            # Toroidal y^2, y^4, ... terms follow the radius of rotation, from
+            # PARM 2 (param_1) on; asphere terms start at PARM 1 (param_0).
+            start = 1 if surf_type == "toroidal" else 0
             return [data.get(f"param_{k}", 0.0) for k in range(start, start + 8)]
 
         raise ValueError(f"Unsupported Zemax surface type: {surf_type}")

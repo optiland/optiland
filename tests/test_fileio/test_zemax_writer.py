@@ -144,6 +144,50 @@ class TestRoundTripToroidal:
                 assert_allclose(s1.geometry.R_yz, s2.geometry.R_yz, rtol=1e-5)
 
 
+    @staticmethod
+    def _toroid_optic() -> Optic:
+        optic = Optic()
+        optic.surfaces.add(index=0, thickness=be.inf)
+        optic.surfaces.add(
+            index=1,
+            surface_type="toroidal",
+            radius_y=20.0,
+            radius_x=50.0,
+            toroidal_coeffs_poly_y=[1e-3, 2e-5],
+            thickness=4.0,
+            material="N-BK7",
+            is_stop=True,
+        )
+        optic.surfaces.add(index=2, thickness=30.0)
+        optic.surfaces.add(index=3)
+        optic.set_aperture(aperture_type="EPD", value=5.0)
+        optic.fields.set_type("angle")
+        optic.fields.add(y=0.0)
+        optic.wavelengths.add(0.55, is_primary=True)
+        return optic
+
+    def test_writes_radius_of_rotation(self):
+        # PARM 1 of a TOROIDAL surface is the radius of rotation, not its
+        # curvature; PARM 2 onward are the coefficients on y^2, y^4, ...
+        model = OpticToZemaxConverter(self._toroid_optic()).convert()
+        toroid = next(
+            s for s in model.surfaces.values() if s.get("TYPE") == "TOROIDAL"
+        )
+        assert_allclose(toroid["PARM_1"], 50.0)
+        assert_allclose(toroid["PARM_2"], 1e-3)
+        assert_allclose(toroid["PARM_3"], 2e-5)
+
+    def test_radius_of_rotation_round_trip(self, tmp_path, set_test_backend):
+        optic = self._toroid_optic()
+        out = tmp_path / "toroid.zmx"
+        save_zemax_file(optic, str(out))
+        reloaded = load_zemax_file(str(out))
+        geometry = reloaded.surfaces[1].geometry
+        assert_allclose(geometry.R_yz, 20.0)
+        assert_allclose(geometry.R_rot, 50.0)
+        assert_allclose(geometry.coeffs_poly_y[:2], [1e-3, 2e-5])
+
+
 # ---------------------------------------------------------------------------
 # Round-trip: floating stop aperture
 # ---------------------------------------------------------------------------
