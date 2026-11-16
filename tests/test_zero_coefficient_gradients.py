@@ -329,17 +329,23 @@ class TestChebyshev:
             else:
                 coefficients = be.array(CHEBYSHEV)
             geometry = _chebyshev(coefficients)
-            calls = []
-            original = ChebyshevPolynomialGeometry._chebyshev
+            selected = []
+            original = ChebyshevPolynomialGeometry._nonzero_terms
 
-            def counted(self, n, x):
-                calls.append(n)
-                return original(self, n, x)
+            def counted(self):
+                terms = original(self)
+                selected.append(terms)
+                return terms
 
-            monkeypatch.setattr(ChebyshevPolynomialGeometry, "_chebyshev", counted)
+            def fail(self, *args):
+                raise AssertionError("the zero terms were attached")
+
+            monkeypatch.setattr(ChebyshevPolynomialGeometry, "_nonzero_terms", counted)
+            monkeypatch.setattr(ChebyshevPolynomialGeometry, "_with_zero_terms", fail)
             with torch.no_grad():
                 geometry.sag(be.array(X), be.array(Y))
-            assert len(calls) == 2 * NONZERO
+            assert selected
+            assert all(len(terms) == NONZERO for terms in selected)
 
     def test_numpy_values_are_the_sum_of_the_nonzero_terms(self):
         """On NumPy the zero terms stay out, so the bits are those of before."""
