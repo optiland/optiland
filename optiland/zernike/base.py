@@ -10,6 +10,8 @@ Kramer Harrison, 2025
 
 from __future__ import annotations
 
+import functools
+import math
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, ClassVar
 
@@ -296,3 +298,51 @@ class BaseZernike(ABC):
             value = value + (-1) ** k * (numerator / denominator) * factor * power_term
 
         return value
+
+    @staticmethod
+    def _norm_squared(n: int, m: int) -> float:
+        """Return the square of the normalization constant as a Python number.
+
+        The Zernike geometry builds its tables from this value, so that the
+        tables need no backend array. Each Zernike type gives the value.
+
+        Args:
+            n (int): Radial order of the Zernike term.
+            m (int): Azimuthal order of the Zernike term.
+
+        Returns:
+            float: The square of the normalization constant.
+
+        Raises:
+            NotImplementedError: If the Zernike type does not give the value.
+        """
+        raise NotImplementedError
+
+    @staticmethod
+    @functools.cache
+    def _radial_coefficients(n: int, m: int) -> tuple[int, ...]:
+        """Return the exact integer coefficients of the radial polynomial.
+
+        R_n^m(rho) = rho^|m| * sum_j b_j * rho^(2 j), for j = 0 to
+        (n - |m|) / 2. The coefficients b_j are the coefficients of
+        ``_radial_term``, computed with Python integers.
+
+        Args:
+            n (int): Radial order of the Zernike term.
+            m (int): Azimuthal order of the Zernike term.
+
+        Returns:
+            tuple[int, ...]: The coefficients b_0 to b_J.
+        """
+        m = abs(m)
+        half = (n - m) // 2
+        coefficients = [0] * (half + 1)
+        for k in range(half + 1):
+            # A multinomial coefficient, so the division is exact.
+            value = math.factorial(n - k) // (
+                math.factorial(k)
+                * math.factorial((n + m) // 2 - k)
+                * math.factorial(half - k)
+            )
+            coefficients[half - k] = -value if k % 2 else value
+        return tuple(coefficients)

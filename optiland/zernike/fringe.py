@@ -35,6 +35,11 @@ class ZernikeFringe(BaseZernike):
     """
 
     @staticmethod
+    def _norm_squared(n: int = 0, m: int = 0) -> float:
+        """Return the square of the normalization constant: 1 for all terms."""
+        return 1.0
+
+    @staticmethod
     def _norm_constant(n=0, m=0):
         """Calculate the normalization constant for a given Zernike polynomial.
         Note that this is 1 for all terms for Zernike Fringe polynomials.
