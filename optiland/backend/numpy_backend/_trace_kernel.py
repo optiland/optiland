@@ -195,8 +195,9 @@ SEED_MAX = 1
 SEED_COLUMNS = 2
 
 # Rows of ``work``, the buffers of the Newton-Raphson iteration of a block.
-_RESIDUAL, _T_NEXT, _SAG, _PX, _PY, _DFDX, _DFDY, _R2, _HORNER = range(9)
-_WORK_ROWS = 9
+# _R2 and _ROOT hold r**2 and the conic root of the last ``_asphere_sag``.
+_RESIDUAL, _T_NEXT, _SAG, _PX, _PY, _DFDX, _DFDY, _R2, _HORNER, _ROOT = range(10)
+_WORK_ROWS = 10
 # Rows of ``flags``, the state of each ray in the iteration.
 _NO_SEED, _CONVERGED, _IS_ACTIVE = range(3)
 _FLAG_ROWS = 3
@@ -587,16 +588,6 @@ def _maximum(value: float, other: float) -> float:
 
 
 @njit(inline="always", error_model="numpy", cache=True)
-def _sign_preserving_floor(value: float, eps: float) -> float:
-    """``_sign_preserving_floor`` of ``newton_raphson`` for one value.
-
-    A value with abs(value) <= eps becomes eps or -eps, by its sign. NaN
-    becomes -eps, because NaN >= 0 is False.
-    """
-    return value if abs(value) > eps else (eps if value >= 0 else -eps)
-
-
-@njit(inline="always", error_model="numpy", cache=True)
 def _regularize_signed(value: float, tau: float) -> float:
     """The floored value of ``_regularize_signed`` of ``newton_raphson``.
 
@@ -639,12 +630,13 @@ def _asphere_sag(
     n_coef: int,
     m: int,
 ) -> None:
-    """``EvenAsphere.sag`` at a point of each ray of a block.
+    """``EvenAsphere._sag_and_terms`` at a point of each ray of a block.
 
     Args:
         point: The buffers of x and y of the points.
         sag: Receives the sag at each point.
-        scratch: Two buffers that receive r**2 and the sum of Horner's method.
+        scratch: Three buffers that receive r**2, the conic root and the sum
+            of Horner's method. ``_term_slopes`` reads r**2 and the root.
         row: The float row of the surface: RADIUS, ONE_PLUS_K and
             RADIUS_SQUARED of the base conic.
         coef: The row of ``coef`` of the surface: C_1 to C_n.
@@ -652,13 +644,14 @@ def _asphere_sag(
         m: The number of rays in the block.
     """
     px, py = point
-    r2, horner = scratch
+    r2, roots, horner = scratch
     radius, one_plus_k = row[RADIUS], row[ONE_PLUS_K]
     radius_squared = row[RADIUS_SQUARED]
     for j in range(m):
         r2j = px[j] * px[j] + py[j] * py[j]
         r2[j] = r2j
         root = _sqrt(1.0 - one_plus_k * r2j / radius_squared)
+        roots[j] = root
         sag[j] = r2j / (radius * (1.0 + root))
     if n_coef > 0:
         # r2 * (C_1 + r2 * (C_2 + ... + r2 * C_n)).
@@ -704,6 +697,46 @@ def _asphere_slopes(
     if n_coef > 0:
         # d(sag)/dx = 2 x d(sag)/d(r2), with d(sag)/d(r2) of the polynomial
         # C_1 + 2 C_2 r2 + ... + n C_n r2^(n-1). The same for y.
+        _horner(r2, horner, dcoef, n_coef, m)
+        for j in range(m):
+            dfdx[j] = dfdx[j] + 2.0 * px[j] * horner[j]
+            dfdy[j] = dfdy[j] + 2.0 * py[j] * horner[j]
+
+
+@njit(inline="always", error_model="numpy", cache=True)
+def _term_slopes(
+    point: tuple,
+    slopes: tuple,
+    scratch: tuple,
+    row: np.ndarray,
+    dcoef: np.ndarray,
+    n_coef: int,
+    m: int,
+) -> None:
+    """``EvenAsphere._slopes_from_terms`` at the points of ``_asphere_sag``.
+
+    The values of ``_asphere_slopes``, from the r**2 and the conic root that
+    the last ``_asphere_sag`` wrote at the same points.
+
+    Args:
+        point: The buffers of x and y of the points.
+        slopes: Two buffers that receive d(sag)/dx and d(sag)/dy.
+        scratch: The buffers of r**2, the conic root and the sum of Horner's
+            method. The sum receives d(sag)/d(r2) of the polynomial.
+        row: The float row of the surface: RADIUS.
+        dcoef: The row of ``dcoef`` of the surface: i * C_i for i = 1 to n.
+        n_coef: The number of coefficients.
+        m: The number of rays in the block.
+    """
+    px, py = point
+    dfdx, dfdy = slopes
+    r2, roots, horner = scratch
+    radius = row[RADIUS]
+    for j in range(m):
+        denom = radius * roots[j]
+        dfdx[j] = px[j] / denom
+        dfdy[j] = py[j] / denom
+    if n_coef > 0:
         _horner(r2, horner, dcoef, n_coef, m)
         for j in range(m):
             dfdx[j] = dfdx[j] + 2.0 * px[j] * horner[j]
@@ -805,9 +838,10 @@ def _seed(
         px[j] = bx[j] + t * bL[j]
         py[j] = by[j] + t * bM[j]
     _add_seeds(distance, seed_stats, m)
-    # _surface_residual: F(t) = sag(x + t L, y + t M) - (z + t N).
+    # _iterate_with_terms: F(t) = sag(x + t L, y + t M) - (z + t N).
     sag, residual = work[_SAG], work[_RESIDUAL]
-    _asphere_sag((px, py), sag, (work[_R2], work[_HORNER]), row, coef, n_coef, m)
+    scratch = (work[_R2], work[_ROOT], work[_HORNER])
+    _asphere_sag((px, py), sag, scratch, row, coef, n_coef, m)
     converged = flags[_CONVERGED]
     tol = row[TOL]
     for j in range(m):
@@ -857,13 +891,14 @@ def _step(
 ) -> None:
     """One Newton-Raphson step t - F(t) / (dF/dt) for the active rays.
 
-    The expressions of ``_surface_residual_dt``, ``_regularize_signed`` and
-    ``_surface_residual``. These invariants keep the bits of the generic
-    solve:
+    The expressions of ``NewtonRaphsonGeometry._iterate_with_terms``,
+    ``_residual_dt_from_slopes``, ``_regularize_signed`` and
+    ``EvenAsphere._sag_and_terms``. These invariants keep the bits of the
+    generic solve:
 
-    - fx and fy come from the normalized normal, as in
-      ``_surface_residual_dt``. In exact arithmetic they are dfdx and dfdy,
-      but dfdx and dfdy give other bits.
+    - The slopes come from the r**2 and the conic root of the last
+      ``_asphere_sag``, at the same point, and enter dF/dt directly, as in
+      ``_iterate_with_terms``.
     - The step is computed for all rays, so that the loop vectorizes, but
       only the active rays keep it.
     - _PX and _PY hold the point at t only for the active rays. An inactive
@@ -877,15 +912,11 @@ def _step(
     px, py = work[_PX], work[_PY]
     dfdx, dfdy = work[_DFDX], work[_DFDY]
     residual, t_next, sag = work[_RESIDUAL], work[_T_NEXT], work[_SAG]
-    scratch = (work[_R2], work[_HORNER])
-    _asphere_slopes((px, py), (dfdx, dfdy), scratch, row, dcoef, n_coef, m)
+    scratch = (work[_R2], work[_ROOT], work[_HORNER])
+    _term_slopes((px, py), (dfdx, dfdy), scratch, row, dcoef, n_coef, m)
     for j in range(m):
-        nx, ny, nz = _unit_normal(dfdx[j], dfdy[j])
-        nz_safe = _sign_preserving_floor(nz, _DENOM_TAU)
-        fx = -nx / nz_safe
-        fy = -ny / nz_safe
         L, M, N = bL[j], bM[j], bN[j]
-        fxL, fyM = fx * L, fy * M
+        fxL, fyM = dfdx[j] * L, dfdy[j] * M
         scale = abs(fxL) + abs(fyM) + abs(N)
         df_dt = _regularize_signed(fxL + fyM - N, _DENOM_TAU * _maximum(scale, 1.0))
         t = distance[j] - residual[j] / df_dt

@@ -554,15 +554,25 @@ solve (``_newton`` in ``_trace_kernel.py``):
   t > 0. Otherwise it misses the surface.
 - The rays of a block iterate together, with the rules of the generic
   solve: the residual F(t) = sag(x + t L, y + t M) - (z + t N), the slopes
-  of the sag from the normalized surface normal, the floors of n_z and of
-  dF/dt, the strict test ``abs(F) < tol``, the early exit when no ray is
-  active, ``max_iter``, and NaN for a ray with a NaN residual. A ray that
-  converged, or that has a NaN residual, takes no more steps, so each ray
-  takes the steps that it takes in the generic solve.
+  of the sag from r**2 and the conic root of the last sag evaluation (no
+  unit normal), the floor of dF/dt, the strict test ``abs(F) < tol``, the
+  early exit when no ray is active, ``max_iter``, and NaN for a ray with a
+  NaN residual. A ray that converged, or that has a NaN residual, takes no
+  more steps, so each ray takes the steps that it takes in the generic
+  solve.
 
 The sag and its slopes use Horner's method, as ``EvenAsphere`` does. The
 builder computes the products i * C_i in Python, with the objects of the
-geometry, as ``EvenAsphere._surface_normal`` does.
+geometry, as ``EvenAsphere._slopes_from_terms`` does.
+
+The generic solve gets these values from two methods of
+``NewtonRaphsonGeometry``. ``_sag_and_terms(x, y)`` returns the sag and the
+terms that its slopes share with it, and ``_slopes_from_terms(x, y,
+terms)`` returns the slopes. A geometry that overrides both evaluates each
+iterate once, and its slopes enter dF/dt directly. The sag must keep the
+bits of ``sag()``. A geometry without them, or a subclass that overrides
+``sag()`` or ``_surface_normal()`` but not the two methods, gets the loop
+with ``sag()`` and ``_surface_normal()``.
 
 One value depends on all rays. ``_effective_tolerance`` raises ``tol`` to
 the round-off floor ``8 * eps * max(1, max|t|)``, with the largest
