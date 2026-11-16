@@ -83,6 +83,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -581,6 +582,162 @@ def scenario_fd_jacobian_wide_asphere() -> Operation:
     return _fd_jacobian("wide_asphere")
 
 
+# Back surfaces of the freeform singlets, one for each Newton-Raphson surface
+# type that the scenarios above do not trace. The surfaces stay near their
+# base spheres, so the rays converge in a few steps.
+_FREEFORMS = {
+    "zernike": {
+        "surface_type": "zernike",
+        "radius": -50.0,
+        "conic": -0.3,
+        # Fringe 37, without piston, tilt and focus.
+        "coefficients": [0.0] * 4
+        + [1e-3 * (-1) ** j / (1 + j // 6) for j in range(33)],
+        "zernike_type": "fringe",
+        "norm_radius": 12.0,
+    },
+    "xy_polynomial": {
+        "surface_type": "polynomial",
+        "radius": -45.0,
+        "coefficients": [
+            [0.0, 0.0, 2e-4, 0.0, -1e-6],
+            [0.0, 1e-5, 0.0, 2e-7, 0.0],
+            [3e-4, 0.0, -2e-6, 0.0, 0.0],
+            [0.0, 4e-7, 0.0, 0.0, 0.0],
+            [-1e-6, 0.0, 0.0, 0.0, 0.0],
+        ],
+    },
+    "chebyshev": {
+        "surface_type": "chebyshev",
+        "radius": -45.0,
+        "coefficients": [
+            [0.0, 1e-3, -2e-3, 4e-4],
+            [5e-4, 0.0, 3e-4, 0.0],
+            [-1e-3, 2e-4, 0.0, 0.0],
+            [3e-4, 0.0, 0.0, 0.0],
+        ],
+        "norm_x": 12.0,
+        "norm_y": 12.0,
+    },
+    "odd_asphere": {
+        "surface_type": "odd_asphere",
+        "radius": -40.0,
+        "conic": -0.5,
+        "coefficients": [0.0, 0.0, 1e-4, 1e-5, -2e-7],
+    },
+    "forbes_qbfs": {
+        "surface_type": "forbes_qbfs",
+        "radius": -40.0,
+        "conic": -0.5,
+        "radial_terms": {0: 1e-3, 1: -5e-4, 2: 2e-4, 3: -8e-5},
+        "norm_radius": 9.0,
+    },
+    "forbes_q2d": {
+        "surface_type": "forbes_q2d",
+        "radius": -40.0,
+        "conic": -0.5,
+        "freeform_coeffs": {
+            ("a", 0, 0): 5e-4,
+            ("a", 0, 1): -2e-4,
+            ("a", 1, 0): 1e-4,
+            ("a", 1, 1): 1e-3,
+            ("b", 1, 0): 8e-5,
+            ("a", 2, 1): -3e-4,
+            ("b", 3, 0): 2e-4,
+        },
+        "norm_radius": 9.0,
+    },
+}
+
+# Rays per trace: 10k on NumPy and Torch CPU, 500k on CUDA (as in
+# cuda_trace_nograd). On Windows, a NumPy trace of these singlets with 25k
+# rays or more got fresh pages from the system for its temporary arrays
+# (Zernike, Forbes: 30 to 160 page faults per 1000 rays; at 100k rays all
+# surface types), and the page faults then made its time depend on the
+# memory state of the machine. A trace of 10k rays had no page faults.
+_FREEFORM_RAYS = {None: 10_000, "cpu": 10_000, "cuda": 500_000}
+
+# Traces per timed call on NumPy, Torch CPU and CUDA. A scenario fails only
+# if its time grows by more than 5 % and by more than 2 ms (--fail-ratio,
+# --min-delta), so a 5 % slowdown shows only in a call of 40 ms or more.
+# These counts keep each call above 40 ms also after the speed-ups of #1168.
+# When a change makes a call faster than 40 ms, add traces: both refs run the
+# scenarios of the candidate's script.
+_FREEFORM_TRACES = {
+    "zernike": (24, 12, 3),
+    "xy_polynomial": (40, 20, 4),
+    "chebyshev": (40, 16, 4),
+    "odd_asphere": (40, 20, 4),
+    "forbes_qbfs": (40, 16, 4),
+    "forbes_q2d": (25, 14, 4),
+}
+
+
+def _freeform_singlet(family: str) -> Optic:
+    """An N-BK7 singlet: a spherical front surface (the stop), a freeform back."""
+    import optiland.backend as be
+    from optiland.optic import Optic
+
+    optic = Optic(name=f"bench-{family}")
+    optic.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+    optic.surfaces.add(
+        index=1, radius=30.0, thickness=5.0, material="N-BK7", is_stop=True
+    )
+    optic.surfaces.add(index=2, thickness=45.0, **_FREEFORMS[family])
+    optic.surfaces.add(index=3)
+    optic.set_aperture(aperture_type="EPD", value=10.0)
+    optic.fields.set_type("angle")
+    optic.fields.add(y=0.0)
+    optic.wavelengths.add(value=0.55, is_primary=True)
+    return optic
+
+
+def _explicit_grid(n, half_width, angle_rad, wavelength):
+    """Parallel rays from a square grid of about ``n`` points at z = 0.
+
+    The points cover x and y, so a freeform evaluates its terms in both
+    coordinates. In a fan, x is 0 for all rays.
+    """
+    import numpy as np
+
+    from optiland.rays import RealRays
+
+    k = math.isqrt(n)
+    c = np.linspace(-half_width, half_width, k)
+    x, y = np.meshgrid(c, c)
+    m = k * k
+    return RealRays(
+        x.ravel(),
+        y.ravel(),
+        np.zeros(m),
+        np.zeros(m),
+        np.full(m, math.sin(angle_rad)),
+        np.full(m, math.cos(angle_rad)),
+        np.ones(m),
+        np.full(m, wavelength),
+    )
+
+
+def _freeform_trace(family: str, device: str | None = None) -> Operation | None:
+    """Traces through the singlet of ``family``.
+
+    Args:
+        family: Key of ``_FREEFORMS``.
+        device: None for NumPy, else the Torch device ("cpu" or "cuda").
+    """
+    if device is not None and not _use_torch(device):
+        return None
+    optic = _freeform_singlet(family)
+    n = _FREEFORM_RAYS[device]
+    traces = _FREEFORM_TRACES[family][(None, "cpu", "cuda").index(device)]
+
+    def op():
+        for _ in range(traces):
+            optic.surfaces.trace(_explicit_grid(n, 4.0, 0.05, 0.55))
+
+    return _synchronized(op) if device == "cuda" else op
+
+
 SCENARIOS = {
     "surfaces_trace_spherical": scenario_surfaces_trace_spherical,
     "surfaces_trace_conic_oap": scenario_surfaces_trace_conic_oap,
@@ -599,6 +756,11 @@ SCENARIOS = {
     "torch_cpu_fwd_bwd": scenario_torch_cpu_fwd_bwd,
     "cuda_trace_nograd": scenario_cuda_trace_nograd,
     "cuda_fwd_bwd": scenario_cuda_fwd_bwd,
+    # Newton-Raphson freeform surfaces: one singlet per surface type, on NumPy,
+    # Torch CPU and CUDA.
+    **{f"surfaces_trace_{f}": partial(_freeform_trace, f) for f in _FREEFORMS},
+    **{f"torch_cpu_trace_{f}": partial(_freeform_trace, f, "cpu") for f in _FREEFORMS},
+    **{f"cuda_trace_{f}": partial(_freeform_trace, f, "cuda") for f in _FREEFORMS},
 }
 
 # One call of these scenarios has a fast and a slow mode. The child times
@@ -610,6 +772,8 @@ TIMED_CALLS = {
     "cuda_trace_nograd": 5,  # GPU work from the display
     "torch_cpu_fwd_bwd": 3,  # Torch CPU thread scheduling
     "cuda_fwd_bwd": 3,  # GPU work from the display
+    **{f"torch_cpu_trace_{f}": 5 for f in _FREEFORMS},  # as torch_cpu_trace_nograd
+    **{f"cuda_trace_{f}": 5 for f in _FREEFORMS},  # as cuda_trace_nograd
 }
 
 
