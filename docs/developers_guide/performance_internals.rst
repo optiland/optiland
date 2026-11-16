@@ -572,7 +572,12 @@ terms)`` returns the slopes. A geometry that overrides both evaluates each
 iterate once, and its slopes enter dF/dt directly. The sag must keep the
 bits of ``sag()``. A geometry without them, or a subclass that overrides
 ``sag()`` or ``_surface_normal()`` but not the two methods, gets the loop
-with ``sag()`` and ``_surface_normal()``.
+with ``sag()`` and ``_surface_normal()``. A class can also override
+``_has_terms()``: an instance for which it returns False gets the loop with
+``sag()`` and ``_surface_normal()``, because the shared loop has nothing to
+share there and only adds its fixed cost. ``PolynomialGeometry`` does this
+for a NumPy array without a term. The loop asks only the instances of such
+a class.
 
 One value depends on all rays. ``_effective_tolerance`` raises ``tol`` to
 the round-off floor ``8 * eps * max(1, max|t|)``, with the largest

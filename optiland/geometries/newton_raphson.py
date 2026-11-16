@@ -237,14 +237,22 @@ _TERM_METHODS = ("sag", "_surface_normal", "_slopes_from_terms")
 # decides again.
 _SHARED_TERMS: dict[type, tuple] = {}
 
+# The decision of _class_shares_terms for a class that overrides _has_terms:
+# each instance decides. The value is true, but it is not True.
+_ASK_INSTANCE = "ask the instance"
 
-def _class_shares_terms(cls) -> bool:
+
+def _class_shares_terms(cls) -> bool | str:
     """Return True if the sag and the slopes of ``cls`` come from its terms.
 
     The class that defines ``_sag_and_terms`` must also define or inherit
     the methods in ``_TERM_METHODS``. A subclass that overrides ``sag`` or
     ``_surface_normal``, but not ``_sag_and_terms``, has another surface
     (``OddAsphere`` is a subclass of ``EvenAsphere``).
+
+    Returns:
+        bool or str: False or True, or ``_ASK_INSTANCE`` if the class
+        overrides ``_has_terms``.
     """
     mro = cls.__mro__
 
@@ -257,7 +265,11 @@ def _class_shares_terms(cls) -> bool:
     # A class that overrides only _sag_and_terms has no slopes from terms.
     if mro[definer("_slopes_from_terms")] is NewtonRaphsonGeometry:
         return False
-    return all(definer(name) >= owner for name in _TERM_METHODS)
+    if not all(definer(name) >= owner for name in _TERM_METHODS):
+        return False
+    if mro[definer("_has_terms")] is not NewtonRaphsonGeometry:
+        return _ASK_INSTANCE
+    return True
 
 
 def _shares_terms(geometry) -> bool:
@@ -265,8 +277,9 @@ def _shares_terms(geometry) -> bool:
 
     The class must share its terms (:func:`_class_shares_terms`), and the
     instance must not have its own ``sag`` or ``_surface_normal`` (a mock).
-    Else the loop calls ``sag`` and ``_surface_normal``. The decision for a
-    class is computed once, so the check costs little in each call.
+    If the class overrides ``_has_terms``, the instance must also have
+    terms. Else the loop calls ``sag`` and ``_surface_normal``. The decision
+    for a class is computed once, so the check costs little in each call.
     """
     cls = type(geometry)
     if cls._sag_and_terms is _BASE_SAG_AND_TERMS:
@@ -277,10 +290,15 @@ def _shares_terms(geometry) -> bool:
     if entry is None or entry[0] != methods:
         entry = (methods, _class_shares_terms(cls))
         _SHARED_TERMS[cls] = entry
-    if not entry[1]:
+    decision = entry[1]
+    if not decision:
         return False
     instance = vars(geometry)
-    return "sag" not in instance and "_surface_normal" not in instance
+    if "sag" in instance or "_surface_normal" in instance:
+        return False
+    # Both loops give the same surface, so a stale _has_terms only changes
+    # the speed. That is why the entry does not check its identity.
+    return decision is True or geometry._has_terms()
 
 
 class NewtonRaphsonGeometry(StandardGeometry, ABC):
@@ -381,6 +399,21 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
             tuple[be.ndarray, be.ndarray]: d(sag)/dx and d(sag)/dy.
         """
         raise NotImplementedError
+
+    def _has_terms(self):
+        """Return False if this instance has no terms that the loop can share.
+
+        The loop then calls ``sag`` and ``_surface_normal``, as for a
+        geometry without :meth:`_sag_and_terms`. Override this method if
+        some instances of a class have no terms, for example a polynomial
+        without coefficients: then the shared loop has nothing to share, and
+        its fixed cost makes it slower. The loop asks only the instances of
+        a class that overrides this method, so other classes pay nothing.
+
+        Returns:
+            bool: True.
+        """
+        return True
 
     def surface_normal(self, rays):
         """Calculates the surface normal of the geometry at the given rays.
