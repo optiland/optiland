@@ -60,6 +60,9 @@ class TorchParameterSync:
 
         Call inside a grad-enabled context to keep the graph live.
         """
+        # Drop the graph of the last write from shared arrays first, so that
+        # this evaluation's backward pass does not run into it.
+        self.problem.variables.release_graphs()
         for var, param in zip(self.problem.variables, self.params, strict=True):
             var.update(param)
         self.problem.update_optics()

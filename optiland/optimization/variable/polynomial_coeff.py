@@ -9,10 +9,9 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
-import numpy as np
-
+import optiland.backend as be
 from optiland.optimization.scaling.identity import IdentityScaler
-from optiland.optimization.variable.base import VariableBehavior
+from optiland.optimization.variable.base import VariableBehavior, release_attribute
 
 
 class PolynomialCoeffVariable(VariableBehavior):
@@ -57,15 +56,7 @@ class PolynomialCoeffVariable(VariableBehavior):
         try:
             value = surf.geometry.coefficients[i][j]
         except IndexError:
-            pad_width_i = max(0, i + 1 - surf.geometry.coefficients.shape[0])
-            pad_width_j = max(0, j + 1 - surf.geometry.coefficients.shape[1])
-            c_new = np.pad(
-                surf.geometry.coefficients,
-                pad_width=((0, pad_width_i), (0, pad_width_j)),
-                mode="constant",
-                constant_values=0,
-            )
-            surf.geometry.coefficients = c_new
+            surf.geometry.coefficients = self._padded(surf.geometry.coefficients)
             value = 0
         return value
 
@@ -81,16 +72,40 @@ class PolynomialCoeffVariable(VariableBehavior):
         try:
             surf.geometry.coefficients[i][j] = new_value
         except IndexError:
-            pad_width_i = max(0, i + 1 - surf.geometry.coefficients.shape[0])
-            pad_width_j = max(0, j + 1 - surf.geometry.coefficients.shape[1])
-            c_new = np.pad(
-                surf.geometry.coefficients,
-                pad_width=((0, pad_width_i), (0, pad_width_j)),
-                mode="constant",
-                constant_values=0,
-            )
+            c_new = self._padded(surf.geometry.coefficients)
             c_new[i][j] = new_value
             surf.geometry.coefficients = c_new
+
+    def release_graph(self):
+        """Replace the coefficient array by a copy without an autograd graph.
+
+        ``update_value`` writes one entry into the array that all
+        coefficient variables of the surface share. See
+        ``VariableBehavior.release_graph``.
+        """
+        geometry = self.optic.surfaces[self.surface_number].geometry
+        release_attribute(geometry, "coefficients")
+
+    def _padded(self, coefficients):
+        """Return ``coefficients`` padded with zeros up to ``coeff_index``.
+
+        The backend pads, so a Torch tensor stays a tensor on its device.
+
+        Args:
+            coefficients: The 2D coefficient array of the geometry.
+
+        Returns:
+            The padded coefficient array.
+        """
+        i, j = self.coeff_index
+        pad_width_i = max(0, i + 1 - coefficients.shape[0])
+        pad_width_j = max(0, j + 1 - coefficients.shape[1])
+        return be.pad(
+            coefficients,
+            pad_width=((0, pad_width_i), (0, pad_width_j)),
+            mode="constant",
+            constant_values=0,
+        )
 
     def __str__(self):
         """Return a string representation of the variable.

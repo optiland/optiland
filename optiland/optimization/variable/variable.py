@@ -206,6 +206,13 @@ class Variable:
 
         self.variable.update_value(unscaled_value)
 
+    def release_graph(self):
+        """Drop the autograd graph that the last update left in the optic.
+
+        See ``VariableBehavior.release_graph``.
+        """
+        self.variable.release_graph()
+
     def reset(self):
         """Reset the variable to its initial value."""
         self.update(self.initial_value)
