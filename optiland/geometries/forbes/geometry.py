@@ -33,7 +33,7 @@ from typing import Any
 import optiland.backend as be
 from optiland._host_values import host
 from optiland.coordinate_system import CoordinateSystem
-from optiland.geometries._derivatives import is_transformed
+from optiland.geometries._derivatives import derivative_requested, is_transformed
 from optiland.geometries.newton_raphson import NewtonRaphsonGeometry
 from optiland.geometries.standard import _is_radius_infinite
 
@@ -42,6 +42,7 @@ try:
 except (ImportError, ModuleNotFoundError):
     torch = None
 
+from . import _whole_sum
 from ._zero_terms import (
     KEEP,
     REVERSE,
@@ -53,6 +54,7 @@ from ._zero_terms import (
     zero_terms,
 )
 from .qpoly import (
+    _family_basis,
     _q2d_cartesian_eval,
     _trim_trailing_zeros,
     clenshaw_q2d,
@@ -80,6 +82,25 @@ def _watchable(value):
         transform.
     """
     return hasattr(value, "requires_grad") and not is_transformed(value)
+
+
+def _constants(values):
+    """Return the values without their graph, for use in many evaluations.
+
+    A geometry keeps the change of basis of its coefficients between
+    evaluations. With a graph, a second backward pass through it fails: a
+    Torch product with a constant keeps the constant for its backward pass,
+    and the first backward pass frees it. An evaluation that can give a
+    derivative with respect to the coefficients computes the change of basis
+    again, with its graph (see ``_basis_with_graph``).
+
+    Args:
+        values (list): Scalars, tensors or NumPy scalars.
+
+    Returns:
+        list: The values, tensors detached from their graph.
+    """
+    return [v.detach() if hasattr(v, "detach") else v for v in values]
 
 
 def _is_radius_zero(radius):
@@ -540,6 +561,19 @@ class ForbesGeometryBase(NewtonRaphsonGeometry):
         """
         return _conic_correction(r2, self.radius, self.k)
 
+    def _basis_with_graph(self):
+        """Return True if the evaluation needs the graph of the change of basis.
+
+        That is the case if a derivative with respect to the coefficients can
+        be requested now (``derivative_requested``). The evaluation then
+        computes the change of basis from the coefficients. Else it takes the
+        change of basis of the preparation, which has no graph.
+
+        Returns:
+            bool: False on NumPy and without a derivative to request.
+        """
+        return derivative_requested(self.coeffs_c)
+
     def _conic_terms(self, r2, factor=True, root=True):
         """Return the conic correction factor, and the values of its slope.
 
@@ -672,6 +706,8 @@ class ForbesQNormalSlopeGeometry(ForbesGeometryBase):
             self._all_coeffs_zero = True
             self._zero_terms = None
             self._full_radial_coeffs = []
+            self._radial_basis = []
+            self._radial_jobs = None
             self._watch_coeffs(())
             self._coeffs_dirty = False
             return
@@ -699,6 +735,19 @@ class ForbesQNormalSlopeGeometry(ForbesGeometryBase):
             if self._zero_terms is None
             else [self.coeffs_c[n] for n in range(len(self.coeffs_n))]
         )
+        # The change of basis of the kept coefficients, once per preparation
+        # and not in each evaluation (without its graph, see _constants), and
+        # the jobs of RadialSum.
+        kept = self._prepared_radial_coeffs
+        self._radial_basis = _constants(_family_basis(kept, 0)) if kept else []
+        self._radial_jobs = None
+        if kept and torch is not None and be.get_backend() == "torch":
+            self._radial_jobs = tuple(
+                _whole_sum.RadialJob(
+                    kept, self._radial_basis, len(self.coeffs_n), slope, _radial_sums
+                )
+                for slope in (False, True)
+            )
         self._watch_coeffs(self.radial_terms.values())
         self._coeffs_dirty = False
 
@@ -719,11 +768,14 @@ class ForbesQNormalSlopeGeometry(ForbesGeometryBase):
     def _radial(self, usq, slope):
         """Return the radial sum S at u**2, and dS/d(u**2) with ``slope``.
 
-        The evaluation runs on the trimmed coefficients. In reverse mode,
-        ``ZeroTerms`` adds the derivative of the trimmed zero coefficients.
-        In forward mode and in ``torch.func`` transforms, the evaluation
-        takes all coefficients if a trimmed zero coefficient can carry a
-        derivative.
+        Without a derivative to request, the evaluation runs on the trimmed
+        coefficients and their change of basis of the preparation. In
+        reverse mode, ``RadialSum`` gives the values of that evaluation and
+        computes the gradients in one backward pass, and ``ZeroTerms`` adds
+        the derivative of the trimmed zero coefficients. In forward mode and
+        in ``torch.func`` transforms, autograd records the evaluation, with
+        the change of basis, of all coefficients if a trimmed zero
+        coefficient can carry a derivative, and of the trimmed ones if not.
 
         Args:
             usq (array_like): The squared normalized radius u**2.
@@ -739,7 +791,21 @@ class ForbesQNormalSlopeGeometry(ForbesGeometryBase):
         coefficients = self._radial_coeffs(mode)
         if not coefficients:
             return None
-        sums = _radial_sums(coefficients, None, usq, slope)
+        if (
+            mode != KEEP
+            and self._radial_jobs is not None
+            and _whole_sum.records_reverse(self.coeffs_c, usq)
+        ):
+            sums = _whole_sum.RadialSum.apply(
+                self._radial_jobs[slope], self.coeffs_c, usq
+            )
+            if not isinstance(sums, tuple):
+                sums = (sums,)
+        else:
+            basis = self._radial_basis
+            if mode == KEEP or self._basis_with_graph():
+                basis = None
+            sums = _radial_sums(coefficients, basis, usq, slope)
         if mode == REVERSE:
             sums = self._zero_terms.attach(sum_weights, (usq,), *sums)
         return sums
@@ -1143,6 +1209,19 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
         self._prepared_cm0_coeffs = _trim_trailing_zeros(self.cm0_coeffs)
         self._prepared_ams_coeffs = [_trim_trailing_zeros(a) for a in self.ams_coeffs]
         self._prepared_bms_coeffs = [_trim_trailing_zeros(b) for b in self.bms_coeffs]
+        # The change of basis of each kept family, once per preparation and
+        # not in each evaluation, without its graph (see _constants).
+        cm0 = self._prepared_cm0_coeffs
+        self._q2d_bases = (
+            _constants(_family_basis(cm0, 0)) if cm0 else None,
+            *(
+                [
+                    _constants(_family_basis(f, m)) if f else None
+                    for m, f in enumerate(group, 1)
+                ]
+                for group in (self._prepared_ams_coeffs, self._prepared_bms_coeffs)
+            ),
+        )
         self._zero_terms = None
         sources = getattr(self, "_coeff_sources", [])
         if sources:
@@ -1184,11 +1263,13 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
     def _polynomial(self, X, Y, usq, slopes):
         """Return P, and dP/dX and dP/dY with ``slopes``, of ``_q2d_cartesian_eval``.
 
-        The evaluation runs on the trimmed families. In reverse mode,
-        ``ZeroTerms`` adds the derivative of the trimmed zero coefficients.
-        In forward mode and in ``torch.func`` transforms, the evaluation
-        takes all coefficients if a trimmed zero coefficient can carry a
-        derivative.
+        Without a derivative with respect to the coefficients, the
+        evaluation runs on the trimmed families and their changes of basis
+        of the preparation. Else it computes the changes of basis with their
+        graph. In reverse mode, ``ZeroTerms`` adds the derivative of the
+        trimmed zero coefficients. In forward mode and in ``torch.func``
+        transforms, the evaluation takes all coefficients if a trimmed zero
+        coefficient can carry a derivative.
 
         Args:
             X (array_like): The normalized x-coordinates x / Rn.
@@ -1200,8 +1281,17 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
             tuple: P, and dP/dX and dP/dY with ``slopes``.
         """
         mode = self._zero_term_mode()
+        bases = self._q2d_bases
+        if mode == KEEP or self._basis_with_graph():
+            bases = None
         values = _q2d_cartesian_eval(
-            X, Y, *self._q2d_coeffs(mode), _no_trim=True, slopes=slopes, usq=usq
+            X,
+            Y,
+            *self._q2d_coeffs(mode),
+            _no_trim=True,
+            slopes=slopes,
+            bases=bases,
+            usq=usq,
         )
         values = values if slopes else (values,)
         if mode == REVERSE:
