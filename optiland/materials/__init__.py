@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from .abbe import AbbeMaterial, AbbeMaterialE
 from .agf import AGFMaterial
+from .at_conditions import MaterialAtConditions
 from .base import BaseMaterial
 from .catalog import MaterialCatalog
 from .data import DataMaterial
@@ -35,6 +36,8 @@ __all__ = [
     "ModelMaterial",
     # From agf.py
     "AGFMaterial",
+    # From at_conditions.py
+    "MaterialAtConditions",
     # From base.py
     "BaseMaterial",
     # From gradient_material.py
