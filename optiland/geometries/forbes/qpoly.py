@@ -198,29 +198,87 @@ def _clenshaw_qbfs_recurrence(bs, usq, alphas):
     return alphas
 
 
+def _qbfs_pass(bs, usq, slope=False):
+    """Return the Q-BFS sum S, and dS/d(u^2) with ``slope``, in one downward pass.
+
+    The pass keeps only the last two terms of each recurrence. The terms of
+    S have the operations of ``_clenshaw_qbfs_functional`` and of the table
+    recurrence ``_clenshaw_qbfs_recurrence``, so S has their values. The
+    slope recurrence is the derivative of the value recurrence with respect
+    to u^2, as in ``clenshaw_qbfs_der`` with j = 1.
+
+    Args:
+        bs: At least one coefficient after ``change_basis_qbfs_to_pn``, as a
+            sequence of scalars.
+        usq: The squared normalized radius u^2.
+        slope: Also return dS/d(u^2).
+
+    Returns:
+        S, or the tuple (S, dS/d(u^2)).
+    """
+    m = len(bs) - 1
+    prefix = 2 - 4 * usq
+    alpha = bs[m] + usq * 0  # alpha_m, broadcast to the shape of usq
+    later = None  # alpha_{n+2}; None for a zero term
+    d = d_later = None  # d alpha_{n+1}/d(u^2) and d alpha_{n+2}/d(u^2)
+    for n in range(m - 1, -1, -1):
+        if slope:
+            # alpha_n = bs_n + (2 - 4 u^2) alpha_{n+1} - alpha_{n+2}, so
+            # d alpha_n = (2 - 4 u^2) d alpha_{n+1} - d alpha_{n+2} - 4 alpha_{n+1}.
+            if d is None:
+                new_d = -4 * alpha
+            elif d_later is None:
+                new_d = prefix * d - 4 * alpha
+            else:
+                new_d = prefix * d - d_later - 4 * alpha
+            d_later, d = d, new_d
+        if later is None:
+            new = bs[n] + prefix * alpha
+        else:
+            new = bs[n] + prefix * alpha - later
+        later, alpha = alpha, new
+    if m == 0:
+        s = 2 * alpha
+        # A constant sum: dS/d(u^2) is zero, with the shape of usq. Not
+        # be.zeros_like, which can make a leaf that requires grad.
+        return (s, usq * 0) if slope else s
+    s = 2 * (alpha + later)
+    if not slope:
+        return s
+    return s, 2 * d if d_later is None else 2 * (d + d_later)
+
+
 def clenshaw_qbfs(
-    cs: list[float], usq: be.array, alphas: be.array = None, _no_trim: bool = False
+    cs: list[float],
+    usq: be.array,
+    alphas: be.array = None,
+    _no_trim: bool = False,
+    bs=None,
 ):
     """Computes the sum of Q-BFS polynomials using Clenshaw's algorithm.
 
     Trailing exact-zero coefficients are trimmed before evaluation unless
     ``_no_trim`` is set (the caller has already prepared a trimmed sequence).
+    A caller that evaluates the same coefficients many times can give their
+    change of basis ``bs`` (``change_basis_qbfs_to_pn`` of the trimmed
+    ``cs``), so that it is not computed again in each call.
     """
     if not _no_trim:
         cs = _trim_trailing_zeros(cs)
-    bs = change_basis_qbfs_to_pn(cs, _no_trim=True)
+    if bs is None:
+        bs = change_basis_qbfs_to_pn(cs, _no_trim=True)
     m = len(bs) - 1
     if m < 0:
         return be.zeros_like(usq) if hasattr(usq, "shape") else 0.0
+    if alphas is None:
+        return _qbfs_pass(bs, usq)
 
     if be.get_backend() == "torch":
         s, _, _ = _clenshaw_qbfs_functional(bs, usq)
-        if alphas is not None:
-            alphas_res = _clenshaw_qbfs_recurrence(bs, usq, be.empty_like(alphas))
-            alphas[...] = alphas_res
+        alphas_res = _clenshaw_qbfs_recurrence(bs, usq, be.empty_like(alphas))
+        alphas[...] = alphas_res
         return s
 
-    alphas = _initialize_alphas_q(cs, usq, alphas)
     alphas = _clenshaw_qbfs_recurrence(bs, usq, alphas)
     return 2 * (alphas[0] + alphas[1]) if m > 0 else 2 * alphas[0]
 
@@ -357,26 +415,37 @@ def compute_z_qbfs(
 
 
 def compute_z_zprime_qbfs(
-    coefs: list[float], u: be.array, usq: be.array, _no_trim: bool = False
+    coefs: list[float],
+    u: be.array,
+    usq: be.array,
+    _no_trim: bool = False,
+    bs=None,
 ) -> tuple[be.array, be.array]:
-    """Computes the raw Q-BFS polynomial sum and its derivative w.r.t. u."""
+    """Computes the raw Q-BFS polynomial sum and its derivative.
+
+    Args:
+        coefs: Q-BFS coefficient sequence.
+        u: The normalized radius. If None, the derivative is taken with
+            respect to u^2 instead of u, so the caller needs no u.
+        usq: The squared normalized radius u^2.
+        _no_trim: When True, ``coefs`` is assumed already trimmed.
+        bs: The change of basis of the trimmed ``coefs``, if the caller has
+            it (see ``clenshaw_qbfs``).
+
+    Returns:
+        tuple: The sum S and dS/du, or dS/d(u^2) if ``u`` is None.
+    """
     if not _no_trim:
         coefs = _trim_trailing_zeros(coefs)
     if len(coefs) == 0:
-        zeros = be.zeros_like(u)
+        zeros = be.zeros_like(usq if u is None else u)
         return zeros, zeros
-
-    alphas = clenshaw_qbfs_der(coefs, usq, j=1, _no_trim=True)
-
-    if len(coefs) > 1:
-        s = 2 * (alphas[0, 0] + alphas[0, 1])
-        ds_dusq = 2 * (alphas[1, 0] + alphas[1, 1])
-    else:
-        s = 2 * alphas[0, 0]
-        ds_dusq = 2 * alphas[1, 0]
-
-    ds_du = ds_dusq * 2 * u
-    return s, ds_du
+    if bs is None:
+        bs = change_basis_qbfs_to_pn(coefs, _no_trim=True)
+    s, ds_dusq = _qbfs_pass(bs, usq, slope=True)
+    if u is None:
+        return s, ds_dusq
+    return s, ds_dusq * 2 * u
 
 
 # q2d polynomials logic
@@ -608,31 +677,52 @@ def _harmonic_powers(X, Y, m_max):
     return H_c, H_s
 
 
-def _q2d_m0_envelope(X, Y, usq, cm0, _no_trim: bool = False):
+def _family_basis(coefs, m):
+    """Return the change of basis of one trimmed family, as a list of scalars.
+
+    Args:
+        coefs: The trimmed coefficients of the family.
+        m: The azimuthal order: 0 for the Q-BFS basis of the m = 0 terms.
+
+    Returns:
+        list: The coefficients of the Clenshaw sum, ``change_basis_qbfs_to_pn``
+        for m = 0 and ``change_basis_q2d_to_pnm`` otherwise.
+    """
+    if m == 0:
+        return list(change_basis_qbfs_to_pn(coefs, _no_trim=True))
+    return list(change_basis_q2d_to_pnm(coefs, m, _no_trim=True))
+
+
+def _q2d_m0_envelope(X, Y, usq, cm0, _no_trim: bool = False, slopes=True, bs=None):
     """Evaluate the m==0 envelope term and its Cartesian derivatives.
 
     Computes ``P_m0 = u**2 * (1 - u**2) * S_cm0(u**2)`` (the Qbfs-style
-    radial envelope) via a single derivative-Clenshaw sweep, applying the
-    chain rule from ``u**2`` back to ``X``/``Y``.
+    radial envelope) with one pass of ``_qbfs_pass`` for S and dS/du**2,
+    applying the chain rule from ``u**2`` back to ``X``/``Y``.
+
+    Args:
+        X: Normalized x-coordinate (be.array).
+        Y: Normalized y-coordinate (be.array).
+        usq: ``X**2 + Y**2``.
+        cm0: The m = 0 coefficients.
+        _no_trim: When True, ``cm0`` is assumed already trimmed.
+        slopes: When False, return only ``P_m0``.
+        bs: The change of basis of the trimmed ``cm0``, if the caller has it.
 
     Returns:
-        tuple: ``(P_m0, dP_m0_dX, dP_m0_dY)``.
+        tuple: ``(P_m0, dP_m0_dX, dP_m0_dY)``, or ``P_m0`` without ``slopes``.
     """
     if not _no_trim:
         cm0 = _trim_trailing_zeros(cm0)
     if not cm0:
         zeros = be.zeros_like(usq)
-        return zeros, zeros, zeros
-
-    # Reuse derivative Clenshaw to get S and dS/du^2 in one sweep.
-    alphas_m0 = clenshaw_qbfs_der(cm0, usq, j=1, _no_trim=True)
-    if len(cm0) > 1:
-        s_cm0 = 2 * (alphas_m0[0, 0] + alphas_m0[0, 1])
-        dsdu2_cm0 = 2 * (alphas_m0[1, 0] + alphas_m0[1, 1])
-    else:
-        s_cm0 = 2 * alphas_m0[0, 0]
-        dsdu2_cm0 = 2 * alphas_m0[1, 0]
+        return (zeros, zeros, zeros) if slopes else zeros
+    if bs is None:
+        bs = _family_basis(cm0, 0)
     env = usq * (1 - usq)
+    if not slopes:
+        return env * _qbfs_pass(bs, usq)
+    s_cm0, dsdu2_cm0 = _qbfs_pass(bs, usq, slope=True)
     P_m0 = env * s_cm0
     # d/dX [ u^2(1-u^2) * S ] = 2X * [ (1 - 2u^2) S + u^2(1-u^2) dS/du^2 ]
     radial_chain = (1 - 2 * usq) * s_cm0 + env * dsdu2_cm0
@@ -642,47 +732,100 @@ def _q2d_m0_envelope(X, Y, usq, cm0, _no_trim: bool = False):
     return P_m0, dP_m0_dX, dP_m0_dY
 
 
-def _q2d_mth_term(X, Y, usq, m, a_coef, b_coef, H_c, H_s):
+def _add(total, term):
+    """Return ``total + term``; None stands for a zero that was not computed."""
+    if total is None:
+        return term
+    if term is None:
+        return total
+    return total + term
+
+
+def _q2d_mth_term(X, Y, usq, m, a_coef, b_coef, H_c, H_s, slopes=True, bases=None):
     """Evaluate one m>=1 harmonic term and its Cartesian derivatives.
 
     Combines the per-m radial Clenshaw sums (``S_a``, ``S_b`` and their
     ``du**2`` derivatives) with the harmonic powers ``H_c[m]``/``H_s[m]``
-    via the product/chain rule.
+    via the product/chain rule. An empty family adds nothing and is not
+    evaluated.
+
+    Args:
+        X: Normalized x-coordinate (be.array).
+        Y: Normalized y-coordinate (be.array).
+        usq: ``X**2 + Y**2``.
+        m: The azimuthal order, m >= 1.
+        a_coef: The trimmed cosine coefficients of order m.
+        b_coef: The trimmed sine coefficients of order m.
+        H_c: The real parts of (X + iY)**k for k <= m (``_powers``).
+        H_s: The imaginary parts of (X + iY)**k for k <= m.
+        slopes: When False, return only ``P_term``.
+        bases: The changes of basis of ``a_coef`` and ``b_coef`` (None for
+            a family without them).
 
     Returns:
-        tuple: ``(P_term, dPx_term, dPy_term)``.
+        tuple: ``(P_term, dPx_term, dPy_term)``, or ``P_term`` without
+        ``slopes``.
     """
-    s_a = s_b = dsdu2_a = dsdu2_b = 0.0
-    if a_coef:
-        alphas_a = clenshaw_q2d_der(a_coef, m, usq, j=1, _no_trim=True)
-        s_a = q2d_sum_from_alphas(alphas_a[0], m, len(a_coef))
-        dsdu2_a = q2d_sum_from_alphas(alphas_a[1], m, len(a_coef))
-    if b_coef:
-        alphas_b = clenshaw_q2d_der(b_coef, m, usq, j=1, _no_trim=True)
-        s_b = q2d_sum_from_alphas(alphas_b[0], m, len(b_coef))
-        dsdu2_b = q2d_sum_from_alphas(alphas_b[1], m, len(b_coef))
-
-    Hc_m = H_c[m]
-    Hs_m = H_s[m]
-    Hc_mm1 = H_c[m - 1]
-    Hs_mm1 = H_s[m - 1]
-
-    P_term = Hc_m * s_a + Hs_m * s_b
-    # d/dX [ H_c[m] S_a + H_s[m] S_b ]
-    #   = m*H_c[m-1]*S_a + H_c[m]*2X*dS_a + m*H_s[m-1]*S_b + H_s[m]*2X*dS_b
-    dPx_term = m * (Hc_mm1 * s_a + Hs_mm1 * s_b) + 2 * X * (
-        Hc_m * dsdu2_a + Hs_m * dsdu2_b
-    )
-    # d/dY [ H_c[m] S_a + H_s[m] S_b ]
-    #   = -m*H_s[m-1]*S_a + H_c[m]*2Y*dS_a + m*H_c[m-1]*S_b + H_s[m]*2Y*dS_b
-    dPy_term = m * (-Hs_mm1 * s_a + Hc_mm1 * s_b) + 2 * Y * (
-        Hc_m * dsdu2_a + Hs_m * dsdu2_b
-    )
-
+    P_term = dPx_term = dPy_term = radial = None
+    for coef, basis, h, h_other, cosine in (
+        (a_coef, bases[0] if bases else None, H_c, H_s, True),
+        (b_coef, bases[1] if bases else None, H_s, H_c, False),
+    ):
+        if not coef:
+            continue
+        if basis is None:
+            basis = _family_basis(coef, m)
+        if not slopes:
+            P_term = _add(P_term, h[m] * _q2d_pass(basis, m, usq))
+            continue
+        s, dsdu2 = _q2d_pass(basis, m, usq, slope=True)
+        P_term = _add(P_term, h[m] * s)
+        radial = _add(radial, h[m] * dsdu2)
+        # d/dX Re(X + iY)**m = m Re(X + iY)**(m-1), d/dY Re(X + iY)**m =
+        # -m Im(X + iY)**(m-1), d/dX Im(X + iY)**m = m Im(X + iY)**(m-1) and
+        # d/dY Im(X + iY)**m = m Re(X + iY)**(m-1).
+        if m == 1:
+            # The powers of order 0 are 1 and 0.
+            if cosine:
+                dPx_term = _add(dPx_term, s)
+            else:
+                dPy_term = _add(dPy_term, s)
+            continue
+        dPx_term = _add(dPx_term, m * (h[m - 1] * s))
+        other = m * (h_other[m - 1] * s)
+        dPy_term = _add(dPy_term, -other if cosine else other)
+    if not slopes:
+        return P_term
+    # d/dX of a function of u**2 is 2X d/du**2.
+    dPx_term = _add(dPx_term, 2 * X * radial)
+    dPy_term = _add(dPy_term, 2 * Y * radial)
     return P_term, dPx_term, dPy_term
 
 
-def _q2d_mgt0_sum(X, Y, usq, ams, bms, _no_trim: bool = False):
+def _powers(X, Y, m_max):
+    """Return the real and imaginary parts of (X + iY)**k for k <= m_max.
+
+    The values of ``_harmonic_powers``, but the powers 0 and 1 are the
+    numbers 1 and 0 and the arrays X and Y themselves, so that they cost
+    no operations.
+
+    Args:
+        X: Normalized x-coordinate (be.array).
+        Y: Normalized y-coordinate (be.array).
+        m_max: Highest azimuthal order needed (inclusive), at least 1.
+
+    Returns:
+        tuple[list, list]: ``(H_c, H_s)``.
+    """
+    H_c, H_s = [1.0, X], [0.0, Y]
+    for _ in range(1, m_max):
+        c_prev, s_prev = H_c[-1], H_s[-1]
+        H_c.append(X * c_prev - Y * s_prev)
+        H_s.append(X * s_prev + Y * c_prev)
+    return H_c, H_s
+
+
+def _q2d_mgt0_sum(X, Y, usq, ams, bms, _no_trim: bool = False, slopes=True, bases=None):
     """Sum the m>=1 harmonic terms and their Cartesian derivatives.
 
     Accumulates each m's contribution incrementally to avoid building
@@ -690,15 +833,28 @@ def _q2d_mgt0_sum(X, Y, usq, ams, bms, _no_trim: bool = False):
     intermediates (heavy allocation on CUDA float32 for dense freeforms).
     Out-of-place adds keep the autograd graph intact.
 
+    Args:
+        X: Normalized x-coordinate (be.array).
+        Y: Normalized y-coordinate (be.array).
+        usq: ``X**2 + Y**2``.
+        ams: Per-m cosine coefficient families (index ``i`` is m == i+1).
+        bms: Per-m sine coefficient families, same layout as ``ams``.
+        _no_trim: When True, the families are assumed already trimmed.
+        slopes: When False, return only ``P_mgt0``.
+        bases: The changes of basis of the cosine and of the sine families,
+            two lists with the layout of ``ams`` and ``bms``, if the caller
+            has them.
+
     Returns:
-        tuple: ``(P_mgt0, dPx_mgt0, dPy_mgt0)``.
+        tuple: ``(P_mgt0, dPx_mgt0, dPy_mgt0)``, or ``P_mgt0`` without
+        ``slopes``.
     """
     m_max = max(len(ams), len(bms))
     if m_max == 0:
         zeros = be.zeros_like(usq)
-        return zeros, zeros, zeros
+        return (zeros, zeros, zeros) if slopes else zeros
 
-    H_c, H_s = _harmonic_powers(X, Y, m_max)
+    H_c, H_s = _powers(X, Y, m_max)
 
     P_mgt0 = dPx_mgt0 = dPy_mgt0 = None
     for m_idx in range(m_max):
@@ -710,23 +866,33 @@ def _q2d_mgt0_sum(X, Y, usq, ams, bms, _no_trim: bool = False):
             b_coef = _trim_trailing_zeros(b_coef)
         if not a_coef and not b_coef:
             continue
-
-        P_term, dPx_term, dPy_term = _q2d_mth_term(
-            X, Y, usq, m, a_coef, b_coef, H_c, H_s
+        family_bases = None
+        if bases is not None:
+            family_bases = tuple(
+                group[m_idx] if m_idx < len(group) else None for group in bases
+            )
+        terms = _q2d_mth_term(
+            X, Y, usq, m, a_coef, b_coef, H_c, H_s, slopes, family_bases
         )
-
-        P_mgt0 = P_term if P_mgt0 is None else P_mgt0 + P_term
-        dPx_mgt0 = dPx_term if dPx_mgt0 is None else dPx_mgt0 + dPx_term
-        dPy_mgt0 = dPy_term if dPy_mgt0 is None else dPy_mgt0 + dPy_term
+        if not slopes:
+            P_mgt0 = _add(P_mgt0, terms)
+            continue
+        P_mgt0 = _add(P_mgt0, terms[0])
+        dPx_mgt0 = _add(dPx_mgt0, terms[1])
+        dPy_mgt0 = _add(dPy_mgt0, terms[2])
 
     if P_mgt0 is None:
         zeros = be.zeros_like(usq)
-        return zeros, zeros, zeros
-
+        return (zeros, zeros, zeros) if slopes else zeros
+    if not slopes:
+        return P_mgt0
+    # Each family has a radial slope term, so the slopes are not None here.
     return P_mgt0, dPx_mgt0, dPy_mgt0
 
 
-def _q2d_cartesian_eval(X, Y, cm0, ams, bms, _no_trim: bool = False):
+def _q2d_cartesian_eval(
+    X, Y, cm0, ams, bms, _no_trim: bool = False, slopes=True, bases=None, usq=None
+):
     """Evaluate the Q2D polynomial sum P(X, Y) and its Cartesian derivatives.
 
     P is the dimensionless polynomial part of the Forbes Q2D departure,
@@ -748,22 +914,34 @@ def _q2d_cartesian_eval(X, Y, cm0, ams, bms, _no_trim: bool = False):
         cm0: m=0 (Qbfs-style) coefficient sequence; trimmed internally.
         ams: Per-m cosine coefficient families (index ``i`` is m == i+1).
         bms: Per-m sine coefficient families, same layout as ``ams``.
+        _no_trim: When True, the families are assumed already trimmed.
+        slopes: When False, only P is computed and returned.
+        bases: The changes of basis of the trimmed families, if the caller
+            evaluates them many times: ``(bs_cm0, bases_cos, bases_sin)``,
+            with the layout of ``cm0``, ``ams`` and ``bms`` and None for an
+            empty family. Else each call computes them.
+        usq: ``X**2 + Y**2``, if the caller has it.
 
     Returns:
         tuple: ``(P, dP_dX, dP_dY)`` as be.arrays, broadcast to
-            ``X`` / ``Y`` shape.
+            ``X`` / ``Y`` shape; P alone without ``slopes``.
     """
-    usq = X * X + Y * Y
+    if usq is None:
+        usq = X * X + Y * Y
+    bs_cm0, bases_mgt0 = (None, None) if bases is None else (bases[0], bases[1:])
 
-    P_m0, dP_m0_dX, dP_m0_dY = _q2d_m0_envelope(X, Y, usq, cm0, _no_trim=_no_trim)
+    m0 = _q2d_m0_envelope(X, Y, usq, cm0, _no_trim=_no_trim, slopes=slopes, bs=bs_cm0)
 
     m_max = max(len(ams), len(bms))
     if m_max == 0:
-        return P_m0, dP_m0_dX, dP_m0_dY
+        return m0
 
-    P_mgt0, dPx_mgt0, dPy_mgt0 = _q2d_mgt0_sum(X, Y, usq, ams, bms, _no_trim=_no_trim)
-
-    return P_m0 + P_mgt0, dP_m0_dX + dPx_mgt0, dP_m0_dY + dPy_mgt0
+    mgt0 = _q2d_mgt0_sum(
+        X, Y, usq, ams, bms, _no_trim=_no_trim, slopes=slopes, bases=bases_mgt0
+    )
+    if not slopes:
+        return m0 + mgt0
+    return m0[0] + mgt0[0], m0[1] + mgt0[1], m0[2] + mgt0[2]
 
 
 def _compute_m_gt0_sag_only(ams, bms, u, t, usq, _no_trim: bool = False):
@@ -875,6 +1053,69 @@ def q2d_nm_coeffs_to_ams_bms(nms: list[tuple[int, int]], coefs: list[float]):
     bms_ret = [bc.get(i, []) for i in range(1, max_m + 1)]
 
     return cms, ams_ret, bms_ret
+
+
+def _q2d_pass(ds, m, usq, slope=False):
+    """Return the Q-2D sum S of order m, and dS/d(u^2) with ``slope``, in one pass.
+
+    The pass keeps only the last two terms of each recurrence, and the terms
+    of order 3 for the rule of m = 1 in ``q2d_sum_from_alphas``. The terms
+    of S have the operations of ``_clenshaw_q2d_functional``. The slope
+    recurrence is the derivative of the value recurrence with respect to
+    u^2, as in ``clenshaw_q2d_der`` with j = 1.
+
+    Args:
+        ds: At least one coefficient after ``change_basis_q2d_to_pnm``, as a
+            sequence of scalars.
+        m: The azimuthal order, m >= 1.
+        usq: The squared normalized radius u^2.
+        slope: Also return dS/d(u^2).
+
+    Returns:
+        S, or the tuple (S, dS/d(u^2)).
+    """
+    n_max = len(ds) - 1
+    alpha = ds[n_max] + usq * 0  # alpha_n_max, broadcast to the shape of usq
+    later = None  # alpha_{n+2}; None for a zero term
+    d = d_later = None  # d alpha_{n+1}/d(u^2) and d alpha_{n+2}/d(u^2)
+    third = third_slope = None  # alpha_3 and d alpha_3/d(u^2)
+    if n_max == 3:
+        third = alpha
+    for n in range(n_max - 1, -1, -1):
+        a, b, _ = abc_q2d_clenshaw(n, m)
+        factor = a + b * usq
+        c = abc_q2d_clenshaw(n + 1, m)[2] if later is not None else None
+        if slope:
+            # alpha_n = ds_n + (a + b u^2) alpha_{n+1} - c alpha_{n+2}, so
+            # d alpha_n = b alpha_{n+1} + (a + b u^2) d alpha_{n+1}
+            #             - c d alpha_{n+2}.
+            if d is None:
+                new_d = b * alpha
+            elif d_later is None:
+                new_d = b * alpha + factor * d
+            else:
+                new_d = b * alpha + factor * d - c * d_later
+            d_later, d = d, new_d
+        if later is None:
+            new = ds[n] + factor * alpha
+        else:
+            new = ds[n] + factor * alpha - c * later
+        later, alpha = alpha, new
+        if n == 3:
+            third, third_slope = alpha, d
+    # The sum of q2d_sum_from_alphas, with its rule for m = 1.
+    special = m == 1 and n_max > 2
+    s = 0.5 * alpha
+    if special:
+        s = s - 2 / 5 * third
+    if not slope:
+        return s
+    if d is None:
+        return s, usq * 0  # a constant sum, see _qbfs_pass
+    ds_du2 = 0.5 * d
+    if special and third_slope is not None:
+        ds_du2 = ds_du2 - 2 / 5 * third_slope
+    return s, ds_du2
 
 
 def clenshaw_q2d(cns, m, usq, alphas=None, _no_trim: bool = False):
