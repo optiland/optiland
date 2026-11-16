@@ -31,9 +31,11 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 import optiland.backend as be
+from optiland._host_values import host
 from optiland.coordinate_system import CoordinateSystem
 from optiland.geometries._derivatives import is_transformed
 from optiland.geometries.newton_raphson import NewtonRaphsonGeometry
+from optiland.geometries.standard import _is_radius_infinite
 
 try:
     import torch
@@ -79,6 +81,45 @@ def _watchable(value):
         transform.
     """
     return hasattr(value, "requires_grad") and not is_transformed(value)
+
+
+def _is_radius_zero(radius):
+    """Return True if the radius is zero, from the host copy in a CUDA trace.
+
+    Args:
+        radius (float or array_like): The vertex radius of curvature.
+
+    Returns:
+        bool: True for a zero radius.
+    """
+    value = host(radius)
+    return bool((radius if value is None else value) == 0)
+
+
+def _conic_roots(r2, c2, k, numerator=True, denominator=True):
+    """Return the roots N and D of the conic correction factor phi = N / D.
+
+    The operations of ``_conic_correction``, with its floors for a negative
+    argument.
+
+    Args:
+        r2 (array_like): The squared radial coordinate (rho^2).
+        c2 (float or array_like): The squared curvature 1 / R**2.
+        k (float or array_like): The conic constant.
+        numerator (bool): Compute N. Without it, N is None.
+        denominator (bool): Compute D. Without it, D is None.
+
+    Returns:
+        tuple: N = sqrt(1 - k c**2 r**2) and D = sqrt(1 - (k + 1) c**2 r**2).
+    """
+    N = D = None
+    if numerator:
+        num_arg = 1 - k * c2 * r2
+        N = be.sqrt(be.where(num_arg > 0, num_arg, 1e-12))
+    if denominator:
+        den_arg = 1 - (k + 1) * c2 * r2
+        D = be.sqrt(be.where(den_arg > 0, den_arg, 1e-12))
+    return N, D
 
 
 def _conic_correction(r2, radius, k):
@@ -385,16 +426,18 @@ class ForbesGeometryBase(NewtonRaphsonGeometry):
                 k: float(be.to_numpy(v)) for k, v in new.items()
             }
 
-    def _base_sag(self, r2):
+    def _base_sag(self, r2, plane=None):
         """Calculates the sag of the base conic surface.
 
         Args:
             r2 (float or array_like): The squared radial coordinate (rho^2).
+            plane (bool, optional): True if the radius is infinite, if the
+                caller has checked it. Defaults to None: check it.
 
         Returns:
             float or array_like: The sag of the base conic.
         """
-        if be.isinf(self.radius):
+        if be.isinf(self.radius) if plane is None else plane:
             return be.zeros_like(r2)
 
         sqrt_arg = 1 - (1 + self.k) * r2 / self.radius**2
@@ -435,6 +478,51 @@ class ForbesGeometryBase(NewtonRaphsonGeometry):
                                                         factor with respect to rho.
         """
         return _conic_correction(r2, self.radius, self.k)
+
+    def _conic_terms(self, r2, factor=True, root=True):
+        """Return the conic correction factor, and the values of its slope.
+
+        The operations of ``_conic_correction`` for the factor, without the
+        derivative: the sag does not need it, and the slopes compute it from
+        the values here (see ``_slope_parts``).
+
+        Args:
+            r2 (array_like): The squared radial coordinate (rho^2).
+            factor (bool): Compute the factor. Without it, the factor and N
+                are None, and only the root D of the base slope is computed.
+            root (bool): Without the factor, compute D. Without both, the
+                values are c and c**2 only.
+
+        Returns:
+            tuple: The factor N / D, and (c, c**2, N, D) with c = 1 / R, or
+            None for a plane, where the factor is 1.0.
+        """
+        if _is_radius_infinite(self.radius):
+            return 1.0, None
+        c = 1.0 / self.radius
+        c2 = c**2
+        N, D = _conic_roots(r2, c2, self.k, numerator=factor, denominator=root)
+        return (N / D if factor else None), (c, c2, N, D)
+
+    def _slope_parts(self, conic):
+        """Return the slope factors of the base conic and of the conic factor.
+
+        The base sag has d(z_base)/dx = x c / D, and the conic factor
+        phi = N / D has d(phi)/dx = 2 x d(phi)/d(r**2) = x c**2 / (N D**3).
+        Both slopes vanish at the vertex, without a division by the radial
+        coordinate.
+
+        Args:
+            conic (tuple or None): The values of ``_conic_terms``.
+
+        Returns:
+            tuple: c / D and c**2 / (N D**3), or 0.0 and None for a plane.
+        """
+        if conic is None:
+            return 0.0, None
+        c, c2, N, D = conic
+        base = 0.0 if _is_radius_zero(self.radius) else c / D
+        return base, c2 / (N * D**3)
 
 
 class ForbesQNormalSlopeGeometry(ForbesGeometryBase):
@@ -782,15 +870,17 @@ class ForbesQNormalSlopeGeometry(ForbesGeometryBase):
 class ForbesQ2dGeometry(ForbesGeometryBase):
     """Forbes Q2D (freeform) surface geometry."""
 
-    # Default surface-normal path: direct-Cartesian (harmonic powers).
-    # Regular at the origin with finite autograd gradients — the legacy
-    # polar path's `1/r` artefact produced NaN gradients at the vertex.
-    # The polar path with its `_surface_normal_analytical_vertex`
-    # `where`-blend remains available as a fallback by setting
-    # ``_use_cartesian_normal = False`` per-instance; it is kept for
-    # one release as a safety net per the PR-series guidance, and may
-    # be removed in a follow-up once Cartesian has bedded in. See
-    # issue #617.
+    # Default path: direct-Cartesian (harmonic powers), for the sag and
+    # the slopes. Regular at the origin with finite autograd gradients;
+    # the legacy polar path's `1/r` artefact produced NaN gradients at the
+    # vertex. The sag and the slopes use the same r**2, without an
+    # epsilon, so they describe the same surface. The polar path with its
+    # `_surface_normal_analytical_vertex` `where`-blend remains available
+    # as a fallback by setting ``_use_cartesian_normal = False``
+    # per-instance; with it, the sag and the normal are those of before
+    # (the sag with rho = sqrt(r**2 + 1e-12)). It is kept for one release
+    # as a safety net per the PR-series guidance, and may be removed in a
+    # follow-up once Cartesian has bedded in. See issue #617.
     _use_cartesian_normal: bool = True
 
     r"""Forbes Q2D freeform surface.
@@ -958,6 +1048,64 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
             self._prepared_bms_coeffs,
         )
 
+    def _polynomial(self, X, Y, usq, slopes):
+        """Return P, and dP/dX and dP/dY with ``slopes``, of ``_q2d_cartesian_eval``.
+
+        The evaluation runs on the trimmed families. In reverse mode,
+        ``ZeroTerms`` adds the derivative of the trimmed zero coefficients.
+        In forward mode and in ``torch.func`` transforms, the evaluation
+        takes all coefficients if a trimmed zero coefficient can carry a
+        derivative.
+
+        Args:
+            X (array_like): The normalized x-coordinates x / Rn.
+            Y (array_like): The normalized y-coordinates y / Rn.
+            usq (array_like): X**2 + Y**2.
+            slopes (bool): Also return dP/dX and dP/dY.
+
+        Returns:
+            tuple: P, and dP/dX and dP/dY with ``slopes``.
+        """
+        mode = self._zero_term_mode()
+        values = _q2d_cartesian_eval(
+            X, Y, *self._q2d_coeffs(mode), _no_trim=True, slopes=slopes, usq=usq
+        )
+        values = values if slopes else (values,)
+        if mode == REVERSE:
+            values = self._zero_terms.attach(
+                q2d_cartesian_weights, (X, Y, usq), *values
+            )
+        return values
+
+    def _q2d_terms(self, x, y, slopes):
+        """Return the values that the sag and its slopes share at (x, y).
+
+        Args:
+            x (array_like): The x-coordinates.
+            y (array_like): The y-coordinates.
+            slopes (bool): Also evaluate dP/dX and dP/dY, for the slopes.
+
+        Returns:
+            tuple: r**2, u**2 = r**2 / Rn**2, the values of ``_polynomial``,
+            the conic correction factor, and the values of ``_conic_terms``.
+        """
+        self._ensure_coeffs()
+        r2 = x**2 + y**2
+        usq = r2 / self.norm_radius**2
+        polynomial = self._polynomial(
+            x / self.norm_radius, y / self.norm_radius, usq, slopes
+        )
+        factor, conic = self._conic_terms(r2)
+        return r2, usq, polynomial, factor, conic
+
+    def _sag_with_terms(self, x, y, slopes):
+        """Return the sag at (x, y) and the terms of ``_q2d_terms``."""
+        terms = self._q2d_terms(x, y, slopes)
+        r2, usq, polynomial, factor, conic = terms
+        departure = factor * polynomial[0]
+        z_base = self._base_sag(r2, plane=conic is None)
+        return z_base + be.where(usq > 1, 0.0, departure), terms
+
     def sag(self, x, y):
         """Calculate the sag of the Forbes Q2D freeform surface.
 
@@ -968,8 +1116,58 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
         Returns:
             float or array_like: The sag of the Forbes Q2D freeform surface.
         """
-        self._ensure_coeffs()
         x, y = be.array(x), be.array(y)
+        if not self._use_cartesian_normal:
+            return self._sag_polar(x, y)
+        return self._sag_with_terms(x, y, slopes=False)[0]
+
+    def _sag_and_terms(self, x, y):
+        """Return the sag at (x, y), and the terms that its slopes share.
+
+        The evaluation gives P, dP/dX and dP/dY together, so the slopes in
+        the Newton-Raphson loop need no second evaluation of the polynomial.
+        See :meth:`NewtonRaphsonGeometry._sag_and_terms`.
+        """
+        return self._sag_with_terms(x, y, slopes=True)
+
+    def _slopes_from_terms(self, x, y, terms):
+        """Return d(sag)/dx and d(sag)/dy from the terms of ``_q2d_terms``.
+
+        The sag is z = z_base + phi P, so
+        d(z)/dx = x (c / D + c**2 / (N D**3) P) + phi dP/dX / Rn (see
+        ``_slope_parts``), and the same for y. There is no division by r,
+        and the slopes at the vertex need no special case. The departure and
+        its slope are zero for u**2 > 1, the rule of the sag.
+
+        See :meth:`NewtonRaphsonGeometry._slopes_from_terms`.
+        """
+        _, usq, (P, dP_dX, dP_dY), factor, conic = terms
+        base, factor_slope = self._slope_parts(conic)
+        outside = usq > 1
+        radial = base
+        if factor_slope is not None:
+            radial = base + be.where(outside, 0.0, factor_slope * P)
+        scale = be.where(outside, 0.0, factor / self.norm_radius)
+        return x * radial + scale * dP_dX, y * radial + scale * dP_dY
+
+    def _has_terms(self):
+        """Return False for the polar fallback; see ``_use_cartesian_normal``.
+
+        The Newton-Raphson loop then calls ``sag`` and ``_surface_normal``.
+        """
+        return self._use_cartesian_normal
+
+    def _sag_polar(self, x, y):
+        """Return the sag of before, for the polar fallback.
+
+        Args:
+            x (array_like): The x-coordinates.
+            y (array_like): The y-coordinates.
+
+        Returns:
+            array_like: The sag, with rho = sqrt(r**2 + 1e-12).
+        """
+        self._ensure_coeffs()
         r2 = x**2 + y**2
         z_base = self._base_sag(r2)
 
@@ -1081,54 +1279,16 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
         Uses :func:`_q2d_cartesian_eval` (harmonic powers + per-m radial
         Clenshaw) to obtain the dimensionless polynomial value and its
         Cartesian derivatives without ever forming a ``1/r`` factor. The
-        base conic sag and conic-correction factor terms still go through
-        the existing rotationally-symmetric helpers; their chain rule
-        from polar to Cartesian uses a safe ``rho`` because
-        ``dconic/drho`` and ``dbase/drho`` both vanish at least linearly
-        at the axis, so the limit is finite and the safe-division
-        artifact is bounded.
+        slopes of the base conic and of the conic correction factor are
+        functions of r**2 times x or y (``_slope_parts``), so they need no
+        safe rho either. These are the slopes of the sag.
 
         Returns:
             tuple: ``(df_dx, df_dy)``.
         """
-        r2 = x_in**2 + y_in**2
-        # Use the regularized rho everywhere so the gradient through
-        # sqrt(r2) is finite at the origin (autograd-safe path).
-        rho_safe = be.sqrt(r2 + _EPSILON**2)
-        r2_safe = rho_safe**2
-        X = x_in / self.norm_radius
-        Y = y_in / self.norm_radius
-        u2 = X * X + Y * Y
-
-        mode = self._zero_term_mode()
-        P, dP_dX, dP_dY = _q2d_cartesian_eval(
-            X, Y, *self._q2d_coeffs(mode), _no_trim=True
+        return self._slopes_from_terms(
+            x_in, y_in, self._q2d_terms(x_in, y_in, slopes=True)
         )
-        if mode == REVERSE:
-            P, dP_dX, dP_dY = self._zero_terms.attach(
-                q2d_cartesian_weights, (X, Y), P, dP_dX, dP_dY
-            )
-        # Convert dP/dX, dP/dY (w.r.t. normalized coords) to physical.
-        dP_dx = dP_dX / self.norm_radius
-        dP_dy = dP_dY / self.norm_radius
-
-        conic_factor, dconic_d_rho = self._conic_correction_factor(r2_safe)
-        cos_t = x_in / rho_safe
-        sin_t = y_in / rho_safe
-        dconic_dx = dconic_d_rho * cos_t
-        dconic_dy = dconic_d_rho * sin_t
-
-        # Departure derivative inside the unit disk (clipped to zero outside).
-        d_dep_dx = dconic_dx * P + conic_factor * dP_dx
-        d_dep_dy = dconic_dy * P + conic_factor * dP_dy
-        d_dep_dx = be.where(u2 > 1, 0.0, d_dep_dx)
-        d_dep_dy = be.where(u2 > 1, 0.0, d_dep_dy)
-
-        d_base_dr = self._base_sag_derivative(rho_safe, r2_safe)
-        d_base_dx = d_base_dr * cos_t
-        d_base_dy = d_base_dr * sin_t
-
-        return d_base_dx + d_dep_dx, d_base_dy + d_dep_dy
 
     def _surface_normal_analytical(self, x_in, y_in):
         """
