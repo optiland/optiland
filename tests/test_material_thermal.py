@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 import optiland.backend as be
 from optiland import materials
 
@@ -175,3 +177,75 @@ class TestMaterialFileThermal:
         # --- Comparison ---
         calculated_n = material.n(wavelength, temperature=temp_c, pressure=pressure_atm)
         assert_allclose(calculated_n, expected_final_n)
+
+
+def _write_material(tmp_path, specs: str):
+    """Write a minimal material file with the given SPECS block."""
+    path = tmp_path / "material.yml"
+    path.write_text(
+        "DATA:\n"
+        "  - type: formula 2\n"
+        "    wavelength_range: 0.3 2.5\n"
+        "    coefficients: 0 1.03961212 0.00600069867 0.231792344 0.0200179144"
+        " 1.01046945 103.560653\n" + specs,
+        encoding="utf-8",
+    )
+    return materials.MaterialFile(str(path))
+
+
+class TestMaterialThermalExpansion:
+    """Tests the coefficient of thermal expansion read from material files."""
+
+    def test_n_bk7(self, set_test_backend):
+        assert materials.Material("N-BK7").thermal_expansion == 7.1e-6
+
+    def test_only_entry_not_optical_range(self, set_test_backend, tmp_path):
+        material = _write_material(
+            tmp_path,
+            "SPECS:\n"
+            "    thermal_expansion:\n"
+            "      - temperature_range: 20 300 °C\n"
+            "        coefficient: 8.3e-06 K<sup>-1</sup>\n",
+        )
+        assert material.thermal_expansion == 8.3e-6
+
+    def test_prefers_optical_range(self, set_test_backend, tmp_path):
+        material = _write_material(
+            tmp_path,
+            "SPECS:\n"
+            "    thermal_expansion:\n"
+            "      - temperature_range: 20 300 °C\n"
+            "        coefficient: 8.3e-06 K<sup>-1</sup>\n"
+            "      - temperature_range: -30 70 °C\n"
+            "        coefficient: 7.1e-06 K<sup>-1</sup>\n",
+        )
+        assert material.thermal_expansion == 7.1e-6
+
+    @pytest.mark.parametrize(
+        "specs",
+        [
+            "",
+            "SPECS:\n    temperature: 20.0 °C\n",
+            "SPECS:\n    thermal_expansion: []\n",
+            "SPECS:\n    thermal_expansion:\n      - temperature_range: -30 70 °C\n",
+            "SPECS:\n    thermal_expansion:\n      - coefficient: K<sup>-1</sup>\n",
+            "SPECS:\n    thermal_expansion:\n      - coefficient: ''\n",
+            "SPECS:\n    thermal_expansion:\n      - coefficient: nan K<sup>-1</sup>\n",
+            "SPECS:\n    thermal_expansion: 7.1e-06\n",
+        ],
+        ids=[
+            "no_specs",
+            "no_thermal_expansion",
+            "empty_list",
+            "no_coefficient",
+            "no_number",
+            "empty_coefficient",
+            "nan",
+            "not_a_list",
+        ],
+    )
+    def test_missing_or_malformed_is_none(self, set_test_backend, tmp_path, specs):
+        assert _write_material(tmp_path, specs).thermal_expansion is None
+
+    def test_ideal_material_is_none(self, set_test_backend):
+        assert materials.IdealMaterial(1.5).thermal_expansion is None

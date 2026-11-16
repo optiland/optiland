@@ -647,6 +647,16 @@ class BaseMaterial(ABC):
         return PgF - (0.6438 - 0.001682 * Vd)
 
     @property
+    def thermal_expansion(self) -> float | None:
+        """Coefficient of thermal expansion (CTE) of the material, in 1/K.
+
+        The CTE is the relative change in length per kelvin of temperature
+        change. ``None`` means the material has no CTE data, not that the CTE
+        is zero.
+        """
+        return None
+
+    @property
     def display_name(self) -> str:
         """Human-readable identity; never a serialization or lookup key."""
         return type(self).__name__
