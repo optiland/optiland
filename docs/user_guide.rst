@@ -104,6 +104,7 @@ most.
    conventions
    start_here
    how_do_i
+   coming_from_other_tools
    cheat_sheet
    glossary
    optimization_guide
