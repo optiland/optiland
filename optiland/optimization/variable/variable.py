@@ -107,8 +107,10 @@ class Variable:
             "coeff_number",
             "wavelength",
             "coeff_index",
+            "coeff_tuple",
             "axis",
             "glass_selection",
+            "apply_scaling",
         }
 
     def _get_variable(self):
