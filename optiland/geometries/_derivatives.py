@@ -95,6 +95,45 @@ def is_transformed(value) -> bool:
     return _is_wrapped(value, sys.modules["torch"])
 
 
+def requires_grad_in(state, skip=(), depth=3) -> bool:
+    """Return True if a tensor in ``state`` requires grad.
+
+    The search looks into lists, tuples, dicts and the attributes of
+    objects, down to ``depth`` levels. It reads no tensor values, so it never
+    waits for a GPU.
+
+    Args:
+        state (dict): The attributes of an object, for example
+            ``vars(geometry)``.
+        skip (tuple[str, ...]): The names of entries of ``state`` to leave
+            out.
+        depth (int): The number of levels below ``state`` to look into.
+
+    Returns:
+        bool: True if a tensor requires grad.
+    """
+    return any(
+        _requires_grad(value, depth)
+        for name, value in state.items()
+        if name not in skip
+    )
+
+
+def _requires_grad(value, depth) -> bool:
+    if hasattr(value, "requires_grad"):
+        return bool(value.requires_grad)
+    if depth == 0 or isinstance(value, (str, bytes, int, float)):
+        return False
+    if isinstance(value, (list, tuple)):
+        return any(_requires_grad(item, depth - 1) for item in value)
+    if isinstance(value, dict):
+        return any(_requires_grad(item, depth - 1) for item in value.values())
+    attributes = getattr(value, "__dict__", None)
+    if attributes is None:
+        return False
+    return any(_requires_grad(item, depth - 1) for item in attributes.values())
+
+
 def _is_wrapped(value, torch) -> bool:
     functorch = getattr(torch._C, "_functorch", None)
     check = getattr(functorch, "is_functorch_wrapped_tensor", None)

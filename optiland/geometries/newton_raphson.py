@@ -4,7 +4,8 @@ The Newton Raphson geometry represents a surface utilizing the Newton-Raphson
 method for ray tracing. This is an abstract base class that should be inherited
 by any geometry that uses the Newton-Raphson method for ray tracing.
 
-When the PyTorch backend is active with gradient tracking enabled, the
+When the PyTorch backend is active with gradient tracking enabled, and a
+derivative of the distance can be requested, the
 ``distance`` method uses a DiffOptics-style one-step implicit correction
 to compute correct first-order gradients through the converged intersection
 point without unrolling the Newton-Raphson iterations through the autograd
@@ -33,6 +34,7 @@ from typing import Any
 import optiland.backend as be
 from optiland import _trace_probe
 from optiland.coordinate_system import CoordinateSystem
+from optiland.geometries._derivatives import requires_grad_in, reverse_mode_only
 from optiland.geometries.standard import StandardGeometry
 from optiland.utils import machine_eps
 
@@ -51,6 +53,9 @@ _DENOM_EPS_MULTIPLIER = 32.0
 # Multiplier for the round-off floor under the user-supplied convergence
 # tolerance. See :func:`_effective_tolerance`.
 _CONV_EPS_MULTIPLIER = 8.0
+
+# The ray fields that the distance depends on.
+_RAY_FIELDS = ("x", "y", "z", "L", "M", "N")
 
 
 def _nz_threshold(nz):
@@ -775,13 +780,43 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
     # Public distance method with autograd dispatch
     # ------------------------------------------------------------------
 
+    def _derivative_requested(self, rays) -> bool:
+        """Return True if a derivative of the distance can be requested now.
+
+        Torch records gradients by default, so ``torch.is_grad_enabled()``
+        alone does not tell if a caller needs a derivative. The distance
+        needs the differentiable path if a ray position or direction, or a
+        parameter of the surface, requires grad, or if a ``torch.func``
+        transform or a forward-mode level is active. Else the primal solve
+        gives the result, as on NumPy.
+
+        A tensor in the attributes of the geometry counts as a parameter,
+        also in a list, a dict or an object (see ``requires_grad_in``). The
+        coordinate system does not count: the rays are already in the local
+        frame. If a parameter is not found, the primal solve still records
+        its iterations, so the derivative comes from the unrolled loop.
+
+        Args:
+            rays (RealRays): The rays of the call.
+
+        Returns:
+            bool: True if the differentiable path must run.
+        """
+        if not reverse_mode_only():
+            return True
+        if any(getattr(rays, name).requires_grad for name in _RAY_FIELDS):
+            return True
+        return requires_grad_in(vars(self), skip=("cs",))
+
     def distance(self, rays, aperture=None):
         """
         Calculates the distance from the ray origin to the surface intersection
         using a robust Newton-Raphson method. This version uses the base conic
         intersection as a strong initial guess.
 
-        **Differentiable mode (torch backend with grad enabled):**
+        **Differentiable mode (torch backend with grad enabled, and a
+        derivative can be requested, see** :meth:`_derivative_requested`
+        **):**
 
         The primal Newton-Raphson solve runs inside ``torch.no_grad()`` so
         that the iterative loop is never recorded in the autograd graph.  A
@@ -798,7 +833,8 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
             gradients. Higher order derivatives (double backward and beyond)
             are not guaranteed to match the exact unrolled Newton system.
 
-        **Non differentiable mode (numpy backend, or torch without grad):**
+        **Non differentiable mode (numpy backend, torch without grad, or
+        torch when no derivative can be requested):**
 
         Returns the converged t directly.
 
@@ -834,6 +870,7 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
             torch is not None
             and be.get_backend() == "torch"
             and torch.is_grad_enabled()
+            and self._derivative_requested(rays)
         )
 
         # --- Phase A: graph-free primal solve and root classification ----
