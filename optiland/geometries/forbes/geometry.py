@@ -792,7 +792,10 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
             self.norm_radius = be.array(1.0)
 
         self.cm0_coeffs, self.ams_coeffs, self.bms_coeffs = [], [], []
-        self._prepare_coeffs()
+        # Prepare now, so that the coefficient lists exist after construction.
+        # _ensure_coeffs prepares under torch.enable_grad(): a surface built
+        # inside torch.no_grad() keeps the graph of its coefficient tensors.
+        self._ensure_coeffs()
 
     def _prepare_coeffs(self):
         """
@@ -1207,7 +1210,11 @@ class ForbesQ2dGeometry(ForbesGeometryBase):
             self.freeform_coeffs[key] = self.freeform_coeffs[key] * scale_factor
 
         self.c = 1 / self.radius if self.radius != 0 else 0
-        self._prepare_coeffs()
+        # As for the Q surface: the next evaluation prepares the scaled
+        # coefficients, under torch.enable_grad() (see _ensure_coeffs). A
+        # preparation here, inside torch.no_grad(), would keep the scaled
+        # coefficients without a graph, also if they require grad later.
+        self._coeffs_dirty = True
 
     def update_normalization(self, semi_aperture: float) -> None:
         if self.normalization_mode == "auto":
