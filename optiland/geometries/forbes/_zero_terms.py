@@ -622,23 +622,33 @@ def _harmonic(family, theta):
 
 
 def q2d_cartesian_weights(saved, gradients, families):
-    """Weights for (P, dP/dX, dP/dY) of ``_q2d_cartesian_eval``; saved (X, Y).
+    """Weights for (P,) or (P, dP/dX, dP/dY) of ``_q2d_cartesian_eval``.
 
     P = x (1 - x) S_0 + sum_m (Re (X + iY)**m S_a + Im (X + iY)**m S_b),
-    with x = X**2 + Y**2.
+    with x = X**2 + Y**2. Saved (X, Y), or (X, Y, x) if the evaluation got
+    x from its caller.
     """
-    X, Y = saved
-    gradient, gradient_x, gradient_y = gradients
-    x = torch.addcmul(X * X, Y, Y)
+    X, Y, *given = saved
+    if len(gradients) == 1:
+        (gradient,) = gradients
+        gradient_x = gradient_y = None
+    else:
+        gradient, gradient_x, gradient_y = gradients
+    x = given[0] if given else torch.addcmul(X * X, Y, Y)
     h_c, h_s = _harmonic_powers(X, Y, max(family.m for family in families))
     # d/dX of a function of x is 2 X d/dx, so the slope weights of all
     # families share this factor.
-    radial = 2 * torch.addcmul(gradient_x * X, gradient_y, Y)
+    radial = None
+    if gradient_x is not None:
+        radial = 2 * torch.addcmul(gradient_x * X, gradient_y, Y)
     weights = []
     for family in families:
         m = family.m
         if family.role == "m0":
             envelope = x - x * x
+            if radial is None:
+                weights.append((gradient * envelope, None))
+                continue
             weight = torch.addcmul(gradient * envelope, radial, 1 - 2 * x)
             weights.append((weight, radial * envelope))
             continue
@@ -648,6 +658,9 @@ def q2d_cartesian_weights(saved, gradients, families):
             h, lower_x, lower_y, sign = h_c[m], h_c[m - 1], h_s[m - 1], -1
         else:
             h, lower_x, lower_y, sign = h_s[m], h_s[m - 1], h_c[m - 1], 1
+        if radial is None:
+            weights.append((gradient * h, None))
+            continue
         if m == 1:
             # The lower powers are the numbers 1 and 0.
             weight = gradient * h + (gradient_x if sign < 0 else gradient_y)
