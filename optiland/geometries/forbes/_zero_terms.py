@@ -514,20 +514,14 @@ def _harmonic_powers(X, Y, m_max):
 
 
 def sum_weights(saved, gradients, families):
-    """Weights for (S,) of ``clenshaw_qbfs``: one m = 0 family; saved (x,)."""
-    (x,) = saved
-    (gradient,) = gradients
-    return x, [(gradient, None)]
+    """Weights for (S,) or (S, dS/dx) of one m = 0 family; saved (x,).
 
-
-def sum_and_slope_weights(saved, gradients, families):
-    """Weights for (S, dS/du) of ``compute_z_zprime_qbfs`` with x = u**2; saved (u,).
-
-    dS/du = 2 u dS/dx.
+    The outputs of ``clenshaw_qbfs``, and of ``compute_z_zprime_qbfs``
+    without u (the derivative with respect to x = u**2).
     """
-    (u,) = saved
-    gradient, gradient_u = gradients
-    return u**2, [(gradient, gradient_u * (2 * u))]
+    (x,) = saved
+    gradient, *slope = gradients
+    return x, [(gradient, slope[0] if slope else None)]
 
 
 def q2d_sum_weights(saved, gradients, families):
