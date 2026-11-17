@@ -27,6 +27,7 @@ from optiland_gui.services.job_records import (
 
 if TYPE_CHECKING:
     from optiland_gui.services.job_records import OpticSnapshot
+    from optiland_gui.services.prepared_optic import PreparedOptic
 
 
 class DocumentState(QObject):
@@ -228,7 +229,7 @@ class CalculationJobs(QObject):
         self,
         target: str,
         handler: str,
-        snapshot: OpticSnapshot | None,
+        snapshot: OpticSnapshot | PreparedOptic | None,
         parameters: dict,
         *,
         replace: bool = True,

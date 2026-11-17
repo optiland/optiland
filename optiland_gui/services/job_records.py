@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from optiland.optic import Optic
+    from optiland_gui.services.prepared_optic import PreparedOptic
 
 
 @dataclass(frozen=True)
@@ -164,7 +165,7 @@ class JobRequest:
     target: str
     generation: int
     handler: str
-    snapshot: OpticSnapshot | None
+    snapshot: OpticSnapshot | PreparedOptic | None
     parameters: dict[str, Any]
     cancel_on_document_change: bool = True
     context: Any = field(default=None, compare=False, repr=False)

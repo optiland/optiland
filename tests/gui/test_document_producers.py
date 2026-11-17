@@ -81,9 +81,13 @@ def test_expanded_parameter_refresh_retains_focused_draft(qapp, minimal_optic):
     editor.toggle_properties_widget(1)
     try:
         properties = editor.tableWidget.cellWidget(2, 0)
+        # Placement opens first; a hidden Shape field cannot receive focus.
+        properties.tabs.setCurrentIndex(1)
         focused = properties.input_widgets["Radius X"]
         focused.setFocus()
         QTest.qWait(10)
+        assert focused.isVisible()
+        assert focused.hasFocus()
         focused.setText("Uncommitted radius draft")
         connector.set_surface_geometry_params(1, {"Conic X": "-0.25"})
         assert focused.hasFocus()

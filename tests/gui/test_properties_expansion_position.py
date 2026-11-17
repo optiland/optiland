@@ -124,7 +124,9 @@ def test_expansion_that_introduces_vertical_scrollbar_uses_final_viewport(
     connector = OptilandConnector()
     connector.load_optic_from_object(minimal_optic)
     editor = LensEditor(connector)
-    editor.resize(900, 220)
+    probe = SurfacePropertiesWidget(3, connector)
+    editor.resize(900, probe.sizeHint().height() + 100)
+    probe.deleteLater()
     editor.show()
     try:
         qapp.processEvents()

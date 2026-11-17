@@ -90,6 +90,8 @@ def make_editor(minimal_optic):
 
 
 def move_to_cell(editor, row, column):
+    editor.tableWidget.scrollTo(editor.tableWidget.model().index(row, column))
+    QTest.qWait(20)
     rect = editor.tableWidget.visualRect(editor.tableWidget.model().index(row, column))
     move_pointer(editor.tableWidget.viewport(), rect.center())
 
@@ -160,6 +162,8 @@ def test_selection_and_hover_survive_expanded_property_rows(qapp, minimal_optic)
         move_to_cell(editor, 3, 2)
         assert state.hovered_surface is minimal_optic.surfaces[2]
         props = table.cellWidget(2, 0)
+        table.scrollTo(table.model().index(1, 0))
+        QTest.qWait(20)
         move_pointer(props, QPoint(15, 15))
         assert state.hovered_surface is minimal_optic.surfaces[1]
         assert state.hovered_column is None
