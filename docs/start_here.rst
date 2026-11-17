@@ -65,7 +65,8 @@ Optical engineer
 you already know.*
 
 You have used Zemax OpticStudio, CODE V or OSLO and want to know how the same
-work looks in Optiland.
+work looks in Optiland. :doc:`coming_from_other_tools` gives the Optiland name
+for each OpticStudio and CODE V term.
 
 1. :doc:`quickstart`: build, trace, analyze, optimize and save in five
    minutes.
