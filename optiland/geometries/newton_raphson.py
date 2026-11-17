@@ -153,14 +153,21 @@ class _DistanceSolveResult:
     """Outcome of the graph-free primal Newton-Raphson distance solve.
 
     Attributes:
-        t: Propagation distance to the intersection.
-        residual: Surface residual ``F(t) = sag(x, y) - z`` at ``t``.
-        converged: Per-ray boolean mask, ``|F(t)| < tol``.
+        t: Propagation distance to the intersection. NaN for a ray that
+            missed the surface or did not converge within ``max_iter``.
+        residual: Surface residual ``F(t) = sag(x, y) - z`` of the last
+            iterate.
+        converged: Per-ray boolean mask: ``|F(t)| < tol``, and for a ray
+            seeded on the vertex plane, a root in front of the ray.
         iterations: Number of Newton updates actually performed.
         final: ``(x, y, terms)`` of the evaluation that gave ``residual``,
             if the geometry gives its sag with ``_sag_and_terms``. Else None.
             ``_classify_final_roots`` takes the slopes at the root from
             these values.
+        reached: Per-ray boolean mask ``|F(t)| < tol`` of the last iterate,
+            before the rule for rays seeded on the vertex plane. A ray
+            without it did not converge within ``max_iter``. None if not
+            given: then ``converged`` stands for it.
     """
 
     t: Any
@@ -168,6 +175,7 @@ class _DistanceSolveResult:
     converged: Any
     iterations: int
     final: Any = None
+    reached: Any = None
 
 
 @dataclass
@@ -561,22 +569,25 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
                 f_t = self._surface_residual(t, rays)
                 converged = be.abs(f_t) < tol
 
-        # A ray whose residual is NaN would have had its distance turned into
-        # NaN by the next Newton step; keep that outcome after an early exit.
-        dead = be.isnan(f_t)
+        # A ray that did not converge within max_iter is a ray failure, as a
+        # ray that misses the base conic: its distance becomes NaN. Its last
+        # iterate is not on the surface. A NaN residual never converges, so a
+        # ray with a NaN residual is one of these rays.
+        reached = converged
+        dead = be.logical_not(converged)
         if plane_seeded:
-            # A plane-seeded ray that did not reach a root in front of it
-            # is a miss, as it was before the fallback.
-            dead = be.logical_or(
-                dead,
-                be.logical_and(
-                    no_seed, be.logical_not(be.logical_and(converged, t > 0))
-                ),
-            )
+            # A plane-seeded ray is also a miss when its root is behind it,
+            # as it was before the fallback.
+            dead = be.logical_or(dead, be.logical_and(no_seed, be.logical_not(t > 0)))
             converged = be.logical_and(converged, be.logical_not(dead))
         t = be.where(dead, be.full_like(t, be.nan), t)
         return _DistanceSolveResult(
-            t=t, residual=f_t, converged=converged, iterations=iterations, final=final
+            t=t,
+            residual=f_t,
+            converged=converged,
+            iterations=iterations,
+            final=final,
+            reached=reached,
         )
 
     def _iterate_with_terms(self, t, rays, tol):
@@ -681,8 +692,16 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
         )
 
         # Mutually exclusive diagnostic categories, in priority order.
-        nonfinite = be.logical_not(finite)
-        nonconverged = be.logical_and(finite, be.logical_not(converged))
+        if result.reached is None:
+            nonconverged = be.logical_and(finite, be.logical_not(converged))
+        else:
+            # A ray that did not reach the tolerance has the distance NaN, so
+            # the check of t counts it as non-finite. Report it as
+            # non-converged, with its last residual.
+            nonconverged = be.logical_and(
+                be.logical_not(result.reached), be.isfinite(result.residual)
+            )
+        nonfinite = be.logical_and(be.logical_not(finite), be.logical_not(nonconverged))
         conv_finite = be.logical_and(finite, converged)
         nz_singular = be.logical_and(conv_finite, be.logical_not(nz_regular))
         near_singular = be.logical_and(

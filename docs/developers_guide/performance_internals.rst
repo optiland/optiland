@@ -556,10 +556,10 @@ solve (``_newton`` in ``_trace_kernel.py``):
   solve: the residual F(t) = sag(x + t L, y + t M) - (z + t N), the slopes
   of the sag from r**2 and the conic root of the last sag evaluation (no
   unit normal), the floor of dF/dt, the strict test ``abs(F) < tol``, the
-  early exit when no ray is active, ``max_iter``, and NaN for a ray with a
-  NaN residual. A ray that converged, or that has a NaN residual, takes no
-  more steps, so each ray takes the steps that it takes in the generic
-  solve.
+  early exit when no ray is active, ``max_iter``, and NaN for a ray that
+  did not converge within ``max_iter`` (a NaN residual never converges). A
+  ray that converged, or that has a NaN residual, takes no more steps, so
+  each ray takes the steps that it takes in the generic solve.
 
 The sag and its slopes use Horner's method, as ``EvenAsphere`` does. The
 builder computes the products i * C_i in Python, with the objects of the
