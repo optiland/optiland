@@ -13,13 +13,13 @@ The Optiland optimization framework includes the following components:
 - **Optimization Problem Class**: Encapsulates the problem definition, linking operands and variables.
 - **Optimizers**: Algorithms for solving optimization problems, such as gradient-based methods or evolutionary strategies.
 
-.. figure:: ../_static/cooke_triplet_lens_optimization_evolution.gif
-  :width: 60%
+.. figure:: ../_static/cooke_triplet_optimization.gif
+  :width: 100%
   :align: center
 
-.. figure:: ../_static/cooke_triplet_merit_function_evolution.gif
-  :width: 60%
-  :align: center
+  A Cooke triplet optimized from three flat plates with ``minimize(problem, "dls")``.
+  The animation was written by the ``LayoutRecorder`` observer
+  (``optiland.optimization.observers``).
 
 .. raw:: html
 
