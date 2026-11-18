@@ -11,4 +11,5 @@
       PlanarReference
       ReferenceGeometry
       SphericalReference
+      TelecentricSphericalReference
    

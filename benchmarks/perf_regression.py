@@ -10,24 +10,59 @@ compares ratios:
 
 Both refs are executed from plain source checkouts (git worktrees) against
 the single active environment via ``PYTHONPATH``, which works because
-optiland is pure Python. Each measurement runs in a fresh interpreter, the
-two refs are interleaved to cancel thermal/load drift, and the per-scenario
-statistic is the minimum over repeats (the standard robust estimator for
-wall-clock timing). The gate fails only when a scenario is slower than
-``--fail-ratio`` AND the absolute slowdown exceeds ``--min-delta`` seconds,
-so microsecond-scale jitter can never fail CI.
+optiland is pure Python. Both refs run this copy of the script, so the two
+sides time the same scenario definitions.
+
+Each repeat runs each ref once, in a fresh interpreter. The order alternates
+between repeats, so slow drift and the position in a repeat do not favor
+one ref. Each interpreter runs each scenario once untimed as a warmup.
+Each timed call starts after ``gc.collect()`` and ``gc.freeze()``: the
+cyclic garbage collector then scans only the objects that the call
+creates, so the objects that earlier scenarios left alive do not add a
+collection to the call. The statistic is the minimum
+over all timed calls of all repeats. Timing noise only adds time, so the
+minimum is the best estimate of the cost without noise, but it does not
+show a cost that occurs in only some calls.
+
+A scenario fails only when its ratio (candidate / base) exceeds
+``--fail-ratio`` and its slowdown exceeds ``--min-delta`` seconds, so
+microsecond jitter cannot fail CI. For a base time below
+min_delta / (fail_ratio - 1), 40 ms with the defaults, the min delta and
+not the ratio sets the threshold: a 10 ms scenario fails only above 1.20.
+Give a scenario enough work for more than 40 ms per timed call.
+
+Timings on shared CI runners are noisy. In two gate runs of the same code
+on GitHub runners, surfaces_trace_conic_oap gave ratios of 1.22 and 0.80.
+A scenario that is slower than both limits therefore runs again, together
+with the other slower scenarios only, with ``--confirm-repeats`` repeats
+(default 10). It fails only if this confirmation run shows it slower too.
+A real regression is slower in both runs. A small regression can still
+pass on CI, so measure a performance change on a quiet local machine too.
 
 The project policy is zero tolerated regression. A literal 1.00 threshold
-would fail on identical code (an A/A run of the same ref against itself
-measures ratios up to ~1.015 with this protocol), so the default fail
-ratio of 1.05 is that policy expressed with a 3x margin over the measured
-noise floor. Recalibrate with an A/A run (--base X --candidate X) when
-moving to a noisier machine.
+would fail on identical code, because an A/A run (the same ref as base and
+candidate) gives ratios above and below 1.00. The fail ratio must stay
+above the largest A/A ratio, the noise floor. Recalibrate with an A/A run
+(--base X --candidate X) when moving to a noisier machine.
+
+In the table, FAIL marks a scenario that is slower than both limits, and
+the gate exits with 1. warn marks a ratio above ``--warn-ratio`` that does
+not fail. ERROR marks a scenario that raised on the candidate. It fails
+the gate. n/a marks a scenario that is not compared; "n/a (base raised)"
+marks one that raised on the base ref, for example because it needs API
+that the base does not have. An error message follows its row. Timing
+noise can also cause a FAIL or warn, so run the flagged scenarios again
+with ``--only`` and more repeats before you report one.
+
+A scenario whose builder needs a missing optional dependency (Torch, CUDA)
+shows a plain n/a. CI installs no torch, so the Torch and CUDA scenarios
+show n/a there, and a change to the Torch backend needs a local run.
 
 Usage:
     uv run python benchmarks/perf_regression.py                # vs merge base
     uv run python benchmarks/perf_regression.py --base v0.6.0
     uv run python benchmarks/perf_regression.py --base master --candidate HEAD
+    uv run python benchmarks/perf_regression.py --only iterative_aiming --repeats 10
 
 Limitations: the base ref runs against the candidate's dependency set; a PR
 that changes dependencies compares apples to oranges and should say so in
@@ -39,6 +74,7 @@ Kramer Harrison, 2026
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import math
 import os
@@ -46,29 +82,63 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable
+from functools import partial
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from optiland.optic import Optic
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
+# The result of one child for one scenario: the time in seconds, the error
+# message if the scenario raised, or None if the child has no result for it.
+Sample = float | str | None
+
+# A scenario builder returns the operation to time: a call without arguments.
+Operation = Callable[[], None]
+
 # ---------------------------------------------------------------------------
 # Scenarios. Each builds its inputs, then times only the operation named in
-# the key. Builders use long-stable public API only, so the same file can
-# measure any recent ref.
+# the key. Builders use public API where they can, so that the file can
+# measure older refs. A builder that needs newer or private API shows n/a on
+# a base ref that lacks it.
 # ---------------------------------------------------------------------------
 
 
-def _spherical_stack():
+# Even-asphere coefficients per surface of the lens stack, for the asphere
+# scenarios.
+_ASPHERES = {1: [-2.0e-6, 1.5e-9, -3.0e-12], 6: [4.0e-6, -2.0e-9, 1.0e-12]}
+
+
+def _lens_stack(name: str, aspheres: dict[int, list[float]] | None = None) -> Optic:
+    """Four air-spaced N-BK7 singlets (8 surfaces) with the stop on surface 4.
+
+    Args:
+        name: Name of the optic.
+        aspheres: Even-asphere coefficients per surface index. These surfaces
+            get conic -0.5. All other surfaces are spherical.
+    """
     import optiland.backend as be
     from optiland.optic import Optic
 
-    optic = Optic(name="bench-spherical")
+    aspheres = aspheres or {}
+    optic = Optic(name=name)
     optic.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
     radii = [55.0, -260.0, 34.0, 190.0, -45.0, 28.0, -32.0, -85.0]
     thick = [4.0, 0.5, 5.0, 3.0, 1.0, 6.0, 2.5, 60.0]
     for i, (r, t) in enumerate(zip(radii, thick, strict=True), start=1):
         mat = "N-BK7" if i % 2 == 1 else "air"
+        shape = {}
+        if i in aspheres:
+            shape = {
+                "surface_type": "even_asphere",
+                "conic": -0.5,
+                "coefficients": aspheres[i],
+            }
         optic.surfaces.add(
-            index=i, radius=r, thickness=t, material=mat, is_stop=(i == 4)
+            index=i, radius=r, thickness=t, material=mat, is_stop=(i == 4), **shape
         )
     optic.surfaces.add(index=9)
     optic.set_aperture(aperture_type="EPD", value=18.0)
@@ -133,9 +203,9 @@ def _explicit_fan(n, angle_max_rad, wavelength):
     )
 
 
-def scenario_surfaces_trace_spherical():
+def scenario_surfaces_trace_spherical() -> Operation:
     """Forward propagation through 8 spherical surfaces (no aiming layer)."""
-    optic = _spherical_stack()
+    optic = _lens_stack("bench-spherical")
     n = 180_000
 
     def op():
@@ -144,7 +214,7 @@ def scenario_surfaces_trace_spherical():
     return op
 
 
-def scenario_surfaces_trace_conic_oap():
+def scenario_surfaces_trace_conic_oap() -> Operation:
     """Forward propagation through the off-axis parabola (conic root path)."""
     optic = _oap_collimator()
     n = 360_000
@@ -155,9 +225,9 @@ def scenario_surfaces_trace_conic_oap():
     return op
 
 
-def scenario_optic_trace_generation():
+def scenario_optic_trace_generation() -> Operation:
     """Full optic.trace: field/pupil generation plus propagation."""
-    optic = _spherical_stack()
+    optic = _lens_stack("bench-spherical")
 
     def op():
         for hy in (0.0, 1.0):
@@ -172,9 +242,9 @@ def scenario_optic_trace_generation():
     return op
 
 
-def scenario_iterative_aiming():
+def scenario_iterative_aiming() -> Operation:
     """optic.trace with the iterative Newton aimer on a straight system."""
-    optic = _spherical_stack()
+    optic = _lens_stack("bench-spherical")
     optic.ray_tracer.set_aiming("iterative", max_iter=50, tol=1e-9)
 
     def op():
@@ -190,9 +260,9 @@ def scenario_iterative_aiming():
     return op
 
 
-def scenario_first_order_ops():
+def scenario_first_order_ops() -> Operation:
     """Repeated scalar first-order queries (path construction cost)."""
-    optic = _spherical_stack()
+    optic = _lens_stack("bench-spherical")
 
     def op():
         for _ in range(60):
@@ -203,12 +273,13 @@ def scenario_first_order_ops():
     return op
 
 
-def scenario_optimization_merit():
+def scenario_optimization_merit() -> Operation:
     """Merit evaluations of a small optimization problem (issue #934).
 
-    One evaluation runs one first-order operand and nine traces, as an
-    optimizer does for each function evaluation. Per-call costs that are
-    small alone add up here.
+    One evaluation runs one first-order operand and nine spot-size operands
+    (3 fields x 3 wavelengths), as an optimizer does for each function
+    evaluation. Per-call costs that are small alone add up here. The design
+    does not change between the evaluations.
     """
     from optiland.optimization import OptimizationProblem
     from optiland.samples.objectives import CookeTriplet
@@ -240,6 +311,433 @@ def scenario_optimization_merit():
     return op
 
 
+def _use_torch(device: str = "cpu", grad: bool = False) -> bool:
+    """Switch to the Torch backend in float64, or return False if unavailable.
+
+    The measure loop restores the NumPy backend after every scenario.
+    """
+    try:
+        import torch
+    except ImportError:
+        return False
+    if device == "cuda" and not torch.cuda.is_available():
+        return False
+    import optiland.backend as be
+
+    be.set_backend("torch")
+    be.set_device(device)
+    be.set_precision("float64")
+    if grad:
+        be.grad_mode.enable()
+    return True
+
+
+def _synchronized(op: Operation) -> Operation:
+    """Wait for queued CUDA work at the end of each timed call."""
+    import torch
+
+    def run():
+        op()
+        torch.cuda.synchronize()
+
+    return run
+
+
+def _restore_defaults() -> None:
+    """Switch back to the NumPy backend in float64 after a scenario.
+
+    Each backend stores its own precision, so set_precision runs both before
+    and after the switch.
+    """
+    import optiland.backend as be
+
+    if be.get_backend() == "torch":
+        be.grad_mode.disable()
+        be.set_device("cpu")
+        be.set_precision("float64")
+    be.set_backend("numpy")
+    be.set_precision("float64")
+
+
+def scenario_surfaces_trace_large() -> Operation:
+    """Forward propagation of 500k rays through 8 spherical surfaces."""
+    optic = _lens_stack("bench-spherical")
+    n = 500_000
+
+    def op():
+        optic.surfaces.trace(_explicit_fan(n, 0.05, 0.55))
+
+    return op
+
+
+def scenario_surfaces_trace_asphere() -> Operation:
+    """Forward propagation through two even aspheres (Newton intersections)."""
+    optic = _lens_stack("bench-asphere", _ASPHERES)
+    n = 100_000
+
+    def op():
+        optic.surfaces.trace(_explicit_fan(n, 0.05, 0.55))
+
+    return op
+
+
+def scenario_surfaces_trace_small() -> Operation:
+    """Many small traces: the per-call overhead of the trace loop."""
+    optic = _lens_stack("bench-spherical")
+
+    def op():
+        for _ in range(100):
+            optic.surfaces.trace(_explicit_fan(64, 0.05, 0.55))
+
+    return op
+
+
+def _torch_trace(device: str, n: int) -> Operation | None:
+    """Trace of ``n`` rays through the asphere stack on Torch, gradients off."""
+    if not _use_torch(device):
+        return None
+    optic = _lens_stack("bench-asphere", _ASPHERES)
+
+    def op():
+        optic.surfaces.trace(_explicit_fan(n, 0.05, 0.55))
+
+    return _synchronized(op) if device == "cuda" else op
+
+
+def _torch_fwd_bwd(device: str) -> Operation | None:
+    """Two Adam steps: forward trace, backward pass, parameter update.
+
+    Each call builds the optic and the problem again, so each call starts
+    from the same design. The time includes this setup.
+    """
+    if not _use_torch(device, grad=True):
+        return None
+    from optiland.optimization import OptimizationProblem, TorchAdamOptimizer
+
+    def op():
+        optic = _lens_stack("bench-asphere", _ASPHERES)
+        problem = OptimizationProblem()
+        for hy in (0.0, 1.0):
+            problem.add_operand(
+                "rms_spot_size",
+                target=0.0,
+                weight=1.0,
+                input_data={
+                    "optic": optic,
+                    "surface_number": -1,
+                    "Hx": 0.0,
+                    "Hy": hy,
+                    "num_rays": 32,
+                    "wavelength": 0.55,
+                    "distribution": "hexapolar",
+                },
+            )
+        for i in (1, 2, 3, 6):
+            problem.add_variable(optic, "radius", surface_number=i)
+        TorchAdamOptimizer(problem).optimize(n_steps=2, lr=1e-3, disp=False)
+
+    return _synchronized(op) if device == "cuda" else op
+
+
+def scenario_torch_cpu_trace_nograd() -> Operation | None:
+    """Torch CPU, gradients off: 100k rays through the asphere stack."""
+    return _torch_trace("cpu", 100_000)
+
+
+def scenario_torch_cpu_fwd_bwd() -> Operation | None:
+    """Torch CPU, gradients on: two optimizer steps on spot-size operands."""
+    return _torch_fwd_bwd("cpu")
+
+
+def scenario_cuda_trace_nograd() -> Operation | None:
+    """Torch CUDA, gradients off: 500k rays through the asphere stack."""
+    return _torch_trace("cuda", 500_000)
+
+
+def scenario_cuda_fwd_bwd() -> Operation | None:
+    """Torch CUDA, gradients on: two optimizer steps on spot-size operands."""
+    return _torch_fwd_bwd("cuda")
+
+
+def scenario_least_squares_e2e() -> Operation:
+    """A complete small LeastSquares run (finite-difference Jacobian).
+
+    Each call builds the optic and the problem again; otherwise the timed
+    call starts from the design that the warmup optimized and stops earlier.
+    All weights are 1, so the merit does not depend on how field and
+    wavelength weights are applied.
+    """
+    from optiland.optimization import LeastSquares, OptimizationProblem
+    from optiland.samples.objectives import CookeTriplet
+
+    def op():
+        optic = CookeTriplet()
+        problem = OptimizationProblem()
+        problem.add_operand("f2", target=50.0, weight=1.0, input_data={"optic": optic})
+        for hy in (0.0, 0.7, 1.0):
+            problem.add_operand(
+                "rms_spot_size",
+                target=0.0,
+                weight=1.0,
+                input_data={
+                    "optic": optic,
+                    "surface_number": -1,
+                    "Hx": 0.0,
+                    "Hy": hy,
+                    "num_rays": 5,
+                    "wavelength": optic.primary_wavelength,
+                    "distribution": "hexapolar",
+                },
+            )
+        for i in (1, 3, 5):
+            problem.add_variable(optic, "radius", surface_number=i)
+        LeastSquares(problem).optimize(maxiter=12)
+
+    return op
+
+
+def scenario_merit_paraxial_seidel() -> Operation:
+    """Five merit evaluations of paraxial and Seidel operands (no real-ray trace).
+
+    One evaluation computes f2, EPL, XPL and TSC, TCC, TAC, PC of 8 surfaces
+    (35 operands) and takes less than 40 ms. Below 40 ms the 2 ms min delta
+    and not the 5% fail ratio sets the threshold, so the timed call runs five
+    evaluations.
+    """
+    from optiland.optimization import OptimizationProblem
+
+    optic = _lens_stack("bench-spherical")
+    problem = OptimizationProblem()
+    for name in ("f2", "EPL", "XPL"):
+        problem.add_operand(name, target=0.0, weight=1.0, input_data={"optic": optic})
+    for name in ("TSC", "TCC", "TAC", "PC"):
+        for surface in range(8):
+            problem.add_operand(
+                name,
+                target=0.0,
+                weight=1.0,
+                input_data={"optic": optic, "surface_number": surface},
+            )
+
+    def op():
+        for _ in range(5):
+            problem.sum_squared()
+
+    return op
+
+
+# Step of the forward differences, scaled by max(1, |x|), as in
+# benchmarks/optimization/harness.py.
+_FD_STEP = 1e-8
+
+
+def _fd_jacobian(problem_name: str) -> Operation:
+    """One forward-difference Jacobian of a ``benchmarks/optimization`` problem.
+
+    The problem comes from the copy of ``problems.py`` next to this script,
+    so both refs time the same problem. The steps are those of
+    ``benchmarks/optimization/harness.py`` (``time_fd_jacobian``). Each
+    residual vector comes from ``LeastSquares._compute_residuals_vector``,
+    the function that SciPy calls for each column. The design changes for
+    every column, so caches that hold the results of one design (ray aiming,
+    paraxial values) cannot answer.
+    """
+    import importlib.util
+
+    import numpy as np
+
+    import optiland.backend as be
+    from optiland.optimization import LeastSquares
+
+    path = Path(__file__).resolve().parent / "optimization" / "problems.py"
+    spec = importlib.util.spec_from_file_location("_gate_problems", path)
+    problems = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(problems)
+    _, problem = problems.PROBLEMS[problem_name]()
+    optimizer = LeastSquares(problem)
+    x0 = np.asarray(be.to_numpy([v.value for v in problem.variables]), dtype=float)
+
+    def op():
+        # The first call also sets the design back to x0.
+        optimizer._compute_residuals_vector(x0)
+        for j in range(x0.size):
+            x = x0.copy()
+            x[j] += _FD_STEP * max(1.0, abs(x0[j]))
+            optimizer._compute_residuals_vector(x)
+
+    return op
+
+
+def scenario_fd_jacobian_cooke() -> Operation:
+    """Forward-difference Jacobian, Cooke triplet: 12 variables, paraxial aiming."""
+    return _fd_jacobian("cooke")
+
+
+def scenario_fd_jacobian_wide_asphere() -> Operation:
+    """Forward-difference Jacobian, wide-angle asphere lens: 20 variables.
+
+    This problem uses iterative ray aiming. In each column the aimer solves
+    again for the changed design, and this solve takes most of the time.
+    """
+    return _fd_jacobian("wide_asphere")
+
+
+# Back surfaces of the freeform singlets, one for each Newton-Raphson surface
+# type that the scenarios above do not trace. The surfaces stay near their
+# base spheres, so the rays converge in a few steps.
+_FREEFORMS = {
+    "zernike": {
+        "surface_type": "zernike",
+        "radius": -50.0,
+        "conic": -0.3,
+        # Fringe 37, without piston, tilt and focus.
+        "coefficients": [0.0] * 4
+        + [1e-3 * (-1) ** j / (1 + j // 6) for j in range(33)],
+        "zernike_type": "fringe",
+        "norm_radius": 12.0,
+    },
+    "xy_polynomial": {
+        "surface_type": "polynomial",
+        "radius": -45.0,
+        "coefficients": [
+            [0.0, 0.0, 2e-4, 0.0, -1e-6],
+            [0.0, 1e-5, 0.0, 2e-7, 0.0],
+            [3e-4, 0.0, -2e-6, 0.0, 0.0],
+            [0.0, 4e-7, 0.0, 0.0, 0.0],
+            [-1e-6, 0.0, 0.0, 0.0, 0.0],
+        ],
+    },
+    "chebyshev": {
+        "surface_type": "chebyshev",
+        "radius": -45.0,
+        "coefficients": [
+            [0.0, 1e-3, -2e-3, 4e-4],
+            [5e-4, 0.0, 3e-4, 0.0],
+            [-1e-3, 2e-4, 0.0, 0.0],
+            [3e-4, 0.0, 0.0, 0.0],
+        ],
+        "norm_x": 12.0,
+        "norm_y": 12.0,
+    },
+    "odd_asphere": {
+        "surface_type": "odd_asphere",
+        "radius": -40.0,
+        "conic": -0.5,
+        "coefficients": [0.0, 0.0, 1e-4, 1e-5, -2e-7],
+    },
+    "forbes_qbfs": {
+        "surface_type": "forbes_qbfs",
+        "radius": -40.0,
+        "conic": -0.5,
+        "radial_terms": {0: 1e-3, 1: -5e-4, 2: 2e-4, 3: -8e-5},
+        "norm_radius": 9.0,
+    },
+    "forbes_q2d": {
+        "surface_type": "forbes_q2d",
+        "radius": -40.0,
+        "conic": -0.5,
+        "freeform_coeffs": {
+            ("a", 0, 0): 5e-4,
+            ("a", 0, 1): -2e-4,
+            ("a", 1, 0): 1e-4,
+            ("a", 1, 1): 1e-3,
+            ("b", 1, 0): 8e-5,
+            ("a", 2, 1): -3e-4,
+            ("b", 3, 0): 2e-4,
+        },
+        "norm_radius": 9.0,
+    },
+}
+
+# Rays per trace: 10k on NumPy and Torch CPU, 500k on CUDA (as in
+# cuda_trace_nograd). On Windows, a NumPy trace of these singlets with 25k
+# rays or more got fresh pages from the system for its temporary arrays
+# (Zernike, Forbes: 30 to 160 page faults per 1000 rays; at 100k rays all
+# surface types), and the page faults then made its time depend on the
+# memory state of the machine. A trace of 10k rays had no page faults.
+_FREEFORM_RAYS = {None: 10_000, "cpu": 10_000, "cuda": 500_000}
+
+# Traces per timed call on NumPy, Torch CPU and CUDA. A scenario fails only
+# if its time grows by more than 5 % and by more than 2 ms (--fail-ratio,
+# --min-delta), so a 5 % slowdown shows only in a call of 40 ms or more.
+# These counts keep each call above 40 ms also after the speed-ups of #1168.
+# When a change makes a call faster than 40 ms, add traces: both refs run the
+# scenarios of the candidate's script.
+_FREEFORM_TRACES = {
+    "zernike": (24, 12, 3),
+    "xy_polynomial": (40, 20, 4),
+    "chebyshev": (40, 16, 4),
+    "odd_asphere": (40, 20, 4),
+    "forbes_qbfs": (40, 16, 4),
+    "forbes_q2d": (25, 14, 4),
+}
+
+
+def _freeform_singlet(family: str) -> Optic:
+    """An N-BK7 singlet: a spherical front surface (the stop), a freeform back."""
+    import optiland.backend as be
+    from optiland.optic import Optic
+
+    optic = Optic(name=f"bench-{family}")
+    optic.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+    optic.surfaces.add(
+        index=1, radius=30.0, thickness=5.0, material="N-BK7", is_stop=True
+    )
+    optic.surfaces.add(index=2, thickness=45.0, **_FREEFORMS[family])
+    optic.surfaces.add(index=3)
+    optic.set_aperture(aperture_type="EPD", value=10.0)
+    optic.fields.set_type("angle")
+    optic.fields.add(y=0.0)
+    optic.wavelengths.add(value=0.55, is_primary=True)
+    return optic
+
+
+def _explicit_grid(n, half_width, angle_rad, wavelength):
+    """Parallel rays from a square grid of about ``n`` points at z = 0.
+
+    The points cover x and y, so a freeform evaluates its terms in both
+    coordinates. In a fan, x is 0 for all rays.
+    """
+    import numpy as np
+
+    from optiland.rays import RealRays
+
+    k = math.isqrt(n)
+    c = np.linspace(-half_width, half_width, k)
+    x, y = np.meshgrid(c, c)
+    m = k * k
+    return RealRays(
+        x.ravel(),
+        y.ravel(),
+        np.zeros(m),
+        np.zeros(m),
+        np.full(m, math.sin(angle_rad)),
+        np.full(m, math.cos(angle_rad)),
+        np.ones(m),
+        np.full(m, wavelength),
+    )
+
+
+def _freeform_trace(family: str, device: str | None = None) -> Operation | None:
+    """Traces through the singlet of ``family``.
+
+    Args:
+        family: Key of ``_FREEFORMS``.
+        device: None for NumPy, else the Torch device ("cpu" or "cuda").
+    """
+    if device is not None and not _use_torch(device):
+        return None
+    optic = _freeform_singlet(family)
+    n = _FREEFORM_RAYS[device]
+    traces = _FREEFORM_TRACES[family][(None, "cpu", "cuda").index(device)]
+
+    def op():
+        for _ in range(traces):
+            optic.surfaces.trace(_explicit_grid(n, 4.0, 0.05, 0.55))
+
+    return _synchronized(op) if device == "cuda" else op
+
+
 SCENARIOS = {
     "surfaces_trace_spherical": scenario_surfaces_trace_spherical,
     "surfaces_trace_conic_oap": scenario_surfaces_trace_conic_oap,
@@ -247,23 +745,99 @@ SCENARIOS = {
     "iterative_aiming": scenario_iterative_aiming,
     "first_order_ops": scenario_first_order_ops,
     "optimization_merit": scenario_optimization_merit,
+    "surfaces_trace_large": scenario_surfaces_trace_large,
+    "surfaces_trace_asphere": scenario_surfaces_trace_asphere,
+    "surfaces_trace_small": scenario_surfaces_trace_small,
+    "least_squares_e2e": scenario_least_squares_e2e,
+    "merit_paraxial_seidel": scenario_merit_paraxial_seidel,
+    "fd_jacobian_cooke": scenario_fd_jacobian_cooke,
+    "fd_jacobian_wide_asphere": scenario_fd_jacobian_wide_asphere,
+    "torch_cpu_trace_nograd": scenario_torch_cpu_trace_nograd,
+    "torch_cpu_fwd_bwd": scenario_torch_cpu_fwd_bwd,
+    "cuda_trace_nograd": scenario_cuda_trace_nograd,
+    "cuda_fwd_bwd": scenario_cuda_fwd_bwd,
+    # Newton-Raphson freeform surfaces: one singlet per surface type, on NumPy,
+    # Torch CPU and CUDA.
+    **{f"surfaces_trace_{f}": partial(_freeform_trace, f) for f in _FREEFORMS},
+    **{f"torch_cpu_trace_{f}": partial(_freeform_trace, f, "cpu") for f in _FREEFORMS},
+    **{f"cuda_trace_{f}": partial(_freeform_trace, f, "cuda") for f in _FREEFORMS},
+}
+
+# One call of these scenarios has a fast and a slow mode. The child times
+# each of them this many times and keeps the minimum, so that one slow call
+# does not decide the result. Each entry names the cause of its slow mode.
+TIMED_CALLS = {
+    "surfaces_trace_asphere": 3,  # seen in A/A runs, cause not known
+    "torch_cpu_trace_nograd": 5,  # Torch CPU thread scheduling
+    "cuda_trace_nograd": 5,  # GPU work from the display
+    "torch_cpu_fwd_bwd": 3,  # Torch CPU thread scheduling
+    "cuda_fwd_bwd": 3,  # GPU work from the display
+    **{f"torch_cpu_trace_{f}": 5 for f in _FREEFORMS},  # as torch_cpu_trace_nograd
+    **{f"cuda_trace_{f}": 5 for f in _FREEFORMS},  # as cuda_trace_nograd
 }
 
 
-def measure(out_path: str) -> None:
-    """Run every scenario once (after one warmup) in this interpreter."""
+def _selected(only: str | None) -> list[str]:
+    """Return the scenarios named in ``--only``, or all if it is empty."""
+    if not only:
+        return list(SCENARIOS)
+    names = [n.strip() for n in only.split(",") if n.strip()]
+    unknown = [n for n in names if n not in SCENARIOS]
+    if unknown:
+        raise SystemExit(f"unknown scenarios: {', '.join(unknown)}")
+    return names
+
+
+# The child cuts error messages to this length, so that the table stays short.
+_MAX_ERROR_CHARS = 300
+
+
+def measure(out_path: str, names: list[str]) -> None:
+    """Time the selected scenarios in this interpreter and write the results as JSON.
+
+    Each scenario runs once as a warmup and then once timed, or as often as
+    ``TIMED_CALLS`` says, and the child keeps the minimum. Each timed call
+    starts after ``gc.collect()`` and ``gc.freeze()``. Without them, the
+    allocations of all earlier scenarios decide when the cyclic garbage
+    collector runs, and a collection scans every object alive in this
+    interpreter: about 30 ms with all scenarios built. A change in one part
+    of the library could then add or remove a collection in a scenario of
+    another part. After the freeze, a collection in the call scans only the
+    objects that the call creates. ``gc.unfreeze()`` after each scenario
+    lets the next ``gc.collect()`` free them again. A scenario that raises
+    gets its error message instead of a time, and one whose builder returns
+    None gets None.
+
+    Args:
+        out_path: Path of the JSON file to write.
+        names: Scenarios to time, in this order.
+    """
     import warnings
 
     warnings.simplefilter("ignore")
     import optiland
 
-    results: dict[str, float] = {}
-    for name, factory in SCENARIOS.items():
-        op = factory()
-        op()  # warmup: caches, imports, first-touch allocations
-        t0 = time.perf_counter()
-        op()
-        results[name] = time.perf_counter() - t0
+    results: dict[str, Sample] = {}
+    for name in names:
+        try:
+            op = SCENARIOS[name]()
+            if op is None:  # an optional dependency is missing
+                results[name] = None
+                continue
+            op()  # warmup: caches, imports, first-touch allocations
+            best = math.inf
+            for _ in range(TIMED_CALLS.get(name, 1)):
+                gc.collect()
+                gc.freeze()
+                t0 = time.perf_counter()
+                op()
+                best = min(best, time.perf_counter() - t0)
+            results[name] = best
+        except Exception as exc:
+            results[name] = f"{type(exc).__name__}: {exc}"[:_MAX_ERROR_CHARS]
+        finally:
+            gc.unfreeze()
+            _restore_defaults()
     payload = {"optiland_file": optiland.__file__, "seconds": results}
     Path(out_path).write_text(json.dumps(payload))
 
@@ -279,23 +853,86 @@ def _git(*args: str) -> str:
     ).strip()
 
 
-def _run_child(source_dir: Path, out_file: Path) -> None:
+def _run_child(source_dir: Path, out_file: Path, names: list[str]) -> None:
     env = dict(os.environ)
     env["PYTHONPATH"] = str(source_dir)
-    script = source_dir / "benchmarks" / "perf_regression.py"
-    if not script.exists():
-        # The base ref predates this tool: use the candidate's copy, which
-        # only touches long-stable public API.
-        script = Path(__file__).resolve()
+    # Both refs run this copy of the script, so they time the same scenarios.
+    script = Path(__file__).resolve()
+    only = ",".join(names)
     subprocess.check_call(
-        [sys.executable, str(script), "--measure", str(out_file)],
+        [sys.executable, str(script), "--measure", str(out_file), "--only", only],
         env=env,
         cwd=str(source_dir),
     )
 
 
-def compare(args: argparse.Namespace) -> int:
-    """Measure base and candidate refs interleaved; return the exit code."""
+def _collect_samples(
+    trees: dict[str, Path], names: list[str], repeats: int, tmp_path: Path
+) -> dict[str, dict[str, list[Sample]]]:
+    """Run one child per ref and repeat; return the samples per ref and scenario."""
+    samples: dict[str, dict[str, list[Sample]]] = {
+        role: {name: [] for name in names} for role in trees
+    }
+    roles = list(trees)
+    for r in range(repeats):
+        # The order alternates between repeats, so slow drift and the position
+        # in a repeat do not favor one ref.
+        pair_order = roles if r % 2 == 0 else roles[::-1]
+        for role in pair_order:
+            out = tmp_path / f"{role}-{r}.json"
+            _run_child(trees[role], out, names)
+            seconds = json.loads(out.read_text())["seconds"]
+            for name in names:
+                samples[role][name].append(seconds.get(name))
+    return samples
+
+
+def _report(
+    samples: dict[str, dict[str, list[Sample]]],
+    names: list[str],
+    args: argparse.Namespace,
+) -> list[str]:
+    """Print the comparison table; return one entry per failed scenario."""
+    failures: list[str] = []
+    header = f"{'scenario':30s} {'base [ms]':>10s} {'cand [ms]':>10s} {'ratio':>7s}"
+    print("\n" + header)
+    print("-" * len(header))
+    for name in names:
+        base, cand = samples["base"][name], samples["candidate"][name]
+        cand_error = next((v for v in cand if isinstance(v, str)), None)
+        base_error = next((v for v in base if isinstance(v, str)), None)
+        if cand_error is not None:
+            print(f"{name:30s} {'':>10s} {'ERROR':>10s}")
+            print(f"    {cand_error}")
+            failures.append(f"{name}: error")
+            continue
+        if base_error is not None:
+            print(f"{name:30s} {'n/a (base raised)':>21s}")
+            print(f"    {base_error}")
+            continue
+        if not all(isinstance(v, float) for v in base + cand):
+            print(f"{name:30s} {'n/a':>10s} {'n/a':>10s}")
+            continue
+        t_base = min(base)
+        t_cand = min(cand)
+        ratio = t_cand / t_base if t_base > 0 else math.inf
+        slower = ratio > args.fail_ratio and (t_cand - t_base) > args.min_delta
+        mark = "  FAIL" if slower else ("  warn" if ratio > args.warn_ratio else "")
+        print(
+            f"{name:30s} {t_base * 1e3:10.1f} {t_cand * 1e3:10.1f} {ratio:7.3f}{mark}"
+        )
+        if slower:
+            failures.append(f"{name}: {ratio:.3f}x")
+    return failures
+
+
+def compare(args: argparse.Namespace, names: list[str]) -> int:
+    """Measure base and candidate refs interleaved; return the exit code.
+
+    Args:
+        args: Parsed command-line arguments.
+        names: Scenarios to measure.
+    """
     base_ref = args.base or _git("merge-base", "HEAD", "origin/master")
     base_sha = _git("rev-parse", base_ref)
     with tempfile.TemporaryDirectory(prefix="optiland-perf-") as tmp:
@@ -321,45 +958,28 @@ def compare(args: argparse.Namespace) -> int:
 
             print(f"base: {base_sha[:12]} ({base_ref})   candidate: {cand_label}")
             print(
-                f"repeats: {args.repeats} (interleaved), statistic: min, "
+                f"repeats: {args.repeats} (alternating order), statistic: min, "
                 f"fail ratio: {args.fail_ratio:.2f}, "
                 f"min delta: {args.min_delta * 1e3:.0f} ms"
             )
+            print(f"scenarios: {', '.join(names)}")
 
-            samples: dict[str, dict[str, list[float]]] = {
-                role: {name: [] for name in SCENARIOS} for role in trees
-            }
-            for r in range(args.repeats):
-                for role, tree in trees.items():
-                    out = tmp_path / f"{role}-{r}.json"
-                    _run_child(tree, out)
-                    seconds = json.loads(out.read_text())["seconds"]
-                    for name in SCENARIOS:
-                        samples[role][name].append(seconds[name])
-
-            failures: list[str] = []
-            header = (
-                f"{'scenario':30s} {'base [ms]':>10s} {'cand [ms]':>10s} {'ratio':>7s}"
-            )
-            print("\n" + header)
-            print("-" * len(header))
-            for name in SCENARIOS:
-                t_base = min(samples["base"][name])
-                t_cand = min(samples["candidate"][name])
-                ratio = t_cand / t_base if t_base > 0 else math.inf
-                slower = ratio > args.fail_ratio and (t_cand - t_base) > args.min_delta
-                mark = (
-                    "  FAIL"
-                    if slower
-                    else ("  warn" if ratio > args.warn_ratio else "")
-                )
+            samples = _collect_samples(trees, names, args.repeats, tmp_path)
+            failures = _report(samples, names, args)
+            slower = [f.split(":")[0] for f in failures if not f.endswith(": error")]
+            if slower and args.confirm_repeats > 0:
+                # A shared CI runner can be slower for part of a run. A real
+                # regression is slower again, so a scenario fails only if a
+                # second run of the slower scenarios alone confirms it.
                 print(
-                    f"{name:30s} {t_base * 1e3:10.1f} {t_cand * 1e3:10.1f} "
-                    f"{ratio:7.3f}{mark}"
+                    f"\nConfirmation run of {len(slower)} slower scenario(s): "
+                    f"{args.confirm_repeats} repeats"
                 )
-                if slower:
-                    failures.append(f"{name}: {ratio:.3f}x")
-
+                samples = _collect_samples(
+                    trees, slower, args.confirm_repeats, tmp_path
+                )
+                confirmed = _report(samples, slower, args)
+                failures = [f for f in failures if f.endswith(": error")] + confirmed
             if failures:
                 print(
                     "\nPerformance regression against "
@@ -391,7 +1011,7 @@ def main() -> int:
     parser.add_argument(
         "--measure",
         metavar="OUT_JSON",
-        help="internal: time all scenarios in this interpreter",
+        help="internal: time the selected scenarios in this interpreter",
     )
     parser.add_argument(
         "--base",
@@ -402,6 +1022,18 @@ def main() -> int:
         help="git ref to measure as candidate (default: the current tree)",
     )
     parser.add_argument("--repeats", type=int, default=5)
+    parser.add_argument(
+        "--confirm-repeats",
+        type=int,
+        default=10,
+        help="repeats of the confirmation run of the slower scenarios (0: none)",
+    )
+    parser.add_argument(
+        "--only",
+        metavar="NAMES",
+        help="comma-separated scenarios to run (default: all), for example "
+        "to re-run a flagged scenario with more repeats",
+    )
     parser.add_argument("--fail-ratio", type=float, default=1.05)
     parser.add_argument("--warn-ratio", type=float, default=1.02)
     parser.add_argument(
@@ -411,11 +1043,12 @@ def main() -> int:
         help="absolute slowdown [s] a scenario must exceed to fail",
     )
     args = parser.parse_args()
+    names = _selected(args.only)  # rejects unknown names before any checkout
 
     if args.measure:
-        measure(args.measure)
+        measure(args.measure, names)
         return 0
-    return compare(args)
+    return compare(args, names)
 
 
 if __name__ == "__main__":

@@ -60,6 +60,15 @@ class VariableManager:
         """Clear all variables from the merit function"""
         self.variables = []
 
+    def release_graphs(self):
+        """Drop the autograd graphs that the last updates left in the optics.
+
+        Call this before the variables get the values of a new optimizer
+        step. See ``VariableBehavior.release_graph``.
+        """
+        for variable in self.variables:
+            variable.release_graph()
+
     def __iter__(self):
         """Return the iterator object itself"""
         self._index = 0

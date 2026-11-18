@@ -98,7 +98,7 @@ class NumbaSummation(HuygensFresnelSummation):
         )
 
     @staticmethod
-    @njit(parallel=True, fastmath=True)
+    @njit(parallel=True, fastmath=True, cache=True)
     def _huygens_fresnel_summation(
         image_x,
         image_y,

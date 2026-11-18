@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import optiland.backend as be
 from optiland.coordinate_system import CoordinateSystem
+from optiland.geometries._derivatives import derivative_requested
 from optiland.geometries.newton_raphson import NewtonRaphsonGeometry
 
 
@@ -79,6 +80,24 @@ class EvenAsphere(NewtonRaphsonGeometry):
     def __str__(self):
         return "Even Asphere"
 
+    _r2_index = 0  # index of the r^2 coefficient
+
+    @property
+    def paraxial_radius(self):
+        """Vertex radius including the curvature 2*C of the r^2 term."""
+        if len(self.coefficients) <= self._r2_index:
+            return self.radius
+        c2 = self.coefficients[self._r2_index]
+        if c2 == 0:
+            if not derivative_requested(c2) or bool(be.isinf(self.radius)):
+                return self.radius
+            # A derivative with respect to c2 can be requested (for example,
+            # c2 is an optimization variable that starts at zero).
+            # R / (1 + 2 c2 R) is exactly R at c2 = 0, and its derivative
+            # there is -2 R^2. A flat base keeps its infinite radius.
+            return self.radius / (1 + 2 * c2 * self.radius)
+        return 1 / (1 / self.radius + 2 * c2)
+
     def scale(self, scale_factor: float):
         """Scale the geometry parameters.
 
@@ -89,6 +108,16 @@ class EvenAsphere(NewtonRaphsonGeometry):
         for i in range(len(self.coefficients)):
             # C_i' = C_i * s^(1 - 2(i+1))
             self.coefficients[i] *= scale_factor ** (1 - 2 * (i + 1))
+
+    def flip(self):
+        """Flip the geometry.
+
+        Changes the sign of the radius of curvature and of every aspheric
+        coefficient, so that the sag changes sign. The conic constant remains
+        unchanged.
+        """
+        super().flip()
+        self.coefficients = [-c for c in self.coefficients]
 
     def sag(self, x=0, y=0):
         """Calculates the sag of the asphere at the given coordinates.
@@ -101,12 +130,55 @@ class EvenAsphere(NewtonRaphsonGeometry):
             be.ndarray or float: The sag value(s) at the given coordinates.
 
         """
-        r2 = x**2 + y**2
-        z = r2 / (self.radius * (1 + be.sqrt(1 - (1 + self.k) * r2 / self.radius**2)))
-        for i, Ci in enumerate(self.coefficients):
-            z = z + Ci * r2 ** (i + 1)
+        return self._sag_and_terms(x, y)[0]
 
-        return z
+    def _base_terms(self, x, y):
+        """Return r**2 and the root sqrt(1 - (1 + k) r**2 / R**2) of the conic."""
+        r2 = x**2 + y**2
+        return r2, be.sqrt(1 - (1 + self.k) * r2 / self.radius**2)
+
+    def _sag_and_terms(self, x, y):
+        """Return the sag at (x, y), and r**2 and the conic root for the slopes.
+
+        See :meth:`NewtonRaphsonGeometry._sag_and_terms`.
+        """
+        # The compiled trace plan repeats these expressions (_asphere_sag in
+        # optiland/backend/numpy_backend/_trace_kernel.py). Change both.
+        r2, root = self._base_terms(x, y)
+        z = r2 / (self.radius * (1 + root))
+        # Use the length: the coefficients can also be an array or a tensor.
+        n = len(self.coefficients)
+        if n > 0:
+            # Horner's method: r2 * (C1 + r2 * (C2 + ... + r2 * Cn)).
+            polynomial = self.coefficients[n - 1]
+            for i in range(n - 2, -1, -1):
+                polynomial = self.coefficients[i] + r2 * polynomial
+            z = z + r2 * polynomial
+        return z, (r2, root)
+
+    def _slopes_from_terms(self, x, y, terms):
+        """Return d(sag)/dx and d(sag)/dy from r**2 and the conic root.
+
+        See :meth:`NewtonRaphsonGeometry._slopes_from_terms`.
+        """
+        # The compiled trace plan repeats these expressions (_asphere_slopes
+        # and _step in optiland/backend/numpy_backend/_trace_kernel.py).
+        # Change both.
+        r2, root = terms
+        denom = self.radius * root
+        dfdx = x / denom
+        dfdy = y / denom
+        n = len(self.coefficients)
+        if n > 0:
+            # d(sag)/d(r2) of the polynomial, C1 + 2 C2 r2 + ... + n Cn r2^(n-1),
+            # with Horner's method. It serves both slopes, because
+            # d(sag)/dx = 2 x d(sag)/d(r2) and d(sag)/dy = 2 y d(sag)/d(r2).
+            derivative = n * self.coefficients[n - 1]
+            for i in range(n - 1, 0, -1):
+                derivative = i * self.coefficients[i - 1] + r2 * derivative
+            dfdx = dfdx + 2 * x * derivative
+            dfdy = dfdy + 2 * y * derivative
+        return dfdx, dfdy
 
     def _surface_normal(self, x, y):
         """Calculates the surface normal of the asphere at the given x and y
@@ -121,15 +193,10 @@ class EvenAsphere(NewtonRaphsonGeometry):
             components (nx, ny, nz).
 
         """
-        r2 = x**2 + y**2
-
-        denom = self.radius * be.sqrt(1 - (1 + self.k) * r2 / self.radius**2)
-        dfdx = x / denom
-        dfdy = y / denom
-
-        for i, Ci in enumerate(self.coefficients):
-            dfdx = dfdx + 2 * (i + 1) * x * Ci * r2**i
-            dfdy = dfdy + 2 * (i + 1) * y * Ci * r2**i
+        # The compiled trace plan repeats these expressions (_asphere_slopes
+        # and _unit_normal in optiland/backend/numpy_backend/_trace_kernel.py).
+        # Change both.
+        dfdx, dfdy = self._slopes_from_terms(x, y, self._base_terms(x, y))
 
         mag = be.sqrt(dfdx**2 + dfdy**2 + 1)
 

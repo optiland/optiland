@@ -23,6 +23,7 @@ from .material_utils import (
     plot_glass_map,
     plot_nk,
 )
+from .model_material import ModelMaterial
 from .registry import MaterialRegistry
 from .warnings import OptilandMaterialWarning
 
@@ -30,6 +31,8 @@ __all__ = [
     # From abbe.py
     "AbbeMaterial",
     "AbbeMaterialE",
+    # From model_material.py
+    "ModelMaterial",
     # From agf.py
     "AGFMaterial",
     # From base.py

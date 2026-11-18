@@ -17,7 +17,12 @@ from __future__ import annotations
 
 from .opd import OPD
 from .opd_fan import OPDFan
-from .reference_geometry import PlanarReference, ReferenceGeometry, SphericalReference
+from .reference_geometry import (
+    PlanarReference,
+    ReferenceGeometry,
+    SphericalReference,
+    TelecentricSphericalReference,
+)
 from .wavefront import Wavefront
 from .wavefront_data import WavefrontData
 from .zernike_opd import ZernikeOPD
@@ -31,4 +36,5 @@ __all__ = [
     "ReferenceGeometry",
     "SphericalReference",
     "PlanarReference",
+    "TelecentricSphericalReference",
 ]

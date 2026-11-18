@@ -159,9 +159,10 @@ For usage, see the :doc:`../optimization_guide`.
 - **Evaluators** (``evaluators/``): turn a variable vector into residuals and a
   Jacobian. ``FiniteDiffEvaluator`` writes ``x`` into the variables, opens one
   *evaluation epoch* (``optiland._epoch``, inside which per-design work such as
-  material indices, paraxial data and ray aiming is memoized) and reads
-  ``problem.residual_vector()``. Jacobian columns resume real-ray traces from
-  snapshots of the baseline evaluation (``optiland.raytrace.partial_trace``).
+  material indices, paraxial data, third-order (Seidel) terms and ray aiming
+  is memoized) and reads ``problem.residual_vector()``. Jacobian columns
+  resume real-ray traces from snapshots of the baseline evaluation
+  (``optiland.raytrace.partial_trace``).
   Caches live only inside an epoch; outside one, behavior is unchanged.
 - **Residual blocks** (``block/``): a ``ResidualBlock`` returns many weighted
   residual rows in one vectorized call and declares the rays it needs

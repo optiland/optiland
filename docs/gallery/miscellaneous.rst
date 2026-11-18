@@ -21,6 +21,7 @@ or unique functionality of Optiland.
     miscellaneous/real_image_height_field
     miscellaneous/themes
     miscellaneous/lens_draw_projection
+    miscellaneous/glass_property_coloring
     miscellaneous/ray_aiming
     miscellaneous/eye
     miscellaneous/zemax_circular_aperture_demo

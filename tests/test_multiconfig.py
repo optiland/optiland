@@ -4,8 +4,12 @@ import matplotlib
 import matplotlib.pyplot as plt
 import pytest
 
+import optiland.backend as be
 from optiland.multiconfig.multi_configuration import MultiConfiguration
 from optiland.optic import Optic
+from optiland.optimization import LeastSquares, OptimizationProblem
+from optiland.samples import CookeTriplet
+from tests.utils import assert_allclose
 
 matplotlib.use("Agg")  # use non-interactive backend for testing
 
@@ -136,6 +140,30 @@ def test_set_optic_property(base_optic):
     # Generic pickup sets attr on config 1 from config 0.
     assert mc.current_config(0).name == "NewName"
     assert mc.current_config(1).name == "NewName"
+
+
+def test_optimization_updates_linked_configuration(set_test_backend):
+    """An operand on a linked configuration without variables sees the update.
+
+    The derived configuration owns no variable, so the optimization must
+    update it (and its pickups) from its source configuration; otherwise the
+    operand is constant and the optimizer leaves the system unchanged.
+    """
+    base = CookeTriplet()
+    mc = MultiConfiguration(base)
+    config = mc.add_configuration()
+
+    problem = OptimizationProblem()
+    problem.add_variable(base, "radius", surface_number=1)
+    problem.add_operand("f2", target=45.0, weight=1.0, input_data={"optic": config})
+
+    radius_before = float(be.to_numpy(base.surfaces[1].geometry.radius))
+    LeastSquares(problem).optimize(maxiter=50)
+    radius_after = float(be.to_numpy(base.surfaces[1].geometry.radius))
+
+    assert radius_after != pytest.approx(radius_before)
+    assert_allclose(config.surfaces[1].geometry.radius, radius_after)
+    assert_allclose(problem.operands[0].value, 45.0, rtol=1e-6, atol=1e-9)
 
 
 def test_multiconfig_draw(base_optic):

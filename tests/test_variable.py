@@ -15,6 +15,7 @@ from optiland.geometries import (
     ZernikePolynomialGeometry,
 )
 from optiland.materials.abbe import AbbeMaterial
+from optiland.materials.ideal import IdealMaterial
 from optiland.optic import Optic
 from optiland.optimization import OptimizationProblem, OptimizerGeneric, variable
 from optiland.optimization.scaling.identity import IdentityScaler
@@ -260,6 +261,21 @@ class TestIndexVariable:
         self.index_var.update_value(1.6)
         assert_allclose(self.index_var.get_value(), 1.6)
 
+    def test_update_value_on_ideal_material(self, set_test_backend):
+        optic = Optic()
+        optic.wavelengths.add(0.5876, is_primary=True)
+        optic.surfaces.add(index=0)
+        optic.surfaces.add(
+            index=1, material=IdealMaterial(n=1.5), radius=50, thickness=5
+        )
+        optic.surfaces.add(index=2, radius=-50, thickness=5)
+        optic.surfaces.add(index=3)
+
+        index_var = variable.IndexVariable(optic, 1, None)
+        index_var.update_value(1.62)
+
+        assert_allclose(index_var.get_value(), 1.62)
+
     def test_get_value_no_scaling(self, set_test_backend):
         self.optic = Objective60x()
         self.index_var = variable.IndexVariable(
@@ -272,6 +288,28 @@ class TestIndexVariable:
 
     def test_string_representation(self, set_test_backend):
         assert str(self.index_var) == "Refractive Index, Surface 1"
+
+
+class TestAbbeVariable:
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.optic = Objective60x()
+        self.abbe_var = variable.AbbeVariable(self.optic, 1)
+
+    def test_get_value(self, set_test_backend):
+        assert_allclose(self.abbe_var.get_value(), 84.4679939349711)
+
+    def test_update_value(self, set_test_backend):
+        self.abbe_var.update_value(50.0)
+        assert_allclose(self.abbe_var.get_value(), 50.0)
+
+    def test_update_value_preserves_index(self, set_test_backend):
+        nd = self.optic.surfaces.n(0.5875618)[1]
+        self.abbe_var.update_value(50.0)
+        assert_allclose(self.optic.surfaces.n(0.5875618)[1], nd, rtol=0, atol=1e-12)
+
+    def test_string_representation(self, set_test_backend):
+        assert str(self.abbe_var) == "Abbe Number, Surface 1"
 
 
 class TestMaterialVariable:

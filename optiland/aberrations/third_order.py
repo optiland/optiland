@@ -7,9 +7,10 @@ Kramer Harrison, 2026
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
+from optiland._epoch import epoch_memo
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -136,6 +137,9 @@ class ThirdOrderAberrations:
         )
         return S_conic / (2 * self._n[-1] * self._ua[-1])
 
+    # Key on the term's name: each access to self._TSC_term creates a new
+    # bound method, so the default key, the argument's id, never matches.
+    @epoch_memo(key_fn=lambda term_func: term_func.__name__)
     def _compute_over_surfaces(self, term_func: Callable) -> BEArray:
         terms = [term_func(k) for k in range(1, self._N - 1)]
         return be.array(terms)
@@ -162,6 +166,26 @@ class ThirdOrderAberrations:
         return min(values), max(values)
 
     def _precalculations(self) -> None:
+        """Set the paraxial values that all third-order terms use.
+
+        The values are attributes of this object. In an evaluation epoch they
+        are computed once per numeric context. A later call writes the stored
+        values back, because a call under another numeric context (for
+        example Torch without gradients) can have replaced them.
+        """
+        self.__dict__.update(self._precalculated())
+
+    @epoch_memo()
+    def _precalculated(self) -> dict[str, Any]:
+        """Run the precalculations and return the values they set.
+
+        Every attribute except ``_optic`` is a precalculated value. Exclude
+        any new attribute that is not one.
+        """
+        self._compute_precalculations()
+        return {k: v for k, v in vars(self).items() if k != "_optic"}
+
+    def _compute_precalculations(self) -> None:
         self._inv: float = self._optic.paraxial.invariant()
         self._on_axis = be.isclose(self._inv, be.array(0.0))
         self._n = self._signed_refractive_indices(self._optic.primary_wavelength)
@@ -171,7 +195,7 @@ class ThirdOrderAberrations:
         ) - self._signed_refractive_indices(long)
 
         self._N: int = self._optic.surfaces.num_surfaces
-        self._C = 1 / self._optic.surfaces.radii
+        self._C = 1 / self._optic.surfaces.paraxial_radii
         self._ya, self._ua = self._optic.paraxial.marginal_ray()
         self._yb, self._ub = self._optic.paraxial.chief_ray()
         self._hp = self._inv / (self._n[-1] * self._ua[-1])
@@ -275,6 +299,24 @@ class ThirdOrderAberrations:
     def _TchC_term(self, k: int) -> BEArray:
         return self._chromatic_prefactor(k) * self._ip[k - 1]
 
+    def _seidels_per_surface(
+        self,
+        TSC: BEArray,
+        CC: BEArray,
+        TAC: BEArray,
+        TPC: BEArray,
+        DC: BEArray,
+    ) -> BEArray:
+        """Seidel coefficients SI through SV contributed by each surface.
+
+        Returns:
+            Array of shape (5, N - 2), one column per surface from the first
+            surface after the object to the last surface before the image.
+        """
+        factor = self._n[-1] * self._ua[-1] * 2
+        terms = be.stack([TSC, CC, TAC, TPC, DC])
+        return be.reshape(-terms * factor, (5, -1))
+
     def _sum_seidels(
         self,
         TSC: BEArray,
@@ -283,13 +325,5 @@ class ThirdOrderAberrations:
         TPC: BEArray,
         DC: BEArray,
     ) -> BEArray:
-        factor = self._n[-1] * self._ua[-1] * 2
-        return be.array(
-            [
-                -be.sum(TSC) * factor,
-                -be.sum(CC) * factor,
-                -be.sum(TAC) * factor,
-                -be.sum(TPC) * factor,
-                -be.sum(DC) * factor,
-            ]
-        )
+        per_surface = self._seidels_per_surface(TSC, CC, TAC, TPC, DC)
+        return be.reshape(be.sum(per_surface, axis=1), (-1, 1))

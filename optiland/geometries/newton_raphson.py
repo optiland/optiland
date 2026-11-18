@@ -4,7 +4,8 @@ The Newton Raphson geometry represents a surface utilizing the Newton-Raphson
 method for ray tracing. This is an abstract base class that should be inherited
 by any geometry that uses the Newton-Raphson method for ray tracing.
 
-When the PyTorch backend is active with gradient tracking enabled, the
+When the PyTorch backend is active with gradient tracking enabled, and a
+derivative of the distance can be requested, the
 ``distance`` method uses a DiffOptics-style one-step implicit correction
 to compute correct first-order gradients through the converged intersection
 point without unrolling the Newton-Raphson iterations through the autograd
@@ -28,10 +29,12 @@ import contextlib
 import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NamedTuple
 
 import optiland.backend as be
+from optiland import _trace_probe
 from optiland.coordinate_system import CoordinateSystem
+from optiland.geometries._derivatives import requires_grad_in, reverse_mode_only
 from optiland.geometries.standard import StandardGeometry
 from optiland.utils import machine_eps
 
@@ -50,6 +53,72 @@ _DENOM_EPS_MULTIPLIER = 32.0
 # Multiplier for the round-off floor under the user-supplied convergence
 # tolerance. See :func:`_effective_tolerance`.
 _CONV_EPS_MULTIPLIER = 8.0
+
+# The ray fields that the distance depends on.
+_RAY_FIELDS = ("x", "y", "z", "L", "M", "N")
+
+# The loop counts its active rays at these steps. If at most the part
+# _ACTIVE_ONLY_FRACTION of at least _ACTIVE_ONLY_MIN_RAYS rays is active, it
+# goes on with the active rays only (see _iterate_active_rays): a few rays
+# that converge slowly, or not at all, then do not hold the whole bundle.
+# Most rays converge in 3 to 5 steps. A ray that is still active after 8
+# steps has usually stalled (on a strong asphere at 20 deg, 12 % of the rays
+# never converge), so many steps are left, and the selection of the active
+# rays pays. At step 4, the last rays of an ordinary bundle often need only
+# one or two more steps, and the selection costs more than it saves. Only on
+# the CPU, see _active_only_pays.
+_ACTIVE_CHECKS = frozenset({8, 16, 32, 64})
+_ACTIVE_ONLY_FRACTION = 0.25
+_ACTIVE_ONLY_MIN_RAYS = 64
+
+# The ``final`` of a loop with terms that went on with the active rays only:
+# _classify_final_roots evaluates the terms again at the roots.
+_TERMS_AT_THE_ROOTS = "terms at the roots"
+
+
+class _RaySubset(NamedTuple):
+    """The ray fields of the active rays (see ``_iterate_active_rays``)."""
+
+    x: Any
+    y: Any
+    z: Any
+    L: Any
+    M: Any
+    N: Any
+
+
+def _active_only_pays(done):
+    """Return True if a loop can go on with its active rays only.
+
+    This pays for at least ``_ACTIVE_ONLY_MIN_RAYS`` rays, and on the CPU. On
+    a GPU, the time of a step comes mostly from the launches of its kernels,
+    which cost about the same for fewer rays, so the selection of the rays
+    would cost more than it saves. The loop calls this only at the steps of
+    ``_ACTIVE_CHECKS``, so an ordinary call never pays for it.
+
+    Args:
+        done: The mask of the rays that take no more steps.
+
+    Returns:
+        bool: True on the CPU for enough rays.
+    """
+    device = getattr(done, "device", None)
+    return (
+        getattr(device, "type", "cpu") == "cpu"
+        and be.size(done) >= _ACTIVE_ONLY_MIN_RAYS
+    )
+
+
+def _put(values, mask, part):
+    """Return ``values`` with the entries of ``mask`` replaced by ``part``.
+
+    The result is a new array, so autograd records the operation.
+    """
+    if be.get_backend() == "torch":
+        return values.masked_scatter(mask, part)
+    result = values.copy()
+    result[mask] = part
+    return result
 
 
 def _nz_threshold(nz):
@@ -135,6 +204,10 @@ def _effective_tolerance(tol, t):
     """
     scale = float(be.to_numpy(be.max(be.abs(t))))
     floor = _CONV_EPS_MULTIPLIER * machine_eps(t) * max(1.0, scale)
+    if floor > float(tol):
+        # The tolerance now depends on the largest |t| of the call, so a part
+        # of a bundle can get another tolerance than the whole bundle.
+        _trace_probe.require_whole_bundle("Newton-Raphson tolerance floor")
     return max(float(tol), floor)
 
 
@@ -143,16 +216,30 @@ class _DistanceSolveResult:
     """Outcome of the graph-free primal Newton-Raphson distance solve.
 
     Attributes:
-        t: Propagation distance to the intersection.
-        residual: Surface residual ``F(t) = sag(x, y) - z`` at ``t``.
-        converged: Per-ray boolean mask, ``|F(t)| < tol``.
+        t: Propagation distance to the intersection. NaN for a ray that
+            missed the surface or did not converge within ``max_iter``.
+        residual: Surface residual ``F(t) = sag(x, y) - z`` of the last
+            iterate.
+        converged: Per-ray boolean mask: ``|F(t)| < tol``, and for a ray
+            seeded on the vertex plane, a root in front of the ray.
         iterations: Number of Newton updates actually performed.
+        final: ``(x, y, terms)`` of the evaluation that gave ``residual``,
+            if the geometry gives its sag with ``_sag_and_terms``, or
+            ``_TERMS_AT_THE_ROOTS`` if that loop went on with the active rays
+            only. Else None. ``_classify_final_roots`` takes the slopes at
+            the root from these values.
+        reached: Per-ray boolean mask ``|F(t)| < tol`` of the last iterate,
+            before the rule for rays seeded on the vertex plane. A ray
+            without it did not converge within ``max_iter``. None if not
+            given: then ``converged`` stands for it.
     """
 
     t: Any
     residual: Any
     converged: Any
     iterations: int
+    final: Any = None
+    reached: Any = None
 
 
 @dataclass
@@ -194,6 +281,101 @@ def _all_finite(*values):
     for value in values[1:]:
         finite = be.logical_and(finite, be.isfinite(value))
     return finite
+
+
+def _residual_dt_from_slopes(fx, fy, rays):
+    """``dF/dt = s_x L + s_y M - N`` from the sag slopes, its scale, and validity.
+
+    The same values as :meth:`NewtonRaphsonGeometry._surface_residual_dt`,
+    but the slopes ``s_x, s_y`` enter directly, without the roundtrip
+    through the unit normal. The normal has
+    ``n_z = -1 / sqrt(1 + s_x**2 + s_y**2)``, so the test ``|n_z| > tau``
+    becomes ``1 + s_x**2 + s_y**2 < 1 / tau**2``. The test is False for a
+    slope that is not finite.
+
+    Returns:
+        tuple: ``(df_dt, scale, nz_regular)``, as ``_surface_residual_dt``.
+    """
+    fx_l = fx * rays.L
+    fy_m = fy * rays.M
+    df_dt = fx_l + fy_m - rays.N
+    scale = be.abs(fx_l) + be.abs(fy_m) + be.abs(rays.N)
+    tau_nz = _nz_threshold(df_dt)
+    nz_regular = 1 + fx**2 + fy**2 < 1 / tau_nz**2
+    return df_dt, scale, nz_regular
+
+
+# The methods that the sag and slope terms of a class must repeat.
+_TERM_METHODS = ("sag", "_surface_normal", "_slopes_from_terms")
+
+# For each class: the methods that _class_shares_terms decided on, and its
+# decision. If one of these methods of the class changes (a mock, a plugin
+# that patches a class), the entry no longer matches, and the next call
+# decides again.
+_SHARED_TERMS: dict[type, tuple] = {}
+
+# The decision of _class_shares_terms for a class that overrides _has_terms:
+# each instance decides. The value is true, but it is not True.
+_ASK_INSTANCE = "ask the instance"
+
+
+def _class_shares_terms(cls) -> bool | str:
+    """Return True if the sag and the slopes of ``cls`` come from its terms.
+
+    The class that defines ``_sag_and_terms`` must also define or inherit
+    the methods in ``_TERM_METHODS``. A subclass that overrides ``sag`` or
+    ``_surface_normal``, but not ``_sag_and_terms``, has another surface
+    (``OddAsphere`` is a subclass of ``EvenAsphere``).
+
+    Returns:
+        bool or str: False or True, or ``_ASK_INSTANCE`` if the class
+        overrides ``_has_terms``.
+    """
+    mro = cls.__mro__
+
+    def definer(name):
+        return next(i for i, base in enumerate(mro) if name in vars(base))
+
+    owner = definer("_sag_and_terms")
+    if mro[owner] is NewtonRaphsonGeometry:
+        return False
+    # A class that overrides only _sag_and_terms has no slopes from terms.
+    if mro[definer("_slopes_from_terms")] is NewtonRaphsonGeometry:
+        return False
+    if not all(definer(name) >= owner for name in _TERM_METHODS):
+        return False
+    if mro[definer("_has_terms")] is not NewtonRaphsonGeometry:
+        return _ASK_INSTANCE
+    return True
+
+
+def _shares_terms(geometry) -> bool:
+    """Return True if the loop takes the sag and the slopes from the terms.
+
+    The class must share its terms (:func:`_class_shares_terms`), and the
+    instance must not have its own ``sag`` or ``_surface_normal`` (a mock).
+    If the class overrides ``_has_terms``, the instance must also have
+    terms. Else the loop calls ``sag`` and ``_surface_normal``. The decision
+    for a class is computed once, so the check costs little in each call.
+    """
+    cls = type(geometry)
+    if cls._sag_and_terms is _BASE_SAG_AND_TERMS:
+        # Most geometries have no terms: one attribute lookup decides.
+        return False
+    methods = (cls._sag_and_terms, cls.sag, cls._surface_normal, cls._slopes_from_terms)
+    entry = _SHARED_TERMS.get(cls)
+    if entry is None or entry[0] != methods:
+        entry = (methods, _class_shares_terms(cls))
+        _SHARED_TERMS[cls] = entry
+    decision = entry[1]
+    if not decision:
+        return False
+    instance = vars(geometry)
+    if "sag" in instance or "_surface_normal" in instance:
+        return False
+    # Both loops give the same surface, so a stale _has_terms only changes
+    # the speed. That is why the entry does not check its identity.
+    return decision is True or geometry._has_terms()
 
 
 class NewtonRaphsonGeometry(StandardGeometry, ABC):
@@ -257,6 +439,58 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
 
         """
         # pragma: no cover
+
+    def _sag_and_terms(self, x, y):
+        """Return the sag at (x, y) and the terms that its slopes share with it.
+
+        The Newton-Raphson loop evaluates the sag at each iterate, and the
+        slopes at the same point while a ray is not converged. A geometry
+        that overrides this method and :meth:`_slopes_from_terms` computes
+        the shared work once per iterate, for example r**2 and the conic
+        root of an even asphere. The sag must have the bits of ``sag(x, y)``.
+
+        The base class has no terms: the loop then calls ``sag`` and
+        ``_surface_normal``.
+
+        Args:
+            x (be.ndarray): The x-coordinate(s).
+            y (be.ndarray): The y-coordinate(s).
+
+        Returns:
+            tuple: The sag at (x, y), and the terms for ``_slopes_from_terms``.
+        """
+        return self.sag(x, y), None
+
+    def _slopes_from_terms(self, x, y, terms):
+        """Return the sag slopes at (x, y) from the terms of ``_sag_and_terms``.
+
+        Override this method together with :meth:`_sag_and_terms`. The slopes
+        are the values that ``_surface_normal`` normalizes.
+
+        Args:
+            x (be.ndarray): The x-coordinate(s).
+            y (be.ndarray): The y-coordinate(s).
+            terms: The terms that ``_sag_and_terms`` returned for (x, y).
+
+        Returns:
+            tuple[be.ndarray, be.ndarray]: d(sag)/dx and d(sag)/dy.
+        """
+        raise NotImplementedError
+
+    def _has_terms(self):
+        """Return False if this instance has no terms that the loop can share.
+
+        The loop then calls ``sag`` and ``_surface_normal``, as for a
+        geometry without :meth:`_sag_and_terms`. Override this method if
+        some instances of a class have no terms, for example a polynomial
+        without coefficients: then the shared loop has nothing to share, and
+        its fixed cost makes it slower. The loop asks only the instances of
+        a class that overrides this method, so other classes pay nothing.
+
+        Returns:
+            bool: True.
+        """
+        return True
 
     def surface_normal(self, rays):
         """Calculates the surface normal of the geometry at the given rays.
@@ -326,9 +560,10 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
         computation (which can be singular at a grazing/tangent point) purely
         to satisfy the loop structure.
 
-        Potential future optimization: support an optional fused
-        ``eval_sag_and_grad(x, y)`` API to return ``(sag_val, fx, fy)``
-        in a single pass and reduce duplicate surface computations.
+        A geometry that overrides ``_sag_and_terms`` and
+        ``_slopes_from_terms`` gets the loop of ``_iterate_with_terms``: the
+        sag and the slopes at an iterate share their work. Other geometries
+        get the loop with ``sag`` and ``_surface_normal``.
 
         Args:
             rays: An object with attributes x, y, z, L, M, N.
@@ -341,6 +576,12 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
             _DistanceSolveResult: Distance, final residual, per-ray
             convergence mask and iteration count.
         """
+        # The compiled trace plan repeats this solve for an EvenAsphere, with
+        # _iterate_with_terms, _residual_dt_from_slopes, _regularize_signed
+        # and _effective_tolerance (_newton in
+        # optiland/backend/numpy_backend/_trace_kernel.py, and _floor_applies
+        # in optiland/surfaces/_trace_plan.py). Change both.
+
         # Better initial guess via base conic intersection. The seed decides
         # which root's basin the iteration converges in, so it must already
         # be the physical branch.
@@ -360,23 +601,84 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
 
         tol = _effective_tolerance(self.tol, t)
 
+        if _shares_terms(self):
+            loop = self._iterate_with_terms
+        else:
+            loop = self._iterate_with_sag_and_normal
+        t, f_t, converged, iterations, final = loop(t, rays, tol)
+
+        # A ray that did not converge within max_iter is a ray failure, as a
+        # ray that misses the base conic: its distance becomes NaN. Its last
+        # iterate is not on the surface. A NaN residual never converges, so a
+        # ray with a NaN residual is one of these rays.
+        reached = converged
+        dead = be.logical_not(converged)
+        if plane_seeded:
+            # A plane-seeded ray is also a miss when its root is behind it,
+            # as it was before the fallback.
+            dead = be.logical_or(dead, be.logical_and(no_seed, be.logical_not(t > 0)))
+            converged = be.logical_and(converged, be.logical_not(dead))
+        t = be.where(dead, be.full_like(t, be.nan), t)
+        return _DistanceSolveResult(
+            t=t,
+            residual=f_t,
+            converged=converged,
+            iterations=iterations,
+            final=final,
+            reached=reached,
+        )
+
+    def _iterate_with_sag_and_normal(self, t, rays, tol, budget=None):
+        """The Newton-Raphson loop of ``_solve_distance_primal``.
+
+        Each iterate evaluates ``sag``; while a ray is not converged, the
+        next step evaluates ``_surface_normal`` at the same point. A
+        converged ray takes a zero step.
+
+        Args:
+            t: The seeds.
+            rays: An object with attributes x, y, z, L, M, N.
+            tol: The convergence tolerance.
+            budget: The largest number of steps. Defaults to ``max_iter``.
+
+        Returns:
+            tuple: ``(t, residual, converged, iterations, None)``.
+        """
+        budget = self.max_iter if budget is None else budget
         iterations = 0
         f_t = self._surface_residual(t, rays)
         converged = be.abs(f_t) < tol
 
-        for i in range(self.max_iter):
-            # 1-3. Convergence is checked before any normal evaluation. A NaN
+        for i in range(budget):
+            # Convergence is checked before any normal evaluation. A NaN
             # residual never converges and a Newton step keeps it NaN, so a
             # batch whose only unconverged rays are NaN is finished too;
             # otherwise one dead ray would hold the whole batch to max_iter.
-            if be.all(be.logical_or(converged, be.isnan(f_t))):
+            done = be.logical_or(converged, be.isnan(f_t))
+            if i in _ACTIVE_CHECKS and _active_only_pays(done):
+                # One count of the active rays takes the place of the test of
+                # all rays, so the check reads no more values from a device.
+                n = be.size(done)
+                active = n - int(be.sum(done))
+                if active == 0:
+                    break
+                if active <= _ACTIVE_ONLY_FRACTION * n:
+                    return self._iterate_active_rays(
+                        self._iterate_with_sag_and_normal,
+                        (t, f_t, converged, done),
+                        rays,
+                        tol,
+                        budget - i,
+                        iterations,
+                    )
+            elif be.all(done):
                 break
 
-            # 4. Only reached while at least one ray is still unconverged.
+            # Only reached while at least one ray is still unconverged.
             df_dt, scale, _ = self._surface_residual_dt(t, rays)
             safe_df_dt, _ = _regularize_signed(df_dt, scale)
 
-            # 5. Freeze already-converged rays so a converged root is not
+            # Freeze already-converged rays so a converged root is not
             # perturbed by further steps.
             step = be.where(converged, be.zeros_like(f_t), f_t / safe_df_dt)
             t = t - step
@@ -385,23 +687,110 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
             f_t = self._surface_residual(t, rays)
             converged = be.abs(f_t) < tol
 
-        # A ray whose residual is NaN would have had its distance turned into
-        # NaN by the next Newton step; keep that outcome after an early exit.
-        dead = be.isnan(f_t)
-        if plane_seeded:
-            # A plane-seeded ray that did not reach a root in front of it
-            # is a miss, as it was before the fallback.
-            dead = be.logical_or(
-                dead,
-                be.logical_and(
-                    no_seed, be.logical_not(be.logical_and(converged, t > 0))
-                ),
-            )
-            converged = be.logical_and(converged, be.logical_not(dead))
-        t = be.where(dead, be.full_like(t, be.nan), t)
-        return _DistanceSolveResult(
-            t=t, residual=f_t, converged=converged, iterations=iterations
+        return t, f_t, converged, iterations, None
+
+    def _iterate_active_rays(self, loop, state, rays, tol, budget, iterations):
+        """Continue a loop on the active rays only, and put their results back.
+
+        The converged rays and the rays with a NaN residual take no more
+        steps, so only the active rays go on. Each ray takes the steps that
+        it takes in the loop over all rays: the operations are element-wise.
+        The loop over the active rays evaluates their residual once more at
+        their present iterate, with the same values. The terms of the last
+        evaluation cover only these rays, so the result has none.
+
+        Args:
+            loop: The loop method that the call continues.
+            state: ``(t, residual, converged, done)`` of the present iterate.
+            rays: An object with attributes x, y, z, L, M, N.
+            tol: The convergence tolerance.
+            budget: The number of steps that are left.
+            iterations: The number of steps that were taken.
+
+        Returns:
+            tuple: ``(t, residual, converged, iterations, final)``.
+        """
+        t, f_t, converged, done = state
+        active = be.logical_not(done)
+        subset = _RaySubset(*(getattr(rays, name)[active] for name in _RAY_FIELDS))
+        t_a, f_a, converged_a, steps, _ = loop(t[active], subset, tol, budget)
+        final = _TERMS_AT_THE_ROOTS if loop == self._iterate_with_terms else None
+        return (
+            _put(t, active, t_a),
+            _put(f_t, active, f_a),
+            _put(converged, active, converged_a),
+            iterations + steps,
+            final,
         )
+
+    def _iterate_with_terms(self, t, rays, tol, budget=None):
+        """The Newton-Raphson loop of ``_solve_distance_primal``, with terms.
+
+        The steps of the loop with ``sag`` and ``_surface_normal``, with two
+        differences. One evaluation of ``_sag_and_terms`` at each iterate
+        gives the residual and the terms of the slopes, so the sag and the
+        slopes share their work. The slopes enter ``dF/dt`` directly
+        (:func:`_residual_dt_from_slopes`), without the roundtrip through
+        the unit normal, so a step can differ from that loop in the last
+        bits.
+
+        Args:
+            t: The seeds.
+            rays: An object with attributes x, y, z, L, M, N.
+            tol: The convergence tolerance.
+            budget: The largest number of steps. Defaults to ``max_iter``.
+
+        Returns:
+            tuple: ``(t, residual, converged, iterations, final)``, with
+            ``final = (x, y, terms)`` of the last evaluation, or
+            ``_TERMS_AT_THE_ROOTS`` if the loop went on with the active rays
+            only.
+        """
+        budget = self.max_iter if budget is None else budget
+        x = rays.x + t * rays.L
+        y = rays.y + t * rays.M
+        sag, terms = self._sag_and_terms(x, y)
+        f_t = sag - (rays.z + t * rays.N)
+        converged = be.abs(f_t) < tol
+        iterations = 0
+
+        for i in range(budget):
+            # The rules of the loop with sag and _surface_normal: convergence
+            # is checked before the slopes are evaluated, and converged rays
+            # take a zero step.
+            done = be.logical_or(converged, be.isnan(f_t))
+            if i in _ACTIVE_CHECKS and _active_only_pays(done):
+                # One count of the active rays takes the place of the test of
+                # all rays, so the check reads no more values from a device.
+                n = be.size(done)
+                active = n - int(be.sum(done))
+                if active == 0:
+                    break
+                if active <= _ACTIVE_ONLY_FRACTION * n:
+                    return self._iterate_active_rays(
+                        self._iterate_with_terms,
+                        (t, f_t, converged, done),
+                        rays,
+                        tol,
+                        budget - i,
+                        iterations,
+                    )
+            elif be.all(done):
+                break
+            fx, fy = self._slopes_from_terms(x, y, terms)
+            df_dt, scale, _ = _residual_dt_from_slopes(fx, fy, rays)
+            safe_df_dt, _ = _regularize_signed(df_dt, scale)
+            step = be.where(converged, be.zeros_like(f_t), f_t / safe_df_dt)
+            t = t - step
+            iterations = i + 1
+
+            x = rays.x + t * rays.L
+            y = rays.y + t * rays.M
+            sag, terms = self._sag_and_terms(x, y)
+            f_t = sag - (rays.z + t * rays.N)
+            converged = be.abs(f_t) < tol
+
+        return t, f_t, converged, iterations, (x, y, terms)
 
     def _classify_final_roots(self, result, rays):
         """Classify every ray at the *final* primal root (graph-free).
@@ -414,12 +803,33 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
         ``regular = converged AND finite(everything) AND |n_z| > tau_nz
         AND |dF/dt| > tau_dFdt``
 
+        If the solve kept the terms of its last evaluation
+        (``result.final``), the slopes at the root come from these terms.
+        That evaluation is at the final root, so no sag or normal is
+        evaluated again. Else ``_surface_residual_dt`` evaluates the normal
+        at ``result.t``. A ray whose distance the solve set to NaN after the
+        loop is non-finite in both cases, because ``t`` enters the finite
+        test.
+
         Returns:
             _RootClassification: Detached masks and the detached, unclipped
             final-root ``dF/dt``.
         """
         t = result.t
-        df_dt, scale, nz_regular = self._surface_residual_dt(t, rays)
+        final = result.final
+        if final is _TERMS_AT_THE_ROOTS:
+            # The loop went on with the active rays only and kept no terms.
+            # At the roots, x and y have the bits of the last evaluation of
+            # each ray, so the terms have them too.
+            x = rays.x + t * rays.L
+            y = rays.y + t * rays.M
+            final = (x, y, self._sag_and_terms(x, y)[1])
+        if final is None:
+            df_dt, scale, nz_regular = self._surface_residual_dt(t, rays)
+        else:
+            x, y, terms = final
+            fx, fy = self._slopes_from_terms(x, y, terms)
+            df_dt, scale, nz_regular = _residual_dt_from_slopes(fx, fy, rays)
 
         finite = _all_finite(
             t,
@@ -444,8 +854,16 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
         )
 
         # Mutually exclusive diagnostic categories, in priority order.
-        nonfinite = be.logical_not(finite)
-        nonconverged = be.logical_and(finite, be.logical_not(converged))
+        if result.reached is None:
+            nonconverged = be.logical_and(finite, be.logical_not(converged))
+        else:
+            # A ray that did not reach the tolerance has the distance NaN, so
+            # the check of t counts it as non-finite. Report it as
+            # non-converged, with its last residual.
+            nonconverged = be.logical_and(
+                be.logical_not(result.reached), be.isfinite(result.residual)
+            )
+        nonfinite = be.logical_and(be.logical_not(finite), be.logical_not(nonconverged))
         conv_finite = be.logical_and(finite, converged)
         nz_singular = be.logical_and(conv_finite, be.logical_not(nz_regular))
         near_singular = be.logical_and(
@@ -481,13 +899,18 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
         meaningful) the worst residual, without dumping arrays.
         """
 
-        def _count(mask) -> int:
-            return int(be.to_numpy(be.sum(mask)))
-
-        n_nonfinite = _count(state.nonfinite)
-        n_nonconverged = _count(state.nonconverged)
-        n_nz = _count(state.nz_singular)
-        n_tangent = _count(state.near_singular)
+        # One device-to-host copy for the four counts, not four: on a CUDA
+        # device, each copy waits until the device has done all queued work.
+        # Only the Torch path calls this method. torch.stack keeps the int64
+        # counts exact; be.stack would cast them to the float precision.
+        masks = (
+            state.nonfinite,
+            state.nonconverged,
+            state.nz_singular,
+            state.near_singular,
+        )
+        counts = torch.stack([mask.sum() for mask in masks]).tolist()
+        n_nonfinite, n_nonconverged, n_nz, n_tangent = counts
         n_rejected = n_nonfinite + n_nonconverged + n_nz + n_tangent
         if n_rejected == 0:
             return
@@ -538,13 +961,43 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
     # Public distance method with autograd dispatch
     # ------------------------------------------------------------------
 
+    def _derivative_requested(self, rays) -> bool:
+        """Return True if a derivative of the distance can be requested now.
+
+        Torch records gradients by default, so ``torch.is_grad_enabled()``
+        alone does not tell if a caller needs a derivative. The distance
+        needs the differentiable path if a ray position or direction, or a
+        parameter of the surface, requires grad, or if a ``torch.func``
+        transform or a forward-mode level is active. Else the primal solve
+        gives the result, as on NumPy.
+
+        A tensor in the attributes of the geometry counts as a parameter,
+        also in a list, a dict or an object (see ``requires_grad_in``). The
+        coordinate system does not count: the rays are already in the local
+        frame. If a parameter is not found, the primal solve still records
+        its iterations, so the derivative comes from the unrolled loop.
+
+        Args:
+            rays (RealRays): The rays of the call.
+
+        Returns:
+            bool: True if the differentiable path must run.
+        """
+        if not reverse_mode_only():
+            return True
+        if any(getattr(rays, name).requires_grad for name in _RAY_FIELDS):
+            return True
+        return requires_grad_in(vars(self), skip=("cs",))
+
     def distance(self, rays, aperture=None):
         """
         Calculates the distance from the ray origin to the surface intersection
         using a robust Newton-Raphson method. This version uses the base conic
         intersection as a strong initial guess.
 
-        **Differentiable mode (torch backend with grad enabled):**
+        **Differentiable mode (torch backend with grad enabled, and a
+        derivative can be requested, see** :meth:`_derivative_requested`
+        **):**
 
         The primal Newton-Raphson solve runs inside ``torch.no_grad()`` so
         that the iterative loop is never recorded in the autograd graph.  A
@@ -561,7 +1014,8 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
             gradients. Higher order derivatives (double backward and beyond)
             are not guaranteed to match the exact unrolled Newton system.
 
-        **Non differentiable mode (numpy backend, or torch without grad):**
+        **Non differentiable mode (numpy backend, torch without grad, or
+        torch when no derivative can be requested):**
 
         Returns the converged t directly.
 
@@ -597,6 +1051,7 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
             torch is not None
             and be.get_backend() == "torch"
             and torch.is_grad_enabled()
+            and self._derivative_requested(rays)
         )
 
         # --- Phase A: graph-free primal solve and root classification ----
@@ -678,3 +1133,8 @@ class NewtonRaphsonGeometry(StandardGeometry, ABC):
         max_iter = data.get("max_iter", 100)
 
         return cls(cs, data["radius"], conic, tol, max_iter)
+
+
+# The method of the base class: a class whose _sag_and_terms is this
+# function has no terms (see _shares_terms).
+_BASE_SAG_AND_TERMS = NewtonRaphsonGeometry._sag_and_terms

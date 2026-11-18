@@ -7,10 +7,14 @@ This section contains examples of typical analysis tasks that can be performed w
 
 .. nbgallery::
     analysis/spot
+    analysis/footprint
     analysis/ray_fan
     analysis/ray_fan_best_fit
     analysis/field_curvature
     analysis/chromatic_focal_shift
+    analysis/lateral_color
+    analysis/longitudinal_aberration
+    analysis/seidel_diagram
     analysis/distortion
     analysis/grid_distortion
     analysis/encircled_energy
@@ -20,11 +24,13 @@ This section contains examples of typical analysis tasks that can be performed w
     analysis/jones_pupil
     analysis/pupil_aberration
     analysis/irradiance
+    analysis/radiant_intensity
     analysis/through_focus_spot_diagram
     analysis/angle_vs_image_height_through_pupil
     analysis/angle_vs_image_height_through_field
     analysis/image_simulation
     analysis/prescription
+    analysis/lens_info
     analysis/ghost_analysis
 
 Surface Analysis

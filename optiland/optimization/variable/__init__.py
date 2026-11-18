@@ -22,3 +22,4 @@ from .variable import Variable
 from .variable_manager import VariableManager
 from .norm_radius import NormalizationRadiusVariable
 from .grid_sag import GridSagVariable
+from .abbe import AbbeVariable

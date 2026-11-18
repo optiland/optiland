@@ -13,7 +13,7 @@ from __future__ import annotations
 import contextlib
 
 from optiland import backend as be
-from optiland.optimization.variable.base import VariableBehavior
+from optiland.optimization.variable.base import VariableBehavior, release_attribute
 
 
 class NurbsPointsVariable(VariableBehavior):
@@ -93,6 +93,16 @@ class NurbsPointsVariable(VariableBehavior):
             The inverse-scaled value.
         """
         return scaled_value
+
+    def release_graph(self):
+        """Replace the control points by a copy without an autograd graph.
+
+        ``update_value`` writes one entry into the control-point array that
+        all control-point variables of the surface share. See
+        ``VariableBehavior.release_graph``.
+        """
+        geometry = self.optic.surfaces[self.surface_number].geometry
+        release_attribute(geometry, "P")
 
     def __str__(self):
         """Returns a string representation of the variable.
@@ -180,6 +190,16 @@ class NurbsWeightsVariable(VariableBehavior):
             The inverse-scaled value.
         """
         return scaled_value
+
+    def release_graph(self):
+        """Replace the weights by a copy without an autograd graph.
+
+        ``update_value`` writes one entry into the weight array that all
+        weight variables of the surface share. See
+        ``VariableBehavior.release_graph``.
+        """
+        geometry = self.optic.surfaces[self.surface_number].geometry
+        release_attribute(geometry, "W")
 
     def __str__(self):
         """Returns a string representation of the variable.

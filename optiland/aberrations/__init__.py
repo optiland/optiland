@@ -5,7 +5,7 @@ first- and third-order aberrations.
 
 The public Aberrations class delegates to three focused classes:
   - ThirdOrderAberrations  (TSC, SC, CC, TCC, TAC, AC, TPC, PC, DC)
-  - SeidelAberrations      (seidels)
+  - SeidelAberrations      (seidels, seidels_per_surface)
   - ChromaticAberrations   (TAchC, LchC, TchC)
 
 All public methods on Aberrations continue to work unchanged.
@@ -84,11 +84,15 @@ class Aberrations:
         """Compute third-order distortion."""
         return self._third_order.DC()
 
-    # ── Seidel delegate ───────────────────────────────────────────────────
+    # ── Seidel delegates ──────────────────────────────────────────────────
 
     def seidels(self) -> BEArray:
         """Compute Seidel aberration coefficients."""
         return self._seidel.seidels()
+
+    def seidels_per_surface(self) -> BEArray:
+        """Compute Seidel aberration coefficients of each surface."""
+        return self._seidel.seidels_per_surface()
 
     # ── Chromatic delegates ───────────────────────────────────────────────
 

@@ -145,6 +145,25 @@ class ObjectNAAperture(BaseSystemAperture):
         # as one in front of it at the same distance, not negative.
         return 2 * be.abs(z) * be.tan(u0)
 
+    def object_space_marginal_slope(
+        self, paraxial: Paraxial, wavelength: float | None = None
+    ) -> ScalarOrArray:
+        """Return the paraxial marginal slope ``tan(arcsin(NA / n))``.
+
+        This is the slope that :meth:`compute_epd` assumes, and it stays
+        finite when the entrance pupil is at infinity.
+
+        Args:
+            paraxial: Paraxial engine providing access to system geometry.
+            wavelength: Primary wavelength in micrometers.
+
+        Returns:
+            Marginal-ray slope in object space.
+
+        """
+        sine = self.object_space_sine(paraxial.optic, wavelength)
+        return be.tan(be.arcsin(sine))
+
     def scale(self, factor: float) -> ObjectNAAperture:
         """Return ``self`` — NA is dimensionless and does not scale.
 

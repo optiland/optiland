@@ -33,6 +33,11 @@ def _complex_index(material: BaseMaterial, wavelength_um: float | Array) -> Arra
     return be.to_complex(n) + 1j * be.to_complex(k)
 
 
+def _incident_index(material: BaseMaterial, wavelength_um: float | Array) -> Array:
+    """Index of the incident medium, its absorption left out."""
+    return be.to_complex(be.real(_complex_index(material, wavelength_um)))
+
+
 def _snell_cos(n0, theta0, n):
     """Transmitted angle cosine with forward-branch selection.
 
@@ -107,7 +112,10 @@ def _tmm_coh(stack: ThinFilmStack, wavelength_um, theta0_rad, pol: PolSP):
             T: Transmittance.
             A: Absorptance.
     """
-    n0 = _complex_index(stack.incident_material, wavelength_um)
+    # the incident medium is taken as lossless (real n), as in JonesFresnel:
+    # with its k, the angle of incidence would be complex, and beyond the
+    # critical angle R < 1 at total internal reflection
+    n0 = _incident_index(stack.incident_material, wavelength_um)
     ns = _complex_index(stack.substrate_material, wavelength_um)
     cos0 = _snell_cos(n0, theta0_rad, n0)
     coss = _snell_cos(n0, theta0_rad, ns)
@@ -137,8 +145,14 @@ def _tmm_coh(stack: ThinFilmStack, wavelength_um, theta0_rad, pol: PolSP):
     denom = eta0 * (A + etas * B) + C + etas * D
     denom = be.where(be.abs(denom) == 0, 1e-30 + 0j, denom)
 
+    # the admittances above follow Macleod's n - ik convention; conjugating
+    # r and t alike returns both to Optiland's n + ik convention. The
+    # conjugate is formed from the real and imaginary parts because torch's
+    # conj is a lazy view that cannot be converted to NumPy.
     r = (eta0 * A + eta0 * etas * B - C - etas * D) / denom
-    t = be.conj((2 * eta0) / denom)
+    t = (2 * eta0) / denom
+    r = be.real(r) - 1j * be.imag(r)
+    t = be.real(t) - 1j * be.imag(t)
 
     R = (r * be.conj(r)).real
     T = (t * be.conj(t)).real * etas.real / eta0.real

@@ -151,6 +151,44 @@ class SphericalReference(ReferenceGeometry):
         return self._radius
 
 
+class TelecentricSphericalReference(SphericalReference):
+    """Reference sphere of infinite radius (exit pupil at infinity).
+
+    In an image-space telecentric system the exit-pupil reference sphere is
+    centred on the image point and has an infinite radius. Its optical path
+    difference is the limit ``R -> inf`` of :class:`SphericalReference`:
+    ``n_medium * (u . (P - C))`` for a ray through ``P`` with unit direction
+    ``u``, up to a constant common to every ray. A plane reference is not this
+    limit: it measures along the ray to one plane, not to the far sphere.
+
+    The pupil sample points still need a finite surface. ``path_length`` and
+    ``radius`` therefore use a finite sampling sphere with the same centre;
+    it affects where the samples are placed, not the OPD.
+
+    Args:
+        center: (x, y, z) coordinates of the image point.
+        sampling_radius: Finite radius of the sphere on which the pupil
+            samples are placed.
+    """
+
+    def __init__(self, center: tuple[float, float, float], sampling_radius: float):
+        super().__init__(center, sampling_radius)
+
+    def _relative_path_length(self, rays: RealRaysT, n_medium: float) -> BEArrayT:
+        """Return ``n_medium * (u . (P - C))``, the ``R -> inf`` limit.
+
+        :meth:`SphericalReference._relative_path_length` tends to this value
+        as the radius grows; directions are normalized in the same way.
+        """
+        x, y, z = (
+            rays.x - self.center[0],
+            rays.y - self.center[1],
+            rays.z - self.center[2],
+        )
+        norm = be.sqrt(rays.L**2 + rays.M**2 + rays.N**2)
+        return n_medium * (rays.L * x + rays.M * y + rays.N * z) / norm
+
+
 class PlanarReference(ReferenceGeometry):
     """Planar reference geometry (for afocal systems).
 
@@ -166,6 +204,12 @@ class PlanarReference(ReferenceGeometry):
         self.normal = normal
 
     def path_length(self, rays: RealRaysT, n_medium: float) -> BEArrayT:
+        """Return ``n_medium * t`` for the backward ray ``position - t * direction``.
+
+        ``t`` is signed: negative when the plane lies ahead of the ray. A ray
+        parallel to the plane has no intersection and returns NaN, unless it
+        lies in the plane, where it returns zero (the ray's own position).
+        """
         # Intersection of line P = P0 + t*D with plane (P - PlanePt) . Normal = 0
         # (P0 + t*D - PlanePt) . Normal = 0
         # t * (D . Normal) + (P0 - PlanePt) . Normal = 0
@@ -180,12 +224,14 @@ class PlanarReference(ReferenceGeometry):
         num = (xr - px) * nx + (yr - py) * ny + (zr - pz) * nz
         den = L * nx + M * ny + N * nz
 
-        # Avoid division by zero
-        den = be.where(be.abs(den) < 1e-12, 1e-12, den)
+        # Divide only where the denominator is nonzero, so that neither the
+        # value nor the gradient of the parallel rays is computed from 0 / 0.
+        parallel = den == 0
+        t = -be.where(parallel, 0.0, num) / be.where(parallel, 1.0, den)
+        path = n_medium * t
 
-        t = -num / den
-
-        return n_medium * t
+        # A parallel ray off the plane never meets it.
+        return be.where(parallel & (num != 0), be.nan, path)
 
     @property
     def radius(self) -> float:

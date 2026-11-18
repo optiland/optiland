@@ -6,6 +6,12 @@ category (creation, indexing, math, conic, linalg, interpolation, random,
 misc); this module composes them into the concrete ``NumpyBackend``
 class. See ``creation.py`` etc. for the actual method bodies.
 
+The private modules are not mixins. They hold the compiled Numba code of
+NumPy-only fast paths: ``_trace_kernel.py`` (the compiled trace plan),
+``_aim.py`` (the paraxial aim directions) and ``_compiled_math.py`` (the
+scalar math that both share). See the developer page "Performance
+Internals".
+
 Kramer Harrison, 2024, 2025
 """
 

@@ -41,11 +41,14 @@ class IndexVariable(VariableBehavior):
 
     """
 
+    D_LINE = 0.5875618  # D-line wavelength in microns
+
     def __init__(self, optic, surface_number, wavelength, scaler=None, **kwargs):
         if scaler is None:
             scaler = LinearScaler(factor=1.0, offset=-1.5)
         super().__init__(optic, surface_number, scaler=scaler, **kwargs)
         self.wavelength = wavelength
+        self.ref_wavelength = self.D_LINE if wavelength is None else wavelength
 
     def get_value(self):
         """Returns the value of the index of refraction at the specified surface
@@ -55,7 +58,7 @@ class IndexVariable(VariableBehavior):
             float: The value of the index of refraction.
 
         """
-        n = self.optic.surfaces.n(self.wavelength)
+        n = self.optic.surfaces.n(wavelength=self.ref_wavelength)
         return n[self.surface_number]
 
     def update_value(self, new_value):
@@ -65,7 +68,9 @@ class IndexVariable(VariableBehavior):
             new_value (float): The new value of the index of refraction.
 
         """
-        self.optic.updater.set_index(new_value, self.surface_number)
+        self.optic.updater.set_index(
+            new_value, self.surface_number, wavelength=self.wavelength
+        )
 
     def __str__(self):
         """Return a string representation of the variable.

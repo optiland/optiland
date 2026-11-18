@@ -119,6 +119,28 @@ class BaseSystemAperture(ABC):
         """
         return None
 
+    def object_space_marginal_slope(
+        self, paraxial: Paraxial, wavelength: float | None = None
+    ) -> ScalarOrArray | None:
+        """Return the paraxial marginal-ray slope in object space, if fixed.
+
+        For a finite object whose entrance pupil is at infinity (object-space
+        telecentric), the marginal slope cannot be formed as ``EPD / (2 z)``:
+        both terms are infinite. Aperture types that fix the object-space
+        cone directly override this method.
+
+        Args:
+            paraxial: Paraxial engine providing access to system geometry.
+            wavelength: Primary wavelength in micrometers.  When ``None``,
+                falls back to ``paraxial.optic.primary_wavelength``.
+
+        Returns:
+            The marginal-ray slope, or ``None`` if this type does not fix it
+            independently of the entrance pupil position.
+
+        """
+        return None
+
     # ── System scaling ─────────────────────────────────────────────────────
 
     @abstractmethod

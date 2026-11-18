@@ -44,7 +44,8 @@ class LensOperand:
             surface_number: The number of the first surface.
 
         Returns:
-            The edge thickness between the two surfaces.
+            The edge thickness between the two surfaces, as a scalar (a 0-d
+            tensor with Torch).
         """
 
         surface1 = optic.surfaces[surface_number]
@@ -85,4 +86,7 @@ class LensOperand:
         thickness = optic.surfaces.get_thickness(surface_number)
 
         edge_thickness = thickness - sag1 + sag2
-        return edge_thickness
+        # Return a scalar, as center_thickness does. get_thickness returns an
+        # array of shape (1,), and the unbatched residuals join the operand
+        # values with be.stack, which needs equal shapes.
+        return be.ravel(edge_thickness)[0]

@@ -60,6 +60,12 @@ class ZernikeStandard(BaseZernike):
         return None
 
     @staticmethod
+    def _norm_squared(n: int = 0, m: int = 0) -> float:
+        """Return the squared normalization constant: n + 1 if m = 0, else 2 n + 2."""
+        denominator = 2 if m == 0 else 1
+        return (2 * n + 2) / denominator
+
+    @staticmethod
     def _norm_constant(n=0, m=0):
         """Calculate the normalization constant of the Zernike polynomial.
 
@@ -71,5 +77,4 @@ class ZernikeStandard(BaseZernike):
             float: The calculated value of the normalization constant.
 
         """
-        denominator = 2 if m == 0 else 1
-        return be.sqrt(be.array((2 * n + 2) / denominator))
+        return be.sqrt(be.array(ZernikeStandard._norm_squared(n, m)))

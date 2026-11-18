@@ -11,14 +11,17 @@ Kramer Harrison, 2024
 from __future__ import annotations
 
 import copy
-from contextlib import suppress
+from contextlib import nullcontext, suppress
 from copy import deepcopy
 from functools import cached_property
 from typing import TYPE_CHECKING
 
 import optiland.backend as be
+from optiland import _epoch
 from optiland._epoch import epoch_memo
+from optiland._host_values import host_scope, on_scope_device
 from optiland.coatings import BaseCoatingPolarized
+from optiland.materials import BaseMaterial
 from optiland.paraxial_path import (
     ParaxialPath,
     build_paraxial_path,
@@ -26,12 +29,80 @@ from optiland.paraxial_path import (
     shared_path,
     transverse_basis,
 )
+from optiland.propagation.homogeneous import HomogeneousPropagation
+from optiland.surfaces import _chunked_trace, _trace_plan
 from optiland.surfaces.factories.surface_factory import SurfaceFactory
 from optiland.surfaces.standard_surface import Surface
 
+# A direct trace of up to this many rays opens no evaluation epoch. Inside
+# the epoch, a constant wavelength array is evaluated at one element and
+# broadcast. The bits are the same because the material formulas are
+# element-wise. For a small bundle, the regular material cache key is a
+# short tuple of the wavelengths, which costs less than the bookkeeping of
+# an epoch. Measured with the 8-surface system of the gate scenario
+# surfaces_trace_small (NumPy, time with an epoch / time without): 1.09 at
+# 64 rays, 1.01 at 128, 0.91 at 192 and 0.79 at 512. Measure again when the
+# trace changes. The epoch opened here passes no optics, so the
+# OPTILAND_EPOCH_CHECK guard cannot see a change of the optic.
+_MAX_RAYS_WITHOUT_EPOCH = 128
+
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from contextlib import AbstractContextManager
+
     from optiland._types import SurfaceType
-    from optiland.materials import BaseMaterial
+    from optiland.rays import BaseRays
+
+
+def _host_value_scope(
+    surfaces: Sequence[Surface], rays: BaseRays
+) -> AbstractContextManager[None]:
+    """Return the host-value scope of a trace, or a null scope.
+
+    The scope opens only for rays on a CUDA device. It holds the values that
+    the trace checks in Python: the rotation angles of each coordinate
+    system and of its reference systems, the radius of each geometry, and k
+    of each homogeneous medium for the check any(k > 0). ``host_scope``
+    copies them to the host in one device-to-host copy (see
+    ``optiland._host_values``).
+
+    Args:
+        surfaces: The surfaces of the trace.
+        rays: The rays of the trace.
+
+    Returns:
+        The host-value scope, or ``nullcontext()`` if the rays are not on a
+        CUDA device.
+    """
+    if not on_scope_device(getattr(rays, "x", None)):
+        return nullcontext()
+    # The material memo of the epoch gives the trace the same k array again,
+    # so the prefetch does not evaluate k a second time. The memo applies
+    # when BaseMaterial._epoch_key gives a key: in an epoch, and for
+    # wavelengths that do not require gradients.
+    prefetch_k = (
+        _epoch.current() is not None and BaseMaterial._epoch_key(rays.w, {}) is not None
+    )
+    scalars: list[object] = []
+    absorption: list[object] = []
+    for surface in surfaces:
+        # A custom surface or geometry can lack these attributes.
+        geometry = getattr(surface, "geometry", None)
+        cs = getattr(geometry, "cs", None)
+        while cs is not None:
+            scalars += (cs.rx, cs.ry, cs.rz)
+            cs = cs.reference_cs
+        scalars.append(getattr(geometry, "radius", None))
+        material = getattr(surface, "material_pre", None)
+        model = getattr(material, "propagation_model", None)
+        # The type check is exact: a subclass can override propagate() and
+        # check another k.
+        if prefetch_k and type(model) is HomogeneousPropagation:
+            # If k() raises here, skip it. The trace calls k() again and
+            # raises the error there.
+            with suppress(Exception):
+                absorption.append(model.material.k(rays.w))
+    return host_scope(scalars, absorption)
 
 
 class SurfaceGroup:
@@ -379,6 +450,17 @@ class SurfaceGroup:
         return be.array([surf.geometry.radius for surf in self.surfaces])
 
     @property
+    def paraxial_radii(self):
+        """be.array: vertex radii seen by paraxial rays, i.e. including any
+        r^2 aspheric term"""
+        return be.array(
+            [
+                getattr(surf.geometry, "paraxial_radius", surf.geometry.radius)
+                for surf in self.surfaces
+            ]
+        )
+
+    @property
     def conic(self):
         """be.array: conic constant of all surfaces"""
         values = []
@@ -486,6 +568,40 @@ class SurfaceGroup:
             n.append(be.atleast_1d(surface.material_post.n(wavelength)))
         return be.ravel(be.array(n))
 
+    def abbe(self):
+        """Get the Abbe numbers of the surfaces.
+
+        Returns:
+            numpy.ndarray: The Abbe numbers of the surfaces.
+
+        """
+        abbe_numbers = []
+        for surface in self.surfaces:
+            if surface.material_post is not None:
+                abbe_numbers.append(be.atleast_1d(surface.material_post.abbe()))
+
+        abbe_numbers = be.ravel(be.array(abbe_numbers))
+        return abbe_numbers
+
+    def dPgF(self):
+        """Get the dPgF values of the surfaces.
+
+        dPgF is defined as:
+
+        dPgF = (n_g - n_F) / (n_F - n_C) - (0.6438 - 0.001682 Vd)
+
+        Returns:
+            numpy.ndarray: The dPgF values of the surfaces.
+
+        """
+        dPgF_values = []
+        for surface in self.surfaces:
+            if surface.material_post is not None:
+                dPgF_values.append(be.atleast_1d(surface.material_post.dPgF()))
+
+        dPgF_values = be.ravel(be.array(dPgF_values))
+        return dPgF_values
+
     def get_thickness(self, surface_number):
         """Calculate the thickness between two surfaces.
 
@@ -512,10 +628,112 @@ class SurfaceGroup:
                 full-size arrays alive per surface; pass False when only the
                 rays returned at the image are needed. Defaults to True.
 
+        Returns:
+            BaseRays: ``rays``, traced in place.
+
         """
-        self.reset()
-        for surface in self.surfaces[skip:]:
-            surface.trace(rays, record=record)
+        return self._trace_in_epoch(rays, skip, record, None)
+
+    def _trace_with_final_propagation(
+        self, rays: BaseRays, record: bool = True
+    ) -> BaseRays:
+        """Trace through all surfaces, then propagate past the last surface.
+
+        The rays propagate past the last surface (the image surface) by its
+        thickness, usually 0, in the medium after it. This is
+        ``trace(rays, record=record)`` followed by ``propagate`` of the
+        propagation model of that medium, as ``RealRayTracer`` needs it. The
+        compiled trace plan does both in one pass if it can.
+
+        Args:
+            rays: The rays to trace. They are changed in place.
+            record: Whether to store the ray state on each surface. The
+                propagation past the last surface has no record.
+
+        Returns:
+            ``rays``, traced and propagated in place.
+        """
+        final = _trace_plan.FinalPropagation.after(self.surfaces[-1])
+        self._trace_in_epoch(rays, 0, record, final)
+        final.finish(rays)
+        return rays
+
+    def _trace_in_epoch(
+        self,
+        rays: BaseRays,
+        skip: int,
+        record: bool,
+        final: _trace_plan.FinalPropagation | None,
+    ) -> BaseRays:
+        """Trace ``rays`` through the surfaces in an evaluation epoch.
+
+        The shared body of :meth:`trace` and
+        :meth:`_trace_with_final_propagation`. It reuses an open epoch, and
+        opens none for up to ``_MAX_RAYS_WITHOUT_EPOCH`` rays.
+
+        Args:
+            rays: The rays to trace. They are changed in place.
+            skip: The number of surfaces to skip before tracing.
+            record: Whether to store the ray state on each surface.
+            final: The propagation past the last surface, or None (see
+                :meth:`_trace_surfaces`).
+
+        Returns:
+            ``rays``, traced in place.
+        """
+        # Trace inside an evaluation epoch, so that each material is
+        # evaluated once per wavelength array. A trace changes only the ray
+        # records of the surfaces, and no memoized value depends on them.
+        # evaluation_epoch() reuses an open epoch by itself; _epoch.current()
+        # is checked first only to skip the cost of entering it. See
+        # _MAX_RAYS_WITHOUT_EPOCH for the size limit.
+        if _epoch.current() is not None or be.size(rays.w) <= _MAX_RAYS_WITHOUT_EPOCH:
+            return self._trace_surfaces(rays, skip, record, final)
+        with _epoch.evaluation_epoch():
+            return self._trace_surfaces(rays, skip, record, final)
+
+    def _trace_surfaces(
+        self,
+        rays: BaseRays,
+        skip: int,
+        record: bool,
+        final: _trace_plan.FinalPropagation | None = None,
+    ) -> BaseRays:
+        """Reset the records and trace ``rays`` through the surfaces.
+
+        Called without an open epoch, this is the reference for the epoch of
+        :meth:`trace`.
+
+        Args:
+            rays: The rays to trace. They are changed in place.
+            skip: The number of surfaces to skip before tracing.
+            record: Whether to store the ray state on each surface.
+            final: The propagation past the last surface, or None. The
+                compiled trace plan does it if it can and then sets
+                ``final.applied``. Otherwise the caller must apply it
+                (``final.finish``).
+
+        Returns:
+            ``rays``, traced in place.
+        """
+        surfaces = self.surfaces[skip:]
+        for surface in self.surfaces[:skip]:
+            surface.reset()
+        # The compiled trace plan traces NumPy rays in its domain (see
+        # optiland.surfaces._trace_plan). trace_with_plan owns the records of
+        # ``surfaces``; on False the caller resets them. Looked up at each
+        # call, so that tests can replace trace_with_plan.
+        if _trace_plan.trace_with_plan(surfaces, rays, record, final):
+            return rays
+        for surface in surfaces:
+            surface.reset()
+        # A large NumPy bundle is traced in parts of 65536 rays when that
+        # gives the bits of this loop (see optiland.surfaces._chunked_trace).
+        if not _chunked_trace.trace_in_parts(surfaces, rays, record):
+            # On a CUDA device, the checks of the loop read host copies.
+            with _host_value_scope(surfaces, rays):
+                for surface in surfaces:
+                    surface.trace(rays, record=record)
         return rays
 
     def add(

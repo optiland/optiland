@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from optiland._suggest import options_hint
+from optiland.optimization.variable.abbe import AbbeVariable
 from optiland.optimization.variable.asphere_coeff import AsphereCoeffVariable
 from optiland.optimization.variable.chebyshev_coeff import ChebyshevCoeffVariable
 from optiland.optimization.variable.conic import ConicVariable
@@ -131,6 +132,7 @@ class Variable:
             "tilt": TiltVariable,
             "decenter": DecenterVariable,
             "index": IndexVariable,
+            "abbe": AbbeVariable,
             "material": MaterialVariable,
             "asphere_coeff": AsphereCoeffVariable,
             "polynomial_coeff": PolynomialCoeffVariable,
@@ -203,6 +205,13 @@ class Variable:
             unscaled_value = be.ravel(unscaled_value)[0]
 
         self.variable.update_value(unscaled_value)
+
+    def release_graph(self):
+        """Drop the autograd graph that the last update left in the optic.
+
+        See ``VariableBehavior.release_graph``.
+        """
+        self.variable.release_graph()
 
     def reset(self):
         """Reset the variable to its initial value."""

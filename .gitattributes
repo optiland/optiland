@@ -1,2 +1,10 @@
 database/* linguist-language=ignore
 *.html linguist-language=ignore
+
+# keep text sources LF on every platform; a CRLF checkout is normalized on add
+*.py text eol=lf
+*.pyi text eol=lf
+*.ipynb text eol=lf
+*.rst text eol=lf
+*.md text eol=lf
+*.toml text eol=lf

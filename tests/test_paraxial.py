@@ -1538,3 +1538,96 @@ def test_f2_range_is_differentiable(set_test_backend):
     grad = lens.surfaces[1].geometry.radius.grad
     assert grad is not None
     assert be.to_numpy(grad) != 0
+
+
+@pytest.mark.parametrize(
+    "surface_type, coefficients",
+    [("even_asphere", [0.01, 1e-5]), ("odd_asphere", [0.0, 0.01, 1e-5])],
+)
+def test_asphere_r2_term_adds_paraxial_power(
+    set_test_backend, surface_type, coefficients
+):
+    """A flat asphere with an r^2 term C has paraxial curvature 2*C."""
+    lens = Optic()
+    lens.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+    lens.surfaces.add(
+        index=1,
+        radius=be.inf,
+        thickness=5.0,
+        material=IdealMaterial(n=1.5),
+        surface_type=surface_type,
+        coefficients=coefficients,
+    )
+    lens.surfaces.add(index=2, radius=be.inf, thickness=100.0, is_stop=True)
+    lens.surfaces.add(index=3)
+    lens.set_aperture(aperture_type="EPD", value=2.0)
+    lens.fields.set_type(field_type="angle")
+    lens.fields.add(y=0)
+    lens.wavelengths.add(value=0.55, is_primary=True)
+
+    # (n' - n) * 2 * C = 0.5 * 0.02 -> f = 100
+    assert_allclose(lens.paraxial.f2(), 100.0)
+    matrix = lens.paraxial.ray_transfer_matrix(1, 2)
+    assert_allclose(matrix[1, 0], -0.01)
+    # surface-by-surface trace: marginal ray at y = 1 leaves at u = -0.01
+    lens.paraxial.trace(0, 1, 0.55)
+    assert_allclose(lens.surfaces.u[-1], -0.01)
+
+
+@pytest.mark.parametrize("coefficients", [[], [0.0, 1e-5]])
+def test_asphere_without_r2_term_keeps_base_radius(set_test_backend, coefficients):
+    """Without an r^2 term the paraxial radius is the base radius."""
+    from optiland.coordinate_system import CoordinateSystem
+    from optiland.geometries.even_asphere import EvenAsphere
+
+    geometry = EvenAsphere(CoordinateSystem(), radius=50.0, coefficients=coefficients)
+    assert_allclose(geometry.paraxial_radius, 50.0)
+
+
+@pytest.mark.parametrize(
+    "lens_cls", [CementedAchromat, TelescopeDoublet, CookeTriplet, Telephoto]
+)
+@pytest.mark.parametrize(
+    "field_type", ["angle", "paraxial_image_height", "real_image_height"]
+)
+def test_trace_at_infinity_matches_marginal_and_chief_ray(
+    set_test_backend, lens_cls, field_type
+):
+    """trace() from an object at infinity gives the marginal and the chief ray
+    at every surface, also when the entrance pupil is at the first surface
+    (CementedAchromat, TelescopeDoublet: stop on surface 1), where the start
+    slope was 0/0 (#1082). A ray through the edge of both is their sum."""
+    lens = lens_cls()
+    if field_type != "angle":
+        lens.fields.set_type(field_type)
+    wl = lens.primary_wavelength
+    ya, ua = lens.paraxial.marginal_ray()
+    yc, uc = lens.paraxial.chief_ray()
+    for Hy, Py, y_ref, u_ref in (
+        (0, 1, ya, ua),
+        (1, 0, yc, uc),
+        (1, 1, ya + yc, ua + uc),
+    ):
+        lens.paraxial.trace(Hy, Py, wl)
+        y = lens.surfaces.y
+        u = lens.surfaces.u
+        assert be.all(be.isfinite(y)) and be.all(be.isfinite(u))
+        assert_allclose(y[1:], y_ref[1:], atol=1e-9)
+        assert_allclose(u[1:], u_ref[1:], atol=1e-9)
+
+
+def test_paraxial_start_at_infinity_avoids_the_entrance_pupil(set_test_backend):
+    """The start plane is 10 in front of both the first surface and the
+    entrance pupil, so it is never the entrance pupil, wherever that lies."""
+    from optiland.fields.field_types.base import BaseFieldDefinition
+
+    lens = CementedAchromat()
+    z1 = lens.surfaces.positions[1]
+    for EPL in (-25.0, -10.0, 0.0, 7.5):
+        y0, z0 = BaseFieldDefinition._paraxial_start_at_infinity(
+            lens, 0.1, be.array([2.0]), be.array(EPL)
+        )
+        z_ep = z1 + EPL
+        assert_allclose(z0, min(z1, z_ep) - 10.0)
+        # the ray reaches height 2 in the entrance pupil with slope 0.1
+        assert_allclose(y0 + 0.1 * (z_ep - z0), 2.0)

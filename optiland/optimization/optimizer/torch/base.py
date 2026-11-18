@@ -129,7 +129,10 @@ class TorchBaseOptimizer(BaseOptimizer, ABC):
                 optimizer.zero_grad()
 
                 # 1. Update the model state from the current nn.Parameter values.
-                # Use var.update() which inverse-scales from scaled space
+                # Use var.update() which inverse-scales from scaled space. First
+                # drop the graph of the last step from shared arrays, so that
+                # this step's backward pass does not run into it.
+                self.problem.variables.release_graphs()
                 for k, param in enumerate(self.params):
                     self.problem.variables[k].update(param)
 
@@ -160,6 +163,7 @@ class TorchBaseOptimizer(BaseOptimizer, ABC):
                     print(f"  Step {i + 1:04d}/{n_steps}, Loss: {loss.item():.6f}")
 
         # Final update to ensure the model reflects the last optimized state
+        self.problem.variables.release_graphs()
         for k, param in enumerate(self.params):
             self.problem.variables[k].update(param)
         self.problem.update_optics()

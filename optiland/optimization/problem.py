@@ -547,11 +547,22 @@ class OptimizationProblem:
         return be.sqrt(self.sum_squared())
 
     def update_optics(self):
-        """Update all optics considered in the optimization problem"""
-        unique_optics = set()
-        for var in self.variables:
-            unique_optics.add(var.optic)
-        for optic in unique_optics:
+        """Update all optics considered in the optimization problem.
+
+        The optics that own variables are updated first, so that configurations
+        linked to them by pickups read the new values. Every other optic
+        referenced by an operand is then updated, each optic once per call.
+        """
+        variable_optics = {var.optic for var in self.variables}
+        for optic in variable_optics:
+            optic.updater.update()
+
+        operand_optics = {
+            op.input_data["optic"]
+            for op in self.operands
+            if op.input_data and op.input_data.get("optic") is not None
+        }
+        for optic in operand_optics - variable_optics:
             optic.updater.update()
 
     def operand_info(self):

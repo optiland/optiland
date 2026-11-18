@@ -8,7 +8,7 @@ Kramer Harrison, 2025
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from warnings import warn
 
 import matplotlib.pyplot as plt
@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from matplotlib.figure import Figure
     from mpl_toolkits.mplot3d import Axes3D
 
+    from optiland._types import BEArray
     from optiland.fields import Field
     from optiland.optic import Optic
 
@@ -71,6 +72,9 @@ class BasePSF(Wavefront):
     Methods:
         view(projection='2d', log=False, figsize=(7, 5.5), threshold=0.05,
             num_points=128): Visualizes the PSF.
+        cross_section(axis='y', through='peak'): Returns a 1D slice of the PSF.
+        line_spread_function(axis='y'): Returns the line spread function.
+        view_cross_section(axis='both', log=False): Plots PSF cross-sections.
     """
 
     def __init__(
@@ -434,6 +438,199 @@ class BasePSF(Wavefront):
 
         strehl = be.max(self.psf) / 100
         return float(be.to_numpy(strehl).item())
+
+    def cross_section(
+        self,
+        axis: Literal["x", "y"] = "y",
+        through: Literal["peak", "center"] = "peak",
+    ) -> tuple[BEArray, BEArray]:
+        """Returns a 1D cross-section of the PSF.
+
+        Rows of the PSF array run along y and columns along x, as in `view`.
+
+        Args:
+            axis (str, optional): The axis along which the slice runs, 'x' or
+                'y'. Defaults to 'y'.
+            through (str, optional): Where the slice is taken. 'peak' uses the
+                row/column of the PSF maximum, 'center' uses the array centre.
+                Defaults to 'peak'.
+
+        Returns:
+            tuple: A tuple ``(coords, values)``. ``coords`` are the pixel
+            centre positions along `axis`, with pixel ``n // 2`` at 0, in µm
+            if the subclass implements `_get_psf_units` and in pixels
+            otherwise. ``values`` are the PSF values as stored (not
+            renormalized).
+
+        Raises:
+            RuntimeError: If the PSF has not been computed.
+            ValueError: If `axis` is not 'x' or 'y', or `through` is not
+                'peak' or 'center'.
+        """
+        if self.psf is None:
+            raise RuntimeError(
+                "PSF has not been computed. Call _compute_psf in subclass."
+            )
+        if axis not in ("x", "y"):
+            raise ValueError('Axis must be "x" or "y".')
+
+        if through == "peak":
+            peak = be.argwhere(self.psf == be.max(self.psf))[0]
+            row, col = (int(index) for index in be.to_numpy(peak))
+        elif through == "center":
+            row, col = self.psf.shape[0] // 2, self.psf.shape[1] // 2
+        else:
+            raise ValueError('Through must be "peak" or "center".')
+
+        values = self.psf[row, :] if axis == "x" else self.psf[:, col]
+        dx, dy, _ = self._get_pixel_pitch()
+        return self._cross_section_coordinates(axis, dx, dy), values
+
+    def line_spread_function(
+        self, axis: Literal["x", "y"] = "y"
+    ) -> tuple[BEArray, BEArray]:
+        """Returns the line spread function (LSF) of the PSF.
+
+        The LSF along `axis` is the PSF integrated along the other axis (sum
+        times pixel pitch), so the LSF integrates to the same total as the PSF.
+
+        Args:
+            axis (str, optional): The axis along which the LSF is returned,
+                'x' or 'y'. Defaults to 'y'.
+
+        Returns:
+            tuple: A tuple ``(coords, lsf)``. ``coords`` are the pixel centre
+            positions along `axis`, in the same units as `cross_section`.
+
+        Raises:
+            RuntimeError: If the PSF has not been computed.
+            ValueError: If `axis` is not 'x' or 'y'.
+        """
+        if self.psf is None:
+            raise RuntimeError(
+                "PSF has not been computed. Call _compute_psf in subclass."
+            )
+        if axis not in ("x", "y"):
+            raise ValueError('Axis must be "x" or "y".')
+
+        dx, dy, _ = self._get_pixel_pitch()
+        if axis == "y":
+            lsf = be.sum(self.psf, axis=1) * dx
+        else:
+            lsf = be.sum(self.psf, axis=0) * dy
+        return self._cross_section_coordinates(axis, dx, dy), lsf
+
+    def view_cross_section(
+        self,
+        axis: Literal["x", "y", "both"] = "both",
+        log: bool = False,
+        fig_to_plot_on: Figure | None = None,
+        figsize: tuple[float, float] = (7, 4.5),
+        *,
+        show: bool = True,
+    ) -> tuple[Figure, Axes]:
+        """Plots cross-sections of the PSF through its peak.
+
+        Args:
+            axis (str, optional): The cross-section(s) to plot: 'x', 'y' or
+                'both'. Defaults to 'both'.
+            log (bool, optional): Whether to use a logarithmic scale for the
+                intensity. Defaults to False.
+            fig_to_plot_on (Figure, optional): The figure to plot on. If None,
+                a new figure is created. Defaults to None.
+            figsize (tuple[float, float], optional): The figure size.
+                Defaults to (7, 4.5).
+            show (bool): If True (default), calls plt.show(). Set False for
+                headless use.
+
+        Returns:
+            tuple: A tuple containing the figure and axes objects.
+
+        Raises:
+            RuntimeError: If the PSF has not been computed.
+            ValueError: If `axis` is not 'x', 'y' or 'both'.
+        """
+        if self.psf is None:
+            raise RuntimeError(
+                "PSF has not been computed. Call _compute_psf in subclass."
+            )
+        if axis not in ("x", "y", "both"):
+            raise ValueError('Axis must be "x", "y" or "both".')
+
+        is_gui_embedding = fig_to_plot_on is not None
+        if is_gui_embedding:
+            current_fig = fig_to_plot_on
+            current_fig.clear()
+            ax = current_fig.add_subplot(111)
+        else:
+            current_fig, ax = plt.subplots(figsize=figsize)
+
+        _, _, unit = self._get_pixel_pitch()
+        axes_to_plot = ("x", "y") if axis == "both" else (axis,)
+        for name in axes_to_plot:
+            coords, values = self.cross_section(axis=name)
+            if log:
+                values = replace_nonpositive(values)
+            ax.plot(be.to_numpy(coords), be.to_numpy(values), label=name)
+
+        if log:
+            ax.set_yscale("log")
+        position = "Position" if axis == "both" else axis.upper()
+        ax.set_xlabel(f"{position} ({unit})")
+        ax.set_ylabel("Relative Intensity (%)")
+        psf_name = self.__class__.__name__.replace("PSF", " PSF")
+        ax.set_title(f"{psf_name} Cross-Section")
+        if axis == "both":
+            ax.legend()
+        ax.grid(True)
+        current_fig.tight_layout()
+
+        if is_gui_embedding and hasattr(current_fig, "canvas"):
+            current_fig.canvas.draw_idle()
+        if show and not is_gui_embedding:
+            plt.show()
+        return current_fig, ax
+
+    def _get_pixel_pitch(self) -> tuple[float, float, str]:
+        """Returns the pixel pitch of the PSF array along x and y.
+
+        Uses `_get_psf_units` on the full PSF array (pitch = extent / shape)
+        if the subclass implements it, otherwise falls back to pixel units,
+        as `view` does.
+
+        Returns:
+            tuple: The pitch along x, the pitch along y, and the unit label
+            ('µm' or 'pixels').
+        """
+        if hasattr(self, "_get_psf_units"):
+            x_extent, y_extent = self._get_psf_units(self.psf)
+            dx = float(x_extent) / self.psf.shape[1]
+            dy = float(y_extent) / self.psf.shape[0]
+            return dx, dy, "µm"
+        return 1.0, 1.0, "pixels"
+
+    def _cross_section_coordinates(
+        self, axis: Literal["x", "y"], dx: float, dy: float
+    ) -> BEArray:
+        """Returns pixel centre positions along an axis of the PSF array.
+
+        Pixel ``n // 2`` is at position 0, which is the centre of FFT-based
+        PSF arrays (as placed by ``fftshift``).
+
+        Args:
+            axis (str): The axis, 'x' or 'y'.
+            dx (float): The pixel pitch along x.
+            dy (float): The pixel pitch along y.
+
+        Returns:
+            BEArray: The pixel centre positions along `axis`.
+        """
+        if axis == "x":
+            num, pitch = self.psf.shape[1], dx
+        else:
+            num, pitch = self.psf.shape[0], dy
+        center = num // 2
+        return be.linspace(-center * pitch, (num - 1 - center) * pitch, num)
 
     def _get_working_FNO(self):
         """Calculates the working F-number of the optical system for the

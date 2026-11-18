@@ -17,6 +17,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 import optiland.backend as be
+from optiland.thin_film.core import _complex_index, _incident_index
 
 if TYPE_CHECKING:  # pragma: no cover
     from optiland.rays import RealRays
@@ -87,14 +88,26 @@ class JonesFresnel(BaseJones):
             be.ndarray: The calculated Jones matrix.
 
         """
-        # define local variables
-        n1 = self.material_pre.n(rays.w)
-        n2 = self.material_post.n(rays.w)
+        # the medium after the surface may absorb: its complex index n + ik
+        # enters the Fresnel coefficients. The incident medium is taken as
+        # lossless, as in the thin-film stack; with its k the angle of
+        # incidence would be complex.
+        n1 = _incident_index(self.material_pre, rays.w)
+        n2 = _complex_index(self.material_post, rays.w)
 
         # precomputations for speed
         cos_theta_i = be.cos(aoi)
         n = n2 / n1
-        radicand = be.to_complex(n**2 - be.sin(aoi) ** 2)
+        # root = n cos(theta_t). Im(n^2) = 2 n k is not negative in a passive
+        # medium; it is written as +|2 n k| so that a lossless medium keeps a
+        # +0 imaginary part, and the principal square root gives Im(root) >= 0:
+        # the wave that decays into an absorbing medium, and the evanescent
+        # wave at total internal reflection, as before.
+        n_re = be.real(n)
+        n_im = be.imag(n)
+        radicand = be.to_complex(n_re**2 - n_im**2 - be.sin(aoi) ** 2) + 1j * be.abs(
+            2 * n_re * n_im
+        )
         root = be.sqrt(radicand)
 
         # compute fresnel coefficients & compute jones matrices

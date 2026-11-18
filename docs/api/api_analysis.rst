@@ -15,16 +15,20 @@ encircled energy, field curvature, distortion, etc.
    analysis.distortion
    analysis.encircled_energy
    analysis.field_curvature
+   analysis.footprint
    analysis.gaussian_beam
    analysis.grid_distortion
    analysis.intensity
    analysis.image_simulation
    analysis.irradiance
    analysis.jones_pupil
+   analysis.lateral_color
+   analysis.longitudinal_aberration
    analysis.mtf_vs_field
    analysis.pupil_aberration
    analysis.ray_fan
    analysis.rms_vs_field
+   analysis.seidel_diagram
    analysis.spot_diagram
    analysis.through_focus
    analysis.through_focus_spot_diagram

@@ -229,9 +229,15 @@ def test_get_paraxial_object_position(set_test_backend):
         optic, Hy=1, y1=0.5, EPL=optic.paraxial.EPL()
     )
 
-    # check that the object position is correct (should be at infinity)
-    assert_allclose(obj_pos[0], [-4.12359504])
-    assert_allclose(obj_pos[1], [0.0])
+    # object at infinity: the ray starts 10 in front of the first surface (the
+    # entrance pupil lies behind it), and crosses the first surface (z = 0) at
+    # the same height as when it started there
+    y0, z0 = obj_pos
+    assert_allclose(z0, [-10.0])
+    assert_allclose(y0, [-8.13986616])
+    z_ep = optic.paraxial.entrance_pupil_axial_position()
+    u = (0.5 - y0) / (z_ep - z0)
+    assert_allclose(y0 + u * (0.0 - z0), [-4.12359504])
 
     # Change to finite object
     optic = objectives.CookeTriplet()
@@ -242,9 +248,15 @@ def test_get_paraxial_object_position(set_test_backend):
         optic, Hy=1, y1=0.5, EPL=optic.paraxial.EPL()
     )
 
-    # check that the object position is correct
-    assert_allclose(obj_pos[0], [-3.69008309])
-    assert_allclose(obj_pos[1], [0.0])
+    # check that the object position is correct: the angle field starts the
+    # ray 10 in front of the first surface, and it crosses the first surface
+    # (z = 0) at the same height as when it started there
+    y0, z0 = obj_pos
+    assert_allclose(z0, [-10.0])
+    assert_allclose(y0, [-7.32978543])
+    z_ep = optic.paraxial.entrance_pupil_axial_position()
+    u = (0.5 - y0) / (z_ep - z0)
+    assert_allclose(y0 + u * (0.0 - z0), [-3.69008309])
 
 
 def test_get_starting_z_offset(set_test_backend):

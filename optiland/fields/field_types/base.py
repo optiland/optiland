@@ -10,6 +10,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, ClassVar
 
+import optiland.backend as be
 from optiland._suggest import options_hint
 
 if TYPE_CHECKING:
@@ -76,6 +77,35 @@ class BaseFieldDefinition(ABC):
             '+z entry remain supported. Use the "angle" field type, or real '
             "ray tracing with explicit launch geometry."
         )
+
+    @staticmethod
+    def _paraxial_start_at_infinity(
+        optic: Optic, u: ScalarOrArray, y1: ScalarOrArray, EPL: ScalarOrArray
+    ) -> tuple[BEArray, BEArray]:
+        """Start of a paraxial ray of slope u from an object at infinity.
+
+        The ray passes through height y1 in the entrance pupil. It starts on a
+        plane 10 lens units in front of both the first surface and the
+        entrance pupil, as ``Paraxial.marginal_ray`` starts 10 in front of the
+        first surface. The plane never lies on the entrance pupil, so the
+        slope (y1 - y0) / (z_EP - z0) that the paraxial tracer forms is u, also
+        when the entrance pupil is at the first surface (EPL = 0).
+
+        Args:
+            optic: The optical system.
+            u: Slope of the ray in object space.
+            y1: Height of the ray in the entrance pupil.
+            EPL: Entrance pupil location, relative to the first surface.
+
+        Returns:
+            The y and z coordinates of the start of the ray.
+        """
+        # distance from the start plane to the entrance pupil, at least 10
+        d = be.where(EPL > 0, EPL, 0.0) + 10.0
+        z_ep = optic.surfaces.positions[1] + EPL
+        y0 = y1 - u * d
+        z0 = be.ones_like(y1) * (z_ep - d)
+        return y0, z0
 
     @classmethod
     def register(cls, name: str):

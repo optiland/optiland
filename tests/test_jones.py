@@ -49,16 +49,22 @@ class TestJonesFresnel:
         aoi = be.array([0.2])  # use arbitrary angle of incidence
         jones_matrix = jones_fresnel.calculate_matrix(rays, reflect=True, aoi=aoi)
 
+        # closed-form Fresnel coefficients for N = 1.5 + 0.1i from air at
+        # 0.2 rad, with N cos(theta_t) = sqrt(N^2 - sin^2(0.2)), Im >= 0
         assert jones_matrix.shape == (1, 3, 3)
-        assert_allclose(be.real(jones_matrix[0, 0, 0]), -0.20541108217641596)
-        assert_allclose(be.real(jones_matrix[0, 1, 1]), 0.19457669033430527)
+        assert_allclose(be.real(jones_matrix[0, 0, 0]), -0.2067569650964698)
+        assert_allclose(be.imag(jones_matrix[0, 0, 0]), -0.0324398037867097)
+        assert_allclose(be.real(jones_matrix[0, 1, 1]), 0.19578685717592503)
+        assert_allclose(be.imag(jones_matrix[0, 1, 1]), 0.03145354542521542)
         assert_allclose(be.real(jones_matrix[0, 2, 2]), -1.0)
 
         # Test transmission calculation
         jones_matrix = jones_fresnel.calculate_matrix(rays, reflect=False, aoi=aoi)
         assert jones_matrix.shape == (1, 3, 3)
-        assert_allclose(be.real(jones_matrix[0, 0, 0]), 0.7945889178235841)
-        assert_allclose(be.real(jones_matrix[0, 1, 1]), 0.7963844602228702)
+        assert_allclose(be.real(jones_matrix[0, 0, 0]), 0.7932430349035302)
+        assert_allclose(be.imag(jones_matrix[0, 0, 0]), -0.0324398037867097)
+        assert_allclose(be.real(jones_matrix[0, 1, 1]), 0.7950555930559332)
+        assert_allclose(be.imag(jones_matrix[0, 1, 1]), -0.032034675920251936)
         assert_allclose(be.real(jones_matrix[0, 2, 2]), 1.0)
 
 

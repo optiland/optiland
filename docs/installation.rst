@@ -57,6 +57,17 @@ To use the new prescription report generator functionality:
 
        pip install optiland[prescription-pdf]
 
+Standard Install with Manufacturing Drawings
+--------------------------------------------
+
+ISO 10110 fabrication drawings can be exported to PDF and PNG out of the box.
+To also export DXF files for CAD tools, install the ``manufacturing`` extra
+(adds `ezdxf`):
+
+.. code-block:: console
+
+   pip install optiland[manufacturing]
+
 Development Extras
 ------------------
 

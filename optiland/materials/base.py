@@ -30,6 +30,7 @@ except (ImportError, ModuleNotFoundError):
 
 _TYPE_STR_CACHE: dict = {}
 _TYPE_STR_CACHE_MAX = 256
+_STATE_SCALAR_TYPES = frozenset({str, int, float, bool, type(None)})
 
 
 def _type_str(obj) -> str:
@@ -221,7 +222,7 @@ class BaseMaterial(ABC):
             if size is not None and size <= self._MAX_VALUE_KEY_ARRAY_SIZE:
                 wavelength_key = (
                     "array-values",
-                    tuple(np.ravel(be.to_numpy(wavelength))),
+                    tuple(np.ravel(be.to_numpy(wavelength)).tolist()),
                     tuple(wavelength.shape),
                     _type_str(wavelength.dtype),
                     _type_str(getattr(wavelength, "device", None)),
@@ -230,7 +231,10 @@ class BaseMaterial(ABC):
                 wavelength_key = self._array_metadata_key(wavelength)
         else:
             wavelength_key = (type(wavelength), wavelength)
-        return (wavelength_key, self._state_key(tuple(sorted(kwargs.items()))))
+        kwargs_key = (
+            () if not kwargs else self._state_key(tuple(sorted(kwargs.items())))
+        )
+        return (wavelength_key, kwargs_key)
 
     def _cache_state(self) -> tuple | None:
         """Return a hashable optical-state token, or None to disable caching.
@@ -247,6 +251,34 @@ class BaseMaterial(ABC):
 
     @classmethod
     def _state_key(cls, value) -> tuple | None:
+        """Fingerprint numerical state; unsupported or trainable data disables reuse.
+
+        Exact-type fast paths for the common cases; everything else goes to
+        :meth:`_state_key_generic`, whose result this always equals.
+        """
+        kind = type(value)
+        if kind in _STATE_SCALAR_TYPES:
+            return (kind, value)
+        if kind is tuple or kind is list:
+            items = []
+            for item in value:
+                item_kind = type(item)
+                if item_kind in _STATE_SCALAR_TYPES:
+                    items.append((item_kind, item))
+                    continue
+                key = cls._state_key(item)
+                if key is None:
+                    return None
+                items.append(key)
+            return tuple(items)
+        if kind is np.ndarray:
+            if value.size <= cls._MAX_VALUE_KEY_ARRAY_SIZE:
+                return _array_content_key(value, value.tobytes())
+            return cls._array_metadata_key(value)
+        return cls._state_key_generic(value)
+
+    @classmethod
+    def _state_key_generic(cls, value) -> tuple | None:
         """Fingerprint numerical state; unsupported or trainable data disables reuse."""
         if cls._requires_grad(value):
             return None
@@ -368,7 +400,9 @@ class BaseMaterial(ABC):
         if self._requires_grad(wavelength):
             return self._compute_grad_aware(calculate, wavelength, **kwargs)
         state = self._cache_state() if "_cache_state" in type(self).__dict__ else None
-        kwargs_state = self._state_key(tuple(sorted(kwargs.items())))
+        kwargs_state = (
+            () if not kwargs else self._state_key(tuple(sorted(kwargs.items())))
+        )
         if state is None or kwargs_state is None:
             self._n_cache.clear()
             self._k_cache.clear()
@@ -538,7 +572,79 @@ class BaseMaterial(ABC):
         nD = self.n(0.5875618)
         nF = self.n(0.4861327)
         nC = self.n(0.6562725)
+
+        if be.isclose(nF, nC, rtol=0.0, atol=1e-12):
+            return 0.0
+
         return (nD - 1) / (nF - nC)
+
+    def PgF(self):
+        """
+        Calculate the partial dispersion between the F and C lines.
+
+        The partial dispersion is defined as PgF = (n_g - n_F) / (n_F - n_C),
+        where n_g, n_F, and n_C are the refractive indices at g (435.8343 nm),
+        F (486.1327 nm), and C (656.2725 nm) spectral lines,
+        respectively.
+
+        Returns:
+            float: The partial dispersion between the g and F lines.
+
+        """
+        nF = self.n(0.4861327)
+        nC = self.n(0.6562725)
+        ng = self.n(0.4358343)
+
+        # Assign PgF = 0 when nF and nC are very close to avoid division by zero
+        if be.isclose(nF, nC, rtol=0.0, atol=1e-12):
+            return 0.0
+
+        PgF = be.array((ng - nF) / (nF - nC))
+        return PgF
+
+    def P_ref(self, wavelength: float):
+        """
+        Calculate the relative partial dispersion at a reference wavelength.
+
+        The relative partial dispersion is defined as
+        P_ref = (n_ref - n_D) / (n_F - n_C), where n_ref, n_D, n_F and n_C are the
+        refractive indices at the reference wavelength, the D (587.5618 nm), F
+        (486.1327 nm) and C (656.2725 nm) spectral lines, respectively.
+
+        Args:
+            wavelength (float): The reference wavelength in microns.
+        """
+        nD = self.n(0.5875618)
+        nF = self.n(0.4861327)
+        nC = self.n(0.6562725)
+        n_ref = self.n(wavelength)
+
+        # Assign P_ref = 0 when nF and nC are very close to avoid division by zero
+        if be.isclose(nF, nC, rtol=0.0, atol=1e-12):
+            return 0.0
+
+        P_ref = be.array((n_ref - nD) / (nF - nC))
+        return P_ref
+
+    def dPgF(self):
+        """
+        Calculate the deviation of the relative partial dispersion.
+
+        The deviation of the relative partial dispersion is defined as
+
+        dPgF = PgF - (0.6438 - 0.001682 Vd)
+
+        Returns:
+            float: The deviation of the relative partial dispersion.
+
+        """
+        PgF = self.PgF()
+        Vd = self.abbe()
+
+        if Vd == 0.0:
+            return 0.0
+
+        return PgF - (0.6438 - 0.001682 * Vd)
 
     @property
     def display_name(self) -> str:

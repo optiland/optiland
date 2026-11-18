@@ -71,6 +71,7 @@ Here’s a quick overview of what you’ll find in the Developer’s Guide:
    architecture
    code_structure
    configurable_backend
+   performance_internals
    ray_overview
    nonsequential_raytracing
    surface_overview

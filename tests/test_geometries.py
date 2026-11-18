@@ -305,6 +305,108 @@ class TestStandardGeometry:
             geometries.StandardGeometry.from_dict({"invalid_key": "invalid_value"})
 
 
+# The tests of Horner's method in EvenAsphere compare it with the sum of powers
+# that EvenAsphere used before. Both forms evaluate the same polynomial with
+# different float64 operations, so they agree only to round-off. The terms can
+# cancel, so the round-off scales with the sum of the magnitudes of the terms,
+# not with the result. For this reason the tests check a bound on that sum and
+# do not use assert_allclose.
+
+_UNIT_ROUNDOFF = np.finfo(np.float64).eps / 2  # u
+
+# With n coefficients and S = |z_conic| + sum |C_i| r^(2i), (3n + 1) u S bounds
+# the difference of the sag to first order; 32 u covers n <= 10.
+_HORNER_BOUND = 32 * _UNIT_ROUNDOFF
+_HORNER_COEFFICIENTS = [
+    [1e-3],
+    [1e-3, -1e-5],
+    [2.1e-4, -3.3e-6, 4.4e-8, -5.5e-10, 6.6e-12, -7.7e-14, 8.8e-16, -9.9e-18],
+]
+
+
+def _horner_points(
+    seed: int = 3, n: int = 2000, radius: float = 9.0
+) -> tuple[be.ndarray, be.ndarray]:
+    """Random points with a uniform density in a disk of the given radius."""
+    rng = np.random.default_rng(seed)
+    r = radius * np.sqrt(rng.random(n))
+    phi = 2 * np.pi * rng.random(n)
+    return be.array(r * np.cos(phi)), be.array(r * np.sin(phi))
+
+
+def _power_sum(
+    geometry: geometries.EvenAsphere, x: be.ndarray, y: be.ndarray
+) -> tuple[be.ndarray, be.ndarray, be.ndarray, be.ndarray, be.ndarray]:
+    """Sag and slopes of an even asphere with the sum of powers.
+
+    The expressions are those of EvenAsphere before Horner's method. They use
+    the 0-d radius and conic of the geometry, so that radius**2 is the same
+    operation as in the geometry.
+
+    Returns:
+        The sag, the slopes d(sag)/dx and d(sag)/dy, the sum S of the
+        magnitudes of the sag terms, and the sum S' of the magnitudes of the
+        terms of both slopes.
+    """
+    radius, k = geometry.radius, geometry.k
+    r2 = x**2 + y**2
+    sag = r2 / (radius * (1 + be.sqrt(1 - (1 + k) * r2 / radius**2)))
+    denom = radius * be.sqrt(1 - (1 + k) * r2 / radius**2)
+    dfdx = x / denom
+    dfdy = y / denom
+    sag_scale = be.abs(sag)
+    slope_scale = be.abs(dfdx) + be.abs(dfdy)
+    for i, Ci in enumerate(geometry.coefficients):
+        term = Ci * r2 ** (i + 1)
+        x_term = 2 * (i + 1) * x * Ci * r2**i
+        y_term = 2 * (i + 1) * y * Ci * r2**i
+        sag = sag + term
+        dfdx = dfdx + x_term
+        dfdy = dfdy + y_term
+        sag_scale = sag_scale + be.abs(term)
+        slope_scale = slope_scale + be.abs(x_term) + be.abs(y_term)
+    return sag, dfdx, dfdy, sag_scale, slope_scale
+
+
+def _assert_sag_agrees(
+    geometry: geometries.EvenAsphere, x: be.ndarray, y: be.ndarray
+) -> None:
+    """Assert that the sag agrees with the sum of powers within the bound."""
+    sag, _, _, scale, _ = _power_sum(geometry, x, y)
+    error = np.abs(be.to_numpy(geometry.sag(x, y)) - be.to_numpy(sag))
+    assert np.all(error <= _HORNER_BOUND * be.to_numpy(scale))
+
+
+def _assert_normal_agrees(
+    geometry: geometries.EvenAsphere, x: be.ndarray, y: be.ndarray
+) -> None:
+    """Assert that the surface normal agrees with the sum of powers.
+
+    A slope is a polynomial in r2 too, times 2x or 2y. The two forms of a slope
+    differ by at most about (3n + 3) u S', with S' the sum of the magnitudes of
+    the terms of both slopes. The normal (fx, fy, -1) / mag changes a component
+    by at most the sum of the changes of the two slopes divided by mag. Each
+    form also rounds the normalization, by a few u of a component, which is at
+    most 1 in magnitude. Thus the bound 32 u (S' / mag + 1) covers n <= 9.
+    """
+    _, dfdx, dfdy, _, scale = _power_sum(geometry, x, y)
+    mag = be.sqrt(dfdx**2 + dfdy**2 + 1)
+    expected = (dfdx / mag, dfdy / mag, -1 / mag)
+    bound = _HORNER_BOUND * be.to_numpy(scale / mag + 1)
+    normal = geometry._surface_normal(x, y)
+    for value, reference in zip(normal, expected, strict=True):
+        error = np.abs(be.to_numpy(value) - be.to_numpy(reference))
+        assert np.all(error <= bound)
+
+
+def _assert_same_bits(actual: be.ndarray, expected: be.ndarray) -> None:
+    """Assert that two arrays have the same dtype, shape and bytes."""
+    actual, expected = be.to_numpy(actual), be.to_numpy(expected)
+    assert actual.dtype == expected.dtype
+    assert actual.shape == expected.shape
+    assert actual.tobytes() == expected.tobytes()
+
+
 class TestEvenAsphere:
     def test_str(self, set_test_backend):
         cs = CoordinateSystem()
@@ -424,6 +526,80 @@ class TestEvenAsphere:
         geometry_dict = geometry.to_dict()
         new_geometry = geometries.EvenAsphere.from_dict(geometry_dict)
         assert new_geometry.to_dict() == geometry_dict
+
+    @pytest.mark.parametrize("coefficients", _HORNER_COEFFICIENTS)
+    def test_sag_agrees_with_the_sum_of_powers(self, set_test_backend, coefficients):
+        """Horner's method gives the sag of the sum of powers to round-off."""
+        geometry = geometries.EvenAsphere(
+            CoordinateSystem(), 25.0, -0.6, coefficients=coefficients
+        )
+        _assert_sag_agrees(geometry, *_horner_points())
+
+    @pytest.mark.parametrize("coefficients", _HORNER_COEFFICIENTS)
+    def test_normal_agrees_with_the_sum_of_powers(self, set_test_backend, coefficients):
+        """Horner's method gives the normal of the sum of powers to round-off."""
+        geometry = geometries.EvenAsphere(
+            CoordinateSystem(), 25.0, -0.6, coefficients=coefficients
+        )
+        _assert_normal_agrees(geometry, *_horner_points())
+
+    def test_one_coefficient_gives_the_same_bits(self, set_test_backend):
+        """With one coefficient, both forms give the same bits.
+
+        The sum of powers computes C1 * r2**1 and 2 * x * C1 * r2**0, and both
+        powers are exact.
+        """
+        geometry = geometries.EvenAsphere(
+            CoordinateSystem(), 25.0, -0.6, coefficients=[1e-3]
+        )
+        x, y = _horner_points()
+        sag, dfdx, dfdy, _, _ = _power_sum(geometry, x, y)
+        mag = be.sqrt(dfdx**2 + dfdy**2 + 1)
+        _assert_same_bits(geometry.sag(x, y), sag)
+        nx, ny, nz = geometry._surface_normal(x, y)
+        _assert_same_bits(nx, dfdx / mag)
+        _assert_same_bits(ny, dfdy / mag)
+        _assert_same_bits(nz, -1 / mag)
+
+    def test_array_coefficients_give_the_same_surface(self, set_test_backend):
+        """An array or a tensor of coefficients gives the surface of a list.
+
+        AsphereCoeffVariable can replace the list of coefficients with an array.
+        """
+        geometry = geometries.EvenAsphere(CoordinateSystem(), 25.0, -0.6)
+        geometry.coefficients = be.array([2.1e-4, -3.3e-6])
+        x, y = _horner_points()
+        _assert_sag_agrees(geometry, x, y)
+        _assert_normal_agrees(geometry, x, y)
+
+    def test_a_zero_trainable_coefficient_has_a_gradient(self, set_test_backend):
+        """A zero coefficient stays in the sag, so d(sag)/dC2 = r^4."""
+        if be.get_backend() != "torch":
+            pytest.skip("Gradients need the torch backend.")
+        c2 = be.array(0.0)
+        c2.requires_grad_(True)
+        geometry = geometries.EvenAsphere(
+            CoordinateSystem(), 25.0, -0.6, coefficients=[1e-3, c2, 0.0]
+        )
+        x = be.array([1.0, 2.0])
+        y = be.array([0.5, -1.0])
+        geometry.sag(x, y).sum().backward()
+        assert c2.grad is not None
+        assert_allclose(c2.grad, ((x**2 + y**2) ** 2).sum(), rtol=1e-14, atol=0.0)
+
+    def test_a_tensor_of_one_zero_coefficient_has_a_gradient(self, set_test_backend):
+        """A tensor that holds one zero coefficient gets d(sag)/dC1 = r^2."""
+        if be.get_backend() != "torch":
+            pytest.skip("Gradients need the torch backend.")
+        coefficients = be.zeros((1,))
+        coefficients.requires_grad_(True)
+        geometry = geometries.EvenAsphere(CoordinateSystem(), 25.0, -0.6)
+        geometry.coefficients = coefficients
+        x = be.array([1.0, 2.0])
+        y = be.array([0.5, -1.0])
+        geometry.sag(x, y).sum().backward()
+        assert coefficients.grad is not None
+        assert_allclose(coefficients.grad[0], (x**2 + y**2).sum(), rtol=1e-14, atol=0.0)
 
 
 class TestPolynomialGeometry:

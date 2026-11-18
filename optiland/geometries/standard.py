@@ -15,13 +15,19 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+import math
+
 import optiland.backend as be
+from optiland._host_values import host
 from optiland.coordinate_system import CoordinateSystem
 from optiland.geometries.base import BaseGeometry
 
 
 def _is_radius_infinite(radius):
     """Checks if the given radius represents an infinite radius (a plane)."""
+    value = host(radius)
+    if value is not None:  # the host copy in a CUDA trace
+        return math.isinf(value)
     is_inf_tensor = be.isinf(radius)
     if hasattr(is_inf_tensor, "ndim") and is_inf_tensor.ndim > 0:
         return bool(be.all(is_inf_tensor))

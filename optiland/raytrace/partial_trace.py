@@ -287,9 +287,9 @@ def _upstream_positions_stable(surfaces: list, s: int) -> bool:
     already equal the rebuild bit for bit.
     """
     import optiland.backend as be
-    from optiland.paraxial_path import build_paraxial_path
+    from optiland.paraxial_path import _positions_are_global_z
 
-    if not build_paraxial_path(surfaces).positions_are_global_z:
+    if not _positions_are_global_z(surfaces):
         return False
     z = be.array(0.0)
     for k in range(1, s + 1):

@@ -12,7 +12,8 @@ Developer's Guide section.
 .. seealso::
    :doc:`architecture` · :doc:`surface_overview` · :doc:`geometry_overview` ·
    :doc:`interaction_models` · :doc:`analysis_framework` · :doc:`optimization_framework` ·
-   :doc:`tolerancing_framework` · :doc:`configurable_backend` · :doc:`visualization_framework`
+   :doc:`tolerancing_framework` · :doc:`configurable_backend` · :doc:`visualization_framework` ·
+   :doc:`performance_internals`
 
 ----
 
@@ -60,6 +61,13 @@ so it can be created from a string identifier (needed for JSON serialisation).
 
 **Step 5:** Add tests in ``tests/test_geometries/test_my_geometry.py`` using both backends.
 
+.. note::
+   The NumPy trace has fast paths that check exact types. A new geometry or
+   interaction model, or a subclass of a supported one, is traced by the
+   generic code. The result is correct, but large bundles are slower. To
+   check which path a trace takes, or to add the type to a fast path, see
+   :doc:`performance_internals`.
+
 See :doc:`../examples/Tutorial_8a_Custom_Surface_Types` for a worked example.
 
 ----
@@ -96,6 +104,13 @@ element with a non-standard diffraction law).
 **Step 3:** Register in ``optiland/interactions/__init__.py``.
 
 **Step 4:** Add tests in ``tests/test_interactions/test_my_interaction.py``.
+
+.. note::
+   The NumPy trace has fast paths that check exact types. A new geometry or
+   interaction model, or a subclass of a supported one, is traced by the
+   generic code. The result is correct, but large bundles are slower. To
+   check which path a trace takes, or to add the type to a fast path, see
+   :doc:`performance_internals`.
 
 See :doc:`interaction_models` for the full interaction-model architecture.
 

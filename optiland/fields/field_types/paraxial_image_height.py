@@ -99,10 +99,7 @@ class ParaxialImageHeightField(BaseFieldDefinition):
 
         if optic.object_surface.is_infinite:
             u_obj = u_obj_unit * (y_img_target / y_img_unit)
-            y = u_obj * -EPL
-            z = optic.surfaces.positions[1]
-            y0 = y1 + y
-            z0 = be.ones_like(y1) * z
+            return self._paraxial_start_at_infinity(optic, u_obj, y1, EPL)
         else:
             y_obj = -y_obj_unit * (y_img_target / y_img_unit)
             y = y_obj

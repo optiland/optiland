@@ -228,6 +228,53 @@ class TestFresnelCoating:
                 expected = ts * np.dot(E, s) * s + tp * np.dot(E, p_in) * p_out
                 np.testing.assert_allclose(pol @ E, expected, atol=1e-12)
 
+    @pytest.mark.parametrize("n2, k2", [(1.5, 0.1), (1.0, 6.0), (0.2, 3.4)])
+    def test_reflection_from_absorbing_medium(self, set_test_backend, n2, k2):
+        """The reflected field from air onto N = n + ik is the closed-form
+        Fresnel field with the complex index: |(1 - N)/(1 + N)|^2 at normal
+        incidence (0.90 for N = 1 + 6i), and r_s, r_p at oblique incidence."""
+        N = n2 + 1j * k2
+        coating = coatings.FresnelCoating(
+            materials.IdealMaterial(n=1.0), materials.IdealMaterial(n=n2, k=k2)
+        )
+        for deg in (0, 30, 60, 80):
+            th = np.radians(deg)
+            k_in = np.array([0.0, np.sin(th), np.cos(th)])
+            c1 = np.cos(th)
+            c2 = np.sqrt(1 - (np.sin(th) / N) ** 2)  # Im(N c2) > 0: decaying
+            rs = (c1 - N * c2) / (c1 + N * c2)
+            rp = (N * c1 - c2) / (N * c1 + c2)
+            s = np.array([-1.0, 0.0, 0.0])
+            p_in = np.cross(s, k_in)
+
+            pol, k_out = self._field_after(coating, k_in, reflect=True)
+            p_out = np.cross(s, k_out)
+            np.testing.assert_allclose(pol @ s, rs * s, atol=1e-12)
+            np.testing.assert_allclose(pol @ p_in, rp * p_out, atol=1e-12)
+            if deg == 0:
+                R = np.sum(np.abs(pol @ s) ** 2)
+                np.testing.assert_allclose(R, abs((1 - N) / (1 + N)) ** 2)
+
+    def test_absorbing_incident_medium_is_lossless(self, set_test_backend):
+        """The medium before the surface enters with its real index only, as in
+        the thin-film stack, and total reflection from glass into air beyond
+        the critical angle stays total."""
+        th = be.array(np.radians([0.0, 30.0, 60.0]))
+        ray = rays.PolarizedRays(*(be.zeros(3),) * 6, be.ones(3), be.array([0.6] * 3))
+        for reflect in (True, False):
+            jones, ref = (
+                coatings.FresnelCoating(
+                    materials.IdealMaterial(n=1.5, k=k1), materials.IdealMaterial(n=1.0)
+                ).jones.calculate_matrix(ray, reflect=reflect, aoi=th)
+                for k1 in (0.01, 0.0)
+            )
+            assert_allclose(jones, ref)
+        jones = coatings.FresnelCoating(
+            materials.IdealMaterial(n=1.5, k=0.01), materials.IdealMaterial(n=1.0)
+        ).jones.calculate_matrix(ray, reflect=True, aoi=th)
+        assert_allclose(be.abs(jones[2, 0, 0]), 1.0)
+        assert_allclose(be.abs(jones[2, 1, 1]), 1.0)
+
     def test_to_dict(self, set_test_backend):
         mat1 = materials.IdealMaterial(n=1.0)
         mat2 = materials.IdealMaterial(n=1.5)
@@ -351,3 +398,158 @@ class TestThinFilmCoatings:
 
         assert be.all(rays_r.i >= 0)
         assert be.all(rays_t.i >= 0)
+
+    @staticmethod
+    def _airy(n0, n1, d, n2, wl, theta, pol, tangential):
+        """r and t of one layer on a substrate by the Airy sum, exp(-iwt) (n + ik).
+
+        With ``tangential``, the coefficients are ratios of the tangential
+        fields, from the tilted admittances n cos(theta) (s) and n / cos(theta)
+        (p). Otherwise they are ratios of the full fields, with p along s x k
+        for every wave.
+        """
+        s0 = n0 * np.sin(theta)
+        nc0, nc1, nc2 = (np.sqrt(complex(n**2 - s0**2)) for n in (n0, n1, n2))
+        e = np.exp(2j * 2 * np.pi * d * nc1 / wl)
+
+        def interface(na, nca, nb, ncb):
+            if pol == "s":
+                return (nca - ncb) / (nca + ncb), 2 * nca / (nca + ncb)
+            if tangential:
+                ya, yb = na**2 / nca, nb**2 / ncb
+                return (ya - yb) / (ya + yb), 2 * ya / (ya + yb)
+            ca, cb = nca / na, ncb / nb
+            den = nb * ca + na * cb
+            return (nb * ca - na * cb) / den, 2 * na * ca / den
+
+        r01, t01 = interface(n0, nc0, n1, nc1)
+        r12, t12 = interface(n1, nc1, n2, nc2)
+        den = 1 + r01 * r12 * e
+        return (r01 + r12 * e) / den, t01 * t12 * np.sqrt(e) / den
+
+    @pytest.mark.parametrize("pol", ["s", "p"])
+    @pytest.mark.parametrize("n_layer", [1.8, 1.8 + 0.05j])
+    def test_stack_r_t_match_airy(self, set_test_backend, pol, n_layer):
+        """The stack's r and t are the Airy coefficients of the tangential
+        fields, in the n + ik convention, for lossless and absorbing layers."""
+        n0, n2, d, wl = 1.0, 1.5 + 0.02j, 0.37, 0.6
+        stack = coatings.ThinFilmStack(
+            materials.IdealMaterial(n=n0),
+            materials.IdealMaterial(n=n2.real, k=n2.imag),
+        )
+        stack.add_layer_nm(
+            materials.IdealMaterial(n=n_layer.real, k=n_layer.imag), d * 1000
+        )
+        thetas = np.radians([0.0, 20.0, 45.0, 70.0])
+        out = stack.compute_rtRTA_elementwise(
+            be.array([wl] * 4), be.array(thetas), pol
+        )
+        expected = [
+            self._airy(n0, n_layer, d, n2, wl, th, pol, tangential=True)
+            for th in thetas
+        ]
+        assert_allclose(out["r"], np.array([r for r, _ in expected]))
+        assert_allclose(out["t"], np.array([t for _, t in expected]))
+
+    @pytest.mark.parametrize("reflect", [True, False])
+    @pytest.mark.parametrize("n_layer", [1.8, 1.8 + 0.05j])
+    def test_field_matches_closed_form(self, set_test_backend, reflect, n_layer):
+        """The 3D field after the coating is the Airy field, with p along s x k
+        for every wave, for any incident polarization."""
+        n0, n2, d, wl = 1.0, 1.5, 0.37, 0.6
+        coating = coatings.ThinFilmCoating(
+            materials.IdealMaterial(n=n0),
+            materials.IdealMaterial(n=n2),
+            [(materials.IdealMaterial(n=n_layer.real, k=n_layer.imag), d * 1000, "L")],
+        )
+        for deg, az in [(0, 0), (20, 30), (45, 100), (70, -60)]:
+            th, b = np.radians(deg), np.radians(az)
+            k_in = np.array(
+                [np.sin(th) * np.cos(b), np.sin(th) * np.sin(b), np.cos(th)]
+            )
+            (r_s, t_s), (r_p, t_p) = (
+                self._airy(n0, n_layer, d, n2, wl, th, pol, tangential=False)
+                for pol in "sp"
+            )
+            ts, tp = (r_s, r_p) if reflect else (t_s, t_p)
+            s = np.array([-np.sin(b), np.cos(b), 0.0])
+            p_in = np.cross(s, k_in)
+
+            ray = rays.PolarizedRays(
+                *(be.zeros(1),) * 3,
+                *(be.array([c]) for c in k_in),
+                be.ones(1),
+                be.array([wl]),
+            )
+            nx, ny, nz = be.zeros(1), be.zeros(1), be.ones(1)
+            if reflect:
+                ray.reflect(nx, ny, nz)
+                coating.reflect(ray, nx, ny, nz)
+            else:
+                ray.refract(nx, ny, nz, n0, n2)
+                coating.transmit(ray, nx, ny, nz)
+            jones = be.to_numpy(ray.p)[0]
+            k_out = np.array([be.to_numpy(v)[0] for v in (ray.L, ray.M, ray.N)])
+
+            p_out = np.cross(s, k_out)
+            for E in (s, p_in, 0.6 * s + (0.2 + 0.75j) * p_in):
+                expected = ts * np.dot(E, s) * s + tp * np.dot(E, p_in) * p_out
+                np.testing.assert_allclose(jones @ E, expected, atol=1e-12)
+
+    def test_transmit_p_with_absorbing_substrate(self, set_test_backend):
+        """Into an absorbing substrate, the p transmission is the Airy
+        full-field coefficient, with the complex cosine of the substrate."""
+        n0, n_layer, n2, d, wl = 1.0, 1.8, 1.5 + 0.02j, 0.37, 0.6
+        stack = coatings.ThinFilmStack(
+            materials.IdealMaterial(n=n0),
+            materials.IdealMaterial(n=n2.real, k=n2.imag),
+        )
+        stack.add_layer_nm(materials.IdealMaterial(n=n_layer), d * 1000)
+        thetas = np.radians([0.0, 20.0, 45.0, 70.0])
+        ray = rays.PolarizedRays(
+            *(be.zeros(4),) * 6, be.ones(4), be.array([wl] * 4)
+        )
+        jones = coatings.JonesThinFilm(stack).calculate_matrix(
+            ray, reflect=False, aoi=be.array(thetas)
+        )
+        expected = [
+            self._airy(n0, n_layer, d, n2, wl, th, "p", tangential=False)[1]
+            for th in thetas
+        ]
+        assert_allclose(jones[:, 1, 1], np.array(expected))
+
+    @staticmethod
+    def _glass_to_air_stack(k0):
+        stack = coatings.ThinFilmStack(
+            materials.IdealMaterial(n=1.5, k=k0), materials.IdealMaterial(n=1.0)
+        )
+        stack.add_layer_nm(materials.IdealMaterial(n=1.3), 120.0)
+        return stack
+
+    @pytest.mark.parametrize("pol", ["s", "p"])
+    def test_absorbing_incident_medium_is_lossless(self, set_test_backend, pol):
+        """The incident medium enters with its real index only: an absorbing
+        one gives the lossless result, and total reflection beyond the
+        critical angle (41.8 deg here) stays total."""
+        wl = be.array([0.6, 0.6])
+        th = be.array(np.radians([30.0, 60.0]))
+        out = self._glass_to_air_stack(0.01).compute_rtRTA_elementwise(wl, th, pol)
+        ref = self._glass_to_air_stack(0.0).compute_rtRTA_elementwise(wl, th, pol)
+        for key in ("r", "t", "R", "T", "A"):
+            assert_allclose(out[key], ref[key])
+        assert_allclose(out["R"][1], 1.0)
+        assert_allclose(out["T"][1], 0.0, atol=1e-12)
+        assert_allclose(out["A"][1], 0.0, atol=1e-12)
+
+    def test_transmit_with_absorbing_incident_medium(self, set_test_backend):
+        """The Jones transmission matrix ignores the incident medium's
+        absorption, as the stack coefficients do."""
+        th = be.array(np.radians([0.0, 20.0, 35.0]))
+        ray = rays.PolarizedRays(*(be.zeros(3),) * 6, be.ones(3), be.array([0.6] * 3))
+        jones, ref = (
+            coatings.JonesThinFilm(self._glass_to_air_stack(k0)).calculate_matrix(
+                ray, reflect=False, aoi=th
+            )
+            for k0 in (0.01, 0.0)
+        )
+        assert_allclose(jones, ref)

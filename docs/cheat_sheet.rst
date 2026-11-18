@@ -93,6 +93,10 @@ New to these concepts? See the :ref:`glossary` first.
    be.set_backend("torch")    # enable PyTorch (autograd, GPU)
    be.set_backend("numpy")    # revert to NumPy (default)
 
+   # Threads of the compiled NumPy trace, for 8192 rays or more
+   # (default 1; -1 for the number of logical CPUs)
+   be.set_trace_threads(8)
+
    # GPU and precision (PyTorch only)
    be.set_device("cuda")
    be.set_precision("float64")
@@ -355,3 +359,21 @@ New to these concepts? See the :ref:`glossary` first.
    result = scene.trace(num_rays=2_000, max_depth=16, seed=42)
    loss = ((result.detectors["D"].data - target) ** 2).mean()
    loss.backward()                                # gradients flow to scene params
+
+----
+
+24. Generate ISO 10110 fabrication drawings
+-------------------------------------------
+
+.. code-block:: python
+
+   from optiland.iso10110 import DrawingSpec, ISO10110Report
+
+   spec = DrawingSpec(lens, project_name="My lens")
+   spec.set_surface(1, irregularity=0.5, centration=0.5, imperfections="2x0.04")
+   spec.set_element(0, birefringence=10, bubbles="1x0.16", nh_class="NH040")
+   spec.set_title(0, part_number="OPT-001", drawn_by="AB")
+
+   report = ISO10110Report(spec)
+   report.save_pdf("drawings.pdf")   # one page per element
+   report.save_dxf("dxf/")           # requires pip install optiland[manufacturing]

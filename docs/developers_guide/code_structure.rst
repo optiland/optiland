@@ -59,5 +59,6 @@ Key Relationships
 - The **InteractionModel** defines how rays interact with the surface.
 - Each **Material** has a **PropagationModel**, which defines how rays propagate through the material.
 - The **RealRayTracer** and **ParaxialRayTracer** use the **SurfaceGroup** to trace **Rays** through the system.
+- With the NumPy backend, ``SurfaceGroup.trace`` first tries the compiled trace plan (``surfaces/_trace_plan.py``). Outside its domain, each ``Surface`` traces the rays (the generic code). See :doc:`performance_internals`.
 - The **OptimizationProblem** coordinates operands and variables, and can delegate merit evaluation to **BatchedRayEvaluator** to reduce redundant tracing.
 - All numerical operations are dispatched to the active **Backend**.
