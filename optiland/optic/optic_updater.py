@@ -476,7 +476,8 @@ class OpticUpdater:
     def flip(self):
         """Flips the optical system, reversing the order of surfaces (excluding
         object and image planes), their geometries, and materials. Pickups and
-        solves referencing surface indices are updated accordingly.
+        solves referencing surface indices are updated accordingly; thickness
+        pickups follow gap order.
         The new first optical surface (originally the last) is placed at z=0.0.
         """
         if self.optic.surfaces.num_surfaces < 3:
@@ -500,9 +501,16 @@ class OpticUpdater:
                 return num_surfaces - 1 - old_idx
             return old_idx  # Should not happen if indices are valid
 
+        def remap_gap_func(old_idx):
+            # The gap after surface k moves to n-2-k (SurfaceGroup.flip); object
+            # distance (0) and the gaps from n-2 on stay.
+            if 1 <= old_idx <= num_surfaces - 3:
+                return num_surfaces - 2 - old_idx
+            return old_idx
+
         # 3. Handle Pickups
         if self.optic.pickups and len(self.optic.pickups.pickups) > 0:
-            self.optic.pickups.remap_surface_indices(remap_index_func)
+            self._remap_pickup_indices(remap_index_func, remap_gap_func)
 
         # 4. Handle Solves
         if (
@@ -515,6 +523,25 @@ class OpticUpdater:
 
         # 5. Update Optic instance
         self.update()
+
+    def _remap_pickup_indices(self, remap_index_func, remap_gap_func):
+        """Remaps the source and target indices of all pickups after a flip.
+
+        A thickness pickup refers to the gap after its surface, so it is
+        remapped with ``remap_gap_func``; every other pickup is remapped with
+        ``remap_index_func``.
+
+        Args:
+            remap_index_func (callable): Maps an old surface index to the new one.
+            remap_gap_func (callable): Maps an old gap index to the new one.
+        """
+        for pickup in self.optic.pickups.pickups:
+            if pickup.attr_type == "thickness":
+                func = remap_gap_func
+            else:
+                func = remap_index_func
+            pickup.source_surface_idx = func(pickup.source_surface_idx)
+            pickup.target_surface_idx = func(pickup.target_surface_idx)
 
     def set_apodization(
         self, apodization: BaseApodization | str | dict = None, **kwargs

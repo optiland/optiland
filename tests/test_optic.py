@@ -82,8 +82,12 @@ def _thickness_pickup_lens(source=1, target=3, scale=2.0):
     return lens
 
 
+def _gap(lens, index):
+    return float(be.to_numpy(lens.surfaces.get_thickness(index))[0])
+
+
 def _gaps(lens):
-    return [float(be.to_numpy(lens.surfaces.get_thickness(i))[0]) for i in range(1, 5)]
+    return [_gap(lens, i) for i in range(1, 5)]
 
 
 class TestOptic:
@@ -626,6 +630,53 @@ class TestOptic:
         lens.pickups.apply()
         lens.surfaces[3].thickness.backward()
         assert_allclose(g1.grad, 2.0)
+
+    def test_flip_thickness_pickup(self, set_test_backend):
+        lens = _thickness_pickup_lens()
+        assert_allclose(_gaps(lens), [4.0, 5.0, 8.0, 20.0])
+        lens.updater.flip()
+        gaps = _gaps(lens)
+        assert_allclose(gaps, [8.0, 5.0, 4.0, 20.0])
+        assert_allclose(gaps[0], 2.0 * gaps[2])
+
+    @pytest.mark.parametrize(
+        "source, target, new_source, new_target",
+        [(1, 3, 3, 1), (4, 1, 4, 3), (1, 4, 3, 4), (2, 0, 2, 0)],
+    )
+    def test_flip_thickness_pickup_indices(
+        self, set_test_backend, source, target, new_source, new_target
+    ):
+        lens = _thickness_pickup_lens(source=source, target=target)
+        lens.updater.flip()
+        pickup = lens.pickups.pickups[0]
+        assert pickup.source_surface_idx == new_source
+        assert pickup.target_surface_idx == new_target
+        assert_allclose(_gap(lens, new_target), 2.0 * _gap(lens, new_source))
+
+    def test_flip_thickness_pickup_twice(self, set_test_backend):
+        lens = _thickness_pickup_lens()
+        lens.updater.flip()
+        lens.updater.flip()
+        pickup = lens.pickups.pickups[0]
+        assert (pickup.source_surface_idx, pickup.target_surface_idx) == (1, 3)
+        assert_allclose(_gaps(lens), [4.0, 5.0, 8.0, 20.0])
+
+    def test_flip_mixed_pickups(self, set_test_backend):
+        lens = _thickness_pickup_lens()
+        lens.pickups.add(
+            source_surface_idx=1, attr_type="radius", target_surface_idx=3, scale=1.0
+        )
+        lens.updater.update()
+        lens.updater.flip()
+        thickness_pickup, radius_pickup = lens.pickups.pickups
+        assert (
+            thickness_pickup.source_surface_idx,
+            thickness_pickup.target_surface_idx,
+        ) == (3, 1)
+        assert (radius_pickup.source_surface_idx, radius_pickup.target_surface_idx) == (
+            4,
+            2,
+        )
 
     def test_remove_surface(self, set_test_backend):
         lens = singlet_infinite_object()
