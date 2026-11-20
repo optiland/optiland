@@ -154,6 +154,31 @@ surfaces and not in image space. Rays that do not reach the next surface
 within ``max_steps`` steps are vignetted. Exporters to other formats reject
 GRIN media.
 
+Materials at Other Conditions
+-----------------------------
+
+:class:`~optiland.materials.at_conditions.MaterialAtConditions` evaluates
+another material at a fixed temperature (°C) and pressure (atm). Every ``n``
+and ``k`` query is forwarded to the wrapped material with those conditions, so
+an optic can be traced with its glasses at another temperature without changing
+the ray trace:
+
+.. code-block:: python
+
+   from optiland.materials import Material, MaterialAtConditions
+
+   glass = MaterialAtConditions(Material("N-BK7"), temperature=40.0)
+   glass.n(0.55)  # equals Material("N-BK7").n(0.55, temperature=40.0, pressure=1.0)
+
+Only a model that depends on the conditions changes with them: a
+:class:`~optiland.materials.material.Material` with thermal coefficients applies
+the Schott dn/dT model, while materials without one, such as
+:class:`~optiland.materials.ideal.IdealMaterial` and
+:class:`~optiland.materials.abbe.AbbeMaterial`, return their normal index.
+The wrapper also forwards the wrapped material's
+:attr:`~optiland.materials.base.BaseMaterial.thermal_expansion`, so a thermal
+analysis reads the CTE straight from it.
+
 Evaluation and Caching
 ----------------------
 
@@ -201,6 +226,7 @@ lookup when an input or tracked parameter requires a fresh gradient graph.
    materials.base
    materials.abbe
    materials.agf
+   materials.at_conditions
    materials.ideal
    materials.gradient_material
    materials.data
