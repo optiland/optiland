@@ -175,6 +175,9 @@ Only a model that depends on the conditions changes with them: a
 the Schott dn/dT model, while materials without one, such as
 :class:`~optiland.materials.ideal.IdealMaterial` and
 :class:`~optiland.materials.abbe.AbbeMaterial`, return their normal index.
+The wrapper also forwards the wrapped material's
+:attr:`~optiland.materials.base.BaseMaterial.thermal_expansion`, so a thermal
+analysis reads the CTE straight from it.
 
 Evaluation and Caching
 ----------------------

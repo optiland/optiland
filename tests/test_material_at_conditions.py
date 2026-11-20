@@ -180,7 +180,8 @@ def test_thermal_expansion_is_forwarded(set_test_backend):
     assert wrapped.thermal_expansion == glass.thermal_expansion == 7.1e-6
 
     ideal = IdealMaterial(1.5)
-    assert MaterialAtConditions(ideal, 40.0).thermal_expansion is ideal.thermal_expansion is None
+    assert MaterialAtConditions(ideal, 40.0).thermal_expansion is None
+    assert ideal.thermal_expansion is None
 
 
 @pytest.mark.parametrize(
