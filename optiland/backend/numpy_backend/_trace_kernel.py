@@ -936,26 +936,25 @@ def _step(
 
 
 @njit(inline="always", error_model="numpy", cache=True)
-def _finish(distance: np.ndarray, work: np.ndarray, flags: np.ndarray, m: int) -> None:
+def _finish(distance: np.ndarray, flags: np.ndarray, m: int) -> None:
     """The rule of ``_solve_distance_primal`` for the rays that missed.
 
-    A ray with a NaN residual gets the distance NaN. So does a ray without a
-    conic seed, unless it converged to a root in front of it (t > 0).
+    A ray that did not converge within MAX_ITER gets the distance NaN; a ray
+    with a NaN residual never converges. So does a ray without a conic seed
+    whose root is behind it (t <= 0).
 
     Args:
         distance: The distance of each ray. Receives NaN for a ray that
             missed.
-        work: The buffers of the iteration. Reads _RESIDUAL.
         flags: The ray states. Reads _NO_SEED and _CONVERGED.
         m: The number of rays in the block.
     """
-    residual = work[_RESIDUAL]
     no_seed, converged = flags[_NO_SEED], flags[_CONVERGED]
     for j in range(m):
-        t, f = distance[j], residual[j]
-        dead = f != f
+        t = distance[j]
+        dead = not converged[j]
         if no_seed[j]:
-            dead = dead or not (converged[j] and t > 0)
+            dead = dead or not t > 0
         distance[j] = math.nan if dead else t
 
 
@@ -977,9 +976,9 @@ def _newton(
 
     The rays of a block iterate together, until no ray is active or for
     MAX_ITER steps. In the generic solve, a converged ray takes a zero step,
-    and the distance of a ray with a NaN residual becomes NaN at the next
-    step or at the end. Here neither ray takes a step, and ``_finish`` sets
-    NaN for a NaN residual. A ray that stops iterating never starts again,
+    and a ray with a NaN residual keeps it. Here neither ray takes a step.
+    At the end, ``_finish`` sets NaN for a ray that did not converge, as the
+    generic solve does. A ray that stops iterating never starts again,
     and other rays do not change its steps. So each ray takes the steps that
     it takes in the generic solve.
 
@@ -1007,7 +1006,7 @@ def _newton(
         if _count_active(work, flags, m) == 0:
             break
         _step(position, direction, distance, work, flags, row, coef, dcoef, n_coef, m)
-    _finish(distance, work, flags, m)
+    _finish(distance, flags, m)
 
 
 @njit(inline="always", error_model="numpy", cache=True)

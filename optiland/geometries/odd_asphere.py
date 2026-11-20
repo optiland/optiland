@@ -16,8 +16,6 @@ Kramer Harrison, 2025
 
 from __future__ import annotations
 
-import warnings
-
 import optiland.backend as be
 from optiland.geometries.even_asphere import EvenAsphere
 
@@ -96,13 +94,7 @@ class OddAsphere(EvenAsphere):
             be.ndarray or float: The sag value(s) at the given coordinates.
 
         """
-        r2 = be.array(x**2 + y**2)
-        r = be.sqrt(r2)
-        z = r2 / (self.radius * (1 + be.sqrt(1 - (1 + self.k) * r2 / self.radius**2)))
-        for i, Ci in enumerate(self.coefficients):
-            z = z + Ci * r ** (i + 1)
-
-        return z
+        return self._sag_and_terms(x, y)[0]
 
     def _surface_normal(self, x, y):
         """Calculates the surface normal of the asphere at the given x and y
@@ -117,24 +109,7 @@ class OddAsphere(EvenAsphere):
             components (nx, ny, nz).
 
         """
-        r2 = x**2 + y**2
-        r = be.sqrt(r2)
-
-        denom = self.radius * be.sqrt(1 - (1 + self.k) * r2 / self.radius**2)
-        dfdx = x / denom
-        dfdy = y / denom
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            for i, Ci in enumerate(self.coefficients):
-                x_term = (i + 1) * x * Ci * r ** (i - 1)
-                y_term = (i + 1) * y * Ci * r ** (i - 1)
-
-                x_term[~be.isfinite(x_term)] = 0
-                y_term[~be.isfinite(y_term)] = 0
-
-                dfdx = dfdx + x_term
-                dfdy = dfdy + y_term
+        dfdx, dfdy = self._slopes_from_terms(x, y, self._odd_terms(x, y))
 
         mag = be.sqrt(dfdx**2 + dfdy**2 + 1)
 
@@ -143,6 +118,67 @@ class OddAsphere(EvenAsphere):
         nz = -1 / mag
 
         return nx, ny, nz
+
+    def _odd_terms(self, x, y):
+        """Return r**2, r, the mask r > 0 and the root of the conic.
+
+        The root of the conic is sqrt(1 - (1 + k) r**2 / R**2). At the vertex,
+        r is 0 with a finite derivative: sqrt has an infinite derivative at
+        0, so the code takes the root of 1 there and multiplies it by 0.
+        Elsewhere, r has the bits of sqrt(r**2). A NaN stays NaN.
+        """
+        r2 = be.array(x**2 + y**2)
+        positive = r2 > 0
+        r = be.sqrt(r2 + ~positive) * positive
+        root = be.sqrt(1 - (1 + self.k) * r2 / self.radius**2)
+        return r2, r, positive, root
+
+    def _sag_and_terms(self, x, y):
+        """Return the sag at (x, y), and the terms that its slopes share.
+
+        See :meth:`NewtonRaphsonGeometry._sag_and_terms`. The terms are r**2,
+        r, the mask r > 0 and the conic root.
+        """
+        terms = self._odd_terms(x, y)
+        r2, r, _, root = terms
+        z = r2 / (self.radius * (1 + root))
+        # Use the length: the coefficients can also be an array or a tensor.
+        n = len(self.coefficients)
+        if n > 0:
+            # Horner's method: r * (C1 + r * (C2 + ... + r * Cn)).
+            polynomial = self.coefficients[n - 1]
+            for i in range(n - 2, -1, -1):
+                polynomial = self.coefficients[i] + r * polynomial
+            z = z + r * polynomial
+        return z, terms
+
+    def _slopes_from_terms(self, x, y, terms):
+        """Return d(sag)/dx and d(sag)/dy from the terms of ``_sag_and_terms``.
+
+        See :meth:`NewtonRaphsonGeometry._slopes_from_terms`. The polynomial
+        gives d(sag)/dx = x g and d(sag)/dy = y g, with
+        g = (dz/dr) / r = C1 / r + 2 C2 + 3 C3 r + ... + n Cn r^(n-2).
+        """
+        r2, r, positive, root = terms
+        denom = self.radius * root
+        dfdx = x / denom
+        dfdy = y / denom
+        n = len(self.coefficients)
+        if n > 0:
+            # 1 / r, and 0 at the vertex: there the slope of the C1 term is 0,
+            # as the former code set its value 0 / 0 to 0. The divisor is 1 at
+            # the vertex, so the gradient stays finite.
+            inverse_r = positive / (r + ~positive)
+            g = self.coefficients[0] * inverse_r
+            if n > 1:
+                # Horner's method: 2 C2 + r * (3 C3 + ... + r * n Cn).
+                rest = n * self.coefficients[n - 1]
+                for degree in range(n - 1, 1, -1):
+                    rest = degree * self.coefficients[degree - 1] + r * rest
+                g = g + rest
+            dfdx = dfdx + x * g
+            dfdy = dfdy + y * g
+        return dfdx, dfdy
 
     def flip(self):
         """Flip the geometry.
