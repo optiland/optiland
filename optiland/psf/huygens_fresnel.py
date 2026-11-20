@@ -25,6 +25,7 @@ from optiland.psf.huygens_fresnel_strategies import (
     NumbaSummation,
     TorchSummation,
 )
+from optiland.rays import RealRays
 from optiland.visualization.system.utils import transform
 from optiland.wavefront import Wavefront
 
@@ -171,6 +172,36 @@ class ScalarHuygensPSF(BasePSF):
 
         return rx, ry
 
+    def _chief_ray_intercept(self, rx, ry) -> tuple:
+        """Local (x, y) of the chief-ray intercept on the image surface.
+
+        The PSF grid is centered on the chief ray, following the OpticStudio
+        convention for the Huygens PSF (with "Use Centroid" unchecked). If the
+        chief ray does not reach the image, the mean of the valid footprint
+        rays ``rx``, ``ry`` is used instead.
+
+        Args:
+            rx: Local x coordinates of the footprint rays on the image surface.
+            ry: Local y coordinates of the footprint rays on the image surface.
+
+        Returns:
+            tuple: ``(cx, cy)``, the image-surface local coordinates of the
+            grid center in mm.
+        """
+        Hx, Hy = self.fields[0].coord
+        chief = self.optic.trace_generic(
+            Hx=Hx, Hy=Hy, Px=0.0, Py=0.0, wavelength=self.wavelengths[0].value
+        )
+        cx, cy, _ = transform(
+            chief.x, chief.y, chief.z, self.optic.image_surface, is_global=True
+        )
+        cx = be.ravel(cx)[0]
+        cy = be.ravel(cy)[0]
+        valid = be.ravel(chief.i)[0] > 0
+        if not (valid and be.isfinite(cx) and be.isfinite(cy)):
+            return be.mean(rx), be.mean(ry)
+        return cx, cy
+
     def _get_image_extent(self) -> tuple[float, float, float, float]:
         """Calculate the extent of the image plane in mm.
 
@@ -180,8 +211,7 @@ class ScalarHuygensPSF(BasePSF):
         """
         # Determine image center and retrieve x, y intersections
         rx, ry = self._determine_image_center()
-        self.cx = be.mean(rx)
-        self.cy = be.mean(ry)
+        self.cx, self.cy = self._chief_ray_intercept(rx, ry)
 
         # If pixel_pitch is provided, use it to determine the extent.
         # Otherwise, calculate it automatically.
@@ -240,18 +270,25 @@ class ScalarHuygensPSF(BasePSF):
     def _get_image_coordinates(self):
         """Generate image coordinates for the PSF calculation.
 
-        This method computes the coordinates of the image plane based on
-        the extent of the image surface. It creates a grid of points in the
-        image plane, which will be used to evaluate the PSF using the
-        Huygens-Fresnel principle.
+        Following the OpticStudio convention, the grid lies on the plane
+        tangent to the image surface at the chief-ray intercept, and its
+        spacing is measured in that plane. The plane's axes are the image
+        surface's local x and y axes projected onto it. For a flat, untilted
+        image surface, this is the image surface itself.
+
+        Returns:
+            tuple: Global ``(image_x, image_y, image_z)`` arrays of shape
+            ``(image_size, image_size)``.
         """
         xmin, xmax, ymin, ymax = self._get_image_extent()
-        image_x = be.linspace(xmin, xmax, self.image_size)
-        image_y = be.linspace(ymin, ymax, self.image_size)
-        image_x, image_y = be.meshgrid(image_x, image_y)
+        a = be.linspace(xmin - self.cx, xmax - self.cx, self.image_size)
+        b = be.linspace(ymin - self.cy, ymax - self.cy, self.image_size)
+        a, b = be.meshgrid(a, b)
 
-        img_geometry = self.optic.image_surface.geometry
-        image_z = img_geometry.sag(image_x, image_y)
+        (x0, y0, z0), u, v = self._tangent_plane_basis()
+        image_x = x0 + a * u[0] + b * v[0]
+        image_y = y0 + a * u[1] + b * v[1]
+        image_z = z0 + a * u[2] + b * v[2]
 
         # transform image coordinates from local to global frame
         image_x, image_y, image_z = transform(
@@ -263,6 +300,38 @@ class ScalarHuygensPSF(BasePSF):
         image_z = be.reshape(image_z, (self.image_size, self.image_size))
 
         return image_x, image_y, image_z
+
+    def _tangent_plane_basis(self) -> tuple:
+        """Tangent plane of the image surface at the grid center, local frame.
+
+        Returns:
+            tuple: ``(origin, u, v)``. ``origin`` is the ``(x, y, z)`` point on
+            the image surface at ``(self.cx, self.cy)``. ``u`` and ``v`` are
+            orthonormal in-plane axes: the local x axis projected onto the
+            plane, then the local y axis made orthogonal to the normal and
+            ``u``. ``v`` therefore keeps the sense of the local y axis.
+        """
+        geometry = self.optic.image_surface.geometry
+        x0 = be.reshape(be.array(self.cx), (1,))
+        y0 = be.reshape(be.array(self.cy), (1,))
+        z0 = geometry.sag(x0, y0)
+        one = be.ones_like(x0)
+        zero = be.zeros_like(x0)
+        probe = RealRays(x0, y0, z0, zero, zero, one, one, one)
+        nx, ny, nz = geometry.surface_normal(probe)
+        norm = be.sqrt(nx**2 + ny**2 + nz**2)
+        n = (nx[0] / norm[0], ny[0] / norm[0], nz[0] / norm[0])
+
+        def _orthonormalize(vec, *axes):
+            for axis in axes:
+                dot = vec[0] * axis[0] + vec[1] * axis[1] + vec[2] * axis[2]
+                vec = tuple(c - dot * a for c, a in zip(vec, axis, strict=True))
+            length = be.sqrt(vec[0] ** 2 + vec[1] ** 2 + vec[2] ** 2)
+            return tuple(c / length for c in vec)
+
+        u = _orthonormalize((1.0, 0.0, 0.0), n)
+        v = _orthonormalize((0.0, 1.0, 0.0), n, u)
+        return (x0[0], y0[0], z0[0]), u, v
 
     def _medium_wavelength_mm(self):
         """Primary wavelength inside the image-space medium, in mm.
