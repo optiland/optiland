@@ -92,6 +92,15 @@ class MaterialAtConditions(BaseMaterial):
         return self._pressure
 
     @property
+    def thermal_expansion(self) -> float | None:
+        """The wrapped material's coefficient of thermal expansion, in 1/K.
+
+        ``None`` means the wrapped material has no CTE data, not that the CTE
+        is zero.
+        """
+        return self._material.thermal_expansion
+
+    @property
     def display_name(self) -> str:
         """The wrapped material's name with the conditions."""
         return (
