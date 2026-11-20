@@ -465,7 +465,11 @@ class OpticUpdater:
         require_global_z_geometry(self.optic.surfaces, "image_solve")
 
         ya, ua = self.optic.paraxial.marginal_ray()
-        offset = float(ya[-1, 0] / ua[-1, 0])
+        # Moving the image surface slides it along the last gap, so the height
+        # changes at the gap's slope ua[-2]. ua[-1] is the slope after
+        # refraction into the image surface's own material, which differs
+        # whenever that material is not the medium of the last gap.
+        offset = float(ya[-1, 0] / ua[-2, 0])
         surfaces = self.optic.surfaces
         old_z = float(surfaces[-1].geometry.cs.z)
         surfaces[-1].geometry.cs.z = be.array(old_z - offset)
