@@ -423,10 +423,11 @@ class ToroidalSurfaceHandler(BaseSurfaceHandler):
         Returns:
             Kwargs for ``optic.surfaces.add()``.
         """
-        radius_x = raw.get("param_1", 0.0)
+        # The parser stores PARM n as param_{n-1}.
+        radius_x = raw.get("param_0", 0.0)
         if radius_x == 0.0:
             radius_x = float(be.inf)
-        coeffs = [raw.get(f"param_{k}", 0.0) for k in range(2, 10)]
+        coeffs = [raw.get(f"param_{k}", 0.0) for k in range(1, 9)]
         return {
             "surface_type": self.optiland_type,
             "radius_y": raw.get("radius", float(be.inf)),
@@ -448,8 +449,8 @@ class ToroidalSurfaceHandler(BaseSurfaceHandler):
         r_yz = float(geom.R_yz)
         r_rot = float(geom.R_rot)
 
-        # R_rot == inf -> PARM 1 = 0 in Zemax convention
-        parm1 = 0.0 if (math.isinf(r_rot) or r_rot == 0.0) else (1.0 / r_rot)
+        # PARM 1 is the radius of rotation itself; R_rot == inf -> PARM 1 = 0
+        parm1 = 0.0 if math.isinf(r_rot) else r_rot
 
         raw_coeffs = geom.coeffs_poly_y
         coeffs: list[float] = (
