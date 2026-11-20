@@ -8,6 +8,7 @@ import optiland.backend as be
 from optiland.aperture import BaseSystemAperture
 from optiland.apodization import GaussianApodization
 from optiland.fields import FieldGroup, ParaxialImageHeightField
+from optiland.materials import IdealMaterial
 from optiland.optic import Optic
 from optiland.rays import create_polarization
 from optiland.samples.objectives import HeliarLens
@@ -347,6 +348,33 @@ class TestOptic:
         lens = HeliarLens()
         lens.updater.image_solve()
         # This test is just to ensure the method runs without error
+
+    @pytest.mark.parametrize("image_index", [1.5, 1.0])
+    def test_image_solve_focuses_in_last_gap(self, set_test_backend, image_index):
+        """The solve zeroes the marginal height even if the image material
+        differs from the medium of the last gap."""
+        lens = Optic()
+        lens.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+        lens.surfaces.add(
+            index=1, surface_type="paraxial", f=50.0, thickness=20.0, is_stop=True
+        )
+        lens.surfaces.add(
+            index=2, radius=be.inf, thickness=30.0, material=IdealMaterial(n=1.5)
+        )
+        lens.surfaces.add(index=3, material=IdealMaterial(n=image_index))
+        lens.set_aperture("EPD", 2.5)
+        lens.fields.set_type("angle")
+        lens.fields.add(y=0)
+        lens.wavelengths.add(0.55, is_primary=True)
+
+        lens.updater.image_solve()
+
+        ya, _ = lens.paraxial.marginal_ray()
+        assert_allclose(ya[-1, 0], 0.0, atol=1e-10)
+        # Focus in air would be 50 mm behind the lens; the plate starts at
+        # z = 20, so the remaining 30 mm of air become 45 mm in n = 1.5.
+        assert_allclose(lens.surfaces[-1].geometry.cs.z, 65.0)
+        assert_allclose(lens.surfaces[-2].thickness, 45.0)
 
     def test_trace(self, set_test_backend):
         lens = HeliarLens()
