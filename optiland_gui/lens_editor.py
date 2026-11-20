@@ -25,6 +25,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QAbstractSpinBox,
     QApplication,
     QFormLayout,
     QHBoxLayout,
@@ -49,6 +50,7 @@ from PySide6.QtWidgets import (
 from .config import DEFAULT_TAB_POSITION
 from .editor_hover_presentation import EditorHoverPresentation
 from .surface_interaction import EditorHoverTracker, SurfaceInteractionState
+from .widgets.spinbox_hit_areas import protect_spinbox_editor
 
 if TYPE_CHECKING:
     from .optiland_connector import OptilandConnector
@@ -311,6 +313,8 @@ class _AccentFocusDelegate(QStyledItemDelegate):
         self, parent: QWidget, option: QStyleOptionViewItem, index: QModelIndex
     ) -> QWidget | None:
         widget = super().createEditor(parent, option, index)
+        if isinstance(widget, QAbstractSpinBox):
+            protect_spinbox_editor(widget)
         if widget is not None:
             self.editor.hover_presentation.register_editor(widget, index)
         return widget

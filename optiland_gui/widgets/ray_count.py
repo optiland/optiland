@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QSpinBox
-
 from optiland_gui.services.layout_rays import normalize_ray_count, ray_counts
 
+from .spinbox_hit_areas import SpinBox
 
-class RayCountSpinBox(QSpinBox):
+
+class RayCountSpinBox(SpinBox):
     """Step through complete bundles while displaying the actual ray total."""
 
     def __init__(self, parent=None):
