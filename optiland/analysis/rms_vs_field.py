@@ -10,9 +10,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import matplotlib.pyplot as plt
-
 import optiland.backend as be
+from optiland.analysis._plotting import finalize_figure, prepare_axes
 from optiland.analysis.spot_diagram import SpotDiagram
 from optiland.wavefront import Wavefront
 
@@ -21,26 +20,6 @@ if TYPE_CHECKING:
     from matplotlib.figure import Figure
 
     from optiland.optic import Optic
-
-
-def _prepare_axes(
-    fig_to_plot_on: Figure | None, figsize: tuple[float, float]
-) -> tuple[Figure, Axes, bool]:
-    is_gui_embedding = fig_to_plot_on is not None
-    if is_gui_embedding:
-        current_fig = fig_to_plot_on
-        current_fig.clear()
-        ax = current_fig.add_subplot(111)
-    else:
-        current_fig, ax = plt.subplots(figsize=figsize)
-    return current_fig, ax, is_gui_embedding
-
-
-def _finalize_figure(current_fig: Figure, is_gui_embedding: bool, show: bool) -> None:
-    if is_gui_embedding and hasattr(current_fig, "canvas"):
-        current_fig.canvas.draw_idle()
-    if show and not is_gui_embedding:
-        plt.show()
 
 
 def _plot_field_series(
@@ -131,7 +110,7 @@ class RmsSpotSizeVsField(SpotDiagram):
         - The legend is placed outside the plot area for better readability.
         - The method is suitable for both standalone plotting and GUI embedding.
         """
-        current_fig, ax, is_gui_embedding = _prepare_axes(fig_to_plot_on, figsize)
+        current_fig, ax, is_gui_embedding = prepare_axes(fig_to_plot_on, figsize)
 
         _plot_field_series(
             ax,
@@ -142,7 +121,7 @@ class RmsSpotSizeVsField(SpotDiagram):
         )
 
         current_fig.tight_layout()
-        _finalize_figure(current_fig, is_gui_embedding, show)
+        finalize_figure(current_fig, is_gui_embedding, show)
         return current_fig, ax
 
 
@@ -187,7 +166,7 @@ class RmsWavefrontErrorVsField(Wavefront):
         show: bool = True,
     ) -> tuple[Figure, Axes]:
         """View the RMS wavefront error versus field coordinate."""
-        current_fig, ax, is_gui_embedding = _prepare_axes(fig_to_plot_on, figsize)
+        current_fig, ax, is_gui_embedding = prepare_axes(fig_to_plot_on, figsize)
 
         _plot_field_series(
             ax,
@@ -198,7 +177,7 @@ class RmsWavefrontErrorVsField(Wavefront):
         )
 
         current_fig.tight_layout()
-        _finalize_figure(current_fig, is_gui_embedding, show)
+        finalize_figure(current_fig, is_gui_embedding, show)
         return current_fig, ax
 
     def _rms_wavefront_error(self):
