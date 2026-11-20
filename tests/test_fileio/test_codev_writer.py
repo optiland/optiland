@@ -2251,6 +2251,20 @@ class TestSurfaceApertures:
 
     @pytest.mark.parametrize(
         ("r_max", "r_min"),
+        [(5.0, 0.0), (5.0, 2.0), (float("inf"), 2.0)],
+    )
+    def test_radial_aperture_round_trip(self, r_max, r_min, tmp_path, set_test_backend):
+        from optiland.physical_apertures import RadialAperture
+
+        path = str(tmp_path / "aperture.seq")
+        save_codev_file(_lens_with_aperture(RadialAperture(r_max, r_min)), path)
+        aperture = load_codev_file(path).surfaces[1].aperture
+        assert type(aperture) is RadialAperture
+        assert aperture.r_min == r_min
+        assert aperture.r_max == r_max
+
+    @pytest.mark.parametrize(
+        ("r_max", "r_min"),
         [
             (2.0, 2.0),
             (2.0, 3.0),

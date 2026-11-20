@@ -10,6 +10,7 @@ Kramer Harrison, 2026
 from __future__ import annotations
 
 import contextlib
+import math
 import re
 import warnings
 from typing import Any
@@ -436,14 +437,26 @@ class CodeVDataParser:
 
     def _read_cir(self, tokens: list[str]) -> None:
         # CIR [CLR|OBS|EDG] <radius>
-        # Find the numeric token
+        # OBS gives the radius of a central obscuration (``r_min``). Any other
+        # qualifier gives the clear radius (``r_max``). A surface can have both.
+        qualifier = "CLR"
         for tok in tokens[1:]:
             try:
                 r = float(tok)
-                self._current_surf_data["aperture"] = RadialAperture(r_min=0.0, r_max=r)
-                return
             except ValueError:
+                qualifier = tok.upper()
                 continue
+            aperture = self._current_surf_data["aperture"]
+            r_min = aperture.r_min if aperture is not None else 0.0
+            r_max = aperture.r_max if aperture is not None else math.inf
+            if qualifier == "OBS":
+                r_min = r
+            else:
+                r_max = r
+            self._current_surf_data["aperture"] = RadialAperture(
+                r_min=r_min, r_max=r_max
+            )
+            return
 
     # ------------------------------------------------------------------
     # Glass parsing
