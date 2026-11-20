@@ -124,6 +124,22 @@ class TestCodeVDataParser:
         # Surfaces: SO + 6 real + SI = 8 total
         assert len(model.surfaces) == 8
 
+    @pytest.mark.parametrize(
+        ("cir_lines", "r_min", "r_max"),
+        [
+            (["CIR 5"], 0.0, 5.0),
+            (["CIR CLR 5"], 0.0, 5.0),
+            (["CIR OBS 2"], 2.0, float("inf")),
+            (["CIR CLR 5", "CIR OBS 2"], 2.0, 5.0),
+            (["CIR OBS 2", "CIR CLR 5"], 2.0, 5.0),
+        ],
+    )
+    def test_parse_cir_clear_and_obscuration(self, cir_lines, r_min, r_max, tmp_path):
+        path = _write_asphere_seq(tmp_path / "cir.seq", cir_lines)
+        aperture = CodeVDataParser(path).parse().surfaces[1]["aperture"]
+        assert aperture.r_min == r_min
+        assert aperture.r_max == r_max
+
     def test_parse_asphere(self):
         parser = CodeVDataParser(_seq("asphere.seq"))
         model = parser.parse()
