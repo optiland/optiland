@@ -81,6 +81,7 @@ optical system, plus the reference pages you will keep coming back to.
    quickstart
    conventions
    how_do_i
+   coming_from_other_tools
    optimization_guide
    optimization_merit_constraints
    cheat_sheet

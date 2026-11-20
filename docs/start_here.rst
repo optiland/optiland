@@ -47,7 +47,8 @@ Optical Engineer (Practitioner)
 *Goal: get productive fast, import existing designs, and run professional analyses.*
 
 You are migrating from Zemax, CODE V, or OSLO and want to reproduce your existing designs or leverage
-Optiland's optimization and tolerancing workflows quickly.
+Optiland's optimization and tolerancing workflows quickly. :doc:`coming_from_other_tools` gives the
+Optiland name for each OpticStudio and CODE V term.
 
 **Recommended path:**
 

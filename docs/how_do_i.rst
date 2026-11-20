@@ -275,6 +275,8 @@ Interoperate with other tools
 
    * - How do I …
      - Where to look
+   * - find the Optiland name for an OpticStudio or CODE V term?
+     - :doc:`coming_from_other_tools`
    * - import a Zemax ``.zmx`` file?
      - :doc:`Tutorial 1d <examples/Tutorial_1d_Saving_and_Loading>`
    * - import a CODE V ``.seq`` file?
