@@ -168,6 +168,7 @@ class JobRequest:
     parameters: dict[str, Any]
     cancel_on_document_change: bool = True
     context: Any = field(default=None, compare=False, repr=False)
+    cancellable: bool = True
 
     def worker_message(self) -> dict:
         return {
@@ -189,6 +190,7 @@ class JobResult:
     error: str = ""
     current: bool = False
     infrastructure_error: bool = False
+    outcome_unknown: bool = False
 
 
 class CalculationCancelled(Exception):
