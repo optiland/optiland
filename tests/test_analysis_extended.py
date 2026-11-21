@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -11,7 +11,9 @@ from optiland.analysis import (
     jones_pupil,
     through_focus_mtf,
 )
+from optiland.rays import PolarizedRays
 from optiland.samples.objectives import CookeTriplet
+from tests.utils import assert_allclose
 
 
 @pytest.fixture
@@ -47,36 +49,41 @@ def test_psf_basis_generator(cooke_triplet, set_test_backend):
 
 
 def test_jones_pupil_init(cooke_triplet, set_test_backend):
-    with patch.object(cooke_triplet, "trace_generic") as mock_trace:
-        mock_rays = MagicMock()
-        mock_rays.x = be.array([0.0])
-        mock_rays.p = be.zeros((1, 3, 3))
-        if be.get_backend() == "torch":
-            import torch
-
-            mock_rays.p = torch.zeros((1, 3, 3), dtype=torch.float64)
-            mock_rays.x = torch.zeros(1, dtype=torch.float64)
-
-        mock_trace.return_value = mock_rays
-
-        jp = jones_pupil.JonesPupil(cooke_triplet)
+    with patch.object(
+        cooke_triplet, "trace_generic", wraps=cooke_triplet.trace_generic
+    ) as trace:
+        jp = jones_pupil.JonesPupil(cooke_triplet, grid_size=3)
         assert jp.optic == cooke_triplet
+        assert trace.call_count == len(jp.wavelengths)
+        assert cooke_triplet.polarization == "ignore"
+        for data in jp.data:
+            assert data["J"].shape == (9, 2, 2)
+            assert be.all(be.isfinite(data["J"][4]))
 
 
 def test_jones_pupil_generate_data(cooke_triplet, set_test_backend):
-    with patch.object(cooke_triplet, "trace_generic") as mock_trace:
-        mock_rays = MagicMock()
-        mock_rays.x = be.array([0.0])
-        mock_rays.p = be.zeros((1, 3, 3))
-        if be.get_backend() == "torch":
-            import torch
+    def transmitted_rays(*, Hx, Hy, Px, Py, wavelength):
+        # Supply real ray-owned source fields and power for every pupil sample.
+        zero, one = be.zeros_like(Px), be.ones_like(Px)
+        return PolarizedRays(Px, Py, zero, zero, zero, one, 0.25 * one, wavelength)
 
-            mock_rays.p = torch.zeros((1, 3, 3), dtype=torch.float64)
-            mock_rays.x = torch.zeros(1, dtype=torch.float64)
-        mock_trace.return_value = mock_rays
+    with patch.object(
+        cooke_triplet, "trace_generic", side_effect=transmitted_rays
+    ) as trace:
+        jp = jones_pupil.JonesPupil(cooke_triplet, field=(0, 1), grid_size=3)
 
-        jp = jones_pupil.JonesPupil(cooke_triplet)
-        assert jp.optic == cooke_triplet
+    assert len(jp.data) == len(jp.wavelengths) == trace.call_count
+    assert cooke_triplet.polarization == "ignore"
+    for data, wavelength, call in zip(
+        jp.data, jp.wavelengths, trace.call_args_list, strict=True
+    ):
+        assert call.kwargs["Hx"] == 0
+        assert call.kwargs["Hy"] == 1
+        assert call.kwargs["wavelength"] == wavelength.value
+        assert data["Px"].shape == data["Py"].shape == (9,)
+        assert_allclose(data["Px"], call.kwargs["Px"])
+        assert_allclose(data["Py"], call.kwargs["Py"])
+        assert_allclose(data["J"], 0.5 * be.tile(be.eye(2), (9, 1, 1)))
 
 
 # -----------------------------------------------------------------------------
