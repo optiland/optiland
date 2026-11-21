@@ -111,9 +111,9 @@ def test_invalid_optical_definitions_fail_at_construction(definition):
         DataMaterial(definition)
 
 
-def test_reject_unknown_extinction_kind_and_thermal_at_this_feature():
+def test_reject_unknown_extinction_and_thermal_models():
     definition = {'dispersion': {'kind': 'formula', 'formula': 'formula 5', 'coefficients': [1.5]}}
-    with pytest.raises(ValueError, match='Thermal'):
+    with pytest.raises(ValueError, match='thermal'):
         DataMaterial({**definition, 'thermal': {'kind': 'unknown'}})
     with pytest.raises(ValueError, match='extinction kind'):
         DataMaterial({**definition, 'extinction': {'kind': 'unknown', 'wavelengths_um': [.4, .8], 'values': [0, 0]}})
