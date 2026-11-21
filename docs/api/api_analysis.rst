@@ -17,6 +17,7 @@ encircled energy, field curvature, distortion, etc.
    analysis.field_curvature
    analysis.footprint
    analysis.gaussian_beam
+   analysis.ghost
    analysis.grid_distortion
    analysis.intensity
    analysis.image_simulation

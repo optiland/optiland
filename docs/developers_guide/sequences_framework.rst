@@ -176,8 +176,9 @@ Known limitations (v1)
   properties independent of the base system.
 - **No visualization overlay.** There is no built-in way yet to draw the base system and
   a sequence together, color-coded by traversal.
-- **No automated ghost enumeration.** Sequences are hand-specified; there is no helper
-  that proposes candidate 2-bounce ghost paths from a surface list.
+- **Ghost enumeration covers two-bounce paths in refractive systems only.**
+  :class:`~optiland.analysis.ghost.GhostAnalysis` builds and ranks every two-bounce
+  ghost path of a system without mirrors; other sequences are hand-specified.
 - **Analyses are not guaranteed to be meaningful for every sequence.** Some rays in a
   sequence may fail to survive real geometry (total internal reflection, missing the
   clear aperture after a bounce); this shows up as ``NaN`` in ray data, consistent with
