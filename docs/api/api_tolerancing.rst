@@ -15,15 +15,22 @@ Tolerancing in Optiland requires 4 key components:
 
 1. Optic - the optical system to be analyzed.
 2. Operands - the metrics which are assessed e.g., wavefront error.
-3. Perturbations - the variations applied to the optic or a surface of an optic e.g., surface tilt.
+3. Tolerances or perturbations - the variations applied to the optic or a surface of an optic e.g., surface tilt.
+   Tolerances (``Tolerancing.add_tolerance``) are signed deviations from nominal within limits, e.g., ±0.05 mm.
+   Perturbations (``Tolerancing.add_perturbation``) set absolute values of an optimization variable.
 4. Compensators - an *optional* parameter of the optical system that can be adjusted to counteract the effects of a perturbation.
 
 .. autosummary::
    :toctree: tolerancing/
    :caption: Tolerancing Modules
 
+   tolerancing.base
    tolerancing.compensator
    tolerancing.core
+   tolerancing.distributions
    tolerancing.monte_carlo
    tolerancing.perturbation
+   tolerancing.registry
    tolerancing.sensitivity_analysis
+   tolerancing.tolerance
+   tolerancing.types.surface

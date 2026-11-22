@@ -17,6 +17,7 @@ import pandas as pd
 
 import optiland.backend as be
 from optiland.tolerancing.perturbation import BaseSampler, RangeSampler
+from optiland.tolerancing.tolerance import Tolerance
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -69,6 +70,9 @@ class SensitivityAnalysis:
         publishing its DataFrame, results from the last completed run remain
         available and the exception propagates. Samplers are not rewound.
 
+        Tolerances (added with ``Tolerancing.add_tolerance``) are evaluated at
+        their lower and upper limits, one row each.
+
         Raises:
             ValueError: If a perturbation sampler other than RangeSampler is
                 used.
@@ -78,16 +82,12 @@ class SensitivityAnalysis:
 
         try:
             for perturbation in self.tolerancing.perturbations:
-                if not isinstance(perturbation.sampler, RangeSampler):
-                    raise ValueError("Only range samplers are supported.")
-
-                num_iterations = perturbation.sampler.size
-                for _ in range(num_iterations):
+                for apply in self._trial_steps(perturbation):
                     # reset system
                     self.tolerancing.reset()
 
                     # apply perturbation
-                    perturbation.apply()
+                    apply()
 
                     # apply compensators & save results
                     compensator_result = self.tolerancing.apply_compensators()
@@ -97,7 +97,7 @@ class SensitivityAnalysis:
 
                     # save results - perturbation type & value
                     result = {
-                        "perturbation_type": str(perturbation.variable),
+                        "perturbation_type": perturbation.label,
                         "perturbation_value": perturbation.value,
                     }
 
@@ -119,6 +119,22 @@ class SensitivityAnalysis:
             self._results = pd.DataFrame(results)
         finally:
             self.tolerancing.reset()
+
+    @staticmethod
+    def _trial_steps(perturbation):
+        """Return one callable per trial that applies the perturbation.
+
+        Raises:
+            ValueError: If a legacy perturbation does not use a RangeSampler.
+        """
+        if isinstance(perturbation, Tolerance):
+            return [
+                lambda value=value: perturbation.apply_value(value)
+                for value in perturbation.limits
+            ]
+        if not isinstance(perturbation.sampler, RangeSampler):
+            raise ValueError("Only range samplers are supported.")
+        return [perturbation.apply] * perturbation.sampler.size
 
     def get_results(self):
         """Returns the results of the sensitivity analysis.

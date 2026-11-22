@@ -10,9 +10,18 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from optiland.optimization.operand import Operand
+from optiland.tolerancing import types as _types  # noqa: F401 (registers types)
 from optiland.tolerancing.compensator import CompensatorOptimizer
 from optiland.tolerancing.perturbation import BaseSampler, Perturbation
+from optiland.tolerancing.registry import tolerance_registry
+from optiland.tolerancing.tolerance import Tolerance
+
+if TYPE_CHECKING:
+    from optiland.tolerancing.base import BasePerturbation
+    from optiland.tolerancing.distributions import Distribution
 
 
 class OperandEvaluator:
@@ -129,6 +138,71 @@ class Tolerancing:
         perturbation = Perturbation(self.optic, variable_type, sampler, **kwargs)
         self.perturbations.append(perturbation)
 
+    def add_tolerance(
+        self,
+        tolerance_type: str,
+        limit: float | None = None,
+        *,
+        minus: float | None = None,
+        plus: float | None = None,
+        distribution: str | Distribution = "normal",
+        **kwargs,
+    ) -> Tolerance:
+        """Add a tolerance: a signed deviation from nominal within limits.
+
+        Unlike ``add_perturbation``, which sets absolute values of an
+        optimization variable, a tolerance is stated relative to the nominal
+        design, e.g. ``limit=0.05`` for ±0.05. Both can be used together.
+
+        Args:
+            tolerance_type: The registered tolerance type: ``"radius"``,
+                ``"fringes"``, ``"conic"``, ``"thickness"``,
+                ``"surface_decenter"`` or ``"surface_tilt"``, or a type added
+                to ``tolerance_registry``.
+            limit: Symmetric limit; the tolerance spans ``[-limit, +limit]``.
+            minus: Lower limit, for asymmetric tolerances. Requires ``plus``.
+            plus: Upper limit, for asymmetric tolerances. Requires ``minus``.
+            distribution: The distribution used by Monte Carlo analyses:
+                ``"normal"`` (default, truncated with the limits at ±2σ),
+                ``"uniform"``, ``"parabolic"``, ``"end_point"``, or a
+                ``Distribution`` instance.
+            **kwargs: Arguments for the tolerance type, such as
+                ``surface_number`` or ``axis``.
+
+        Returns:
+            The new tolerance.
+
+        Raises:
+            ValueError: If the limits are missing, given twice, or reversed,
+                or if the tolerance type is unknown.
+        """
+        if limit is not None:
+            if minus is not None or plus is not None:
+                raise ValueError("Give either limit or minus and plus, not both.")
+            if limit < 0:
+                raise ValueError(f"limit must not be negative, got {limit}.")
+            minus, plus = -limit, limit
+        elif minus is None or plus is None:
+            raise ValueError("Give either limit, or both minus and plus.")
+
+        tolerance_cls = tolerance_registry.get(tolerance_type)
+        tolerance = Tolerance(
+            tolerance_cls(self.optic, **kwargs), minus, plus, distribution
+        )
+        self.perturbations.append(tolerance)
+        return tolerance
+
+    def ordered_perturbations(self) -> list[BasePerturbation]:
+        """Return the perturbations in the order they are applied.
+
+        Perturbations are sorted by phase (structure, material, form, then
+        rigid body); within a phase they keep insertion order.
+
+        Returns:
+            The perturbations in application order.
+        """
+        return sorted(self.perturbations, key=lambda p: p.phase)
+
     def add_compensator(self, variable_type: str, **kwargs):
         """Add a compensator variable to the optimizer.
 
@@ -164,7 +238,8 @@ class Tolerancing:
 
     def reset(self):
         """Reset the optic to its initial state."""
-        for perturbation in self.perturbations:
+        # reverse application order, so later phases are undone first
+        for perturbation in reversed(self.ordered_perturbations()):
             perturbation.reset()
 
         for compensator in self.compensator.variables:
