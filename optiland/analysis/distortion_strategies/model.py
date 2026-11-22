@@ -131,6 +131,7 @@ class RotationalDistortionModel(DistortionModel):
         self.distortion_type = distortion_type
         self._origin: tuple[BEArray, BEArray] | None = None
         self._scale: BEArray | None = None
+        self._x_parity: BEArray | None = None
         self._max_field_rad: BEArray | None = None
 
     def _project(self, H: BEArray) -> BEArray:
@@ -147,13 +148,23 @@ class RotationalDistortionModel(DistortionModel):
         x_c, y_c = self.reference_point.locate(optic, 0.0, 0.0, wavelength)
         x_c, y_c = x_c[0], y_c[0]
 
-        _, y_ref = self.reference_point.locate(optic, 0.0, self._NEAR_AXIS, wavelength)
+        # Near-axis probes along +Hy and +Hx, traced in one call.
+        x_ref, y_ref = self.reference_point.locate(
+            optic,
+            be.array([0.0, self._NEAR_AXIS]),
+            be.array([self._NEAR_AXIS, 0.0]),
+            wavelength,
+        )
         if self.distortion_type == "f-tan":
             denom = be.tan(self._NEAR_AXIS * self._max_field_rad)
         else:
             denom = self._NEAR_AXIS * self._max_field_rad
 
         self._scale = (y_ref[0] - y_c) / denom
+        # An odd number of reflections can mirror the image in the image
+        # surface's frame, so x may map with the opposite sign of y.
+        x_scale = (x_ref[1] - x_c) / denom
+        self._x_parity = be.where(x_scale * self._scale < 0, -1.0, 1.0)
         self._origin = (x_c, y_c)
 
     def evaluate(
@@ -168,7 +179,7 @@ class RotationalDistortionModel(DistortionModel):
         x_real = x_real - x_c
         y_real = y_real - y_c
 
-        x_ideal = self._scale * self._project(Hx)
+        x_ideal = self._x_parity * self._scale * self._project(Hx)
         y_ideal = self._scale * self._project(Hy)
         return DistortionResult(x_real, y_real, x_ideal, y_ideal, None)
 

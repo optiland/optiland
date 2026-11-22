@@ -166,7 +166,8 @@ class GridDistortion(BaseAnalysis):
             dict: The generated data.
 
         Raises:
-            ValueError: If the distortion type is not 'f-tan' or 'f-theta'.
+            ValueError: If the distortion type is not 'f-tan' or 'f-theta', or
+                if no grid point gives a finite distortion value.
         """
         model = create_distortion_model(
             self.method, distortion_type=self.distortion_type
@@ -185,6 +186,12 @@ class GridDistortion(BaseAnalysis):
 
         pct = model.percent(result, signed=False)
         finite = be.isfinite(pct)
+        if not bool(be.any(finite)):
+            raise ValueError(
+                "Grid distortion is undefined: no field point gives a finite "
+                "distortion value. Check that the chief rays reach the image "
+                "surface and that the plate scale is nonzero."
+            )
         max_distortion = be.max(pct[finite])
 
         return {
