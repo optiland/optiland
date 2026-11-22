@@ -1,151 +1,126 @@
 .. _installation:
 
+.. meta::
+   :description: Install Optiland with pip, add optional extras for PyTorch, the GUI, reports and drawings, set up GPU support, or build from source.
+
 Installation
 ============
 
-Optiland supports Python 3.11 and above and can be installed via pip with optional extras or can be built from source. Choose the installation method that best fits your needs.
-
-Quick Start (Core + CPU‑only PyTorch)
--------------------------------------
-
-To install Optiland with PyTorch support (CPU only) in one step:
-
-.. code-block:: console
-
-   pip install optiland[torch]
-
-This command installs the Optiland core plus the latest PyTorch wheels (CPU‑only) from PyPI.
-
-Standard Install (Core Only)
-----------------------------
-
-If you only need the Optiland core (no PyTorch):
+Optiland supports Python 3.11 and newer. For most people, one command is
+enough:
 
 .. code-block:: console
 
    pip install optiland
 
-Standard Install with GUI
-----------------------------
+That gives you the full sequential and non-sequential engines on the NumPy
+backend, plus 2D (Matplotlib) and 3D (VTK) plotting. Everything else is
+optional, so add it when you need it.
 
-If you wish to use the Optiland GUI:
+.. tip::
 
-.. code-block:: console
+   Installing into a fresh virtual environment (``python -m venv .venv``, a
+   conda environment, or ``uv venv``) keeps Optiland and its dependencies
+   separate from the rest of your system. It is not required, but it does
+   save headaches later.
 
-   pip install optiland[gui]
+Optional extras
+---------------
 
-Standard Install with Prescription Reports
-------------------------------------------
+Extras are installed with square brackets, for example
+``pip install "optiland[torch,gui]"``. (The quotes keep shells like zsh from
+interpreting the brackets.)
 
-To use the new prescription report generator functionality:
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
 
-*   **All Prescription features** (Console Rich-text and PDF rendering):
+   * - Extra
+     - What it adds
+   * - ``torch``
+     - CPU-only PyTorch, for the differentiable backend
+       (:doc:`Tutorial 7a <examples/Tutorial_7a_Differentiable_Ray_Tracing_Hello_World>`).
+       For an NVIDIA GPU, see `GPU support`_ below.
+   * - ``gui``
+     - The Optiland desktop GUI (PySide6). See the :doc:`gui_quickstart`.
+   * - ``prescription``
+     - Prescription reports in the console (``rich``) and as PDF
+       (``reportlab``). ``prescription-console`` and ``prescription-pdf``
+       install only one of the two.
+   * - ``manufacturing``
+     - DXF export of ISO 10110 fabrication drawings (``ezdxf``). PDF and PNG
+       drawings work without it.
 
-    .. code-block:: console
+GPU support
+-----------
 
-       pip install optiland[prescription]
-
-*   **Console-only** (Requires only `rich`):
-
-    .. code-block:: console
-
-       pip install optiland[prescription-console]
-
-*   **PDF-only** (Requires only `reportlab`):
-
-    .. code-block:: console
-
-       pip install optiland[prescription-pdf]
-
-Standard Install with Manufacturing Drawings
---------------------------------------------
-
-ISO 10110 fabrication drawings can be exported to PDF and PNG out of the box.
-To also export DXF files for CAD tools, install the ``manufacturing`` extra
-(adds `ezdxf`):
-
-.. code-block:: console
-
-   pip install optiland[manufacturing]
-
-Development Extras
-------------------
-
-To install Optiland's development dependencies-pytest, codecov, and linting tools-use:
-*(Note: This requires cloning the repository from source)*
-
-.. code-block:: console
-
-   pip install "." --group dev
-
-GPU‑Enabled PyTorch (Manual Install)
-------------------------------------
-
-If you require GPU acceleration, you must install a CUDA‑enabled PyTorch build manually. First install Optiland (core or with dev extras if desired), then follow PyTorch’s official install instructions. For example, for CUDA 11.8:
+The ``torch`` extra installs the CPU-only PyTorch build from PyPI. For GPU
+acceleration, install Optiland first and then a CUDA build of PyTorch that
+matches your NVIDIA driver. For example, for CUDA 12.6:
 
 .. code-block:: console
 
    pip install optiland
-   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+   pip install torch --index-url https://download.pytorch.org/whl/cu126
 
-Note that this command installs PyTorch with CUDA 11.8. This command may not be correct for your system. Refer to https://pytorch.org/get-started/locally/ for the latest installation instructions for your platform.
+The right command depends on your platform and driver, so check the
+`PyTorch installation selector <https://pytorch.org/get-started/locally/>`_.
+On Apple Silicon or a non-NVIDIA GPU, use the CPU-only ``torch`` extra.
 
-Installing from Source
+Once PyTorch is installed, switch backends in your code:
+
+.. code-block:: python
+
+   import optiland.backend as be
+
+   be.set_backend("torch")
+   be.set_device("cuda")   # or "cpu"
+
+Installing from source
 ----------------------
 
-To clone and install the latest development version:
+To get the latest development version, or to contribute, clone the
+repository and install it in editable mode:
 
-1. **Clone the repository**
+.. code-block:: console
 
-   .. code-block:: console
+   git clone https://github.com/optiland/optiland.git
+   cd optiland
+   pip install -e .               # core only
+   pip install -e ".[torch]"      # with PyTorch
+   pip install -e . --group dev   # with test and lint tools (pip 25.1 or newer)
 
-      git clone https://github.com/optiland/optiland.git
+If you use `uv <https://docs.astral.sh/uv/>`_, ``uv sync --group dev`` (and
+``--extra torch`` for PyTorch) sets up the same development environment. The
+:doc:`contributing` guide covers the rest of the development workflow.
 
-2. **Change the directory**
-
-   .. code-block:: console
-
-      cd optiland
-
-3. **Install with optional extras**
-
-   - Core only:
-
-     .. code-block:: console
-
-        pip install .
-
-   - With PyTorch support (CPU‑only):
-
-     .. code-block:: console
-
-        pip install .[torch]
-
-   - With development dependencies:
-
-     .. code-block:: console
-
-        pip install "." --group dev
-
-
-Verify Your Installation
-------------------------
-
-After installation, verify that Optiland imports correctly:
+Check that it works
+-------------------
 
 .. code-block:: python
 
-   import optiland
-
-Optionally, generate and render a sample lens:
-
-.. code-block:: python
-
+   from importlib.metadata import version
    from optiland.samples.objectives import ReverseTelephoto
-   lens = ReverseTelephoto()
-   lens.draw3D()
 
-.. note::
-   - The first import may take a few seconds as modules and JIT-compiled code are cached.
-   - If you see “Module 'torch' not found” after installing optiland[torch], ensure your environment’s PyPI index can reach the official PyTorch packages, or install PyTorch manually as shown above.
-   - For any other issues, please consult our GitHub Issues page.
+   print(version("optiland"))
+   lens = ReverseTelephoto()
+   lens.draw()      # 2D layout; lens.draw3D() opens an interactive 3D view
+
+If a figure with a lens and rays appears, you are all set. Head to the
+:doc:`quickstart` next.
+
+Troubleshooting
+---------------
+
+- **The first import is slow.** Optiland compiles and caches some functions
+  the first time it runs, so the first import can take a few seconds. Later
+  imports are faster.
+- **"No module named 'torch'".** The ``torch`` extra did not install, often
+  because your package index cannot reach PyTorch's wheels. Install PyTorch
+  directly as shown in `GPU support`_.
+- **No 3D window appears.** ``draw3D()`` needs a desktop session. On a remote
+  machine or in CI, use ``draw()`` for 2D plots.
+- **Something else?** Search the
+  `GitHub issues <https://github.com/optiland/optiland/issues>`_ or ask in
+  `GitHub Discussions <https://github.com/optiland/optiland/discussions>`_.
+  Someone has probably hit it before.

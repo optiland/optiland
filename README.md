@@ -24,19 +24,19 @@
 
 ## Introduction
 
-**Optiland** is an open-source optical design platform built in Python, tailored for both classical lens systems and modern computational optics. It provides a robust and extensible interface for constructing, optimizing and analyzing optical systems, from standard refractive or reflective layouts to advanced freeform assemblies.
+**Optiland** is an open-source optical design package written in Python. You can use it to design, analyze and optimize everything from a single lens to a freeform three-mirror telescope, and do it in a notebook or a script.
 
-Built for professional engineering workflows, Optiland includes full support for tolerancing, high-performance optimization routines, and intelligent material selection through its integrated GlassExpert module. Also, traditional ray-based analysis are complemented by differentiable modeling support through PyTorch.
+It does what you would expect from a lens design program: sequential ray tracing, paraxial and aberration analysis, wavefront, PSF and MTF calculations, local and global optimization, tolerancing, and glass selection with GlassExpert. Because it is plain Python, it also fits into research code. The same model runs on a **NumPy** backend for everyday CPU work or a **PyTorch** backend, which adds GPU acceleration and makes every ray trace differentiable.
 
-Whether you're developing prototypes in research or refining production systems, Optiland delivers the flexibility and precision needed to model, simulate, and optimize real-world optical instruments:
+With Optiland you can:
 
-- ⚙️ Build refractive and reflective systems using a clean, object-oriented API  
-- 🔍 Trace rays through multi-surface optical assemblies, including aspherics and freeforms
-- 📊 Analyze paraxial properties, wavefront errors, PSFs/MTFs, and scatter behavior 
-- 🧠 Optimize via traditional merit functions or autograd-enabled differentiable backends  
-- 🎨 Visualize interactively in 2D (Matplotlib) and 3D (VTK).
+- ⚙️ Build refractive and reflective systems with a small, object-oriented API
+- 🔍 Trace rays through spheres, conics, aspheres, freeforms, gratings and more
+- 📊 Analyze first-order properties, aberrations, wavefronts, PSFs, MTFs and scatter
+- 🧠 Optimize with classic merit functions or with gradients from autograd
+- 🎨 Visualize in 2D (Matplotlib) and 3D (VTK), or explore designs in the desktop GUI
 
-Under the hood, Optiland uses NumPy for fast CPU calculations and PyTorch for GPU acceleration and automatic differentiation. Switch between engines depending on your use case with the same interface.
+Optiland is developed in the open by optical engineers, researchers and students, and new contributors are always welcome (see [Get Involved](#-get-involved)).
 
 ## Get started in 5 minutes
 
@@ -77,40 +77,24 @@ is missing or inconsistent about a system, each finding with a runnable fix.
 
 ## Installation
 
-- **Core only**
+Optiland supports Python 3.11 to 3.14.
 
-    ```bash
-    pip install optiland
-    ```
+```bash
+pip install optiland            # core package (NumPy backend)
+pip install optiland[gui]       # + the desktop GUI
+pip install optiland[torch]     # + CPU-only PyTorch for the differentiable backend
+```
 
-- **Core + GUI**
+**GPU support.** Install Optiland, then a CUDA build of PyTorch that matches your driver. For example, for CUDA 12.6:
 
-    ```bash
-    pip install optiland[gui]
-    ```
+```bash
+pip install optiland
+pip install torch --index-url https://download.pytorch.org/whl/cu126
+```
 
-- **With CPU‑only PyTorch**
+The [PyTorch installation selector](https://pytorch.org/get-started/locally/) tells you the right command for your system. On Apple Silicon or a non-NVIDIA GPU, use the CPU-only install above.
 
-    ```bash
-    pip install optiland[torch]
-    ```
-
-- **GPU‑enabled PyTorch**
-
-    After installing Optiland, install a CUDA build of PyTorch manually:
-
-    ```bash
-    pip install optiland
-    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
-    ```
-
-⚠️ Important Notes on GPU Installation
-- This command installs PyTorch with CUDA 12.6. Ensure that your NVIDIA drivers and toolkit are compatible.
-- You can find the correct PyTorch + CUDA combo for your system using the [official PyTorch installation selector](https://pytorch.org/get-started/locally/).
-- If you're using a non-NVIDIA GPU or running on Apple Silicon, use the CPU-only installation instead.
-
-
-For more details, see the [installation guide](https://www.optiland.org/docs/installation.html) in the docs.
+Prefer not to install anything yet? [Try Optiland in your browser](https://www.optiland.org/docs/try_it.html). The [installation guide](https://www.optiland.org/docs/installation.html) covers conda, building from source and troubleshooting.
 
 ## Core Capabilities
 
@@ -135,13 +119,13 @@ For more details, see the [installation guide](https://www.optiland.org/docs/ins
 For a full breakdown of Optiland’s functionalities, see the [complete feature list](https://www.optiland.org/docs/functionalities.html).
 
 > [!NOTE]
-> The code itself is in constant flux and new functionalities are always being added.
+> Optiland moves quickly and new features land all the time. Features marked *beta* or *pre-release* may still change between versions.
 
 
 
 ## 🗺️ Roadmap
 
-Optiland is continually evolving to provide new functionalities for optical design and analysis. Below are some of the planned features and enhancements we aim to implement in future versions. We welcome contributions in any of these areas:
+Optiland keeps growing. Here is what has landed recently and what we would like to build next. We welcome contributions in any of these areas:
 
 ### Physics & Core Engine
 - [x] **Non-Sequential Ray Tracing** (pre-release) — differentiable illumination, stray-light & ghost analysis, with coatings, required mirror reflectance, Beer–Lambert absorption, and self-diagnosing results. See the [Limitations & Roadmap](https://www.optiland.org/docs/gallery/nonsequential/limitations_and_roadmap.html) page (canonical) for the full capability envelope and these follow-ups:
@@ -153,16 +137,18 @@ Optiland is continually evolving to provide new functionalities for optical desi
   - [ ] Polarization (Stokes through Fresnel)
   - [ ] Dr.Jit / Mitsuba 3 / OptiX backend
 - [x] **Multi-Sequence Ray Tracing** (beta) - ghost paths, reverse traces, and sub-component views as alternate traversal orders over the same surfaces. Per-sequence first-order analysis, a visualization overlay, and a ghost-enumeration helper are follow-ups.
-- [ ] **Physical Optics Propagation** (Diffraction, beam clipping, Gaussian beam evolution)
+- [x] **Scalar Physical Optics** (Gaussian beams, angular spectrum propagation)
+  - [ ] Physical optics propagation through full systems (diffraction, beam clipping)
 - [ ] **Multi-Path Sequential Ray Tracing** (branching arms / beamsplitters)
 - [ ] **Additional Freeforms** (Superconic, etc.)
 
 ### Optimization & Algorithms
-- [ ] **Global Optimization Routines** (Genetic Algorithms, etc.)
+- [x] **Global Optimization** (differential evolution, dual annealing, SHGO, basin hopping)
+  - [ ] Additional global strategies (genetic algorithms, etc.)
 - [ ] **AI-Assisted Starting Points** (Database lookup or ML-based design initialization)
 
 ### Engineering & Interoperability
-- [ ] **ISO 10110 Drawing Generator** (Automated fabrication prints)
+- [x] **ISO 10110 Drawing Generator** (automated fabrication prints)
 - [ ] **CAD Export** (STEP/IGES solid body generation)
 - [ ] **Interferogram Analysis** (Experimental data import and phase unwrapping)
 - [ ] **Cost Estimator** (Glass density & volume pricing heuristics)

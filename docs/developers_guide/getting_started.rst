@@ -1,9 +1,9 @@
 .. _getting_started:
 
-Getting Starting with the Codebase
-===================================
+Getting Started with the Codebase
+=================================
 
-This section will help you explore the Optiland codebase and run your first simulation. 
+This section helps you find your way around the Optiland codebase and run your first simulation.
 
 Exploring the Codebase
 ----------------------
@@ -11,12 +11,15 @@ Exploring the Codebase
 Optiland is designed with modularity in mind. Here are the key components you’ll want to explore first:
 
 - **optic**: Defines the core `Optic` class for building optical systems.
-- **rays**: Defines ray objects and and ray generators for simulating light propagation.
+- **rays**: Defines ray objects and ray generators for simulating light propagation.
 - **surfaces**: The building blocks for defining optical elements like lenses and mirrors.
+- **analysis**: Analyses such as spot diagrams, ray fans and distortion, all built on ``BaseAnalysis``.
 - **optimization**: Tools for optimizing optical systems based on user-defined objectives and variables.
+- **backend**: The NumPy/PyTorch abstraction (``import optiland.backend as be``) that all numerical code goes through.
 
 We recommend starting with the **optic** module, as it provides the primary interface for defining optical systems.
-You may also explore the **analysis** module to see how simulations are generally performed.
+The **analysis** module is a good second stop, as it shows how a typical calculation is put together.
+:doc:`code_structure` has the complete map.
 
 The code is thoroughly documented, so use the inline comments and function/class docstrings to understand how
 each module works.
@@ -29,6 +32,7 @@ visualizes the system, and traces some rays.
 
 .. code-block:: python
 
+    import matplotlib.pyplot as plt
     import numpy as np
     from optiland import optic
 
@@ -60,9 +64,11 @@ visualizes the system, and traces some rays.
     # print the first 10 ray y intersection points on the image plane
     print(rays.y[:10])
 
+    plt.show()  # display the plot when running as a script
+
 This script demonstrates three important aspects of Optiland:
 
-1. **Defining an optical system**: The `Optic` object is the starting point for all simulations. Aperture, field, and wavelength are set using the `set_aperture`, `set_field_type`, `add_field` and `add_wavelength` methods.
+1. **Defining an optical system**: The `Optic` object is the starting point for all simulations. The aperture, fields and wavelengths are set with ``set_aperture``, ``fields.set_type``, ``fields.add`` and ``wavelengths.add``.
 2. **Visualization**: Calling the `draw` method generates a 2D plot of the system.
 3. **Tracing rays**: Calling the `trace` method generates rays and traces them through the system. This returns the rays at the image plane.
 

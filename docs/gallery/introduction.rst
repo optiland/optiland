@@ -1,34 +1,120 @@
 .. _example_gallery:
 
-Introduction
-============
+Example Gallery
+===============
 
-This gallery contains a collection of examples demonstrating the capabilities of Optiland. Each example is a self-contained Jupyter notebook that shows how to achieve a specific task using Optiland. The examples cover a wide range of topics, from basic lens design to freeform optics.
-For more detailed explanations of how to use Optiland, see the step-by-step :doc:`learning guide <../learning_guide>`.
+Short, focused notebooks, each showing one thing Optiland can do. They are
+organized by feature, and every one runs on its own, so feel free to jump
+straight to whatever looks interesting. If you would rather learn
+step by step, the :doc:`Learning Guide <../learning_guide>` is the better
+starting point.
 
 .. tip::
 
-   The gallery is organized by Optiland feature. If you know the *question* you want answered
-   rather than the feature you need, use the task-shaped :doc:`../how_do_i` index instead.
+   Know the *question* you want answered but not which feature does it? The
+   :doc:`../how_do_i` page is organized by task instead.
 
-The following sections are covered:
+.. grid:: 1 2 2 3
+   :gutter: 3
 
-1. :doc:`Basic Lenses <basic_lenses>`
-2. :doc:`Specialized Lenses <specialized_lenses>`
-3. :doc:`Reflective Systems <reflective_systems>`
-4. :doc:`Analysis <analysis>`
-5. :doc:`OPD, PSF, MTF <opd_psf_mtf>`
-6. :doc:`Optimization <optimization>`
-7. :doc:`Tolerancing <tolerancing>`
-8. :doc:`Freeform <freeforms>`
-9. :doc:`Diffractive and Phase Elements <diffractive_and_phase>`
-10. :doc:`Coatings and Polarization <coatings_and_polarization>`
-11. :doc:`Differentiable Ray Tracing <differentiable_ray_tracing>`
-12. :doc:`Real-World Projects <real_world_projects>`
-13. :doc:`External Tools Using Optiland <external_tools>`
-14. :doc:`Extended Sources <extended_sources>`
-15. :doc:`Non-Sequential Ray Tracing <nonsequential>`
-16. :doc:`Miscellaneous <miscellaneous>`
+   .. grid-item-card:: Basic Lenses
+      :link: basic_lenses
+      :link-type: doc
+
+      Singlets, doublets, triplets, eyepieces and other classic starting points.
+
+   .. grid-item-card:: Specialized Lenses
+      :link: specialized_lenses
+      :link-type: doc
+
+      Telecentric, f-theta, infrared, zoom, endoscope and lithography lenses.
+
+   .. grid-item-card:: Reflective Systems
+      :link: reflective_systems
+      :link-type: doc
+
+      Parabolas, Cassegrains, the Hubble telescope and three-mirror anastigmats.
+
+   .. grid-item-card:: Analysis
+      :link: analysis
+      :link-type: doc
+
+      Spot diagrams, ray fans, distortion, field curvature, irradiance and more.
+
+   .. grid-item-card:: OPD, PSF, MTF
+      :link: opd_psf_mtf
+      :link-type: doc
+
+      Wavefront maps, Zernike fits, PSFs and MTFs computed several ways.
+
+   .. grid-item-card:: Optimization
+      :link: optimization
+      :link-type: doc
+
+      Local and global optimizers, operands, pickups, bounds and PyTorch-based optimization.
+
+   .. grid-item-card:: Tolerancing
+      :link: tolerancing
+      :link-type: doc
+
+      Sensitivity analysis, Monte Carlo runs and compensators.
+
+   .. grid-item-card:: Freeforms
+      :link: freeforms
+      :link-type: doc
+
+      Polynomial, Chebyshev, Forbes and NURBS freeform surfaces.
+
+   .. grid-item-card:: Diffractive and Phase Elements
+      :link: diffractive_and_phase
+      :link-type: doc
+
+      Gratings, spectrometers and phase surfaces.
+
+   .. grid-item-card:: Coatings and Polarization
+      :link: coatings_and_polarization
+      :link-type: doc
+
+      Thin films, Jones pupils and polarization ray tracing.
+
+   .. grid-item-card:: Differentiable Ray Tracing
+      :link: differentiable_ray_tracing
+      :link-type: doc
+
+      Gradients, autograd and GPU work with the PyTorch backend.
+
+   .. grid-item-card:: Real-World Projects
+      :link: real_world_projects
+      :link-type: doc
+
+      Practical builds: a Cooke triplet from stock lenses, a UV scan lens and a portrait lens.
+
+   .. grid-item-card:: External Tools
+      :link: external_tools
+      :link-type: doc
+
+      Projects built on top of Optiland, such as Visisipy for eye modeling.
+
+   .. grid-item-card:: Extended Sources
+      :link: extended_sources
+      :link-type: doc
+
+      Imaging and illuminating with sources that are not points.
+
+   .. grid-item-card:: Non-Sequential Ray Tracing
+      :link: nonsequential
+      :link-type: doc
+
+      Illumination, stray light and ghosts, from first scene to differentiable optimization.
+
+   .. grid-item-card:: Miscellaneous
+      :link: miscellaneous
+      :link-type: doc
+
+      Apertures, file import, themes, diagnostics and everything else.
+
+Have a design or analysis that would make a good example? Contributions to
+the gallery are very welcome; see :doc:`../contributing`.
 
 .. toctree::
    :hidden:
