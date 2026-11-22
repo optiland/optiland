@@ -11,7 +11,7 @@ Introduction
 The developer's guide is intended for users who wish to better understand and
 contribute to the development of the Optiland package. It provides an overview
 of the package's requirements, architecture and design, and various frameworks related
-to system definition, raytracing, analysis, optimization, tolerancing, etc.   
+to system definition, raytracing, analysis, optimization, tolerancing, etc.
 The guide is intended to be a living document that evolves with the package.
 
 
@@ -23,7 +23,7 @@ The guide is intended to be a living document that evolves with the package.
 Purpose
 -------
 The goal of this guide is to demystify the structure and functionality of the Optiland codebase.
-Ultimately, the guide is to intended to help end users to:
+Ultimately, the guide is intended to help you:
 
 - Add new functionality with minimal friction.
 - Extend existing frameworks to meet custom needs.
@@ -46,8 +46,8 @@ Philosophy and Core Principles
 Optiland is built with the following principles in mind:
 
 - **Transparency and Extensibility**: The codebase is designed to be modular and well-documented, making it easy to adapt for new use cases.
-- **Speed and Performance**: Built on powerful libraries like NumPy and SciPy, Optiland leverages vectorized computations and efficient algorithms to deliver fast, scalable solutions for complex optical problems.
-- **Collaboration and Community**: Optiland is open-source under the MIT License, welcoming contributions from anyone with an interest in advancing optical design tools.
+- **Speed and Performance**: Built on NumPy, SciPy and PyTorch, Optiland relies on vectorized computations, compiled kernels and an optional GPU backend to stay fast on large problems.
+- **Collaboration and Community**: Optiland is open source under the MIT License, and contributions are welcome from anyone interested in better optical design tools, whether that is a bug report, a docs fix or a new feature.
 
 What to Expect in This Guide
 ----------------------------

@@ -14,6 +14,9 @@ For the latest development version, you can clone the repository and install it 
 
    git clone https://github.com/optiland/optiland.git
    cd optiland
-   pip install -e .
+   pip install -e . --group dev   # editable install with test and lint tools
+
+With `uv <https://docs.astral.sh/uv/>`_, ``uv sync --group dev`` does the same (add
+``--extra torch`` to run the PyTorch-backend tests).
 
 Installation details are also outlined in the main :ref:`installation` section of the documentation.

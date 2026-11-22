@@ -90,16 +90,15 @@ New to these concepts? See the :ref:`glossary` first.
 
    import optiland.backend as be
 
-   be.set_backend("torch")    # enable PyTorch (autograd, GPU)
-   be.set_backend("numpy")    # revert to NumPy (default)
+   be.set_backend("torch")       # PyTorch: autograd and GPU support
+   be.set_device("cuda")         # PyTorch only: run on the GPU
+   be.set_precision("float64")   # PyTorch only: float32 or float64
+
+   be.set_backend("numpy")       # back to NumPy (the default)
 
    # Threads of the compiled NumPy trace, for 8192 rays or more
    # (default 1; -1 for the number of logical CPUs)
    be.set_trace_threads(8)
-
-   # GPU and precision (PyTorch only)
-   be.set_device("cuda")
-   be.set_precision("float64")
 
 ----
 
@@ -235,8 +234,9 @@ New to these concepts? See the :ref:`glossary` first.
    from optiland.optimization import OptimizationProblem
 
    problem = OptimizationProblem()
-   problem.add_variable(lens, "radius", surface_number=1)
-   problem.add_variable(lens, "thickness", surface_number=1)
+   # Bounds are optional for local optimizers but required by most global ones
+   problem.add_variable(lens, "radius", surface_number=1, min_val=10, max_val=200)
+   problem.add_variable(lens, "thickness", surface_number=1, min_val=2, max_val=10)
 
 ----
 
@@ -250,10 +250,12 @@ New to these concepts? See the :ref:`glossary` first.
    # EFL of a lens group (surfaces 1 through 2), as in lens.paraxial.f2_range(1, 2)
    problem.add_operand(operand_type="f2_range", target=80.0, weight=1,
                        input_data={"optic": lens, "start": 1, "end": 2})
-   # "num_rays" is a ring count for "hexapolar": 100 rings trace 30301 rays per evaluation
+   # RMS spot size at the image (surface -1) for the full field (Hy=1).
+   # "num_rays" is a ring count for "hexapolar": 16 rings trace 817 rays per evaluation
    problem.add_operand(operand_type="rms_spot_size", target=0.0, weight=1,
-                       input_data={"optic": lens, "field_index": 1, "wavelength_index": 0,
-                                   "distribution": "hexapolar", "num_rays": 100})
+                       input_data={"optic": lens, "surface_number": -1, "Hx": 0, "Hy": 1,
+                                   "wavelength": 0.5876, "distribution": "hexapolar",
+                                   "num_rays": 16})
 
 ----
 
@@ -277,7 +279,7 @@ New to these concepts? See the :ref:`glossary` first.
 
    from optiland.optimization import DualAnnealing
 
-   optimizer = DualAnnealing(problem)
+   optimizer = DualAnnealing(problem)   # every variable needs min_val and max_val
    result = optimizer.optimize()
    print(result)
 
@@ -305,7 +307,7 @@ New to these concepts? See the :ref:`glossary` first.
    p = Prescription(lens)
    p.view()                         # Rich console output
    p.save("prescription.txt")       # plain text
-   p.save("prescription.pdf")       # PDF (requires reportlab)
+   p.save("prescription.pdf")       # PDF: pip install optiland[prescription]
 
 ----
 

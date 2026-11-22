@@ -3,8 +3,8 @@
 Quickstart — Your First 5 Minutes
 ==================================
 
-This page takes you from a fresh install to a working, optimized optical system. Each section is
-self-contained: run any block in a Python script or Jupyter notebook.
+This page takes you from a fresh install to a working, optimized optical system. Run the blocks
+in order, in a Jupyter notebook or a Python script: later blocks reuse the lens built in section 3.
 
 ----
 
@@ -20,8 +20,10 @@ For GPU-accelerated differentiable ray tracing also install PyTorch:
 .. code-block:: bash
 
    pip install optiland[torch]           # CPU-only PyTorch
-   # or manually for CUDA:
-   pip install torch --index-url https://download.pytorch.org/whl/cu118
+   # or, for an NVIDIA GPU, a CUDA build of PyTorch (here CUDA 12.6):
+   pip install torch --index-url https://download.pytorch.org/whl/cu126
+
+See :doc:`installation` for the details.
 
 ----
 
@@ -120,7 +122,8 @@ better image quality.
 6. One-Step Optimization
 ------------------------
 
-Minimize RMS spot size by varying two radii:
+Let the optimizer bend the lens: vary both radii to minimize the on-axis RMS spot size while holding
+the effective focal length at 50 mm.
 
 .. code-block:: python
 
@@ -129,16 +132,22 @@ Minimize RMS spot size by varying two radii:
    problem = OptimizationProblem()
    problem.add_variable(lens, "radius", surface_number=1)
    problem.add_variable(lens, "radius", surface_number=2)
+   problem.add_operand(operand_type="f2", target=50.0, weight=1, input_data={"optic": lens})
    problem.add_operand(
        operand_type="rms_spot_size",
        target=0.0,
-       weight=1,
-       input_data={"optic": lens, "Hx": 0, "Hy": 0, "wavelength": 0.55,
+       weight=10,
+       input_data={"optic": lens, "Hx": 0, "Hy": 0, "wavelength": 0.5876,
                    "distribution": "hexapolar", "num_rays": 6, "surface_number": -1},
    )
    optimizer = LeastSquares(problem)
    result = optimizer.optimize()
    print("Final merit:", result.cost)
+   problem.info()                       # operands and variables, before and after
+
+The image plane stayed where it was, so refocus with ``lens.updater.image_solve()`` and redraw
+with ``lens.draw()`` to see the new shape. The full story is in
+:doc:`Tutorial 3a <examples/Tutorial_3a_Simple_Optimization>` and the :doc:`optimization_guide`.
 
 ----
 
@@ -176,13 +185,14 @@ tutorial :doc:`Tutorial 10a <examples/Tutorial_10a_Non_Sequential_and_Illuminati
 9. What Next?
 -------------
 
-You have installed Optiland, built a lens, traced rays, run a spot diagram, optimized, and saved your
-design — all in under 5 minutes.
+That's the whole workflow: install, build, trace, analyze, optimize and save. Everything else in
+Optiland is a deeper version of one of these steps.
 
 Choose where to go next based on your goals:
 
 - :doc:`how_do_i` — a task-shaped index: find your question, get the notebook that answers it
 - :ref:`start_here` — persona-based routing for students, engineers, researchers, and contributors
-- :doc:`cheat_sheet` — 20 copy-paste snippets for the most common tasks
-- :doc:`learning_guide` — 60+ tutorials covering every feature in depth
+- :doc:`conventions` — one page on how a lens is described; worth reading next
+- :doc:`cheat_sheet` — copy-paste snippets for the most common tasks
+- :doc:`learning_guide` — 40+ tutorials, from beginner to advanced
 - :doc:`Example Gallery <gallery/introduction>` — visual showcase of designs and analyses

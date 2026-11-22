@@ -1,97 +1,140 @@
 .. _start_here:
 
+.. meta::
+   :description: Suggested reading orders through the Optiland documentation for students, optical engineers, computational researchers and contributors.
+
 Start Here
 ==========
 
-**Optiland** is a Python framework for optical design, analysis, and optimization. It covers everything
-from basic paraxial layouts to GPU-accelerated differentiable ray tracing. Whether you are tracing your
-first ray or training a differentiable lens model, this page will route you to the right starting point.
+**Optiland** is a Python package for optical design, analysis and
+optimization. It covers a lot of ground, from paraxial layouts to
+GPU-accelerated differentiable ray tracing, so there is no single right place
+to begin. This page suggests a reading order based on what you came here to do.
+Pick the path that sounds most like you. They overlap, and nothing stops you
+from switching halfway.
 
 .. note::
 
-   Before anything else, read :doc:`conventions` — one page covering the surface-sequential model,
-   the "after" rule for thickness and material, sign conventions, and units. It removes the most
-   common source of newcomer confusion in a few minutes.
+   Whichever path you pick, it is worth reading :doc:`conventions` early. It is
+   one page, and it explains the thing that trips up most newcomers: a
+   surface's ``thickness`` and ``material`` describe the space *after* that
+   surface.
 
-   Already know the optics question you want answered? Skip the paths below and go straight to
-   :doc:`how_do_i` — a task-shaped index mapping concrete questions to the notebook that answers
-   each one.
+   Already have a concrete question? :doc:`how_do_i` maps questions such as "how
+   do I compute the MTF?" straight to the example that answers them.
 
-.. rubric:: Choose Your Path
+.. rubric:: Choose your path
 
 ----
 
-Optics Student / First-Timer
------------------------------
+.. _optics-student-first-timer:
 
-*Goal: understand Optiland basics, trace rays, and visualize a lens system from scratch.*
+Optics student or first-time user
+---------------------------------
 
-You know the fundamentals of optics (lenses, focal lengths, rays) but are new to Optiland or to
-programmatic optical design. Start here to build your first lens in Python.
+*Goal: understand the basics, trace some rays and see what a lens is doing.*
 
-**Recommended path:**
+You know some optics (lenses, focal lengths, rays) but are new to Optiland, or
+to doing optical design in code. This path builds one idea at a time, and every
+notebook runs on its own.
 
-1. :doc:`installation` — install Optiland with ``pip install optiland``
-2. :doc:`Tutorial 1a — Optiland for Beginners <examples/Tutorial_1a_Optiland_for_Beginners>` — build and visualize your first lens
-3. :doc:`Tutorial 1b — Lens Properties & Prescription <examples/Tutorial_1b_Lens_Properties_and_Prescription>` — paraxial properties and surface data
-4. :doc:`Tutorial 1e — Design a Doublet End to End <examples/Tutorial_1e_Design_a_Doublet_End_to_End>` — one design from requirements to prescription
-5. :doc:`Tutorial 2c — Aberration Analyses <examples/Tutorial_2c_Aberration_Analyses>` — spot diagrams, ray fans, and wavefront errors
+1. :doc:`installation`: ``pip install optiland`` is usually all you need.
+2. :doc:`Tutorial 1a: Optiland for Beginners <examples/Tutorial_1a_Optiland_for_Beginners>`:
+   build your first lens and draw it.
+3. :doc:`Tutorial 1b: Lens Properties and Prescription <examples/Tutorial_1b_Lens_Properties_and_Prescription>`:
+   focal length, f-number, pupils and the surface table.
+4. :doc:`Tutorial 2a: Tracing and Analyzing Rays <examples/Tutorial_2a_Tracing_and_Analyzing_Rays>`:
+   what a ray trace actually returns.
+5. :doc:`Tutorial 2c: Aberration Analyses <examples/Tutorial_2c_Aberration_Analyses>`:
+   spot diagrams, ray fans and wavefront errors, and how to read them.
+6. :doc:`Tutorial 1e: Design a Doublet, End to End <examples/Tutorial_1e_Design_a_Doublet_End_to_End>`:
+   put it all together, from a set of requirements to a finished prescription.
+7. :doc:`Tutorial 3a: Simple Optimization <examples/Tutorial_3a_Simple_Optimization>`:
+   let the computer improve the design for you.
 
 **→** :doc:`Start with Tutorial 1a <examples/Tutorial_1a_Optiland_for_Beginners>`
 
 ----
 
-Optical Engineer (Practitioner)
----------------------------------
+.. _optical-engineer-practitioner:
 
-*Goal: get productive fast, import existing designs, and run professional analyses.*
+Optical engineer
+----------------
 
-You are migrating from Zemax, CODE V, or OSLO and want to reproduce your existing designs or leverage
-Optiland's optimization and tolerancing workflows quickly.
+*Goal: get productive quickly, bring in existing designs and run the analyses
+you already know.*
 
-**Recommended path:**
+You have used Zemax OpticStudio, CODE V or OSLO and want to know how the same
+work looks in Optiland.
 
-1. :doc:`quickstart` — a complete 5-minute tour from install to optimization
-2. :doc:`cheat_sheet` — copy-paste snippets for the 20 most common tasks
-3. :doc:`Tutorial 4d — Lens Catalogue Integration <examples/Tutorial_4d_Lens_Catalogue_Integration>` — import off-the-shelf catalog lenses
-4. :doc:`Tutorial 3d — Optimization Case Study (Cooke Triplet) <examples/Tutorial_3d_Optimization_Case_Study_Cooke_Triplet>` — full optimization workflow
+1. :doc:`quickstart`: build, trace, analyze, optimize and save in five
+   minutes.
+2. :doc:`conventions`: how the Optiland lens model maps onto what you are used
+   to.
+3. :doc:`cheat_sheet`: copy-paste snippets for the most common tasks.
+4. :doc:`zemax_import` (or :doc:`oslo_import`): open your existing ``.zmx``
+   or ``.len`` files.
+5. :doc:`Tutorial 4d: Lens Catalogue Integration <examples/Tutorial_4d_Lens_Catalogue_Integration>`:
+   drop in off-the-shelf vendor lenses.
+6. :doc:`Tutorial 3d: Optimization Case Study (Cooke Triplet) <examples/Tutorial_3d_Optimization_Case_Study_Cooke_Triplet>`:
+   a complete optimization workflow.
+7. :doc:`Tutorial 6a: Tolerancing Sensitivity Analysis <examples/Tutorial_6a_Tolerancing_Sensitivity_Analysis>`:
+   sensitivity and Monte Carlo tolerancing.
+
+Curious how the numbers compare with commercial tools? :doc:`validation`
+puts first-order properties, aberrations and real rays side by side with
+OpticStudio and CODE V.
 
 **→** :doc:`Go to the Quickstart <quickstart>`
 
 ----
 
-Computational Researcher
---------------------------
+.. _computational-researcher:
 
-*Goal: use the PyTorch backend for autograd, differentiable optimization, and ML pipelines.*
+Computational researcher
+------------------------
 
-You are working on differentiable optics, end-to-end training of optical systems, or integrating
-Optiland into a PyTorch-based research pipeline.
+*Goal: use the PyTorch backend for autograd, differentiable optimization and
+machine-learning pipelines.*
 
-**Recommended path:**
+You work on differentiable optics or end-to-end design, or you want to put
+Optiland inside a PyTorch training loop.
 
-1. :doc:`Tutorial 7a — Differentiable Ray Tracing Hello World <examples/Tutorial_7a_Differentiable_Ray_Tracing_Hello_World>` — switch to PyTorch and compute gradients
-2. :doc:`Tutorial 7b — Differentiable Lens Optimization <examples/Tutorial_7b_Differentiable_Lens_Optimization>` — gradient-descent optimization with autograd
-3. :ref:`configurable_backend` — backend architecture, device management, and precision control
-4. :doc:`Tutorial 3b — Advanced Optimization <examples/Tutorial_3b_Advanced_Optimization>` — multi-operand merit functions and advanced solvers
+1. :doc:`installation`: install with the ``torch`` extra, or with a CUDA build
+   of PyTorch for GPU work.
+2. :doc:`Tutorial 7a: Differentiable Ray Tracing Hello World <examples/Tutorial_7a_Differentiable_Ray_Tracing_Hello_World>`:
+   switch to the PyTorch backend and compute your first gradients.
+3. :doc:`Tutorial 7b: Differentiable Lens Optimization <examples/Tutorial_7b_Differentiable_Lens_Optimization>`:
+   gradient-based lens optimization with autograd.
+4. :ref:`configurable_backend`: how the backend works, plus device and
+   precision control.
+5. :doc:`Machine learning tutorials (chapter 9) <learning_guide>`: surrogates,
+   classifiers, GANs and reinforcement learning built on top of Optiland.
 
 **→** :doc:`Start with Tutorial 7a <examples/Tutorial_7a_Differentiable_Ray_Tracing_Hello_World>`
 
 ----
 
-Software Contributor / Extender
----------------------------------
+.. _software-contributor-extender:
 
-*Goal: add new surface types, analysis classes, or operands; understand the codebase architecture.*
+Contributor or extender
+-----------------------
 
-You want to extend Optiland with custom components, integrate it into a larger system, or contribute
-a new feature back to the project.
+*Goal: add a surface type, analysis or operand, or understand how the code
+fits together.*
 
-**Recommended path:**
+You want to extend Optiland for your own work, or contribute something back
+to the project. Contributions of every size are welcome, typo fixes included.
 
-1. :doc:`developers_guide/architecture` — high-level codebase map and key design decisions
-2. :doc:`developers_guide/extension_recipes` — step-by-step recipes for the 8 most common extension scenarios
-3. :doc:`Tutorial 8a — Custom Surface Types <examples/Tutorial_8a_Custom_Surface_Types>` — add a new geometry class end-to-end
-4. :doc:`Tutorial 8b — Custom Coating Types <examples/Tutorial_8b_Custom_Coating_Types>` — add a custom coating interaction model
+1. :doc:`contributing`: how to set up a development environment and open a
+   pull request.
+2. :doc:`developers_guide/architecture`: a map of the codebase and the main
+   design decisions.
+3. :doc:`developers_guide/extension_recipes`: step-by-step recipes for the
+   most common extensions.
+4. :doc:`Tutorial 8a: Custom Surface Types <examples/Tutorial_8a_Custom_Surface_Types>`:
+   add a new geometry class, end to end.
+5. :doc:`Tutorial 8b: Custom Coating Types <examples/Tutorial_8b_Custom_Coating_Types>`:
+   add a custom coating.
 
 **→** :doc:`Read the Developer's Guide <developers_guide/introduction>`
