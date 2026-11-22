@@ -21,11 +21,60 @@ from typing import TYPE_CHECKING
 
 import optiland.backend as be
 from optiland.distribution import create_distribution
+from optiland.rays import RealRays
 
 if TYPE_CHECKING:
     from optiland._types import BEArray, DistributionType
+    from optiland.coordinate_system import CoordinateSystem
     from optiland.distribution import BaseDistribution
     from optiland.optic import Optic
+
+
+def _is_rotated(cs: CoordinateSystem | None) -> bool:
+    """Return whether ``cs`` or any of its reference systems has a rotation.
+
+    Args:
+        cs: The coordinate system to inspect, or ``None``.
+
+    Returns:
+        True if any rotation angle in the chain is nonzero.
+    """
+    while cs is not None:
+        for angle in (cs.rx, cs.ry, cs.rz):
+            if bool((be.to_numpy(angle) != 0).any()):
+                return True
+        cs = cs.reference_cs
+    return False
+
+
+def _image_hits_local(optic: Optic) -> tuple[BEArray, BEArray]:
+    """Return the last trace's image-surface hits in the image surface's frame.
+
+    Traced coordinates are stored in the global frame. For a system whose image
+    surface is rotated, for example after a fold mirror, the global ``(x, y)``
+    pair no longer spans the image plane, so the hits are expressed in the
+    image surface's local frame instead. When the image surface is not rotated,
+    the global coordinates are returned unchanged.
+
+    Args:
+        optic: The optical system whose most recent trace is read.
+
+    Returns:
+        A tuple ``(x, y)`` of 1D arrays of image-plane coordinates.
+    """
+    x = optic.surfaces.x[-1, :]
+    y = optic.surfaces.y[-1, :]
+    cs = optic.image_surface.geometry.cs
+    if not _is_rotated(cs):
+        return x, y
+
+    # Reuse the tracer's own global-to-local transform; only positions matter.
+    z = optic.surfaces.z[-1, :]
+    zeros = be.zeros_like(x)
+    ones = be.ones_like(x)
+    points = RealRays(x, y, z, zeros, zeros, ones, ones, ones)
+    cs.localize(points)
+    return points.x, points.y
 
 
 class ReferencePointStrategy(ABC):
@@ -74,9 +123,7 @@ class ChiefRayReferencePoint(ReferencePointStrategy):
     ) -> tuple[BEArray, BEArray]:
         """Trace the chief ray (``Px = Py = 0``) for each field point."""
         optic.trace_generic(Hx=Hx, Hy=Hy, Px=0.0, Py=0.0, wavelength=wavelength)
-        x = optic.surfaces.x[-1, :]
-        y = optic.surfaces.y[-1, :]
-        return x, y
+        return _image_hits_local(optic)
 
 
 class CentroidReferencePoint(ReferencePointStrategy):
@@ -146,8 +193,9 @@ class CentroidReferencePoint(ReferencePointStrategy):
         )
 
         shape = (num_fields, num_pupil)
-        x = be.reshape(optic.surfaces.x[-1, :], shape)
-        y = be.reshape(optic.surfaces.y[-1, :], shape)
+        x_hits, y_hits = _image_hits_local(optic)
+        x = be.reshape(x_hits, shape)
+        y = be.reshape(y_hits, shape)
         intensity = be.reshape(optic.surfaces.intensity[-1, :], shape)
 
         # Survivors: transmitted (positive intensity) and successfully traced.
