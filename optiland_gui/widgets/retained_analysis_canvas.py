@@ -76,7 +76,10 @@ class RetainedAnalysisCanvas(FigureCanvasQTAgg):
 
     def draw_idle(self):
         self._cancel_resize_frame()
-        super().draw_idle()
+        # An unshown analysis page can be replaced and deleted before Qt runs
+        # a zero-timeout callback. showEvent schedules its first visible draw.
+        if self.isVisible():
+            super().draw_idle()
 
     def print_figure(self, *args, **kwargs):
         had_resize_frame = self._resize_frame is not None
@@ -84,7 +87,7 @@ class RetainedAnalysisCanvas(FigureCanvasQTAgg):
         try:
             return super().print_figure(*args, **kwargs)
         finally:
-            if had_resize_frame:
+            if had_resize_frame or self.figure.get_constrained_layout():
                 # Vector/alternate-DPI export restores the display canvas and
                 # DPI, but may leave its old renderer until another paint event.
                 self.draw_idle()
@@ -131,7 +134,7 @@ class RetainedAnalysisCanvas(FigureCanvasQTAgg):
                 if not self._resize_progress.isActive():
                     self._resize_progress.start()
                 self.update()
-            else:
+            elif self.isVisible():
                 self.draw_idle()
             # A callback may request a normal draw, cancelling the deferral.
             self.callbacks.process("resize_event", ResizeEvent("resize_event", self))
@@ -156,6 +159,9 @@ class RetainedAnalysisCanvas(FigureCanvasQTAgg):
 
     def hideEvent(self, event):
         self._cancel_resize_frame()
+        # A queued Matplotlib idle callback must not render after the dock closes.
+        # showEvent requests a fresh draw at the final size.
+        self._draw_pending = False
         super().hideEvent(event)
 
     def showEvent(self, event):

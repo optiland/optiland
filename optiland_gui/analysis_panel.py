@@ -75,6 +75,7 @@ from optiland_gui.widgets.plot_navigation import PlotNavigationToolbar
 from . import gui_plot_utils
 from .services.analysis_plots import draw_analysis_plot
 from .services.job_records import BackendConfig
+from .widgets.analysis_canvas_viewport import AnalysisCanvasViewport
 from .widgets.retained_analysis_canvas import RetainedAnalysisCanvas
 from .widgets.spinbox_hit_areas import DoubleSpinBox, SpinBox
 
@@ -547,6 +548,9 @@ class AnalysisPanel(QWidget):
             if (widget := item.widget()) is not None:
                 if isinstance(widget, FigureCanvas):
                     self._cleanup_figure_canvas(widget)
+                elif isinstance(widget, AnalysisCanvasViewport):
+                    self._cleanup_figure_canvas(widget.canvas)
+                    widget.close()
                 widget.setParent(None)
                 widget.deleteLater()
             elif (sub_layout := item.layout()) is not None:
@@ -1300,7 +1304,13 @@ class AnalysisPanel(QWidget):
                 page["prepared"], self.active_mpl_canvas_widget, {}
             )
             self._setup_plot_toolbar(self.active_mpl_canvas_widget)
-            plot_layout.addWidget(self.active_mpl_canvas_widget)
+            canvas = self.active_mpl_canvas_widget
+            grid = page["prepared"]["subplot_grid"]
+            plot_layout.addWidget(
+                AnalysisCanvasViewport(canvas, grid["rows"], grid["columns"])
+                if grid
+                else canvas
+            )
             # The toolbar exports this completed revision even while a rerun is pending.
             self.active_mpl_toolbar_widget.setToolTip(self.dataInfoLabel.text())
         else:

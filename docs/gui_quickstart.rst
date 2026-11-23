@@ -95,6 +95,12 @@ When you first open the Optiland GUI, you'll see a main window containing severa
     Plot navigation controls follow the light or dark theme. Selected tools
     have an outlined border; keyboard focus uses a dashed border.
 
+    In a narrow dock, regular subplot grids such as Ray Fan and Spot Diagram
+    can extend beyond the visible area. Use the scrollbars to reach other
+    fields and the wavelength legend, or focus the viewport and use the
+    arrow and page keys. The mouse wheel over a plot still zooms around the
+    pointer. Saving the figure exports the full grid.
+
     .. image:: _static/gui_analysis_panel.png
        :alt: Analysis Panel
        :align: center

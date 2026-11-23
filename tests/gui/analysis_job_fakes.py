@@ -83,7 +83,13 @@ def connector_for(optic):
 
 def result_data():
     return {
-        "plot": {"figsize": (7, 5), "axes": [], "texts": [], "legends": []},
+        "plot": {
+            "figsize": (7, 5),
+            "axes": [],
+            "texts": [],
+            "legends": [],
+            "subplot_grid": None,
+        },
         "size_bytes": 100,
         "summary": "Completed data",
     }

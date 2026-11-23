@@ -11,7 +11,10 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from matplotlib import colors
+from matplotlib.axes import Axes
 from matplotlib.collections import LineCollection, PathCollection, QuadMesh
+from matplotlib.gridspec import GridSpec
+from matplotlib.legend import Legend
 from matplotlib.lines import Line2D
 from matplotlib.patches import PathPatch
 from matplotlib.path import Path
@@ -20,7 +23,6 @@ if TYPE_CHECKING:
     from matplotlib.artist import Artist
     from matplotlib.colorizer import ColorizingArtist
     from matplotlib.figure import Figure
-    from matplotlib.legend import Legend
     from matplotlib.text import Text
     from matplotlib.transforms import Transform
 
@@ -94,6 +96,71 @@ def _legend(legend: Legend | None, transform: Transform) -> dict | None:
     }
 
 
+def _subplot_grid(figure: Figure, legends: list) -> dict | None:
+    """Capture a complete regular grid whose layout belongs to Matplotlib."""
+    axes = figure.axes
+    # Axes.get_subplotspec and outside figure legends both arrived in 3.7.
+    if (
+        not hasattr(Axes, "get_subplotspec")
+        or len(axes) < 2
+        or figure.texts
+        or len(legends) > 1
+    ):
+        return None
+    if legends:
+        legend = legends[0]
+        x, y, w, h = legend["anchor"]
+        if not (
+            legend["location"]
+            in (Legend.codes["lower center"], Legend.codes["upper center"])
+            and abs(x - 0.5) < 0.05
+            # The registered wavelength keys sit just below the last row.
+            and -0.1 - 1e-8 <= y <= 0.05 + 1e-8
+            and w == h == 0
+        ):
+            return None
+    cells = []
+    grid = None
+    for ax in axes:
+        spec = ax.get_subplotspec()
+        if (
+            spec is None
+            or not ax.get_in_layout()
+            or not ax.get_visible()
+            or not ax.axison
+            or ax.child_axes
+            or hasattr(ax, "_colorbar")
+            or len(spec.rowspan) != 1
+            or len(spec.colspan) != 1
+        ):
+            return None
+        if grid is None:
+            grid = spec.get_gridspec()
+        if spec.get_gridspec() is not grid or not isinstance(grid, GridSpec):
+            return None
+        cells.append(spec.num1)
+    rows, columns = grid.get_geometry()
+    if (
+        len(cells) != rows * columns
+        or len(set(cells)) != len(cells)
+        or len(set(grid.get_height_ratios())) != 1
+        or len(set(grid.get_width_ratios())) != 1
+        or any(
+            value is not None
+            for value in (
+                grid.left,
+                grid.right,
+                grid.bottom,
+                grid.top,
+                grid.wspace,
+                grid.hspace,
+            )
+        )
+    ):
+        return None
+    return {"rows": rows, "columns": columns, "cells": cells}
+
+
 def capture_analysis_plot(figure: Figure) -> dict:
     """Extract the registered analyses' line, spot, pupil and image plot families."""
     figure.canvas.draw()
@@ -103,6 +170,7 @@ def capture_analysis_plot(figure: Figure) -> dict:
         "texts": [_text(t, figure.transFigure) for t in figure.texts],
         "legends": [_legend(legend, figure.transFigure) for legend in figure.legends],
     }
+    result["subplot_grid"] = _subplot_grid(figure, result["legends"])
     for ax in figure.axes:
         if ax.name != "rectilinear":
             raise ValueError("Analysis pages currently support 2D projections only.")
@@ -117,6 +185,7 @@ def capture_analysis_plot(figure: Figure) -> dict:
             "xlabel": ax.get_xlabel(),
             "ylabel": ax.get_ylabel(),
             "visible": ax.axison,
+            "artist_visible": ax.get_visible(),
             "grid": any(line.get_visible() for line in ax.get_xgridlines()),
             "lines": [],
             "patches": [],
@@ -229,8 +298,23 @@ def draw_analysis_plot(figure: Figure, prepared: dict, theme: str = "dark") -> N
     foreground = "#dddddd" if dark else "#222222"
     background = "#1e1e1e" if dark else "white"
     figure.set_facecolor(background)
-    for data in prepared["axes"]:
-        ax = figure.add_axes(data["position"])
+    layout = prepared["subplot_grid"]
+    if layout:
+        figure.set_layout_engine("compressed")
+        # Leave breathing room for the end ticks when AutoLocator changes
+        # precision as a compact axis crosses a tick-density boundary.
+        figure.get_layout_engine().set(w_pad=6 / 72)
+    elif (
+        hasattr(figure, "set_layout_engine") and figure.get_layout_engine() is not None
+    ):
+        figure.set_layout_engine("none")
+    grid = figure.add_gridspec(layout["rows"], layout["columns"]) if layout else None
+    for i, data in enumerate(prepared["axes"]):
+        ax = (
+            figure.add_subplot(grid[layout["cells"][i]])
+            if grid is not None
+            else figure.add_axes(data["position"])
+        )
         ax.set_facecolor(background)
         for item in data["lines"]:
             style = {k: v for k, v in item.items() if k != "xy"}
@@ -271,10 +355,15 @@ def draw_analysis_plot(figure: Figure, prepared: dict, theme: str = "dark") -> N
                 )
             else:
                 coords = item["coordinates"]
+                values = item["values"]
+                if values.ndim == 1:
+                    # Older Matplotlib exposes the scalar cells as a flat
+                    # array, but pcolormesh expects one row per mesh row.
+                    values = values.reshape(coords.shape[0] - 1, coords.shape[1] - 1)
                 ax.pcolormesh(
                     coords[..., 0],
                     coords[..., 1],
-                    item["values"],
+                    values,
                     cmap=item["cmap"],
                     norm=_norm(item),
                     shading="flat",
@@ -319,6 +408,7 @@ def draw_analysis_plot(figure: Figure, prepared: dict, theme: str = "dark") -> N
         ax.title.set_color(foreground)
         if not data["visible"]:
             ax.set_axis_off()
+        ax.set_visible(data["artist_visible"])
         ax.grid(data["grid"])
         if data["legend"]:
             legend = data["legend"]
@@ -339,8 +429,8 @@ def draw_analysis_plot(figure: Figure, prepared: dict, theme: str = "dark") -> N
     for legend in prepared["legends"]:
         figure.legend(
             handles=[Line2D([], [], **style) for style in legend["handles"]],
-            loc=legend["location"],
-            bbox_to_anchor=legend["anchor"],
+            loc="outside lower center" if layout else legend["location"],
+            bbox_to_anchor=None if layout else legend["anchor"],
             ncols=legend["ncols"],
             title=legend["title"],
         )

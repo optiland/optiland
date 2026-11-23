@@ -92,11 +92,15 @@ def test_dashed_collections_image_opacity_and_patch_paths_survive_transfer():
     )
 
 
-def test_quadmesh_retains_normalization_and_transparency():
+@pytest.mark.parametrize("flat_cells", [False, True])
+def test_quadmesh_retains_normalization_and_transparency(flat_cells):
     original = figure_with_canvas()
     ax = original.subplots()
     mesh = ax.pcolormesh([[1, 2], [3, 4]], alpha=0.6, zorder=4, cmap="viridis")
     prepared = capture_analysis_plot(original)
+    if flat_cells:
+        cells = prepared["axes"][0]["collections"][0]
+        cells["values"] = cells["values"].ravel()
     restored = figure_with_canvas()
     draw_analysis_plot(restored, prepared)
     actual = restored.axes[0].collections[0]
