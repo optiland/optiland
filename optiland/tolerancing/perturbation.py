@@ -14,6 +14,7 @@ from abc import ABC, abstractmethod
 import optiland.backend as be
 from optiland.optimization.scaling.identity import IdentityScaler
 from optiland.optimization.variable import Variable
+from optiland.tolerancing.base import BasePerturbation
 
 
 class BaseSampler(ABC):
@@ -136,7 +137,7 @@ class DistributionSampler(BaseSampler):
         raise ValueError(f"Unknown distribution: {self.distribution}")
 
 
-class Perturbation:
+class Perturbation(BasePerturbation):
     """A class representing a perturbation to an optic variable. Perturbations
     are used to simulate the effects of manufacturing errors or other sources
     of variability in an optical system.
@@ -165,6 +166,11 @@ class Perturbation:
             optic, variable_type, scaler=IdentityScaler(), **kwargs
         )
         self.value = None
+
+    @property
+    def label(self) -> str:
+        """Return a short, human-readable name used in result tables."""
+        return str(self.variable)
 
     def apply(self):
         """Apply the perturbation to the optic."""

@@ -88,8 +88,8 @@ class MonteCarlo:
                 # reset the tolerancing system
                 self.tolerancing.reset()
 
-                # apply perturbations
-                for perturbation in self.tolerancing.perturbations:
+                # apply perturbations, phase by phase
+                for perturbation in self.tolerancing.ordered_perturbations():
                     perturbation.apply()
 
                 # apply compensators
@@ -103,7 +103,7 @@ class MonteCarlo:
 
                 # save results - perturbation type & value
                 for perturbation in self.tolerancing.perturbations:
-                    key = str(perturbation.variable)
+                    key = perturbation.label
                     result[key] = float(perturbation.value)
 
                 # save results - operand values
