@@ -308,6 +308,27 @@ class TestEndToEnd:
         assert apertures[0] is None
         assert apertures[3] is None
 
+    def test_load_latin1_file_with_late_non_ascii_byte(self, zemax_dir, tmp_path):
+        # The UTF-8 attempt decodes the file in chunks, so a non-ASCII byte
+        # past the first 8 KiB used to fail it after some lines were parsed,
+        # and the ISO-8859-1 retry then added those surfaces a second time.
+        with open(os.path.join(zemax_dir, "lens1.zmx"), encoding="utf-8") as fh:
+            head, tail = fh.read().split("SURF 5", 1)
+        padding = "".join(f"TOL TOFF {i} 0 0 0 0 0 0 0 0 0 0\n" for i in range(300))
+        optics = {}
+        for name, letter in (("latin1", "\u00d8"), ("ascii", "D")):
+            path = tmp_path / f"{name}.zmx"
+            text = f"{head}{padding}SURF 5\n  COMM stop {letter} 4 mm{tail}"
+            path.write_bytes(text.encode("iso-8859-1"))
+            optics[name] = load_zemax_file(str(path))
+        assert text.encode("iso-8859-1").index(b"COMM stop") > 8192
+        assert optics["latin1"].surfaces.num_surfaces == 9
+        assert (
+            optics["latin1"].surfaces.num_surfaces
+            == optics["ascii"].surfaces.num_surfaces
+        )
+        assert_allclose(optics["latin1"].paraxial.f2(), optics["ascii"].paraxial.f2())
+
     def test_load_toroidal_surface(self, zemax_dir):
         filename = os.path.join(zemax_dir, "thorlabs_lj1598l1.zmx")
         optic = load_zemax_file(filename)
