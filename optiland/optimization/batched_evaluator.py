@@ -308,7 +308,7 @@ def _extract_value_generic(operand_type, surface_group, input_data, ray_index):
         intercept = surface_group.z[surface_number, ray_index]
         decenter = surface_group.surfaces[surface_number].geometry.cs.z
         if be.is_array_like(decenter):
-            decenter = decenter.item()
+            decenter = be.reshape(decenter, ())
         return intercept - decenter
 
     if operand_type == "real_L":

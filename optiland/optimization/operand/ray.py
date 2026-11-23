@@ -182,11 +182,9 @@ class RayOperand:
         intercept = optic.surfaces.z[surface_number, 0]
         decenter = optic.surfaces[surface_number].geometry.cs.z
 
-        # For some reason decenter can sometimes be a single-element array.
-        # In that case, retreive the float inside.
-        # This is a workaround until a solution is found.
+        # Preserve a scalar shape without detaching the surface-position gradient.
         if be.is_array_like(decenter):
-            decenter = decenter.item()
+            decenter = be.reshape(decenter, ())
 
         return intercept - decenter
 
