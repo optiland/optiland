@@ -14,7 +14,10 @@ from typing import TYPE_CHECKING
 
 from optiland.optimization.operand import Operand
 from optiland.tolerancing import types as _types  # noqa: F401 (registers types)
-from optiland.tolerancing.compensator import CompensatorOptimizer
+from optiland.tolerancing.compensator import (
+    CompensatorOptimizer,
+    QuickFocusCompensator,
+)
 from optiland.tolerancing.perturbation import BaseSampler, Perturbation
 from optiland.tolerancing.registry import tolerance_registry
 from optiland.tolerancing.tolerance import Tolerance
@@ -86,6 +89,7 @@ class Tolerancing:
         self.operands = []
         self.perturbations = []
         self.compensator = CompensatorOptimizer(method=method, tol=tol)
+        self.quick_focus: QuickFocusCompensator | None = None
 
     def add_operand(
         self,
@@ -209,15 +213,25 @@ class Tolerancing:
         Args:
             variable_type: The type of the variable to be used for
                 compensation, such as "thickness", etc. See the variable
-                module for more information.
+                module for more information. ``"quick_focus"`` instead moves
+                the image surface to the minimum RMS spot position on every
+                trial, without an optimizer; see ``QuickFocusCompensator``
+                for its keyword arguments. It runs before the optimizer
+                compensators. Adding it again replaces it.
             **kwargs: Additional keyword arguments for the variable.
 
         """
+        if variable_type == "quick_focus":
+            self.quick_focus = QuickFocusCompensator(self.optic, **kwargs)
+            return
         self.compensator.add_variable(self.optic, variable_type, **kwargs)
 
     def apply_compensators(self):
         """Apply compensators to the optic."""
         result = {}
+        if self.quick_focus is not None:
+            result.update(self.quick_focus.apply())
+
         if self.compensator.has_variables:
             # add operands to the optimization problem (for compensation)
             self.compensator.operands = self.operands
@@ -226,7 +240,6 @@ class Tolerancing:
             self.compensator.run()
 
             # undo scaling and record the optimized values
-            result = {}
             for i, var in enumerate(self.compensator.variables):
                 result[f"C{i}: {var!s}"] = float(var.variable.inverse_scale(var.value))
 
@@ -238,6 +251,10 @@ class Tolerancing:
 
     def reset(self):
         """Reset the optic to its initial state."""
+        # quick focus first: resetting a thickness moves the image surface
+        if self.quick_focus is not None:
+            self.quick_focus.reset()
+
         # reverse application order, so later phases are undone first
         for perturbation in reversed(self.ordered_perturbations()):
             perturbation.reset()

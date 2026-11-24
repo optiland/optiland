@@ -11,6 +11,7 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+import operator
 from typing import TYPE_CHECKING
 
 import matplotlib.pyplot as plt
@@ -18,7 +19,11 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
+from optiland.tolerancing.tolerance import Tolerance
+
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from matplotlib.axes import Axes
     from matplotlib.figure import Figure
     from numpy.typing import NDArray
@@ -43,6 +48,13 @@ class MonteCarlo:
 
     """
 
+    _COMPARISONS = {
+        "<=": operator.le,
+        "<": operator.lt,
+        ">=": operator.ge,
+        ">": operator.gt,
+    }
+
     def __init__(self, tolerancing: Tolerancing) -> None:
         self.tolerancing = tolerancing
         self.operand_names = [
@@ -51,13 +63,19 @@ class MonteCarlo:
         self._results = pd.DataFrame()
         self._validate()
 
-    def run(self, num_iterations: int):
+    def run(self, num_iterations: int, seed: int | None = None):
         """Executes the Monte Carlo simulation for a specified number of
         iterations.
 
         Args:
             num_iterations (int): The number of iterations to run the
                 simulation.
+            seed (int, optional): Seed for the tolerances. Each trial draws
+                from its own generator, spawned from
+                ``numpy.random.SeedSequence(seed)``, so a run is reproducible.
+                Perturbations added with ``add_perturbation`` keep their own
+                samplers and are not seeded. Defaults to None, where each
+                tolerance draws from its own generator.
 
         Returns:
             None: The results are stored in the instance variable `_results`
@@ -82,15 +100,23 @@ class MonteCarlo:
 
         """
         results = []
+        if seed is None:
+            generators = [None] * num_iterations
+        else:
+            children = np.random.SeedSequence(seed).spawn(num_iterations)
+            generators = [np.random.default_rng(child) for child in children]
 
         try:
-            for _ in range(num_iterations):
+            for rng in generators:
                 # reset the tolerancing system
                 self.tolerancing.reset()
 
                 # apply perturbations, phase by phase
                 for perturbation in self.tolerancing.ordered_perturbations():
-                    perturbation.apply()
+                    if rng is not None and isinstance(perturbation, Tolerance):
+                        perturbation.apply(rng)
+                    else:
+                        perturbation.apply()
 
                 # apply compensators
                 compensator_result = self.tolerancing.apply_compensators()
@@ -133,6 +159,79 @@ class MonteCarlo:
 
         """
         return self._results
+
+    def yield_fraction(self, spec: dict[int | str, tuple[str, float]]) -> float:
+        """Return the fraction of trials that meet every condition in a spec.
+
+        Args:
+            spec: Maps a column to a condition ``(op, value)``, where ``op``
+                is one of ``"<="``, ``"<"``, ``">="`` or ``">"``. A column is
+                an operand index (``0`` for the first operand) or a column
+                name of ``get_results()``, such as a compensator column.
+
+        Returns:
+            The fraction of trials, between 0 and 1, that meet all conditions.
+            A trial with a NaN value in a tested column fails.
+
+        Raises:
+            RuntimeError: If ``run`` has not been called.
+            ValueError: If ``spec`` is empty or an operator is unknown.
+            KeyError: If a column does not exist.
+            IndexError: If an operand index is out of range.
+        """
+        self._require_results()
+        if not spec:
+            raise ValueError("spec must contain at least one condition.")
+
+        passed = np.ones(len(self._results), dtype=bool)
+        for key, (op, value) in spec.items():
+            if op not in self._COMPARISONS:
+                raise ValueError(
+                    f"Unknown operator {op!r}; use one of "
+                    f"{', '.join(self._COMPARISONS)}."
+                )
+            column = self._column(key).to_numpy(dtype=float)
+            # comparisons with NaN are False, so NaN trials fail
+            passed &= self._COMPARISONS[op](column, value)
+        return float(passed.mean())
+
+    def percentiles(self, q: Sequence[float] = (50, 90, 98)) -> pd.DataFrame:
+        """Return percentiles of the operand and compensator values.
+
+        Args:
+            q: Percentiles to compute, between 0 and 100. Defaults to
+                ``(50, 90, 98)``.
+
+        Returns:
+            One row per percentile and one column per operand and compensator.
+            NaN trials are left out; use ``yield_fraction`` to count them.
+
+        Raises:
+            RuntimeError: If ``run`` has not been called.
+            ValueError: If a percentile is outside [0, 100].
+        """
+        self._require_results()
+        q = np.asarray(q, dtype=float)
+        if np.any((q < 0) | (q > 100)):
+            raise ValueError("Percentiles must be between 0 and 100.")
+
+        labels = {p.label for p in self.tolerancing.perturbations}
+        columns = [c for c in self._results.columns if c not in labels]
+        result = self._results[columns].astype(float).quantile(q / 100)
+        result.index = q
+        result.index.name = "percentile"
+        return result
+
+    def _require_results(self) -> None:
+        """Raise if there are no results to summarize."""
+        if self._results.empty:
+            raise RuntimeError("No results. Call run() first.")
+
+    def _column(self, key: int | str) -> pd.Series:
+        """Return a result column by operand index or column name."""
+        if isinstance(key, int | np.integer):
+            return self._results[self.operand_names[key]]
+        return self._results[key]
 
     def view_histogram(self, kde: bool = True) -> tuple[Figure, NDArray[np.object_]]:
         """Displays a histogram of the data.
