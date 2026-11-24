@@ -176,30 +176,80 @@ class ActionManager:
             "Reset Window Layout",
             triggered=self.main_window.reset_windows_action,
         )
-
-    def _create_layout_actions(self) -> None:
-        """Create Layout-slot load and save actions."""
-        settings = self.main_window.settings
-        load1 = self._create_action(
-            "load_layout_1",
-            "1",
-            triggered=self.main_window.load_layout_1_slot,
-            tooltip="Load Layout from Slot 1",
-        )
-        load2 = self._create_action(
-            "load_layout_2",
-            "2",
-            triggered=self.main_window.load_layout_2_slot,
-            tooltip="Load Layout from Slot 2",
+        self._create_action(
+            "arrange_two_panes",
+            "Arrange &Two Panes",
+            triggered=self.main_window.arrange_two_panes,
+            tooltip="Design and viewer tabs beside analysis and scripting tabs",
         )
         self._create_action(
-            "save_layout",
-            "Save Current Layout",
-            triggered=self.main_window.save_layout_slot,
-            tooltip="Save current window layout to next available slot (1 or 2)",
+            "arrange_four_panes",
+            "Arrange &Four Panes",
+            triggered=self.main_window.arrange_four_panes,
+            tooltip="Design, viewer, analysis and scripts in a two-by-two layout",
         )
-        load1.setEnabled(settings.contains("Layouts/Config1Geometry"))
-        load2.setEnabled(settings.contains("Layouts/Config2Geometry"))
+        self._create_action(
+            "equalize_panes",
+            "&Equalize Split Panes",
+            triggered=self.main_window.equalize_panes,
+            tooltip="Balance visible splits within each panel's size limits",
+        )
+
+    def _create_layout_actions(self) -> None:
+        """Create named controls for the two supported saved workspace slots."""
+        self._create_action(
+            "load_layout_1",
+            "Restore Workspace 1",
+            triggered=self.main_window.load_layout_1_slot,
+        )
+        self._create_action(
+            "load_layout_2",
+            "Restore Workspace 2",
+            triggered=self.main_window.load_layout_2_slot,
+        )
+        for slot in (1, 2):
+            self._create_action(
+                f"save_layout_{slot}",
+                f"Save to Workspace {slot}",
+                triggered=lambda checked=False, number=slot: (
+                    self.main_window.save_named_layout_slot(number)
+                ),
+            )
+            self._create_action(
+                f"rename_layout_{slot}",
+                f"Rename Workspace {slot}...",
+                triggered=lambda checked=False, number=slot: (
+                    self.main_window.rename_layout_slot(number)
+                ),
+            )
+        self._create_action(
+            "save_layout",
+            "Save to Next Workspace",
+            triggered=self.main_window.save_layout_slot,
+        )
+        self.update_layout_actions()
+
+    def update_layout_actions(self) -> None:
+        """Keep workspace names, availability and the next-save destination current."""
+        settings = self.main_window.settings
+        for slot in (1, 2):
+            name = self.main_window._workspace_name(slot)
+            menu_name = name.replace("&", "&&")
+            load = self.get_action(f"load_layout_{slot}")
+            load.setText(f"Restore {menu_name}")
+            load.setToolTip(f"Restore workspace {slot}: {name}")
+            load.setEnabled(
+                settings.contains(f"Layouts/Config{slot}Geometry")
+                and settings.contains(f"Layouts/Config{slot}State")
+            )
+            self.get_action(f"save_layout_{slot}").setText(f"Save to {menu_name}")
+            self.get_action(f"rename_layout_{slot}").setText(f"Rename {menu_name}...")
+        target = self.main_window.next_save_slot_index
+        self.get_action("save_layout").setText(f"Save to Next Workspace ({target})")
+        self.get_action("save_layout").setToolTip(
+            f"Save the current layout to workspace {target}: "
+            f"{self.main_window._workspace_name(target)}"
+        )
 
     def _create_theme_actions(self) -> None:
         """Create mutually exclusive Dark / Light theme actions."""

@@ -61,17 +61,7 @@ class ZemaxDataParser:
     def __init__(self, filename: str, agf_dirs=None) -> None:
         self.filename = filename
         self.agf_dirs = agf_search_dirs(agf_dirs)
-        self.data_model = ZemaxDataModel()
-        self._current_surf = -1
-        self._current_surf_data: dict[str, Any] = {}
-        self._medium = "air"  # the medium before the in-progress surface
-        self._current_aperture_offset = (0.0, 0.0)
-        self._declared_field_count: int | None = None
-        self._declared_wavelength_count: int | None = None
-        self._raw_fields: dict[str, list[float]] = {}
-        self._wavelength_slots: dict[int, tuple[float, float]] = {}
-        self._primary_wavelength_slot: int | None = None
-        self._read_config_data(["FTYP"])
+        self._reset_state()
 
         # Operand dispatch table — maps operand string to handler method
         self._operand_table = {
@@ -117,6 +107,26 @@ class ZemaxDataParser:
             "OBDC": self._read_aperture_decenter,
         }
 
+    def _reset_state(self) -> None:
+        """Start a new data model and clear the state of a parse in progress.
+
+        Called before each encoding attempt, so that an attempt that fails
+        part way through, or decodes to text without aperture data, leaves
+        nothing behind for the next one.
+        """
+        self.data_model = ZemaxDataModel()
+        self._current_surf = -1
+        self._current_surf_data: dict[str, Any] = {}
+        self._medium = "air"  # the medium before the in-progress surface
+        self._current_aperture_offset = (0.0, 0.0)
+        self._current_aperture_shape = None
+        self._declared_field_count: int | None = None
+        self._declared_wavelength_count: int | None = None
+        self._raw_fields: dict[str, list[float]] = {}
+        self._wavelength_slots: dict[int, tuple[float, float]] = {}
+        self._primary_wavelength_slot: int | None = None
+        self._read_config_data(["FTYP"])
+
     def parse(self) -> ZemaxDataModel:
         """Read the Zemax file and extract optical data into a ZemaxDataModel.
 
@@ -131,17 +141,22 @@ class ZemaxDataParser:
         encodings = ["utf-16", "utf-8", "iso-8859-1"]
         success = False
         for encoding in encodings:
+            # Decode the whole file before parsing any of it: the file is read
+            # in chunks, so a decode error can come after lines were parsed.
             try:
                 with open(self.filename, encoding=encoding) as fh:
-                    for line in fh:
-                        tokens = line.split()
-                        if not tokens:
-                            continue
-                        operand = tokens[0]
-                        if operand in self._operand_table:
-                            self._operand_table[operand](tokens)
+                    lines = fh.readlines()
             except (UnicodeError, UnicodeDecodeError):
                 continue
+
+            self._reset_state()
+            for line in lines:
+                tokens = line.split()
+                if not tokens:
+                    continue
+                operand = tokens[0]
+                if operand in self._operand_table:
+                    self._operand_table[operand](tokens)
 
             if self.data_model.aperture:
                 success = True

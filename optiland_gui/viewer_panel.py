@@ -17,18 +17,18 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QDoubleSpinBox,
     QFormLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
     QSizePolicy,
-    QSpinBox,
     QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
+
+from .widgets.spinbox_hit_areas import DoubleSpinBox, SpinBox
 
 try:
     import vtk
@@ -128,16 +128,16 @@ class SagViewer(QWidget):
         settings_layout.addWidget(QLabel("Sag Viewer Settings"))
 
         settings_form = QFormLayout()
-        self.surface_selector = QSpinBox()
+        self.surface_selector = SpinBox()
         self.surface_selector.setRange(0, 100)
         settings_form.addRow("Surface Index:", self.surface_selector)
 
-        self.x_cross_section = QDoubleSpinBox()
+        self.x_cross_section = DoubleSpinBox()
         self.x_cross_section.setRange(-1000, 1000)
         self.x_cross_section.setValue(0.0)
         settings_form.addRow("X Cross-section (for Y-plot):", self.x_cross_section)
 
-        self.y_cross_section = QDoubleSpinBox()
+        self.y_cross_section = DoubleSpinBox()
         self.y_cross_section.setRange(-1000, 1000)
         self.y_cross_section.setValue(0.0)
         settings_form.addRow("Y Cross-section (for X-plot):", self.y_cross_section)
@@ -145,7 +145,7 @@ class SagViewer(QWidget):
         settings_layout.addLayout(settings_form)
         settings_layout.addStretch()
 
-        self.maxExtentSpinBox = QDoubleSpinBox()
+        self.maxExtentSpinBox = DoubleSpinBox()
         self.maxExtentSpinBox.setRange(0.01, 1000.0)
         self.maxExtentSpinBox.setValue(20.0)  # Default value
         self.maxExtentSpinBox.setSuffix(" mm")

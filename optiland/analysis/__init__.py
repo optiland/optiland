@@ -21,6 +21,7 @@ from .field_curvature import FieldCurvature
 from .chromatic_focal_shift import ChromaticFocalShift
 from .footprint import FootprintDiagram
 from .lateral_color import LateralColor
+from .relative_illumination import RelativeIllumination
 from .longitudinal_aberration import LongitudinalAberration
 from .seidel_diagram import SeidelDiagram
 from .rms_vs_field import RmsSpotSizeVsField, RmsWavefrontErrorVsField
@@ -32,6 +33,7 @@ from .through_focus_mtf import ThroughFocusMTF
 from .through_focus_spot_diagram import ThroughFocusSpotDiagram
 from .jones_pupil import JonesPupil
 from .gaussian_beam import GaussianBeamAnalysis
+from .ghost import GhostAnalysis
 
 import optiland.plugins as _plugins
 

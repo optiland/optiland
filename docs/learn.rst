@@ -6,9 +6,11 @@
 Learn
 =====
 
-Optiland's learning material comes in three forms: a progressive tutorial
-series, a gallery of focused examples organized by feature, and an in-browser
-playground where you can run Optiland without installing anything.
+Optiland's learning material comes in three flavors: a tutorial series that
+builds up one idea at a time, a gallery of short, focused examples organized by
+feature, and an in-browser playground where you can try things out without
+installing anything. If you are not sure where to begin, start with chapter 1
+of the Learning Guide.
 
 .. grid:: 1 1 3 3
    :gutter: 3
@@ -17,9 +19,9 @@ playground where you can run Optiland without installing anything.
       :link: learning_guide
       :link-type: doc
 
-      Ten thematic chapters, from your first singlet to differentiable ray
+      Eleven chapters, from your first singlet to differentiable ray
       tracing, machine learning and non-sequential illumination. Every
-      notebook is self-contained and runnable.
+      notebook runs on its own.
 
    .. grid-item-card:: Example Gallery
       :link: gallery/introduction

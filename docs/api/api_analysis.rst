@@ -17,6 +17,7 @@ encircled energy, field curvature, distortion, etc.
    analysis.field_curvature
    analysis.footprint
    analysis.gaussian_beam
+   analysis.ghost
    analysis.grid_distortion
    analysis.intensity
    analysis.image_simulation
@@ -27,6 +28,7 @@ encircled energy, field curvature, distortion, etc.
    analysis.mtf_vs_field
    analysis.pupil_aberration
    analysis.ray_fan
+   analysis.relative_illumination
    analysis.rms_vs_field
    analysis.seidel_diagram
    analysis.spot_diagram

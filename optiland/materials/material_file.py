@@ -9,6 +9,7 @@ Kramer Harrison, 2024
 from __future__ import annotations
 
 import contextlib
+import math
 import os
 
 import yaml
@@ -72,6 +73,7 @@ class MaterialFile(BaseMaterial):
         self._n = None
         self._formula_wavelength_range = None
         self._t0 = None
+        self._thermal_expansion = None
         self.reference_data = None
 
         self.formula_map = {
@@ -402,6 +404,7 @@ class MaterialFile(BaseMaterial):
             self._parse_sub_data(sub_data)
 
         self._parse_thermal_dispersion(data)
+        self._parse_thermal_expansion(data)
         self._parse_reference(data)
 
     def _parse_sub_data(self, sub_data: dict) -> None:
@@ -444,6 +447,32 @@ class MaterialFile(BaseMaterial):
             self._t0 = float(data["SPECS"]["temperature"].split(" ")[0])
         except KeyError:
             pass  # Optional field, safe to ignore
+
+    def _parse_thermal_expansion(self, data: dict) -> None:
+        """Parse the coefficient of thermal expansion (CTE).
+
+        Uses the ``-30 70 °C`` entry when present, else the first entry. Missing
+        or malformed data leaves the CTE as None.
+        """
+        try:
+            entries = data["SPECS"]["thermal_expansion"]
+            entry = next(
+                (e for e in entries if e.get("temperature_range") == "-30 70 °C"),
+                entries[0],
+            )
+            value = float(str(entry["coefficient"]).split()[0])
+        except (AttributeError, IndexError, KeyError, TypeError, ValueError):
+            return
+        if math.isfinite(value):
+            self._thermal_expansion = value
+
+    @property
+    def thermal_expansion(self) -> float | None:
+        """Coefficient of thermal expansion (CTE) from the material file, in 1/K.
+
+        ``None`` means the file has no usable CTE data, not that the CTE is zero.
+        """
+        return self._thermal_expansion
 
     def _parse_reference(self, data: dict) -> None:
         """Parse optional reference information."""

@@ -25,12 +25,57 @@ from optiland.analysis.distortion_strategies import (
     create_distortion_model,
 )
 from optiland.analysis.image_simulation import DistortionWarper
+from optiland.optic import Optic
 from optiland.samples.objectives import CookeTriplet
 
 
 @pytest.fixture
 def cooke_triplet():
     return CookeTriplet()
+
+
+def _fold_relay(fold: bool, back: bool = False) -> Optic:
+    """Two-singlet system from #1210, optionally folded by a 45 deg mirror.
+
+    With ``fold=True`` the beam is turned to +y by a flat mirror and the
+    elements after it are placed in global coordinates. ``back=True`` makes
+    their local +z point against the beam (the Zemax negative-thickness
+    convention). The unfolded copy replaces the mirror by a dummy plane, so
+    all three systems are optically identical.
+    """
+    op = Optic()
+    op.surfaces.add(index=0, thickness=be.inf)
+    op.surfaces.add(index=1, thickness=0, is_stop=True)
+    op.surfaces.add(index=2, radius=50, thickness=3, material="N-BK7")
+    op.surfaces.add(index=3, radius=-50, thickness=40)
+    if fold:
+        sign = -1 if back else 1
+        rx = np.pi / 2 if back else -np.pi / 2
+        op.surfaces.add(index=4, material="mirror", rx=np.pi / 4, thickness=0)
+        op.surfaces.add(
+            index=5, radius=sign * 30, material="N-BK7", y=30, z=43, rx=rx
+        )
+        op.surfaces.add(index=6, radius=-sign * 30, y=34, z=43, rx=rx)
+        op.surfaces.add(index=7, y=60, z=43, rx=rx)
+    else:
+        op.surfaces.add(index=4, thickness=30)
+        op.surfaces.add(index=5, radius=30, thickness=4, material="N-BK7")
+        op.surfaces.add(index=6, radius=-30, thickness=26)
+        op.surfaces.add(index=7)
+    op.set_aperture("EPD", 10)
+    op.fields.set_type("angle")
+    for y in (0, 5, 10):
+        op.fields.add(y=y)
+    op.wavelengths.add(0.55, is_primary=True)
+    return op
+
+
+# Folded and unfolded traces agree to ~3e-6 relative in the plate scale: the
+# 1e-10 near-axis probe is resolved in global coordinates, which sit ~43 mm from
+# the origin along the folded axis. That float64 floor shifts every distortion
+# value by ~3e-4 percentage points, so compare in absolute percentage points.
+_FOLD_RTOL = 1e-5
+_FOLD_ATOL_PCT = 1e-3
 
 
 class TestReferencePointStrategies:
@@ -166,3 +211,74 @@ class TestNonParaxialIntegration:
         )
         assert tuple(grid.shape) == (1, 16, 16, 2)
         assert np.all(np.isfinite(be.to_numpy(grid)))
+
+
+class TestFoldedSystems:
+    """Distortion of a folded system equals that of its unfolded copy (#1210)."""
+
+    @pytest.mark.parametrize("back", [False, True])
+    def test_chief_ray_in_image_frame(self, set_test_backend, back):
+        Hx = be.array([0.0, 1.0, 0.7])
+        Hy = be.array([1.0, 0.0, 0.7])
+        locator = ChiefRayReferencePoint()
+        x0, y0 = locator.locate(_fold_relay(False), Hx, Hy, 0.55)
+        x1, y1 = locator.locate(_fold_relay(True, back), Hx, Hy, 0.55)
+        # Local +z along the beam after one mirror mirrors the image in y.
+        y_sign = 1.0 if back else -1.0
+        assert_allclose(be.to_numpy(x1), be.to_numpy(x0), atol=1e-9)
+        assert_allclose(be.to_numpy(y1), y_sign * be.to_numpy(y0), atol=1e-9)
+
+    @pytest.mark.parametrize("back", [False, True])
+    def test_centroid_in_image_frame(self, set_test_backend, back):
+        Hx = be.array([0.0, 0.5])
+        Hy = be.array([1.0, 0.5])
+        locator = CentroidReferencePoint(num_rays=12)
+        x0, y0 = locator.locate(_fold_relay(False), Hx, Hy, 0.55)
+        x1, y1 = locator.locate(_fold_relay(True, back), Hx, Hy, 0.55)
+        y_sign = 1.0 if back else -1.0
+        assert_allclose(be.to_numpy(x1), be.to_numpy(x0), atol=1e-9)
+        assert_allclose(be.to_numpy(y1), y_sign * be.to_numpy(y0), atol=1e-9)
+
+    @pytest.mark.parametrize("back", [False, True])
+    def test_distortion_matches_unfolded(self, set_test_backend, back):
+        ref = analysis.Distortion(_fold_relay(False))
+        folded = analysis.Distortion(_fold_relay(True, back))
+        for a, b in zip(folded.data, ref.data, strict=True):
+            assert_allclose(be.to_numpy(a), be.to_numpy(b), atol=_FOLD_ATOL_PCT)
+
+    @pytest.mark.parametrize("back", [False, True])
+    def test_grid_distortion_matches_unfolded(self, set_test_backend, back):
+        ref = analysis.GridDistortion(_fold_relay(False))
+        folded = analysis.GridDistortion(_fold_relay(True, back))
+        assert_allclose(
+            float(be.to_numpy(folded.data["max_distortion"])),
+            float(be.to_numpy(ref.data["max_distortion"])),
+            rtol=_FOLD_RTOL,
+        )
+
+    @pytest.mark.parametrize("back", [False, True])
+    def test_affine_grid_distortion_matches_unfolded(self, set_test_backend, back):
+        def model():
+            return AffineDistortionModel(
+                reference_point=CentroidReferencePoint(num_rays=12), fit_grid_size=5
+            )
+
+        ref = analysis.GridDistortion(_fold_relay(False), method=model())
+        folded = analysis.GridDistortion(_fold_relay(True, back), method=model())
+        assert_allclose(
+            float(be.to_numpy(folded.data["max_distortion"])),
+            float(be.to_numpy(ref.data["max_distortion"])),
+            rtol=_FOLD_RTOL,
+        )
+
+
+class _NaNModel(RotationalDistortionModel):
+    """Rotational model whose distortion is undefined everywhere."""
+
+    def percent(self, result, *, signed=False):
+        return be.full_like(result.x_real, be.nan)
+
+
+def test_grid_distortion_raises_when_undefined(set_test_backend, cooke_triplet):
+    with pytest.raises(ValueError, match="no field point gives a finite"):
+        analysis.GridDistortion(cooke_triplet, method=_NaNModel())

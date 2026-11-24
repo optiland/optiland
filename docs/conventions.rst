@@ -17,6 +17,8 @@ lens element is therefore *two* surfaces (front and back), not one:
 
 .. code-block:: python
 
+   from optiland import optic
+
    lens = optic.Optic()
    lens.surfaces.add(index=0, thickness=float("inf"))                     # object
    lens.surfaces.add(index=1, radius=50.0, thickness=5.0, material="N-BK7", is_stop=True)

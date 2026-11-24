@@ -122,6 +122,7 @@ def test_populated_splitter_burst_preserves_zoom_data_and_final_image(
 ):
     window, docks, retained = populated_dock_tree
     canvases, before, draws = [], [], [[], []]
+    resized = [False, False]
     for index, (panel, connector, page) in enumerate(retained):
         canvas = panel.active_mpl_canvas_widget
         canvases.append(canvas)
@@ -141,6 +142,11 @@ def test_populated_splitter_burst_preserves_zoom_data_and_final_image(
         canvas.mpl_connect(
             "draw_event", lambda _event, index=index: draws[index].append(True)
         )
+
+        def record_resize(_event, index=index):
+            resized[index] = True
+
+        canvas.mpl_connect("resize_event", record_resize)
     requests = 0
     driver = QTimer(window)
     driver.setInterval(16)
@@ -159,8 +165,11 @@ def test_populated_splitter_burst_preserves_zoom_data_and_final_image(
     wait_for(qapp, lambda: requests == 24)
     wait_for(qapp, lambda: all(final_pixels_match(canvas) for canvas in canvases))
     QTest.qWait(180)
-    # The old immediate-per-resize canvas produces 23 renders per panel.
-    assert all(0 < len(events) < 12 for events in draws)
+    # An overflowing canvas can stay at its readable minimum throughout a
+    # splitter drag. Only the scroll area changes size in that case.
+    assert any(resized)
+    for changed, events in zip(resized, draws, strict=True):
+        assert 0 < len(events) < 12 if changed else not events
     for canvas, (panel, connector, page), state in zip(
         canvases, retained, before, strict=True
     ):
@@ -179,6 +188,10 @@ def test_populated_splitter_burst_preserves_zoom_data_and_final_image(
             atol=1e-8,
         )
         final_image = hashlib.sha256(canvas.buffer_rgba()).digest()
+        # Compare the final pixels with a full redraw at the same geometry.
+        # Another compressed-layout solve can adjust subpixel axes positions.
+        assert canvas._resize_frame is None
+        figure.set_layout_engine("none")
         canvas.draw()
         assert hashlib.sha256(canvas.buffer_rgba()).digest() == final_image
 
