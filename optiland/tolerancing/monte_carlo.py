@@ -12,6 +12,8 @@ Kramer Harrison, 2024
 from __future__ import annotations
 
 import operator
+import pickle
+from concurrent.futures import ProcessPoolExecutor
 from typing import TYPE_CHECKING
 
 import matplotlib.pyplot as plt
@@ -19,6 +21,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
+import optiland.backend as be
 from optiland.tolerancing.tolerance import Tolerance
 
 if TYPE_CHECKING:
@@ -63,7 +66,7 @@ class MonteCarlo:
         self._results = pd.DataFrame()
         self._validate()
 
-    def run(self, num_iterations: int, seed: int | None = None):
+    def run(self, num_iterations: int, seed: int | None = None, workers: int = 1):
         """Executes the Monte Carlo simulation for a specified number of
         iterations.
 
@@ -76,6 +79,15 @@ class MonteCarlo:
                 Perturbations added with ``add_perturbation`` keep their own
                 samplers and are not seeded. Defaults to None, where each
                 tolerance draws from its own generator.
+            workers (int, optional): Number of processes that run the trials.
+                Defaults to 1 (in this process). With more than one, each
+                process works on a copy of the optic, so the optic in this
+                process is not changed, and the results equal those of a
+                serial run with the same seed. Without a seed, a random one is
+                drawn. Needs the NumPy backend and tolerances only (no
+                ``add_perturbation`` perturbations, whose samplers would repeat
+                the same values in every process). On Windows and macOS, call
+                it from code under ``if __name__ == "__main__":``.
 
         Returns:
             None: The results are stored in the instance variable `_results`
@@ -98,8 +110,21 @@ class MonteCarlo:
         publishing its DataFrame, results from the last completed run remain
         available and the exception propagates. Samplers are not rewound.
 
+        Raises:
+            ValueError: If ``workers`` is less than 1, or if ``workers`` is
+                more than 1 with the PyTorch backend or with perturbations
+                added by ``add_perturbation``.
+
         """
-        results = []
+        if workers < 1:
+            raise ValueError(f"workers must be at least 1, got {workers}.")
+        if workers > 1:
+            self._check_parallel()
+            self._results = pd.DataFrame(
+                self._run_parallel(num_iterations, seed, workers)
+            )
+            return
+
         if seed is None:
             generators = [None] * num_iterations
         else:
@@ -107,49 +132,48 @@ class MonteCarlo:
             generators = [np.random.default_rng(child) for child in children]
 
         try:
-            for rng in generators:
-                # reset the tolerancing system
-                self.tolerancing.reset()
-
-                # apply perturbations, phase by phase
-                for perturbation in self.tolerancing.ordered_perturbations():
-                    if rng is not None and isinstance(perturbation, Tolerance):
-                        perturbation.apply(rng)
-                    else:
-                        perturbation.apply()
-
-                # apply compensators
-                compensator_result = self.tolerancing.apply_compensators()
-
-                # evaluate operands
-                operand_values = self.tolerancing.evaluate()
-
-                # save results
-                result = {}
-
-                # save results - perturbation type & value
-                for perturbation in self.tolerancing.perturbations:
-                    key = perturbation.label
-                    result[key] = float(perturbation.value)
-
-                # save results - operand values
-                result.update(
-                    {
-                        f"{name}": value
-                        for name, value in zip(
-                            self.operand_names, operand_values, strict=False
-                        )
-                    },
-                )
-
-                # save results - compensator values
-                result.update(compensator_result)
-
-                results.append(result)
-
+            results = _run_trials(self.tolerancing, self.operand_names, generators)
             self._results = pd.DataFrame(results)
         finally:
             self.tolerancing.reset()
+
+    def _check_parallel(self) -> None:
+        """Raise if the trials cannot run in several processes."""
+        if be.get_backend() != "numpy":
+            raise ValueError("workers > 1 requires the NumPy backend.")
+        if not all(isinstance(p, Tolerance) for p in self.tolerancing.perturbations):
+            raise ValueError(
+                "workers > 1 supports tolerances (add_tolerance) only; "
+                "perturbations added with add_perturbation cannot be split "
+                "across processes."
+            )
+
+    def _run_parallel(
+        self, num_iterations: int, seed: int | None, workers: int
+    ) -> list[dict]:
+        """Run the trials in ``workers`` processes, in contiguous chunks.
+
+        Returns:
+            One result row per trial, in trial order.
+        """
+        sequence = np.random.SeedSequence(seed)
+        chunks = [
+            list(chunk)
+            for chunk in np.array_split(
+                np.array(sequence.spawn(num_iterations), dtype=object),
+                min(workers, num_iterations),
+            )
+            if len(chunk)
+        ]
+        payload = pickle.dumps(self.tolerancing)
+        with ProcessPoolExecutor(max_workers=len(chunks)) as executor:
+            futures = [executor.submit(_run_chunk, payload, chunk) for chunk in chunks]
+            try:
+                return [row for future in futures for row in future.result()]
+            except BaseException:
+                for future in futures:
+                    future.cancel()
+                raise
 
     def get_results(self) -> pd.DataFrame:
         """Return the Monte Carlo analysis results.
@@ -372,3 +396,69 @@ class MonteCarlo:
 
         if not self.tolerancing.perturbations:
             raise ValueError("No perturbations found in the tolerancing system.")
+
+
+def _run_chunk(payload: bytes, seeds: list[np.random.SeedSequence]) -> list[dict]:
+    """Run trials on an unpickled copy of a tolerancing system.
+
+    Args:
+        payload: The pickled ``Tolerancing``.
+        seeds: One seed sequence per trial.
+
+    Returns:
+        One result row per trial.
+    """
+    tolerancing = pickle.loads(payload)
+    names = [f"{i}: {operand}" for i, operand in enumerate(tolerancing.operands)]
+    generators = [np.random.default_rng(seed) for seed in seeds]
+    try:
+        return _run_trials(tolerancing, names, generators)
+    finally:
+        tolerancing.reset()
+
+
+def _run_trials(
+    tolerancing: Tolerancing,
+    operand_names: list[str],
+    generators: list[np.random.Generator | None],
+) -> list[dict]:
+    """Run one trial per generator and return one result row per trial.
+
+    Args:
+        tolerancing: The tolerancing system.
+        operand_names: Result column names of the operands.
+        generators: Generator for the tolerances of each trial, or None to
+            use each tolerance's own generator.
+
+    Returns:
+        The result rows.
+    """
+    results = []
+    for rng in generators:
+        # reset the tolerancing system
+        tolerancing.reset()
+
+        # apply perturbations, phase by phase
+        for perturbation in tolerancing.ordered_perturbations():
+            if rng is not None and isinstance(perturbation, Tolerance):
+                perturbation.apply(rng)
+            else:
+                perturbation.apply()
+
+        # apply compensators
+        compensator_result = tolerancing.apply_compensators()
+
+        # evaluate operands
+        operand_values = tolerancing.evaluate()
+
+        # save results - perturbation type & value
+        result = {p.label: float(p.value) for p in tolerancing.perturbations}
+
+        # save results - operand values
+        result.update(dict(zip(operand_names, operand_values, strict=False)))
+
+        # save results - compensator values
+        result.update(compensator_result)
+
+        results.append(result)
+    return results
