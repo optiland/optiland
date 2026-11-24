@@ -25,6 +25,7 @@ from .material_utils import (
     plot_nk,
 )
 from .model_material import ModelMaterial
+from .offset import OffsetMaterial
 from .registry import MaterialRegistry
 from .warnings import OptilandMaterialWarning
 
@@ -62,6 +63,8 @@ __all__ = [
     "plot_glass_map",
     "plot_nk",
     "find_closest_glass",
+    # From offset.py
+    "OffsetMaterial",
     # From registry.py
     "MaterialRegistry",
     # From warnings.py
