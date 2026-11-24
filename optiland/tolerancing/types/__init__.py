@@ -3,6 +3,12 @@
 from __future__ import annotations
 
 from optiland.tolerancing.registry import tolerance_registry
+from optiland.tolerancing.types.element import (
+    ElementDecenterTolerance,
+    ElementRollTolerance,
+    ElementTiltTolerance,
+    ElementTolerance,
+)
 from optiland.tolerancing.types.surface import (
     ConicTolerance,
     FringesTolerance,
@@ -20,6 +26,9 @@ _BUILTIN = {
     "thickness": ThicknessTolerance,
     "surface_decenter": SurfaceDecenterTolerance,
     "surface_tilt": SurfaceTiltTolerance,
+    "element_decenter": ElementDecenterTolerance,
+    "element_tilt": ElementTiltTolerance,
+    "element_roll": ElementRollTolerance,
 }
 
 for _name, _cls in _BUILTIN.items():
@@ -28,6 +37,10 @@ for _name, _cls in _BUILTIN.items():
 
 __all__ = [
     "ConicTolerance",
+    "ElementDecenterTolerance",
+    "ElementRollTolerance",
+    "ElementTiltTolerance",
+    "ElementTolerance",
     "FringesTolerance",
     "RadiusTolerance",
     "SurfaceDecenterTolerance",

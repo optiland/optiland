@@ -161,8 +161,9 @@ class Tolerancing:
         Args:
             tolerance_type: The registered tolerance type: ``"radius"``,
                 ``"fringes"``, ``"conic"``, ``"thickness"``,
-                ``"surface_decenter"`` or ``"surface_tilt"``, or a type added
-                to ``tolerance_registry``.
+                ``"surface_decenter"``, ``"surface_tilt"``,
+                ``"element_decenter"``, ``"element_tilt"`` or
+                ``"element_roll"``, or a type added to ``tolerance_registry``.
             limit: Symmetric limit; the tolerance spans ``[-limit, +limit]``.
             minus: Lower limit, for asymmetric tolerances. Requires ``plus``.
             plus: Upper limit, for asymmetric tolerances. Requires ``minus``.
@@ -171,7 +172,8 @@ class Tolerancing:
                 ``"uniform"``, ``"parabolic"``, ``"end_point"``, or a
                 ``Distribution`` instance.
             **kwargs: Arguments for the tolerance type, such as
-                ``surface_number`` or ``axis``.
+                ``surface_number`` or ``axis``; element types take ``first``,
+                ``last`` and, for tilts and rolls, ``pivot``.
 
         Returns:
             The new tolerance.
