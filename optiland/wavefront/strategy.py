@@ -42,6 +42,22 @@ WavefrontStrategyType = Literal["chief_ray", "centroid", "best_fit"]
 ReferenceType = Literal["sphere", "plane"]
 
 
+def _to_float(value: ScalarOrArray) -> float:
+    """Return a detached Python float for reporting a reference parameter.
+
+    The reference geometry keeps backend scalars so that the OPD stays
+    differentiable; only the values reported in :class:`WavefrontData`
+    are converted.
+
+    Args:
+        value: A scalar or single-element backend array.
+
+    Returns:
+        The value as a Python float.
+    """
+    return float(be.to_numpy(value))
+
+
 def chief_reference_sphere(
     center: tuple[ScalarOrArray, ScalarOrArray, ScalarOrArray],
     exit_pupil_point: tuple[ScalarOrArray, ScalarOrArray, ScalarOrArray],
@@ -332,9 +348,11 @@ class ChiefRayStrategy(ReferenceStrategy):
             pupil_z=pupil_z,
             opd=opd_wv,
             intensity=intensity,
-            radius=geometry.radius,
+            radius=_to_float(geometry.radius),
             reference_center=(
-                geometry.center if isinstance(geometry, SphericalReference) else None
+                tuple(_to_float(c) for c in geometry.center)
+                if isinstance(geometry, SphericalReference)
+                else None
             ),
             **kwargs,
         )
@@ -375,7 +393,10 @@ class ChiefRayStrategy(ReferenceStrategy):
         ref = chief_reference_sphere(
             (x, y, z), self.exit_pupil_point, chief_opd, self.n_image
         )
-        return type(ref)((x.item(), y.item(), z.item()), ref.radius.item())
+        # Reshape rather than .item() so the center and radius keep their
+        # dependence on the system parameters for automatic differentiation.
+        center = (x.reshape(()), y.reshape(()), z.reshape(()))
+        return type(ref)(center, ref.radius.reshape(()))
 
     def _calculate_sphere_from_chief_ray(
         self, chief_ray: RealRays
@@ -383,7 +404,7 @@ class ChiefRayStrategy(ReferenceStrategy):
         """Legacy wrapper for _create_reference_geometry."""
         ref = self._create_reference_geometry(chief_ray)
         if isinstance(ref, SphericalReference):
-            return ref.center[0], ref.center[1], ref.center[2], ref.radius
+            return (*(_to_float(c) for c in ref.center), _to_float(ref.radius))
         raise ValueError("Reference geometry is not a sphere.")
 
     def _create_planar_ref(
@@ -409,7 +430,8 @@ class ChiefRayStrategy(ReferenceStrategy):
             PlanarReference: The planar reference geometry.
         """
         return PlanarReference(
-            (x.item(), y.item(), z.item()), (L.item(), M.item(), N.item())
+            (x.reshape(()), y.reshape(()), z.reshape(())),
+            (L.reshape(()), M.reshape(()), N.reshape(())),
         )
 
 
@@ -511,9 +533,11 @@ class CentroidStrategy(ReferenceStrategy):
             pupil_z=pupil_z,
             opd=opd_waves,
             intensity=intensity,
-            radius=geometry.radius,
+            radius=_to_float(geometry.radius),
             reference_center=(
-                geometry.center if isinstance(geometry, SphericalReference) else None
+                tuple(_to_float(c) for c in geometry.center)
+                if isinstance(geometry, SphericalReference)
+                else None
             ),
             **kwargs,
         )
@@ -622,10 +646,8 @@ class CentroidStrategy(ReferenceStrategy):
             SphericalReference: The spherical reference geometry.
         """
         distances_wf = be.linalg.norm(wavefront_points - centroid, axis=1)
-        radius = (be.sum(weights * distances_wf) / be.sum(weights)).item()
-        return SphericalReference(
-            (centroid[0].item(), centroid[1].item(), centroid[2].item()), radius
-        )
+        radius = be.sum(weights * distances_wf) / be.sum(weights)
+        return SphericalReference((centroid[0], centroid[1], centroid[2]), radius)
 
     def _calculate_reference_sphere(
         self, rays: RealRays
@@ -633,7 +655,7 @@ class CentroidStrategy(ReferenceStrategy):
         """Legacy wrapper for _create_reference_geometry."""
         ref = self._create_reference_geometry(rays)
         if isinstance(ref, SphericalReference):
-            return ref.center[0], ref.center[1], ref.center[2], ref.radius
+            return (*(_to_float(c) for c in ref.center), _to_float(ref.radius))
         raise ValueError("Reference geometry is not a sphere.")
 
     def _create_planar_ref(
@@ -662,12 +684,8 @@ class CentroidStrategy(ReferenceStrategy):
             mean_direction = mean_direction / norm
 
         return PlanarReference(
-            (centroid[0].item(), centroid[1].item(), centroid[2].item()),
-            (
-                mean_direction[0].item(),
-                mean_direction[1].item(),
-                mean_direction[2].item(),
-            ),
+            (centroid[0], centroid[1], centroid[2]),
+            (mean_direction[0], mean_direction[1], mean_direction[2]),
         )
 
 
@@ -732,8 +750,8 @@ class BestFitStrategy(CentroidStrategy):
         yc = c[1] / 2
         zc = c[2] / 2
         radius = be.sqrt(c[3] + xc**2 + yc**2 + zc**2)
-        self.center = (xc.item(), yc.item(), zc.item())
-        return SphericalReference(self.center, radius.item())
+        self.center = (_to_float(xc), _to_float(yc), _to_float(zc))
+        return SphericalReference((xc, yc, zc), radius)
 
     def _create_planar_ref(self, wavefront_points: be.ndarray) -> PlanarReference:
         """Create a planar reference geometry using least-squares fit.
@@ -755,8 +773,8 @@ class BestFitStrategy(CentroidStrategy):
         normal = vh[-1, :]
 
         return PlanarReference(
-            (centroid[0].item(), centroid[1].item(), centroid[2].item()),
-            (normal[0].item(), normal[1].item(), normal[2].item()),
+            (centroid[0], centroid[1], centroid[2]),
+            (normal[0], normal[1], normal[2]),
         )
 
 
