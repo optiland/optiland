@@ -53,6 +53,8 @@ class SensitivityAnalysis:
             f"{i}: {operand}" for i, operand in enumerate(tolerancing.operands)
         ]
         self._results = pd.DataFrame()
+        self._nominal: list[float] = []
+        self._row_owner: list[int] = []
         self._validate()
 
     def run(self):
@@ -73,15 +75,20 @@ class SensitivityAnalysis:
         Tolerances (added with ``Tolerancing.add_tolerance``) are evaluated at
         their lower and upper limits, one row each.
 
+        After the trials, the operands are evaluated once at nominal, with
+        compensators applied. ``rss_estimate`` and ``view_tornado`` report
+        changes relative to these values.
+
         Raises:
             ValueError: If a perturbation sampler other than RangeSampler is
                 used.
 
         """
         results = []
+        row_owner = []
 
         try:
-            for perturbation in self.tolerancing.perturbations:
+            for index, perturbation in enumerate(self.tolerancing.perturbations):
                 for apply in self._trial_steps(perturbation):
                     # reset system
                     self.tolerancing.reset()
@@ -115,8 +122,16 @@ class SensitivityAnalysis:
                     result.update(compensator_result)
 
                     results.append(result)
+                    row_owner.append(index)
+
+            # nominal operand values, compensated like every trial
+            self.tolerancing.reset()
+            self.tolerancing.apply_compensators()
+            nominal = self.tolerancing.evaluate()
 
             self._results = pd.DataFrame(results)
+            self._nominal = nominal
+            self._row_owner = row_owner
         finally:
             self.tolerancing.reset()
 
@@ -144,6 +159,109 @@ class SensitivityAnalysis:
 
         """
         return self._results
+
+    def rss_estimate(self) -> pd.DataFrame:
+        """Estimate the combined effect of all perturbations by RSS.
+
+        For each perturbation, the change of an operand is the largest
+        absolute change from nominal over its trials (for a tolerance, the
+        worse of its two limits). The estimated change is the root sum of
+        squares of these changes, which assumes small, independent
+        perturbations. A NaN trial makes the estimate NaN.
+
+        Returns:
+            One row per operand, with columns ``nominal`` (the compensated
+            nominal value), ``rss_change`` and ``estimate``
+            (``nominal + rss_change``).
+
+        Raises:
+            RuntimeError: If ``run`` has not been called.
+        """
+        changes = self._worst_changes()
+        rss = np.sqrt((changes**2).sum(axis=0, skipna=False))
+        nominal = pd.Series(self._nominal, index=self.operand_names)
+        return pd.DataFrame(
+            {"nominal": nominal, "rss_change": rss, "estimate": nominal + rss}
+        )
+
+    def view_tornado(
+        self,
+        operand_index: int = 0,
+        top: int | None = None,
+        figsize: tuple[float, float] | None = None,
+    ) -> tuple[Figure, Axes]:
+        """Plot a tornado chart of the operand changes per perturbation.
+
+        Each perturbation gets two bars: the change from nominal at its lower
+        and at its upper end (the limits of a tolerance, or the first and last
+        value of a sweep). Perturbations are sorted by the larger change, with
+        the largest on top.
+
+        Args:
+            operand_index: Index of the operand to plot. Defaults to 0.
+            top: Plot only this many perturbations, the largest first.
+                Defaults to all.
+            figsize: Figure size in inches. Defaults to a height that grows
+                with the number of perturbations.
+
+        Returns:
+            The figure and axes of the plot.
+
+        Raises:
+            RuntimeError: If ``run`` has not been called.
+            IndexError: If ``operand_index`` is out of range.
+        """
+        self._require_results()
+        name = self.operand_names[operand_index]
+        delta = self._results[name].to_numpy(dtype=float) - self._nominal[operand_index]
+        owner = np.asarray(self._row_owner)
+
+        rows = []
+        for index, perturbation in enumerate(self.tolerancing.perturbations):
+            d = delta[owner == index]
+            rows.append((perturbation.label, d[0], d[-1]))
+        rows.sort(key=lambda r: np.nan_to_num(max(abs(r[1]), abs(r[2]))))
+        if top is not None:
+            rows = rows[-top:]
+
+        if figsize is None:
+            figsize = (6.0, 1.0 + 0.45 * len(rows))
+        fig, ax = plt.subplots(figsize=figsize)
+        y = np.arange(len(rows))
+        # side by side, so a bar is not hidden when both ends have one sign
+        ax.barh(y - 0.2, [r[1] for r in rows], 0.4, color="C0", label="lower end")
+        ax.barh(y + 0.2, [r[2] for r in rows], 0.4, color="C1", label="upper end")
+        ax.axvline(0.0, color="k", linewidth=0.8)
+        ax.set_yticks(y, [r[0] for r in rows])
+        ax.set_xlabel(f"Change in {name}")
+        ax.grid(axis="x")
+        ax.legend()
+        fig.tight_layout()
+        return fig, ax
+
+    def _require_results(self) -> None:
+        """Raise if there are no results to summarize."""
+        if self._results.empty:
+            raise RuntimeError("No results. Call run() first.")
+
+    def _worst_changes(self) -> pd.DataFrame:
+        """Return the largest absolute change per perturbation and operand.
+
+        Returns:
+            One row per perturbation and one column per operand.
+        """
+        self._require_results()
+        values = self._results[self.operand_names].to_numpy(dtype=float)
+        delta = np.abs(values - np.asarray(self._nominal, dtype=float))
+        owner = np.asarray(self._row_owner)
+        perturbations = self.tolerancing.perturbations
+        # np.max (not nanmax) so a NaN trial propagates
+        worst = [delta[owner == i].max(axis=0) for i in range(len(perturbations))]
+        return pd.DataFrame(
+            worst,
+            index=[p.label for p in perturbations],
+            columns=self.operand_names,
+        )
 
     def view(
         self,
