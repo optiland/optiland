@@ -7,6 +7,11 @@ from .conic import ConicVariable
 from .thickness import ThicknessVariable
 from .tilt import TiltVariable
 from .decenter import DecenterVariable
+from .element import (
+    ElementDecenterVariable,
+    ElementRollVariable,
+    ElementTiltVariable,
+)
 from .index import IndexVariable
 from .material import MaterialVariable
 from .asphere_coeff import AsphereCoeffVariable

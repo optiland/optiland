@@ -17,6 +17,11 @@ from optiland.optimization.variable.asphere_coeff import AsphereCoeffVariable
 from optiland.optimization.variable.chebyshev_coeff import ChebyshevCoeffVariable
 from optiland.optimization.variable.conic import ConicVariable
 from optiland.optimization.variable.decenter import DecenterVariable
+from optiland.optimization.variable.element import (
+    ElementDecenterVariable,
+    ElementRollVariable,
+    ElementTiltVariable,
+)
 from optiland.optimization.variable.forbes_coeff import (
     ForbesQ2dCoeffVariable,
     ForbesQNormalSlopeCoeffVariable,
@@ -111,6 +116,9 @@ class Variable:
             "axis",
             "glass_selection",
             "apply_scaling",
+            "first",
+            "last",
+            "pivot",
         }
 
     def _get_variable(self):
@@ -133,6 +141,9 @@ class Variable:
             "thickness": ThicknessVariable,
             "tilt": TiltVariable,
             "decenter": DecenterVariable,
+            "element_decenter": ElementDecenterVariable,
+            "element_tilt": ElementTiltVariable,
+            "element_roll": ElementRollVariable,
             "index": IndexVariable,
             "abbe": AbbeVariable,
             "material": MaterialVariable,
