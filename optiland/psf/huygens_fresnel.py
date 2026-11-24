@@ -92,6 +92,10 @@ class ScalarHuygensPSF(BasePSF):
             If provided, this will override the automatic extent calculation.
             Defaults to None.
         **kwargs: Additional keyword arguments passed to the strategy.
+
+    The image grid is centred on the chief-ray intercept: sample
+    ``image_size // 2`` (along each axis) is on the chief ray and samples are
+    spaced by exactly ``pixel_pitch``, the convention of the FFT-based PSF.
     """
 
     def __init__(
@@ -145,7 +149,17 @@ class ScalarHuygensPSF(BasePSF):
             raise ValueError(f"Unsupported backend for HuygensPSF: {backend}")
 
     def _determine_image_center(self):
-        """Determine center of image via raytrace across field"""
+        """Trace a ray bundle for the field and return its image intercepts.
+
+        The intercepts, in the local frame of the image surface, measure the
+        geometric spot used to size the automatic image extent. The grid
+        centre itself is the chief-ray intercept, see
+        ``_chief_ray_intercept``.
+
+        Returns:
+            tuple: ``(rx, ry)`` local image-surface coordinates (mm) of the
+            transmitted rays, or ``([0.0], [0.0])`` if no ray is transmitted.
+        """
         Hx, Hy = self.fields[0].coord
         rays = self.optic.trace(
             Hx=Hx,
@@ -171,36 +185,81 @@ class ScalarHuygensPSF(BasePSF):
 
         return rx, ry
 
-    def _get_image_extent(self) -> tuple[float, float, float, float]:
-        """Calculate the extent of the image plane in mm.
+    def _chief_ray_intercept(self, rx, ry) -> tuple:
+        """Return the chief-ray intercept on the image surface (local frame).
 
-        The extent can be determined either by optical cutoff (oversample mode),
-        by geometric/Airy coverage (default mode), or by a user-provided
-        pixel_pitch.
+        The PSF grid is centred on the chief ray, the same reference as the
+        FFT-based PSF. If the chief ray is vignetted or fails to trace, the
+        mean of the transmitted spot rays ``(rx, ry)`` is used instead.
+
+        Args:
+            rx: Local x coordinates (mm) of the transmitted spot rays.
+            ry: Local y coordinates (mm) of the transmitted spot rays.
+
+        Returns:
+            tuple: ``(cx, cy)`` grid centre in the local image-surface frame,
+            in mm.
         """
-        # Determine image center and retrieve x, y intersections
-        rx, ry = self._determine_image_center()
-        self.cx = be.mean(rx)
-        self.cy = be.mean(ry)
+        Hx, Hy = self.fields[0].coord
+        rays = self.optic.trace_generic(
+            Hx=Hx, Hy=Hy, Px=0.0, Py=0.0, wavelength=self.wavelengths[0].value
+        )
+        x, y, z = (be.atleast_1d(c) for c in (rays.x, rays.y, rays.z))
+        valid = (
+            be.atleast_1d(rays.i)[0] > 0
+            and be.isfinite(x[0])
+            and be.isfinite(y[0])
+            and be.isfinite(z[0])
+        )
+        if not valid:
+            return be.mean(rx), be.mean(ry)
 
-        # If pixel_pitch is provided, use it to determine the extent.
-        # Otherwise, calculate it automatically.
-        if self.pixel_pitch is not None:
-            extent = 0.5 * self.image_size * self.pixel_pitch
-        else:
+        cx, cy, _ = transform(x, y, z, self.optic.image_surface, is_global=True)
+        return be.atleast_1d(cx)[0], be.atleast_1d(cy)[0]
+
+    def _get_image_extent(self) -> tuple[float, float, float, float]:
+        """Calculate the extent of the image grid in mm.
+
+        The grid has ``image_size`` samples per axis at exactly
+        ``pixel_pitch``, with sample ``image_size // 2`` on the chief-ray
+        intercept ``(cx, cy)``: sample ``i`` sits at
+        ``cx + (i - image_size // 2) * pixel_pitch``. This is the FFT
+        (``fftshift``) convention also assumed by
+        ``BasePSF._cross_section_coordinates``, for even and odd sizes.
+
+        The pixel pitch is the user-provided ``pixel_pitch`` if given.
+        Otherwise it follows from the optical cutoff (oversample mode), or
+        from the geometric/Airy half-extent (default mode), chosen so that
+        the outermost samples on both sides of the chief ray lie at least
+        that half-extent away from it.
+
+        Returns:
+            tuple: ``(xmin, xmax, ymin, ymax)`` pixel-edge extent of the grid
+            in the local image-surface frame, in mm. Its width is exactly
+            ``image_size * pixel_pitch``; for even sizes it is offset by half
+            a pixel from the chief ray.
+        """
+        # Spot intercepts size the automatic extent; the grid is centred on
+        # the chief ray.
+        rx, ry = self._determine_image_center()
+        self.cx, self.cy = self._chief_ray_intercept(rx, ry)
+
+        # If pixel_pitch is provided, it is used as is. Otherwise, it is
+        # calculated automatically.
+        if self.pixel_pitch is None:
             if self.oversample is not None:
-                extent = self._extent_from_cutoff()
+                self._extent_from_cutoff()  # sets self.pixel_pitch
             else:
                 extent = self._extent_from_geometry(rx, ry)
+                # Samples on the shorter side of the chief ray: (N - 1) // 2
+                self.pixel_pitch = extent / max((self.image_size - 1) // 2, 1)
 
-            # Pixel pitch is derived from the calculated extent
-            self.pixel_pitch = 2 * extent / self.image_size
-
-        # Final extents centered on chief ray intercept
-        xmin = -extent + self.cx
-        xmax = extent + self.cx
-        ymin = -extent + self.cy
-        ymax = extent + self.cy
+        # Pixel-edge extent of the grid, sample image_size // 2 on (cx, cy)
+        half = self.image_size // 2
+        xmin = self.cx - (half + 0.5) * self.pixel_pitch
+        xmax = xmin + self.image_size * self.pixel_pitch
+        ymin = self.cy - (half + 0.5) * self.pixel_pitch
+        ymax = ymin + self.image_size * self.pixel_pitch
 
         return xmin, xmax, ymin, ymax
 
@@ -225,7 +284,8 @@ class ScalarHuygensPSF(BasePSF):
         spot size, as well as a scaled ideal Airy disk at a given wavelength. The
         extent is defined as the maximum of the geometric extent and the ideal
         extent, ensuring that the PSF covers the area where the light is expected
-        to be distributed.
+        to be distributed. The geometric extent is the largest distance of the
+        spot rays from the grid centre ``(cx, cy)`` (the chief-ray intercept).
         """
         num_Airy_disks = 5.0  # how many Airy disk radii to include in half-extent
         extent_geometric = be.max(be.hypot(rx - self.cx, ry - self.cy))
@@ -240,15 +300,23 @@ class ScalarHuygensPSF(BasePSF):
     def _get_image_coordinates(self):
         """Generate image coordinates for the PSF calculation.
 
-        This method computes the coordinates of the image plane based on
-        the extent of the image surface. It creates a grid of points in the
-        image plane, which will be used to evaluate the PSF using the
-        Huygens-Fresnel principle.
+        The samples are spaced by exactly ``pixel_pitch``, with sample
+        ``image_size // 2`` on the chief-ray intercept (see
+        ``_get_image_extent``). They are placed on the image surface in its
+        local frame and transformed to the global frame, where the PSF is
+        evaluated using the Huygens-Fresnel principle.
+
+        Returns:
+            tuple: ``(image_x, image_y, image_z)`` global coordinates (mm),
+            each of shape ``(image_size, image_size)``.
         """
-        xmin, xmax, ymin, ymax = self._get_image_extent()
-        image_x = be.linspace(xmin, xmax, self.image_size)
-        image_y = be.linspace(ymin, ymax, self.image_size)
-        image_x, image_y = be.meshgrid(image_x, image_y)
+        self._get_image_extent()  # sets cx, cy and pixel_pitch
+        half = self.image_size // 2
+        offsets = (
+            be.linspace(-half, self.image_size - 1 - half, self.image_size)
+            * self.pixel_pitch
+        )
+        image_x, image_y = be.meshgrid(offsets + self.cx, offsets + self.cy)
 
         img_geometry = self.optic.image_surface.geometry
         image_z = img_geometry.sag(image_x, image_y)
