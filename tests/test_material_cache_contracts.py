@@ -312,13 +312,15 @@ def test_untracked_custom_state_is_not_cached(set_test_backend):
 
 
 def test_builtin_subclass_must_track_its_additional_state(set_test_backend):
-    class OffsetMaterial(IdealMaterial):
+    # not named OffsetMaterial: subclasses register by class name, and this
+    # local class would replace optiland.materials.OffsetMaterial there
+    class ShiftedIdealMaterial(IdealMaterial):
         offset = 0.0
 
         def _calculate_n(self, wavelength, **kwargs):
             return super()._calculate_n(wavelength, **kwargs) + self.offset
 
-    material = OffsetMaterial(1.5)
+    material = ShiftedIdealMaterial(1.5)
     material.index = be.asarray([1.5])
     material.absorp = be.asarray([0.0])
     material.n(0.5)

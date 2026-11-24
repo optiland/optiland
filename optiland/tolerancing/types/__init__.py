@@ -9,6 +9,11 @@ from optiland.tolerancing.types.element import (
     ElementTiltTolerance,
     ElementTolerance,
 )
+from optiland.tolerancing.types.material import (
+    AbbeTolerance,
+    IndexTolerance,
+    MaterialTolerance,
+)
 from optiland.tolerancing.types.surface import (
     ConicTolerance,
     FringesTolerance,
@@ -29,6 +34,8 @@ _BUILTIN = {
     "element_decenter": ElementDecenterTolerance,
     "element_tilt": ElementTiltTolerance,
     "element_roll": ElementRollTolerance,
+    "index": IndexTolerance,
+    "abbe": AbbeTolerance,
 }
 
 for _name, _cls in _BUILTIN.items():
@@ -36,12 +43,15 @@ for _name, _cls in _BUILTIN.items():
         tolerance_registry.register(_name, _cls)
 
 __all__ = [
+    "AbbeTolerance",
     "ConicTolerance",
     "ElementDecenterTolerance",
     "ElementRollTolerance",
     "ElementTiltTolerance",
     "ElementTolerance",
     "FringesTolerance",
+    "IndexTolerance",
+    "MaterialTolerance",
     "RadiusTolerance",
     "SurfaceDecenterTolerance",
     "SurfaceTiltTolerance",

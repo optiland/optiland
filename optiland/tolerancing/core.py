@@ -165,8 +165,9 @@ class Tolerancing:
             tolerance_type: The registered tolerance type: ``"radius"``,
                 ``"fringes"``, ``"conic"``, ``"thickness"``,
                 ``"surface_decenter"``, ``"surface_tilt"``,
-                ``"element_decenter"``, ``"element_tilt"`` or
-                ``"element_roll"``, or a type added to ``tolerance_registry``.
+                ``"element_decenter"``, ``"element_tilt"``, ``"element_roll"``,
+                ``"index"`` or ``"abbe"``, or a type added to
+                ``tolerance_registry``.
             limit: Symmetric limit; the tolerance spans ``[-limit, +limit]``.
             minus: Lower limit, for asymmetric tolerances. Requires ``plus``.
             plus: Upper limit, for asymmetric tolerances. Requires ``minus``.
