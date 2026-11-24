@@ -163,8 +163,8 @@ class Tolerancing:
 
         Args:
             tolerance_type: The registered tolerance type: ``"radius"``,
-                ``"fringes"``, ``"conic"``, ``"thickness"``,
-                ``"surface_decenter"``, ``"surface_tilt"``,
+                ``"fringes"``, ``"irregularity"``, ``"conic"``,
+                ``"thickness"``, ``"surface_decenter"``, ``"surface_tilt"``,
                 ``"element_decenter"``, ``"element_tilt"``, ``"element_roll"``,
                 ``"index"`` or ``"abbe"``, or a type added to
                 ``tolerance_registry``.

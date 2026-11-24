@@ -22,6 +22,7 @@ from .odd_asphere import OddAsphere
 from .plane import Plane
 from .plane_grating import PlaneGrating
 from .polynomial import PolynomialGeometry
+from .sag_error import SagErrorGeometry
 from .standard import StandardGeometry
 from .standard_grating import StandardGratingGeometry
 from .toroidal import ToroidalGeometry
@@ -46,6 +47,8 @@ __all__ = [
     "PlaneGrating",
     # From polynomial.py
     "PolynomialGeometry",
+    # From sag_error.py
+    "SagErrorGeometry",
     # From standard.py
     "StandardGeometry",
     # From standard_grating.py

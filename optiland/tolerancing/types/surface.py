@@ -28,6 +28,26 @@ def _scalar(value) -> float:
     return float(np.ravel(be.to_numpy(value))[0])
 
 
+def default_semi_aperture(optic: Optic, surface_number: int) -> float:
+    """Return the clear semi-aperture of a surface for a form tolerance.
+
+    Args:
+        optic: The optic.
+        surface_number: The surface index.
+
+    Returns:
+        The surface's semi-aperture, or the paraxial marginal plus chief ray
+        heights when none is set.
+    """
+    surface = optic.surfaces[surface_number]
+    if surface.semi_aperture is not None:
+        return _scalar(surface.semi_aperture)
+    ya, _ = optic.paraxial.marginal_ray()
+    yb, _ = optic.paraxial.chief_ray()
+    k = surface_number
+    return abs(_scalar(be.ravel(ya)[k])) + abs(_scalar(be.ravel(yb)[k]))
+
+
 class VariableTolerance(ToleranceType):
     """Tolerance that adds a scaled deviation to an optimization variable.
 
@@ -222,13 +242,7 @@ class FringesTolerance(ToleranceType):
         self.conic = _scalar(getattr(geometry, "k", 0.0))
 
     def _default_semi_aperture(self) -> float:
-        surface = self.optic.surfaces[self.surface_number]
-        if surface.semi_aperture is not None:
-            return _scalar(surface.semi_aperture)
-        ya, _ = self.optic.paraxial.marginal_ray()
-        yb, _ = self.optic.paraxial.chief_ray()
-        k = self.surface_number
-        return abs(_scalar(be.ravel(ya)[k])) + abs(_scalar(be.ravel(yb)[k]))
+        return default_semi_aperture(self.optic, self.surface_number)
 
     def radius_for(self, fringes: float) -> float:
         """Return the radius that corresponds to a power deviation.

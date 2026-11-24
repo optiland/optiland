@@ -9,6 +9,7 @@ from optiland.tolerancing.types.element import (
     ElementTiltTolerance,
     ElementTolerance,
 )
+from optiland.tolerancing.types.irregularity import IrregularityTolerance
 from optiland.tolerancing.types.material import (
     AbbeTolerance,
     IndexTolerance,
@@ -27,6 +28,7 @@ from optiland.tolerancing.types.surface import (
 _BUILTIN = {
     "radius": RadiusTolerance,
     "fringes": FringesTolerance,
+    "irregularity": IrregularityTolerance,
     "conic": ConicTolerance,
     "thickness": ThicknessTolerance,
     "surface_decenter": SurfaceDecenterTolerance,
@@ -51,6 +53,7 @@ __all__ = [
     "ElementTolerance",
     "FringesTolerance",
     "IndexTolerance",
+    "IrregularityTolerance",
     "MaterialTolerance",
     "RadiusTolerance",
     "SurfaceDecenterTolerance",
