@@ -11,7 +11,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from optiland.optimization import LeastSquares, OptimizationProblem, OptimizerGeneric
+import numpy as np
+
+import optiland.backend as be
+from optiland.optimization import (
+    LeastSquares,
+    OptimizationProblem,
+    OptimizerGeneric,
+    minimize,
+)
+from optiland.optimization.failure import ConfigurationError
 from optiland.solves import QuickFocusSolve
 
 if TYPE_CHECKING:
@@ -66,12 +75,31 @@ class CompensatorOptimizer(OptimizationProblem):
     def run(self):
         """Run the optimizer for compensation.
 
+        The run goes through ``optiland.optimization.minimize`` with the
+        settings the legacy optimizers used: ``"generic"`` is L-BFGS-B with
+        at most 1000 iterations, ``"least_squares"`` is
+        ``scipy.optimize.least_squares`` with the ``"lm"`` method. Nothing
+        is printed. A starting design with non-finite operands is left
+        unchanged, so a trial that cannot be traced does not stop a Monte
+        Carlo run.
+
         Returns:
-            scipy.optimize.OptimizeResult: The result of the optimizer run.
+            scipy.optimize.OptimizeResult: The result of the optimizer run, or
+            None if the starting design could not be evaluated.
+
+        Raises:
+            ValueError: If ``method`` is not a valid compensator method.
 
         """
-        optimizer = self.get_optimizer()(self)
-        return optimizer.optimize(tol=self.tol)
+        self.get_optimizer()  # validates the method
+        try:
+            if self.method == "generic":
+                return minimize(self, "l-bfgs-b", maxiter=1000, tol=self.tol)
+            return minimize(self, "least_squares", tol=self.tol, method_choice="lm")
+        except ConfigurationError:
+            if np.all(np.isfinite(be.to_numpy(self.fun_array()))):
+                raise
+            return None
 
 
 class QuickFocusCompensator:
