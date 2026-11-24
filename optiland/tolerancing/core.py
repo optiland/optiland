@@ -10,16 +10,19 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from optiland.optimization.operand import Operand
 from optiland.tolerancing import types as _types  # noqa: F401 (registers types)
 from optiland.tolerancing.compensator import CompensatorOptimizer
 from optiland.tolerancing.perturbation import BaseSampler, Perturbation
+from optiland.tolerancing.presets import add_default_tolerances
 from optiland.tolerancing.registry import tolerance_registry
 from optiland.tolerancing.tolerance import Tolerance
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
+
     from optiland.tolerancing.base import BasePerturbation
     from optiland.tolerancing.distributions import Distribution
 
@@ -191,6 +194,30 @@ class Tolerancing:
         )
         self.perturbations.append(tolerance)
         return tolerance
+
+    def add_default_tolerances(
+        self,
+        table: Mapping[str, Any],
+        surfaces: Iterable[int] | None = None,
+    ) -> list[Tolerance]:
+        """Add the tolerances of a table to every matching part of the design.
+
+        For example ``{"fringes": 2, "thickness": 0.05, "surface_tilt": 0.02}``
+        adds ±2 fringes to every refracting surface, ±0.05 to every gap and a
+        ±0.02° tilt about x and y to every surface. Optiland ships no grade
+        tables; pass your shop's or vendor's values. See
+        ``optiland.tolerancing.presets.add_default_tolerances`` for where each
+        type is placed.
+
+        Args:
+            table: Tolerance type to size: a number (symmetric limit) or a dict
+                of ``add_tolerance`` arguments.
+            surfaces: Restrict to these surface numbers. Defaults to all.
+
+        Returns:
+            The added tolerances.
+        """
+        return add_default_tolerances(self, table, surfaces)
 
     def ordered_perturbations(self) -> list[BasePerturbation]:
         """Return the perturbations in the order they are applied.
