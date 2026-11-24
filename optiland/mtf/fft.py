@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import optiland.backend as be
+from optiland.psf._fft_sampling import pupil_frequency_steps
 from optiland.psf.fft import ScalarFFTPSF, calculate_grid_size
 from optiland.utils import get_working_FNO
 
@@ -220,36 +221,11 @@ class ScalarFFTMTF(BaseMTF):
         image. A mean F/# and an on-axis/off-axis F/# ratio cannot determine
         either directional bandwidth in general. Like the pupil FFT itself,
         this calibration assumes approximately affine pupil-to-cosine mapping.
+        See `optiland.psf._fft_sampling.pupil_frequency_steps`.
         """
-        rays = self.optic.trace_generic(
-            *field,
-            Px=be.array([0.0, 0.0, 0.0, 1.0, -1.0]),
-            Py=be.array([0.0, 1.0, -1.0, 0.0, 0.0]),
-            wavelength=self.resolved_wavelength,
+        return pupil_frequency_steps(
+            self.optic, field, self.resolved_wavelength, self.num_rays
         )
-        geometry = self.optic.image_surface.geometry
-        # trace_generic returns global coordinates; surface_normal expects local
-        # coordinates. Localizing these fresh rays leaves the stored per-surface
-        # trace snapshots in the global frame.
-        geometry.cs.localize(rays)
-        normal = be.stack(geometry.surface_normal(rays), axis=-1)[0]
-        normal = normal / be.sqrt(be.sum(normal**2))
-        directions = be.stack([rays.L, rays.M, rays.N], axis=-1)
-        differences = be.stack(
-            [directions[1] - directions[2], directions[3] - directions[4]]
-        )
-        perpendicular = be.sum(differences * normal, axis=-1)
-        projected = differences - perpendicular[:, None] * normal
-        bandwidths = be.sqrt(be.sum(projected**2, axis=-1))
-        n_image = be.abs(
-            self.optic.image_surface.material_post.n(self.resolved_wavelength)
-        )
-        steps = (
-            n_image
-            * bandwidths
-            / ((self.num_rays - 1) * self.resolved_wavelength * 1e-3)
-        )
-        return steps[0], steps[1]
 
     def _get_mtf_units_tang(self, k):
         """Return the tangential frequency step in cycles/mm for field k."""

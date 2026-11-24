@@ -14,6 +14,7 @@ from __future__ import annotations
 import numpy as np
 
 import optiland.backend as be
+from optiland.psf._fft_sampling import pupil_frequency_steps
 from optiland.psf.base import BasePSF
 
 
@@ -261,12 +262,17 @@ class ScalarFFTPSF(BasePSF):
         It computes the total spatial width and height (in micrometers) of the
         provided PSF image data.
 
-        The calculation uses:
-        - Optic's effective F-number (FNO_eff).
-        - Wavelength of light (using `self.wavelengths[0]`, as scale is typically
-          set by one reference wavelength, units are in µm).
-        - Q-factor: Ratio of `self.grid_size` (FFT grid size) to
-          `self.num_rays` (pupil sampling density).
+        Image-plane position is Fourier conjugate to the image-space direction
+        cosines scaled by ``n / wavelength``, so the pixel pitch is set per
+        axis by the direction-cosine step of one pupil sample, projected onto
+        the image surface at the chief ray (see
+        `optiland.psf._fft_sampling.pupil_frequency_steps`):
+        ``dx = 1 / (grid_size * step_x)`` from pupil X (columns) and
+        ``dy = 1 / (grid_size * step_y)`` from pupil Y (rows). This is the
+        same calibration as the FFT MTF frequency axes. On axis, for a
+        rotationally symmetric system, both reduce to
+        ``wavelength * FNO_w / Q``, with ``FNO_w`` the working F-number and
+        ``Q = grid_size / (num_rays - 1)``.
 
         Args:
             image (be.ndarray): The PSF image data (often a
@@ -279,13 +285,18 @@ class ScalarFFTPSF(BasePSF):
             These are returned as NumPy arrays as `BasePSF.view` expects them
             for Matplotlib's `extent` argument.
         """
-        FNO = self._get_working_FNO()
-
-        Q = self.grid_size / (self.num_rays - 1)
-        dx = self.wavelengths[0].value * FNO / Q
+        step_y, step_x = pupil_frequency_steps(
+            self.optic,
+            self.fields[0].coord,
+            self.wavelengths[0].value,
+            self.num_rays,
+        )
+        # Frequency steps are in cycles/mm; pitches are in micrometers.
+        dx = 1e3 / (self.grid_size * step_x)
+        dy = 1e3 / (self.grid_size * step_y)
 
         x = be.to_numpy(image.shape[1] * dx)
-        y = be.to_numpy(image.shape[0] * dx)
+        y = be.to_numpy(image.shape[0] * dy)
 
         return x, y
 
