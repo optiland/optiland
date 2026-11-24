@@ -23,6 +23,7 @@ from dataclasses import dataclass
 
 from optiland._suggest import did_you_mean
 from optiland.optimization.operand.aberration import AberrationOperand
+from optiland.optimization.operand.image_quality import ImageQualityOperand
 from optiland.optimization.operand.lens import LensOperand
 from optiland.optimization.operand.paraxial import ParaxialOperand
 from optiland.optimization.operand.ray import RayOperand
@@ -81,6 +82,10 @@ METRIC_DICT = {
     "real_N": RayOperand.N,
     "rms_spot_size": RayOperand.rms_spot_size,
     "OPD_difference": RayOperand.OPD_difference,
+    "rms_wavefront": ImageQualityOperand.rms_wavefront,
+    "mtf": ImageQualityOperand.mtf,
+    "boresight_x": ImageQualityOperand.boresight_x,
+    "boresight_y": ImageQualityOperand.boresight_y,
     "center_thickness": LensOperand.center_thickness,
     "edge_thickness": LensOperand.edge_thickness,
     "AOI": RayOperand.AOI,
