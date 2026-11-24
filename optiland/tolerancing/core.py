@@ -26,6 +26,7 @@ from optiland.tolerancing.tolerance import Tolerance
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
+    from optiland.iso10110 import DrawingSpec
     from optiland.tolerancing.base import BasePerturbation
     from optiland.tolerancing.distributions import Distribution
 
@@ -225,6 +226,27 @@ class Tolerancing:
             The added tolerances.
         """
         return add_default_tolerances(self, table, surfaces)
+
+    def add_tolerances_from_drawing(
+        self, drawing: DrawingSpec, **kwargs
+    ) -> list[Tolerance]:
+        """Add the tolerances stated by an ISO 10110 drawing specification.
+
+        Delegates to
+        :func:`optiland.tolerancing.iso10110_bridge.tolerances_from_drawing`,
+        which documents the field mapping and unit conversions.
+
+        Args:
+            drawing: The ISO 10110 drawing specification.
+            **kwargs: Options of ``tolerances_from_drawing``, such as
+                ``distribution``, ``centering`` or ``strict``.
+
+        Returns:
+            The new tolerances.
+        """
+        from optiland.tolerancing.iso10110_bridge import tolerances_from_drawing
+
+        return tolerances_from_drawing(self, drawing, **kwargs)
 
     def ordered_perturbations(self) -> list[BasePerturbation]:
         """Return the perturbations in the order they are applied.
