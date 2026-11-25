@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING, Any, Literal
 import numpy as np
 
 import optiland.backend as be
-from optiland import _epoch
+import scipy
+from optiland.optimization.evaluators import FiniteDiffEvaluator
 from optiland.optimization.failure import reject_hard_constraints
 from scipy import optimize
 
@@ -19,11 +20,23 @@ from .base import OptimizerGeneric
 if TYPE_CHECKING:
     from numpy.typing import ArrayLike
 
+    from ...evaluators import AimPolicy
     from ...problem import OptimizationProblem
+
+_SCIPY_VERSION = tuple(int(part) for part in scipy.__version__.split(".")[:2])
+
+# Before SciPy 1.16, 'lm' counted its own Jacobian columns toward max_nfev.
+_LM_COUNTS_FD_COLUMNS = _SCIPY_VERSION < (1, 16)
 
 
 class LeastSquares(OptimizerGeneric):
-    """Optimizer using SciPy's least-squares solver."""
+    """Optimizer using SciPy's least-squares solver.
+
+    SciPy's ``"lm"``, ``"trf"`` and ``"dogbox"`` methods get their Jacobians
+    from Optiland's finite-difference evaluator, which reuses the residuals
+    already computed at ``x``, resumes eligible columns from trace snapshots
+    and can freeze ray aiming (``aim_policy="frozen"``).
+    """
 
     def __init__(self, problem: OptimizationProblem):
         super().__init__(problem)
@@ -31,6 +44,14 @@ class LeastSquares(OptimizerGeneric):
         self._best_x: np.ndarray | None = None
         self._best_f = float("inf")
         self._last_finite = True
+        self._evaluator: _SciPyFiniteDiffEvaluator | None = None
+
+    @property
+    def _fd_evaluator(self) -> _SciPyFiniteDiffEvaluator:
+        """Evaluator behind the residuals and Jacobians (exact aim by default)."""
+        if self._evaluator is None:
+            self._evaluator = _SciPyFiniteDiffEvaluator(self.problem)
+        return self._evaluator
 
     def _penalty_vector(self, num_rows: int) -> np.ndarray:
         """Scale-aware stand-in for rows that could not be evaluated."""
@@ -44,32 +65,17 @@ class LeastSquares(OptimizerGeneric):
         variables as provided by the SciPy optimizer. These are typically scaled values
         if variable scaling is active.
 
-        The residuals are read inside one evaluation epoch, so per-design work
-        such as material indices is computed once per evaluation.
+        The finite-difference evaluator reads the residuals inside one
+        evaluation epoch, so per-design work such as material indices is
+        computed once per evaluation. It remembers the evaluation as the
+        baseline of a Jacobian at the same point.
 
         Residuals are ``effective_weight * delta`` per operand. SciPy cannot accept
         non-finite values, so non-finite rows are replaced by a penalty scaled to the
-        last finite residual norm; a failed call yields a full penalty vector.
+        last finite residual norm; a failed call (all rows ``NaN``, e.g. a
+        critical ray failure) yields a full penalty vector.
         """
-        num_operands = self.problem.num_residuals
-
-        try:
-            for i, optiland_var_wrapper in enumerate(self.problem.variables):
-                optiland_var_wrapper.update(x_numpy_variables_from_scipy[i])
-
-            self.problem.update_optics()
-            # Optic state is frozen from here until the residuals are read
-            optics = {var.optic for var in self.problem.variables}
-            with _epoch.evaluation_epoch(optics):
-                residuals = np.asarray(
-                    be.to_numpy(self.problem.residual_vector()), dtype=float
-                ).reshape(-1)
-        except _epoch.EpochViolationError:
-            raise  # debug guard: a contract breach is a bug, not a bad design
-        except Exception:
-            # e.g. critical ray failure: no usable rows at all
-            self._last_finite = False
-            return self._penalty_vector(num_operands)
+        residuals = self._fd_evaluator.residuals(x_numpy_variables_from_scipy)
 
         finite = np.isfinite(residuals)
         self._last_finite = bool(finite.all())
@@ -84,6 +90,15 @@ class LeastSquares(OptimizerGeneric):
         # Keep finite rows so the Jacobian stays informative
         return np.where(finite, residuals, self._penalty_vector(residuals.size))
 
+    def _compute_jacobian(self, x_numpy_variables_from_scipy: np.ndarray) -> np.ndarray:
+        """Finite-difference Jacobian of the residuals, SciPy's ``jac``.
+
+        SciPy asks for the Jacobian at the point it evaluated last, which the
+        evaluator reuses as its baseline. Entries that cannot be differenced
+        (failed rows on both sides of ``x``) are 0.
+        """
+        return self._fd_evaluator.jacobian(x_numpy_variables_from_scipy)
+
     def optimize(
         self,
         maxiter: int | None = None,
@@ -93,13 +108,18 @@ class LeastSquares(OptimizerGeneric):
         callback: Any = None,
         method_choice: str = "lm",  # Default to 'lm' for DLS
         x_scale: ArrayLike | float | Literal["jac"] | None = None,
+        aim_policy: str | AimPolicy = "exact",
     ) -> optimize.OptimizeResult:
         """
         Optimize the problem using a SciPy least squares method.
 
         Args:
             maxiter (int, optional): Maximum number of function evaluations.
-                SciPy's least_squares uses max_nfev.
+                SciPy's least_squares uses max_nfev. Jacobian columns are not
+                counted, except by 'lm' with SciPy older than 1.16, whose
+                budget becomes ``max_nfev = ceil(maxiter / (n + 1))`` for
+                ``n`` variables: as many iterations as its own 'lm'
+                differences allowed.
             disp (bool, optional): Whether to display optimization progress.
             plot (bool, optional): If True, update live plots during optimization.
             tol (float, optional): Tolerance for termination (ftol - tolerance for the
@@ -124,6 +144,12 @@ class LeastSquares(OptimizerGeneric):
                 scaling. If set to "jac", SciPy updates the scale using inverse
                 Jacobian column norms. If None, the argument is omitted so the
                 installed SciPy version uses its existing default.
+            aim_policy (str or AimPolicy, optional): Ray aiming during the
+                finite-difference Jacobian columns. 'exact' (default) re-aims
+                every column. 'frozen' reuses the aim solutions at ``x``:
+                residuals and merit stay exact, and only the Jacobian ignores
+                how a variable moves the aim. Much faster with iterative ray
+                aiming. See :mod:`optiland.optimization.evaluators.aim`.
 
         Returns:
             OptimizeResult: The SciPy optimization result.
@@ -152,7 +178,9 @@ class LeastSquares(OptimizerGeneric):
         original_method_choice = method_choice  # Store for warning message
 
         if method_choice == "dls":
-            return self._optimize_dls(maxiter, disp, plot, tol, callback, x_scale)
+            return self._optimize_dls(
+                maxiter, disp, plot, tol, callback, x_scale, aim_policy
+            )
 
         # Validate and adjust method_choice
         if method_choice == "lm":
@@ -209,6 +237,14 @@ class LeastSquares(OptimizerGeneric):
                     x0_numpy[i] = lower_bounds_np[i]
 
         scipy_verbose_level = 1 if disp else 0
+        # 'lm' ignores bounds, so its Jacobian steps ignore them too
+        self._evaluator = _SciPyFiniteDiffEvaluator(
+            self.problem, aim_policy=aim_policy, bounded=method_choice != "lm"
+        )
+        max_nfev = maxiter
+        if method_choice == "lm" and maxiter is not None and _LM_COUNTS_FD_COLUMNS:
+            # Keep the iteration budget of SciPy's own 'lm' differences
+            max_nfev = max(math.ceil(maxiter / (num_variables + 1)), 1)
 
         # Seed F_last and the best finite point from x0
         self._f_last = 0.0
@@ -237,9 +273,10 @@ class LeastSquares(OptimizerGeneric):
             result = optimize.least_squares(
                 self._compute_residuals_vector,
                 x0_numpy,
+                jac=self._compute_jacobian,
                 method=method_choice,
                 bounds=actual_bounds_for_scipy,
-                max_nfev=maxiter,
+                max_nfev=max_nfev,
                 verbose=scipy_verbose_level,
                 ftol=tol,
                 callback=_wrapped_callback,
@@ -268,6 +305,7 @@ class LeastSquares(OptimizerGeneric):
         tol: float,
         callback: Any,
         x_scale: ArrayLike | float | Literal["jac"] | None,
+        aim_policy: str | AimPolicy,
     ) -> optimize.OptimizeResult:
         """Run the native damped least-squares core (``method_choice="dls"``).
 
@@ -276,11 +314,10 @@ class LeastSquares(OptimizerGeneric):
         constraints are honored.
         ``maxiter`` caps residual evaluations, Jacobian columns included.
         """
-        from optiland.optimization.evaluators import FiniteDiffEvaluator
         from optiland.optimization.native import dls
         from optiland.optimization.observers.callback import CallbackObserver
 
-        evaluator = FiniteDiffEvaluator(self.problem)
+        evaluator = FiniteDiffEvaluator(self.problem, aim_policy=aim_policy)
 
         live_plotter: LiveOptimizationPlotter | None = None
         if plot:
@@ -317,6 +354,51 @@ class LeastSquares(OptimizerGeneric):
             live_plotter.update()
             live_plotter.finalize()
         return result
+
+
+class _SciPyFiniteDiffEvaluator(FiniteDiffEvaluator):
+    """Finite-difference evaluator with the steps of SciPy's '2-point' scheme.
+
+    The columns are the ones SciPy's own differences would compute, so a run
+    follows the same path (up to round-off), while each column reuses the
+    baseline evaluation, resumes eligible traces and follows the aim policy.
+    The step is ``h = sqrt(eps) * max(1, |x|)`` (the evaluator's default with
+    ``typical_x = 1``), taken away from zero as SciPy does and flipped toward
+    the interior at a bound.
+
+    Args:
+        problem: The optimization problem.
+        aim_policy: Ray aiming during Jacobian columns, as for
+            :class:`FiniteDiffEvaluator`.
+        bounded: Whether the steps stay inside the variable bounds. False for
+            'lm', which ignores bounds, so an iterate outside them is
+            differenced with ordinary steps.
+    """
+
+    def __init__(
+        self,
+        problem: OptimizationProblem,
+        *,
+        aim_policy: str | AimPolicy = "exact",
+        bounded: bool = True,
+    ) -> None:
+        super().__init__(problem, aim_policy=aim_policy)
+        self._bounded = bounded
+
+    def bounds(self) -> tuple[np.ndarray, np.ndarray]:
+        """Bounds the Jacobian steps honor (``±inf`` when unbounded)."""
+        if self._bounded:
+            return super().bounds()
+        return np.full(self.n_vars, -np.inf), np.full(self.n_vars, np.inf)
+
+    @staticmethod
+    def _interior_step(
+        xj: float, h: float, lo: float, hi: float, fits_up: bool, fits_down: bool
+    ) -> float:
+        """Step of size ``h`` away from zero, flipped toward the interior."""
+        if xj < 0.0 and fits_down:
+            return -h
+        return FiniteDiffEvaluator._interior_step(xj, h, lo, hi, fits_up, fits_down)
 
 
 class _PlotObserver:
