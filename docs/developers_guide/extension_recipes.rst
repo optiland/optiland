@@ -205,6 +205,13 @@ Recipe 6: Add a Custom Tolerance Sensitivity Class
 **Scenario:** Model a non-standard manufacturing error (e.g., index inhomogeneity, surface
 irregularity described by Zernike coefficients).
 
+**Preferred:** if the error is a deviation from nominal with limits, add a tolerance type:
+subclass ``ToleranceType`` in ``optiland/tolerancing/registry.py``, implement ``label``,
+``apply(delta)`` and ``reset()``, set ``phase`` and ``units``, and register it with
+``tolerance_registry.register(name, cls)``. It is then available through
+``Tolerancing.add_tolerance(name, ...)`` and in every analysis. See the example in
+:doc:`tolerancing_framework`. The steps below cover the lower-level perturbations.
+
 **Step 1:** Optiland's ``Perturbation`` class (``optiland/tolerancing/perturbation.py``) is not
 subclassed per error type — it wraps an existing optimization ``Variable`` (selected by a
 ``variable_type`` string, e.g. ``"radius"``) and draws new values from a ``sampler``. To model a

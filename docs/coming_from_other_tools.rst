@@ -242,7 +242,8 @@ names below are the keys of the operand registry
      - ``"rms_spot_size"`` (about the centroid)
    * - RWCE
      -
-     -
+     - ``"rms_wavefront"`` with ``remove_tilt=True`` (piston and tilt removed);
+       without it, piston only
    * - SPHA, COMA, ASTI, FCUR, DIST
      -
      - ``"seidel"`` with ``seidel_number`` 1 to 5
@@ -251,7 +252,11 @@ names below are the keys of the operand registry
      -
    * - MTFT, MTFS
      -
+     - ``"mtf"`` with ``azimuth="tangential"`` or ``"sagittal"``
+   * - BSER
      -
+     - ``"boresight_x"``, ``"boresight_y"`` (signed components, in
+       milliradians)
    * - ZERN
      -
      -
@@ -366,17 +371,78 @@ Tolerancing
      - Optiland
    * - Tolerance Data Editor
      -
-     - :class:`~tolerancing.core.Tolerancing` with ``add_perturbation()`` and
-       ``add_operand()``
+     - :class:`~tolerancing.core.Tolerancing` with ``add_tolerance()``,
+       ``add_perturbation()`` and ``add_operand()``. See :doc:`tolerancing_guide`.
+   * - Tolerance Wizard
+     -
+     - ``add_default_tolerances(table)`` with your own table; no grade values
+       are built in
+   * - TRAD
+     -
+     - ``add_tolerance("radius", ...)``
+   * - TFRN
+     -
+     - ``add_tolerance("fringes", ...)``
+   * - TCON
+     -
+     - ``add_tolerance("conic", ...)``
+   * - TTHI
+     -
+     - ``add_tolerance("thickness", ..., adjust=...)``
+   * - TSDX, TSDY
+     -
+     - ``add_tolerance("surface_decenter", ..., axis="x")``, ``axis="y"``
+   * - TSTX, TSTY
+     -
+     - ``add_tolerance("surface_tilt", ..., axis="x")``, ``axis="y"`` (degrees)
+   * - TEDX, TEDY
+     -
+     - ``add_tolerance("element_decenter", ..., first=..., last=..., axis="x")``
+   * - TETX, TETY
+     -
+     - ``add_tolerance("element_tilt", ..., axis="x", pivot=...)`` (degrees)
+   * - TETZ
+     -
+     - ``add_tolerance("element_roll", ...)`` (degrees)
+   * - TIND, TABB
+     -
+     - ``add_tolerance("index", ...)``, ``add_tolerance("abbe", ...)``
+   * - TIRR
+     -
+     - ``add_tolerance("irregularity", ...)``. Kind ``"B"`` is pure
+       astigmatism and kind ``"C"`` spherical; TIRR mixes the two equally.
    * - Compensators
      -
      - ``add_compensator()``, :class:`~tolerancing.compensator.CompensatorOptimizer`
+   * - Compensator setting: Paraxial Focus
+     -
+     - ``add_compensator("quick_focus")``, a fast refocus without an optimizer
+       (from real rays, not paraxial)
    * - Sensitivity
      -
      - :class:`~tolerancing.sensitivity_analysis.SensitivityAnalysis`
+   * - Estimated change (RSS)
+     -
+     - ``SensitivityAnalysis.rss_estimate()``
+   * - Worst offenders
+     -
+     - ``SensitivityAnalysis.view_tornado()``
+   * - Inverse sensitivity, inverse limit
+     -
+     - :class:`~tolerancing.inverse_sensitivity.InverseSensitivity`
    * - Monte Carlo
      -
-     - :class:`~tolerancing.monte_carlo.MonteCarlo`
+     - :class:`~tolerancing.monte_carlo.MonteCarlo`, ``run(n, seed=..., workers=...)``
+   * - Monte Carlo statistics (yield, percent of trials better than)
+     -
+     - ``MonteCarlo.yield_fraction()``, ``MonteCarlo.percentiles()``
+   * - Statistics: Normal, Uniform, Parabolic
+     -
+     - ``distribution="normal"`` (truncated at the limits, limits at ±2σ),
+       ``"uniform"``, ``"parabolic"``; also ``"end_point"``
+   * - ISO element drawing tolerances
+     -
+     - ``add_tolerances_from_drawing()``, ``drawing_values_from_tolerancing()``
 
 ----
 

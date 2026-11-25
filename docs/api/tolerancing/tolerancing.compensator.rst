@@ -9,4 +9,5 @@
    .. autosummary::
    
       CompensatorOptimizer
+      QuickFocusCompensator
    

@@ -47,6 +47,7 @@ The `optimization.operand` subpackage contains the following modules:
    :recursive:
 
    optimization.operand.aberration
+   optimization.operand.image_quality
    optimization.operand.operand
    optimization.operand.paraxial
    optimization.operand.ray
@@ -67,6 +68,7 @@ The `optimization.variable` subpackage contains the following modules:
    optimization.variable.chebyshev_coeff
    optimization.variable.conic
    optimization.variable.decenter
+   optimization.variable.element
    optimization.variable.forbes_coeff
    optimization.variable.index
    optimization.variable.material

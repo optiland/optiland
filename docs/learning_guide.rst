@@ -143,6 +143,8 @@ tolerance a thin-film stack.
 
 Will the lens still work once it has been built? Sensitivity and Monte Carlo
 tolerancing, followed by surface roughness, scattering and extended sources.
+Tutorial 6d puts the tolerancing together in a complete tolerance study; the
+:doc:`tolerancing_guide` is its reference.
 
 .. toctree::
    :maxdepth: 1
@@ -150,6 +152,7 @@ tolerancing, followed by surface roughness, scattering and extended sources.
    Tutorial 6a: Tolerancing Sensitivity Analysis <examples/Tutorial_6a_Tolerancing_Sensitivity_Analysis>
    Tutorial 6b: Monte Carlo Tolerancing Analysis <examples/Tutorial_6b_Monte_Carlo_Tolerancing_Analysis>
    Tutorial 6c: Roughness, Scattering, and Extended Sources <examples/Tutorial_6c_Roughness_Scattering_and_Extended_Sources>
+   Tutorial 6d: A Complete Tolerance Study <examples/Tutorial_6d_Complete_Tolerance_Study>
 
 
 7. Differentiable Raytracing :bdg-secondary:`elective`

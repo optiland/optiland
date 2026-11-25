@@ -7,6 +7,10 @@ build new geometry types by subclassing either the `BaseGeometry` class or the `
 The former is used for geometries that can be described by a closed-form equation, while the latter is used for geometries
 that require a numerical solution to find the intersection point with a ray.
 
+:class:`~optiland.geometries.sag_error.SagErrorGeometry` wraps any other geometry and adds a
+Zernike sag error to it. It models a form error of a manufactured surface, and is what the
+``"irregularity"`` tolerance applies (see :doc:`/tolerancing_guide`).
+
 .. autosummary::
    :toctree: geometries/
    :caption: Geometry Modules
@@ -22,6 +26,7 @@ that require a numerical solution to find the intersection point with a ray.
    geometries.plane
    geometries.plane_grating
    geometries.polynomial
+   geometries.sag_error
    geometries.standard
    geometries.standard_grating
    geometries.toroidal

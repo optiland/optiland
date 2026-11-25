@@ -23,9 +23,13 @@ The tolerancing framework is built around the following key components:
 
 - **Compensators**: Parameters that can be adjusted to minimize the impact of perturbations. Compensators operate by performing an optimization to restore system performance within acceptable limits.
 
-- **Perturbations**: Defined changes to system parameters (e.g., a shift in lens position or a change in curvature) that simulate real-world manufacturing tolerances or environmental variations.
+- **Tolerances**: Signed deviations from the nominal design between two limits (``Tolerance``, added with ``Tolerancing.add_tolerance``). Each one binds a *tolerance type* (``ToleranceType``), which knows how to apply a deviation to one property of the optic and how to restore it, and a *distribution* (``Distribution``) used by Monte Carlo analyses.
 
-- **Samplers**: Distributions, from which random perturbations are drawn during sensitivity analyses or Monte Carlo simulations. These can be customized to model specific manufacturing processes or environmental conditions.
+- **Perturbations**: Defined changes to system parameters (e.g., a shift in lens position or a change in curvature) that simulate real-world manufacturing tolerances or environmental variations. A ``Perturbation`` sets absolute values of an optimization variable.
+
+- **Samplers**: Sources of perturbation values (``ScalarSampler``, ``RangeSampler``, ``DistributionSampler``), used by perturbations during sensitivity analyses or Monte Carlo simulations. These can be customized to model specific manufacturing processes or environmental conditions.
+
+Tolerances and perturbations share one interface, ``BasePerturbation`` (``optiland/tolerancing/base.py``): a ``label``, ``apply()``, ``reset()`` and a ``phase``. The analyses depend on this interface only. Within a trial, ``Tolerancing.ordered_perturbations()`` applies them phase by phase (``Phase.STRUCTURE``, ``MATERIAL``, ``FORM``, ``RIGID_BODY``) and in insertion order within a phase; ``Tolerancing.reset()`` undoes them in reverse order, so that a thickness change applied first does not overwrite a decenter applied later.
 
 Core Classes
 ------------
@@ -36,22 +40,70 @@ The tolerancing framework centers around the following classes:
 
 - **SensitivityAnalysis**: This class evaluates the effect of individual perturbations on system performance. It computes the changes in operand values for each perturbation independently to identify critical sensitivities in the design.
 
-- **MonteCarlo**: This class performs stochastic simulations by applying random perturbations to system variables. The results provide insights into the statistical robustness of the design under realistic tolerances.
+- **InverseSensitivity**: This class searches, for each tolerance and each side, the largest deviation that keeps chosen operands within an allowed change from their compensated nominal values.
+
+- **MonteCarlo**: This class performs stochastic simulations by applying random perturbations to system variables. The results provide insights into the statistical robustness of the design under realistic tolerances. Seeded runs spawn one generator per trial from ``numpy.random.SeedSequence``, which is also what makes a run split over ``workers`` processes equal to a serial run.
+
+Supporting modules: ``tolerancing.registry`` (``ToleranceType`` and ``tolerance_registry``), ``tolerancing.types`` (the built-in types), ``tolerancing.distributions``, ``tolerancing.presets`` (``add_default_tolerances``), ``tolerancing.iso10110_bridge`` and ``tolerancing.compensator`` (``CompensatorOptimizer`` and ``QuickFocusCompensator``). The index and Abbe tolerances wrap the glass in an ``OffsetMaterial`` and the irregularity tolerance wraps the geometry in a ``SagErrorGeometry``, so the nominal objects are never modified.
 
 Workflow
 --------
 
 1. **Create a Tolerancing Instance**: Instantiate an empty `Tolerancing` object.
-2. **Define Perturbations**: Specify perturbations, together with an appropriate sampling distribution, and add them to the `Tolerancing` instance.
+2. **Define Tolerances or Perturbations**: Add tolerances with ``add_tolerance`` (or a table with ``add_default_tolerances``, or a drawing with ``add_tolerances_from_drawing``), or perturbations with a sampler with ``add_perturbation``.
 3. **Add Operands and (optionally) Compensators**: Identify which metrics will be evaluated and specify any compensators (e.g., adjusting lens positions or tilts to counteract perturbations).
-4. **Run Analysis**: Pass the `Tolerancing` class instance to either the `SensitivityAnalysis` or `MonteCarlo` class, depending on the desired type of study, and run the analysis.
+4. **Run Analysis**: Pass the `Tolerancing` class instance to the `SensitivityAnalysis`, `InverseSensitivity` or `MonteCarlo` class, depending on the desired type of study, and run the analysis.
 5. **Interpret Results**: Use the output to identify sensitive parameters or assess the statistical robustness of the design. Optionally visualize the output using built-in plotting functions, or export the results as a `pandas.DataFrame` for further analysis.
 
 .. tip::
-   See the :ref:`learning_guide` for specific demonstrations of both sensitivity and Monte Carlo analyses using the tolerancing framework.
+   The user-facing reference is the :doc:`../tolerancing_guide`, and
+   :doc:`Tutorial 6d <../examples/Tutorial_6d_Complete_Tolerance_Study>` runs a complete study. See the
+   :ref:`learning_guide` for more demonstrations of sensitivity and Monte Carlo analyses.
 
 How to Extend This
 ------------------
+
+**Scenario:** Add a new kind of tolerance.
+
+Subclass ``ToleranceType`` (``optiland/tolerancing/registry.py``) and register it. The
+constructor reads and stores the nominal state; ``apply(delta)`` applies a signed deviation in
+``units``; ``reset()`` must restore the nominal state exactly. Set ``phase`` so that the
+deviation is applied in the right order, and ``units`` for result tables:
+
+.. code-block:: python
+
+   from optiland.tolerancing import ToleranceType, tolerance_registry
+   from optiland.tolerancing.base import Phase
+
+
+   class WedgeTolerance(ToleranceType):
+       """Example: a wedge, in degrees, applied as a tilt of one surface."""
+
+       phase = Phase.RIGID_BODY
+       units = "degrees"
+
+       def __init__(self, optic, surface_number: int) -> None:
+           super().__init__(optic)
+           self.surface_number = surface_number
+           ...  # read and store the nominal state
+
+       @property
+       def label(self) -> str:
+           return f"Wedge S{self.surface_number}"
+
+       def apply(self, delta: float) -> None:
+           ...  # apply the deviation to the nominal state
+
+       def reset(self) -> None:
+           ...  # restore the nominal state exactly
+
+
+   tolerance_registry.register("wedge", WedgeTolerance)
+
+The new type is then available as ``Tolerancing.add_tolerance("wedge", 0.01,
+surface_number=2)`` and in every analysis. It is placed by ``add_default_tolerances``
+only once it has an entry in ``tolerancing.presets.SCOPES``. Built-in types live in
+``optiland/tolerancing/types/`` and are registered in ``types/__init__.py``.
 
 **Scenario:** Add a custom perturbation sampling strategy to Optiland.
 
