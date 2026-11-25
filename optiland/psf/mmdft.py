@@ -12,6 +12,10 @@ Scott Paine, 2025
 from __future__ import annotations
 
 import optiland.backend as be
+from optiland.psf._fft_sampling import (
+    pupil_direction_matrix,
+    pupil_frequency_steps,
+)
 from optiland.psf.base import BasePSF
 from optiland.psf.fft import calculate_grid_size
 
@@ -87,8 +91,6 @@ class MMDFTPSF(BasePSF):
             **kwargs,
         )
 
-        clear_size = num_rays - 1
-
         # General idea for below:
         #  - If only pixel_pitch is None, calculate based off of image_size, assuming
         #    image_size is full pad size
@@ -99,27 +101,27 @@ class MMDFTPSF(BasePSF):
         # I would implement this as a function, but since it needs access to the FNO,
         # it has to happen after super() initialization, which requires knowing
         # num_rays ahead of time
+        #
+        # The equivalent padded DFT size along an axis is 1 / (pixel_pitch * step),
+        # with `step` the image-plane frequency of one pupil sample along that
+        # axis. On axis both steps equal 1 / (wavelength * FNO_w * (num_rays - 1)).
+        # Off axis they differ; the larger step sets the alias-free limit.
+        # The working F/# is no longer needed here, but computing it rejects
+        # systems whose marginal rays fail to trace, as before.
+        self._get_working_FNO()
+        max_step = max(self._frequency_steps())
         if pixel_pitch is None:
             if image_size is None:
                 # Use grid_size above to set Q and therefore pixel pitch
                 image_size = grid_size
-            pixel_pitch = (
-                self.wavelengths[0].value
-                * self._get_working_FNO()
-                * clear_size
-                / image_size
-            )
+            pixel_pitch = 1e3 / (image_size * max_step)
 
         # Below triggers only if pixel_pitch was given but image_size was not
         if image_size is None:
-            # Use pixel_pitch to calculate max pad size and set image size to be 1
-            # pixel less than that
-            image_size = int(
-                self.wavelengths[0].value
-                * self._get_working_FNO()
-                * clear_size
-                / pixel_pitch
-            )
+            # Use pixel_pitch to calculate max pad size and truncate the image
+            # size to it
+            # (relative slack absorbs round-off when the ratio is an integer)
+            image_size = int(1e3 / (pixel_pitch * max_step) * (1 + 1e-9))
 
         self.image_size = image_size
         self.pixel_pitch = pixel_pitch
@@ -163,23 +165,22 @@ class MMDFTPSF(BasePSF):
         return pupil
 
     def _compute_psf(self):
-        """Computes the PSF from the generated pupil functions via matrix
-        triple-product DFT.
+        """Computes the PSF from the generated pupil function via matrix DFTs.
 
         This involves:
-        1. Generating the appropriate kernels (L, R) based on user inputs.
-        2. Using the kernels to perform a matrix triple-product with the pupil such
-           that the image field G = L g R, where g is the calculated pupil field.
-        3. Taking the absolute square of the image field G to calculate intensity.
-        4. Scaling the result by a calculated normalization factor to ensure
+        1. Evaluating the image field G on a grid with spacing `pixel_pitch`
+           centred on the chief ray (see `_compute_image_field`). When the
+           pupil-to-direction map is diagonal, this is the matrix
+           triple-product G = L g R, where g is the pupil field.
+        2. Taking the absolute square of the image field G to calculate intensity.
+        3. Scaling the result by a calculated normalization factor to ensure
            consistent Strehl ratio (diffraction-limited peak = 100%).
 
         Returns:
             be.ndarray: The computed 2D PSF (shape: `image_size` x `image_size`),
             normalized so that a diffraction-limited system's peak is 100.
         """
-        left_kernel, right_kernel = self._compute_kernels()
-        image_plane = be.matmul(left_kernel, be.matmul(self.pupil, right_kernel))
+        image_plane = self._compute_image_field()
         psf = image_plane * be.conj(image_plane)
 
         return be.real(psf) * 100 / self._get_normalization()
@@ -228,32 +229,60 @@ class MMDFTPSF(BasePSF):
         # Make sure to use max! The PSF may not be centered in the image plane
         return be.max(self.psf) / 100
 
-    def _compute_kernels(self):
-        """Generate the Fourier Kernels for optical propagation with appropriate
-        sampling in the image plane.
+    def _frequency_steps(self) -> tuple[float, float]:
+        """Image-plane frequency of one pupil sample along pupil Y and X.
 
-        In order to be inline with calculations in FFTPSF, the number of samples
-        across the exit pupil is assumed to be num_rays - 1. This takes with it the
-        assumption that all rays trace completely through the system and aren't
-        clipped.
+        See `optiland.psf._fft_sampling.pupil_frequency_steps`.
 
         Returns:
-            tuple[be.ndarray, be.ndarray]: A tuple with the left and right kernels
-            for the matrix triple product to perform the Fourier propagation
-            of the pupil plane electric field. Kernels are non-unitary.
-
+            tuple[float, float]: The steps along pupil Y and pupil X, in
+            cycles/mm.
         """
-        # Assume clear aperture is defined as (num_rays - 1) - done in FFTPSF
-        clear_size = self.num_rays - 1
-        pad_size = (
-            self.wavelengths[0].value
-            * self._get_working_FNO()
-            * clear_size
-            / self.pixel_pitch
+        step_y, step_x = pupil_frequency_steps(
+            self.optic,
+            self.fields[0].coord,
+            self.wavelengths[0].value,
+            self.num_rays,
         )
+        return float(be.to_numpy(step_y)), float(be.to_numpy(step_x))
 
-        # Check to make sure we aren't sampling outside the max extent of the image
-        # domain (defined by pad_size)
+    def _compute_image_field(self):
+        """Evaluate the scalar image field on the output grid by matrix DFTs.
+
+        In the Fraunhofer approximation the image field at offset
+        ``r = (x, y)`` from the chief ray is
+        ``G(r) = sum_p g(p) exp(i k r . (A p))``, where ``g`` is the pupil
+        field at normalized pupil coordinates ``p = (Px, Py)``,
+        ``k = 2 pi / wavelength`` and ``A`` maps ``p`` to the image-space
+        direction cosines times the index (see
+        `optiland.psf._fft_sampling.pupil_direction_matrix`). The output grid
+        has ``image_size`` samples per axis spaced by exactly ``pixel_pitch``,
+        with sample ``image_size // 2`` on the chief ray.
+
+        When ``A`` is diagonal (fields on the x or y axis of a rotationally
+        symmetric system), the sum separates into the matrix triple-product
+        ``G = L g R``. Otherwise the off-diagonal terms couple the axes, and
+        the field is evaluated one image row at a time, which costs about
+        ``image_size`` times more. The separable form is used whenever the
+        phase from the off-diagonal terms stays below 1e-6 rad over the grid.
+
+        In order to be in line with FFTPSF, the pupil is sampled by `num_rays`
+        points across its diameter, assuming all rays trace through the
+        system unclipped.
+
+        Returns:
+            be.ndarray: The complex image field, shape
+            ``(image_size, image_size)``; rows are image y, columns image x.
+
+        Raises:
+            ValueError: If the image grid extends beyond the alias-free extent
+                set by the pupil sampling along either axis.
+        """
+        # The pupil field repeats in the image plane with a period of
+        # 1 / step along each axis; the grid must stay within one period.
+        # A relative slack of 1e-9 absorbs round-off when the default pitch
+        # makes the pad size exactly `image_size`.
+        pad_size = 1e3 / (self.pixel_pitch * max(self._frequency_steps())) * (1 + 1e-9)
         if self.image_size > pad_size:
             max_size = int(pad_size)  # truncate
             raise ValueError(
@@ -261,34 +290,58 @@ class MMDFTPSF(BasePSF):
                 f"calculated pad size of {max_size}. Consider increasing num_rays."
             )
 
-        # MMDFT generates 2 kernels:
-        # right kernel = exp[-2 pi (u x) / pad_size_x]
-        # left kernel = exp[-2 pi (v y) / pad_size_y]
-        # We do an outer product to create the (u x) and (v y) products
-        # For non-square arrays, use the following:
-        # [a, b] = pupil.shape (pupil plane)
-        # [c, d] = psf.shape   (image plane)
-        # (u x) = np.outer(a, c)
-        # (v y) = np.outer(d, b)
-        # This ensures that the shape of the kernels is correct
-        pupil_coordinates = be.arange(self.num_rays) - self.num_rays // 2
-        image_coordinates = be.arange(self.image_size) - self.image_size // 2
+        A = pupil_direction_matrix(
+            self.optic, self.fields[0].coord, self.wavelengths[0].value
+        )
+        k = 2 * be.pi / (self.wavelengths[0].value * 1e-3)  # 1/mm
+        # Pupil sample coordinates (same linspace as `_generate_pupil`) and
+        # image offsets from the chief ray in mm.
+        pupil_coordinates = be.linspace(-1, 1, self.num_rays)
+        image_coordinates = (
+            (be.arange(self.image_size) - self.image_size // 2)
+            * self.pixel_pitch
+            * 1e-3
+        )
 
-        # Because we are dealing with a pupil array sized (num_rays x num_rays) and
-        # an image plane size (image_size x image_size), we can reuse coordinates. In
-        # the future, this will fail if pupil.shape[0] != pupil.shape[1] or
-        # psf.shape[0] != psf.shape[1].
-        right_vector_product = be.outer(pupil_coordinates, image_coordinates)
-        left_vector_product = be.outer(image_coordinates, pupil_coordinates)
-
+        # Pupil rows are pupil Y and columns pupil X (see `_generate_pupil`).
+        # right[px, x] = exp(i k A_xx Px x),  left[y, py] = exp(i k A_yy Py y)
         right_kernel = be.to_complex(
-            be.exp(-2j * be.pi * right_vector_product / pad_size)
+            be.exp(1j * k * A[0, 0] * be.outer(pupil_coordinates, image_coordinates))
         )
 
-        left_kernel = be.to_complex(
-            be.exp(-2j * be.pi * left_vector_product / pad_size)
+        r_max = float(be.to_numpy(be.max(be.abs(image_coordinates))))
+        off_diagonal_phase = (
+            k * r_max * float(be.to_numpy(be.abs(A[0, 1]) + be.abs(A[1, 0])))
         )
-        return left_kernel, right_kernel
+        if off_diagonal_phase < 1e-6:
+            left_kernel = be.to_complex(
+                be.exp(
+                    1j * k * A[1, 1] * be.outer(image_coordinates, pupil_coordinates)
+                )
+            )
+            return be.matmul(left_kernel, be.matmul(self.pupil, right_kernel))
+
+        # Coupled axes: for each image row y,
+        # G[y, x] = sum_py exp(i k (A_xy x + A_yy y) Py)
+        #           * sum_px g[py, px] exp(i k A_yx y Px) exp(i k A_xx Px x)
+        rows = []
+        for y in image_coordinates:
+            row_modulation = be.to_complex(
+                be.exp(1j * k * A[1, 0] * y * pupil_coordinates)
+            )
+            partial = be.matmul(self.pupil * row_modulation[None, :], right_kernel)
+            column_phase = be.to_complex(
+                be.exp(
+                    1j
+                    * k
+                    * be.outer(
+                        pupil_coordinates, A[0, 1] * image_coordinates + A[1, 1] * y
+                    )
+                )
+            )
+            rows.append(be.sum(column_phase * partial, axis=0)[None, :])
+        # concatenate, not stack: the torch backend's stack casts to a real dtype
+        return be.concatenate(rows, axis=0)
 
     def _get_psf_units(self, image):
         """Calculates the physical extent (units) of the PSF image for plotting.

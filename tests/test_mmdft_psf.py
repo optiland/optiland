@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import matplotlib
 import matplotlib.pyplot as plt
+import numpy as np
 import pytest
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
@@ -257,8 +258,11 @@ def test_get_units_finite_obj(make_mmdftpsf):
     mmdftpsf = make_mmdftpsf(field=(0, 1), tweak_optic=tweak)
     image = be.zeros((128, 128))
     x, y = mmdftpsf._get_psf_units(image)
-    assert_allclose(x, 382.82764038)
-    assert_allclose(y, 382.82764038)
+    # The default pitch is the largest alias-free pitch for image_size: off
+    # axis it is set by the larger per-axis frequency step (here pupil X), so
+    # it equals the FFT PSF x-pitch of the same case, not lambda * FNO_w / Q.
+    assert_allclose(x, 369.12999618)
+    assert_allclose(y, 369.12999618)
 
 
 def test_psf_log_tick_formatter(make_mmdftpsf):
@@ -314,3 +318,108 @@ def test_fft_agreement(make_mmdftpsf_and_fftpsf, num_rays, image_size):
     )
     assert_allclose(fftpsf.psf, mmdftpsf.psf)
     assert_allclose(fftpsf.strehl_ratio(), mmdftpsf.strehl_ratio())
+
+
+def test_off_axis_matches_fft_psf_per_axis(set_test_backend):
+    """Off axis, MMDFT samples at `pixel_pitch` along both axes.
+
+    With the pitch set to the FFT PSF pitch along one axis, the MMDFT row (or
+    column) through the chief ray reproduces the FFT PSF samples on that axis.
+    A single isotropic pitch fails one of the two.
+    """
+    optic = CookeTriplet()
+    fft = ScalarFFTPSF(optic, (0, 1), 0.55, num_rays=64, grid_size=512)
+    dx, dy, _ = fft._get_pixel_pitch()
+    assert dy > 1.05 * dx  # anamorphic field
+
+    size, centre = 33, 512 // 2
+    window = slice(centre - size // 2, centre + size // 2 + 1)
+    for pitch, axis in ((dx, "x"), (dy, "y")):
+        mmdft = MMDFTPSF(
+            optic, (0, 1), 0.55, num_rays=64, image_size=size, pixel_pitch=pitch
+        )
+        if axis == "x":
+            expected, actual = fft.psf[centre, window], mmdft.psf[size // 2, :]
+        else:
+            expected, actual = fft.psf[window, centre], mmdft.psf[:, size // 2]
+        assert_allclose(actual, expected, rtol=1e-6, atol=1e-9)
+
+
+def _rotated_field_optic(angle_deg, azimuth_deg):
+    """CookeTriplet with fields at (0, angle) and the same angle rotated.
+
+    Angle fields compose tan(x) and tan(y), so the rotated field is
+    (atan(t sin(az)), atan(t cos(az))) with t = tan(angle).
+    """
+    optic = CookeTriplet()
+    t = np.tan(np.radians(angle_deg))
+    az = np.radians(azimuth_deg)
+    fx = float(np.degrees(np.arctan(t * np.sin(az))))
+    fy = float(np.degrees(np.arctan(t * np.cos(az))))
+    optic.fields.add(x=fx, y=fy)
+    max_field = float(be.to_numpy(optic.fields.max_field))
+    return optic, (0.0, angle_deg / max_field), (fx / max_field, fy / max_field)
+
+
+def _rotation_error(optic, meridional, skew, azimuth, **kwargs):
+    """Relative error between a skew-field PSF and the rotated meridional PSF."""
+    from scipy.ndimage import map_coordinates
+
+    psf_m = be.to_numpy(MMDFTPSF(optic, meridional, 0.55, **kwargs).psf)
+    psf_s = be.to_numpy(MMDFTPSF(optic, skew, 0.55, **kwargs).psf)
+    size = psf_m.shape[0]
+    c, s = np.cos(np.radians(azimuth)), np.sin(np.radians(azimuth))
+    # psf_s(r) = psf_m(R^T r), with R taking +y to the skew field direction.
+    offsets = np.arange(size) - size // 2
+    x, y = np.meshgrid(offsets, offsets)
+    rotated = map_coordinates(
+        psf_m,
+        [s * x + c * y + size // 2, c * x - s * y + size // 2],
+        order=3,
+        mode="constant",
+    )
+    inner = np.hypot(x, y) < size // 2 - 2  # stay clear of the grid corners
+    return np.sum((psf_s - rotated)[inner] ** 2) / np.sum(psf_s[inner] ** 2)
+
+
+def test_skew_field_is_rotated_meridional_psf(set_test_backend, monkeypatch):
+    """Rotational symmetry: a skew-field PSF is the meridional one, rotated.
+
+    For a rotationally symmetric lens, the PSF of a field rotated by an angle
+    about the axis is the PSF of the unrotated field, rotated by the same
+    angle about the chief ray. Together with the per-axis scale checked in
+    `test_off_axis_matches_fft_psf_per_axis`, this fixes the skew-field PSF.
+    A skew field couples the pupil axes: dropping the off-diagonal terms of
+    the pupil-to-direction map (separable per-axis kernels) breaks the
+    symmetry. The remaining error is pupil-grid discretization and decreases
+    with num_rays (about 3e-4, 6e-5 and 2e-5 at 64, 128 and 256 rays).
+    """
+    import optiland.psf.mmdft as mmdft_module
+
+    azimuth = 36.87
+    optic, meridional, skew = _rotated_field_optic(18.0, azimuth)
+
+    # The two chief rays are rotations of each other.
+    rays = optic.trace_generic(
+        Hx=be.array([meridional[0], skew[0]]),
+        Hy=be.array([meridional[1], skew[1]]),
+        Px=0.0,
+        Py=0.0,
+        wavelength=0.55,
+    )
+    L, M = be.to_numpy(rays.L), be.to_numpy(rays.M)
+    c, s = np.cos(np.radians(azimuth)), np.sin(np.radians(azimuth))
+    np.testing.assert_allclose([L[1], M[1]], [s * M[0], c * M[0]], atol=1e-9)
+
+    kwargs = {"num_rays": 128, "image_size": 61, "pixel_pitch": 0.3}
+    assert _rotation_error(optic, meridional, skew, azimuth, **kwargs) < 1e-4
+
+    # Control: without the off-diagonal coupling the symmetry is broken.
+    full_matrix = mmdft_module.pupil_direction_matrix
+
+    def diagonal_only(*args):
+        A = full_matrix(*args)
+        return A * be.array([[1.0, 0.0], [0.0, 1.0]])
+
+    monkeypatch.setattr(mmdft_module, "pupil_direction_matrix", diagonal_only)
+    assert _rotation_error(optic, meridional, skew, azimuth, **kwargs) > 1e-3
