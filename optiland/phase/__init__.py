@@ -6,6 +6,7 @@ from .grid import GridPhaseProfile
 from .height_profile import HeightProfile
 from .linear_grating import LinearGratingPhaseProfile
 from .radial import RadialPhaseProfile
+from .wavelength_dependent import WavelengthDependentPhaseProfile
 
 __all__ = [
     "BasePhaseProfile",
@@ -14,4 +15,5 @@ __all__ = [
     "HeightProfile",
     "LinearGratingPhaseProfile",
     "RadialPhaseProfile",
+    "WavelengthDependentPhaseProfile",
 ]

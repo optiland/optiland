@@ -42,6 +42,23 @@ The `PhaseInteractionModel` can be used to create a wide variety of optical comp
 
 To create a surface with a phase profile, you need to create a `BasePhaseProfile` object and pass it to the `SurfaceFactory` using the `phase_profile` argument. The `interaction_type` will be automatically set to `phase`.
 
+**Wavelength-dependent phase.** If the phase comes from a height map and a dispersive material, use ``HeightProfile``, which already evaluates both materials at the ray wavelength. For any other case, wrap one profile per wavelength in ``WavelengthDependentPhaseProfile``:
+
+.. code-block:: python
+
+   from optiland.phase import RadialPhaseProfile, WavelengthDependentPhaseProfile
+
+   # A focusing phase designed separately for each wavelength (in µm).
+   profile = WavelengthDependentPhaseProfile(
+       {
+           0.48: RadialPhaseProfile(coefficients=[-65.4]),
+           0.55: RadialPhaseProfile(coefficients=[-57.1]),
+       }
+   )
+   lens.surfaces.add(index=1, radius=be.inf, thickness=100.0, phase_profile=profile)
+
+Lookup is exact. Tracing at a wavelength that has no entry raises a ``ValueError`` that lists the wavelengths that are defined. It never falls back to the nearest wavelength. The wrapper serializes with ``to_dict``/``from_dict`` like any other phase profile.
+
 How to Extend This
 ------------------
 
