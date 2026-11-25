@@ -30,6 +30,7 @@ Tolerancing in Optiland requires 4 key components:
    tolerancing.distributions
    tolerancing.inverse_sensitivity
    tolerancing.monte_carlo
+   tolerancing.multiconfig
    tolerancing.perturbation
    tolerancing.registry
    tolerancing.sensitivity_analysis

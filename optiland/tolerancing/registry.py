@@ -57,6 +57,22 @@ class ToleranceType(ABC):
     def reset(self) -> None:
         """Restore the nominal state."""
 
+    def pickup_targets(self) -> list[tuple[int, str]]:
+        """Return the optic attributes this tolerance writes that a pickup can
+        drive.
+
+        ``MultiConfigTolerancing`` uses this to find configurations whose
+        attribute follows another configuration through a pickup. The
+        default, an empty list, means no attribute is pickup-linked, so the
+        deviation is always applied directly.
+
+        Returns:
+            ``(surface_number, attribute)`` pairs, where ``attribute`` is a
+            pickup ``attr_type`` (``"radius"``, ``"conic"``, ``"thickness"``)
+            or a surface attribute path such as ``"material_post"``.
+        """
+        return []
+
 
 class ToleranceRegistry:
     """Registry of tolerance types, keyed by name."""

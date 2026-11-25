@@ -52,6 +52,10 @@ class MaterialTolerance(ToleranceType):
         """Return a short, human-readable name."""
         return f"{self.name} S{self.surface_number}"
 
+    def pickup_targets(self) -> list[tuple[int, str]]:
+        """Return the material after the surface."""
+        return [(self.surface_number, "material_post")]
+
     def apply(self, delta: float) -> None:
         """Replace the material with the nominal one offset by ``delta``."""
         if delta == 0:

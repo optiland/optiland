@@ -59,11 +59,14 @@ class VariableTolerance(ToleranceType):
     Attributes:
         variable_type: The optimization variable type that is perturbed.
         scale: Factor from deviation units to variable units.
+        pickup_attr: The pickup ``attr_type`` that can drive the variable, or
+            None if no pickup can.
     """
 
     variable_type: str = ""
     scale: float = 1.0
     name: str = ""
+    pickup_attr: str | None = None
 
     def __init__(self, optic: Optic, surface_number: int, **kwargs) -> None:
         super().__init__(optic)
@@ -81,6 +84,12 @@ class VariableTolerance(ToleranceType):
     def label(self) -> str:
         """Return a short, human-readable name."""
         return f"{self.name} S{self.surface_number}"
+
+    def pickup_targets(self) -> list[tuple[int, str]]:
+        """Return the pickup-linkable attribute, if any."""
+        if self.pickup_attr is None:
+            return []
+        return [(self.surface_number, self.pickup_attr)]
 
     def apply(self, delta: float) -> None:
         """Set the variable to nominal plus the scaled deviation."""
@@ -101,6 +110,7 @@ class RadiusTolerance(VariableTolerance):
     variable_type = "radius"
     units = "lens units"
     name = "Radius"
+    pickup_attr = "radius"
 
     def __init__(self, optic: Optic, surface_number: int) -> None:
         super().__init__(optic, surface_number)
@@ -116,6 +126,7 @@ class ConicTolerance(VariableTolerance):
 
     variable_type = "conic"
     name = "Conic"
+    pickup_attr = "conic"
 
 
 class SurfaceDecenterTolerance(VariableTolerance):
@@ -184,6 +195,13 @@ class ThicknessTolerance(ToleranceType):
     def label(self) -> str:
         """Return a short, human-readable name."""
         return f"Thickness S{self.surface_number}"
+
+    def pickup_targets(self) -> list[tuple[int, str]]:
+        """Return the thickness and, if set, the adjust thickness."""
+        targets = [(self.surface_number, "thickness")]
+        if self.adjust is not None:
+            targets.append((self.adjust, "thickness"))
+        return targets
 
     def apply(self, delta: float) -> None:
         """Change the thickness, and the adjust thickness by the opposite
@@ -273,6 +291,10 @@ class FringesTolerance(ToleranceType):
     def label(self) -> str:
         """Return a short, human-readable name."""
         return f"Fringes S{self.surface_number}"
+
+    def pickup_targets(self) -> list[tuple[int, str]]:
+        """Return the radius, which carries the power deviation."""
+        return [(self.surface_number, "radius")]
 
     def apply(self, delta: float) -> None:
         """Set the radius for a power deviation of ``delta`` fringes."""
