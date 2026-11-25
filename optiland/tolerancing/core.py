@@ -187,21 +187,33 @@ class Tolerancing:
             ValueError: If the limits are missing, given twice, or reversed,
                 or if the tolerance type is unknown.
         """
-        if limit is not None:
-            if minus is not None or plus is not None:
-                raise ValueError("Give either limit or minus and plus, not both.")
-            if limit < 0:
-                raise ValueError(f"limit must not be negative, got {limit}.")
-            minus, plus = -limit, limit
-        elif minus is None or plus is None:
-            raise ValueError("Give either limit, or both minus and plus.")
-
+        minus, plus = self._tolerance_limits(limit, minus, plus)
         tolerance_cls = tolerance_registry.get(tolerance_type)
         tolerance = Tolerance(
             tolerance_cls(self.optic, **kwargs), minus, plus, distribution
         )
         self.perturbations.append(tolerance)
         return tolerance
+
+    @staticmethod
+    def _tolerance_limits(
+        limit: float | None, minus: float | None, plus: float | None
+    ) -> tuple[float, float]:
+        """Return ``(minus, plus)`` from the limit arguments of ``add_tolerance``.
+
+        Raises:
+            ValueError: If the limits are missing or given twice, or if
+                ``limit`` is negative.
+        """
+        if limit is not None:
+            if minus is not None or plus is not None:
+                raise ValueError("Give either limit or minus and plus, not both.")
+            if limit < 0:
+                raise ValueError(f"limit must not be negative, got {limit}.")
+            return -limit, limit
+        if minus is None or plus is None:
+            raise ValueError("Give either limit, or both minus and plus.")
+        return minus, plus
 
     def add_default_tolerances(
         self,

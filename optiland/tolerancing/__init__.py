@@ -1,6 +1,7 @@
 # flake8: noqa
 
 from .core import Tolerancing
+from .multiconfig import ConfigurationGroupTolerance, MultiConfigTolerancing
 from .perturbation import ScalarSampler, RangeSampler, DistributionSampler, Perturbation
 from .sensitivity_analysis import SensitivityAnalysis
 from .inverse_sensitivity import InverseSensitivity
