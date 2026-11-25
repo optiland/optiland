@@ -75,6 +75,13 @@ class MultiConfiguration:
         This ensures that, initially, both configurations are identical
         and controlled by the source's variables.
 
+        Pickups inherited from the source keep pointing at their real source
+        configurations (the other configurations are not duplicated by the
+        copy). An inherited pickup that drives the same surface attribute as
+        one of the new links to the source is dropped, so every attribute
+        has exactly one driver. Other inherited links, such as a material
+        link to configuration 0, are kept.
+
         Args:
             source_config_idx (int): The index of the configuration to copy.
                 Defaults to 0.
@@ -83,11 +90,25 @@ class MultiConfiguration:
             Optic: The new configuration instance.
         """
         source_optic = self.configurations[source_config_idx]
-        new_optic = copy.deepcopy(source_optic)
+        # Map every other configuration to itself, so inherited cross-config
+        # pickups keep their real source optic instead of a hidden copy.
+        memo = {id(c): c for c in self.configurations if c is not source_optic}
+        new_optic = copy.deepcopy(source_optic, memo)
         self.configurations.append(new_optic)
 
         # Link the new optic to the source optic
+        pickups = new_optic.pickups.pickups
+        num_inherited = len(pickups)
         self._link_configurations(source_optic, new_optic)
+
+        # Drop inherited pickups superseded by a new link (one driver each).
+        new_links = pickups[num_inherited:]
+        linked = {(p.target_surface_idx, p.attr_type) for p in new_links}
+        pickups[:] = [
+            p
+            for p in pickups[:num_inherited]
+            if (p.target_surface_idx, p.attr_type) not in linked
+        ] + new_links
 
         return new_optic
 

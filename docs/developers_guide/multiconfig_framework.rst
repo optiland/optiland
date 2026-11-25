@@ -30,6 +30,17 @@ When a new configuration is added, the framework automatically establishes picku
 
 This means that by default, changing a parameter in the Base Configuration (Config 0) will propagate to all other configurations.
 
+Derived Configurations
+~~~~~~~~~~~~~~~~~~~~~~
+
+A configuration can be derived from any existing configuration, not only from Config 0
+(for example ``add_configuration(1)``). The new configuration is linked to its source for
+radius, conic and thickness. Pickups it inherits from the source keep pointing at their real
+source configurations: the deep copy does not duplicate the other configurations. An
+inherited pickup that drives the same surface attribute as one of the new links is dropped,
+so each attribute has exactly one driver. Other inherited links are kept, for example a
+material link to Config 0 created by ``set_material(..., configurations="all")``.
+
 Breaking Links
 --------------
 

@@ -57,7 +57,7 @@ class Prescription:
             raise NotImplementedError(
                 "Prescription does not support MultiConfiguration objects. "
                 "Pass a single Optic instance.  Access individual configs via "
-                "multi_config.configs[i] and generate a prescription for each."
+                "multi_config.configurations[i] and generate a prescription for each."
             )
         self._optic = optic
         self._sections: list[BaseSection] = (
