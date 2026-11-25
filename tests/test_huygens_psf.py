@@ -11,6 +11,7 @@ import optiland.backend as be
 from optiland.psf.huygens_fresnel import HuygensPSF
 from optiland.psf.huygens_fresnel_strategies import NumbaSummation
 from optiland.samples.objectives import CookeTriplet, DoubleGauss, ReverseTelephoto
+from tests.utils import assert_allclose
 
 matplotlib.use("Agg")  # use non-interactive backend for testing
 
@@ -325,31 +326,31 @@ class TestHuygensPSF:
     ):
         EXPECTED_STREHL_VALUES = {
             "CookeTriplet": {
-                (0, 0): 0.30215346284681016,
+                (0, 0): 0.30797721174137493,
                 (
                     0.7,
                     0.0,
-                ): 0.023345559659099676,
+                ): 0.023837284283406722,
             },
             "DoubleGauss": {
                 (
                     0,
                     0,
-                ): 0.07332452538749026,
+                ): 0.07348338951447812,
                 (
                     0.7,
                     0.0,
-                ): 0.00723398494179964,
+                ): 0.0073382783730852694,
             },
             "ReverseTelephoto": {
                 (
                     0,
                     0,
-                ): 0.9785149658601526,
+                ): 0.9897438335540847,
                 (
                     0.7,
                     0.0,
-                ): 0.9256881209403168,
+                ): 0.9351285415300045,
             },
         }
         # Tolerance for Strehl comparison
@@ -654,3 +655,127 @@ def test_psf_scales_with_image_space_index(vectorial):
         psfs.append(be.to_numpy(psf.psf))
 
     np.testing.assert_allclose(psfs[1], psfs[0], atol=0.5)
+
+
+def _perfect_parabola():
+    """F/10 paraboloidal mirror (f = 100 mm): perfect on-axis focus."""
+    from optiland.optic import Optic
+
+    optic = Optic()
+    optic.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+    optic.surfaces.add(
+        index=1, radius=-200, conic=-1.0, thickness=-100, material="mirror", is_stop=True
+    )
+    optic.surfaces.add(index=2)
+    optic.set_aperture("EPD", 10)
+    optic.fields.set_type("angle")
+    optic.fields.add(y=0.0)
+    optic.wavelengths.add(0.55, is_primary=True)
+    return optic
+
+
+def _airy_best_fit_scale(psf):
+    """Scale s of the analytic Airy pattern 100 * (2 J1(v) / v)^2 that best fits
+    the PSF, with v = pi r / (lambda N_w s) and r measured from pixel N // 2.
+
+    s = 1 means the PSF has the Airy size 1.22 lambda N_w at the reported pixel
+    pitch (Born & Wolf, Principles of Optics, ch. 8).
+    """
+    from scipy.special import j1
+
+    image = be.to_numpy(psf.psf)
+    n = image.shape[0]
+    pitch_um = float(be.to_numpy(psf.pixel_pitch)) * 1e3
+    lambda_n = 0.55 * float(be.to_numpy(psf._get_working_FNO()))
+    x = (np.arange(n) - n // 2) * pitch_um
+    r = np.hypot(*np.meshgrid(x, x))
+    window = r < 3 * 1.22 * lambda_n  # central lobe and first two rings
+
+    scales = np.linspace(0.9, 1.1, 2001)
+    costs = []
+    for s in scales:
+        v = np.maximum(np.pi * r[window] / (lambda_n * s), 1e-12)
+        model = np.where(v > 1e-9, (2 * j1(v) / v) ** 2, 1.0) * 100
+        costs.append(np.sum((image[window] - model) ** 2))
+    return scales[int(np.argmin(costs))]
+
+
+@pytest.mark.parametrize("image_size", [32, 33])
+def test_perfect_mirror_peak_on_center_pixel(set_test_backend, image_size):
+    """A perfect system peaks at exactly 100 (Strehl 1) on pixel N // 2."""
+    psf = HuygensPSF(
+        _perfect_parabola(), (0, 0), 0.55, num_rays=32, image_size=image_size
+    )
+    image = be.to_numpy(psf.psf)
+    center = image_size // 2
+    assert np.unravel_index(np.argmax(image), image.shape) == (center, center)
+    assert_allclose(image[center, center], 100.0, rtol=1e-9, atol=0)
+    assert_allclose(psf.strehl_ratio(), 1.0, rtol=1e-9, atol=0)
+
+
+@pytest.mark.parametrize("image_size", [24, 25])
+def test_perfect_mirror_matches_airy_size(set_test_backend, image_size):
+    """The PSF has the Airy size 1.22 lambda N_w at the reported pixel pitch.
+
+    The best-fit scale is 1.0032 with 64 x 64 pupil samples (1.0007 with
+    128 x 128); the residual comes from the pupil sampling.
+    """
+    psf = HuygensPSF(
+        _perfect_parabola(), (0, 0), 0.55, num_rays=64, image_size=image_size
+    )
+    assert abs(_airy_best_fit_scale(psf) - 1.0) < 0.006
+
+
+@pytest.mark.parametrize("image_size", [8, 9])
+def test_user_pixel_pitch_is_exact(set_test_backend, image_size):
+    """The samples are spaced by exactly the user's pixel pitch."""
+    pitch = 0.7e-3  # mm
+    psf = HuygensPSF(
+        _perfect_parabola(),
+        (0, 0),
+        0.55,
+        num_rays=16,
+        image_size=image_size,
+        pixel_pitch=pitch,
+    )
+    image_x, image_y, _ = psf._get_image_coordinates()
+    assert_allclose(be.diff(image_x[0, :]), pitch, rtol=1e-9, atol=0)
+    assert_allclose(be.diff(image_y[:, 0]), pitch, rtol=1e-9, atol=0)
+    dx, dy, _ = psf._get_pixel_pitch()
+    assert_allclose(dx, pitch * 1e3, rtol=1e-12, atol=0)
+    assert_allclose(dy, pitch * 1e3, rtol=1e-12, atol=0)
+
+
+@pytest.mark.parametrize("image_size", [16, 17])
+def test_center_pixel_on_chief_ray_off_axis(set_test_backend, image_size):
+    """Pixel N // 2 is on the chief ray; the spot fits on the grid."""
+    optic = CookeTriplet()
+    psf = HuygensPSF(optic, (0, 1), 0.55, num_rays=16, image_size=image_size)
+    image_x, image_y, _ = psf._get_image_coordinates()
+
+    chief = optic.trace_generic(Hx=0, Hy=1, Px=0.0, Py=0.0, wavelength=0.55)
+    center = image_size // 2
+    assert_allclose(image_x[center, center], be.atleast_1d(chief.x)[0], atol=1e-12)
+    assert_allclose(image_y[center, center], be.atleast_1d(chief.y)[0], atol=1e-12)
+
+    # the outermost samples on the shorter side still cover the geometric spot
+    rx, ry = psf._determine_image_center()
+    spot_radius = be.max(be.hypot(rx - psf.cx, ry - psf.cy))
+    half_span = ((image_size - 1) // 2) * psf.pixel_pitch
+    assert be.to_numpy(half_span) >= be.to_numpy(spot_radius) * (1 - 1e-12)
+
+
+def test_center_falls_back_to_spot_mean_without_chief_ray():
+    """If the chief ray is vignetted, the grid is centred on the spot mean."""
+    from types import SimpleNamespace
+
+    optic = CookeTriplet()
+    psf = HuygensPSF(optic, (0, 1), 0.55, num_rays=16, image_size=16)
+    rx, ry = psf._determine_image_center()
+    blocked = SimpleNamespace(
+        x=be.array([0.0]), y=be.array([0.0]), z=be.array([0.0]), i=be.array([0.0])
+    )
+    with patch.object(optic, "trace_generic", return_value=blocked):
+        cx, cy = psf._chief_ray_intercept(rx, ry)
+    assert_allclose(cx, be.mean(rx))
+    assert_allclose(cy, be.mean(ry))
