@@ -237,3 +237,106 @@ class TestVectorialHuygensMTF:
         tang_v, sag_v = mtf_vectorial.mtf[0]
         assert_allclose(tang_s, tang_v, atol=0.05)
         assert_allclose(sag_s, sag_v, atol=0.05)
+
+
+# ---------------------------------------------------------------------------
+# Frequency axis
+# ---------------------------------------------------------------------------
+
+
+def _perfect_parabola():
+    """F/10 paraboloidal mirror (f = 100 mm): perfect on-axis focus."""
+    from optiland.optic import Optic
+
+    optic = Optic()
+    optic.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+    optic.surfaces.add(
+        index=1,
+        radius=-200,
+        conic=-1.0,
+        thickness=-100,
+        material="mirror",
+        is_stop=True,
+    )
+    optic.surfaces.add(index=2)
+    optic.set_aperture("EPD", 10)
+    optic.fields.set_type("angle")
+    optic.fields.add(y=0.0)
+    optic.wavelengths.add(0.55, is_primary=True)
+    return optic
+
+
+def _first_crossing(freq, mtf, level):
+    """Frequency at which the MTF first falls below ``level`` (linear interp)."""
+    i = int(np.argmax(mtf < level))
+    return np.interp(level, [mtf[i], mtf[i - 1]], [freq[i], freq[i - 1]])
+
+
+@pytest.fixture
+def numpy_backend():
+    """NumPy backend for the 257 x 257 Huygens grids below.
+
+    With the torch test settings (autograd enabled) the Huygens summation
+    keeps its graph for every image point, tens of GB at this grid size.
+    """
+    original_backend = be.get_backend()
+    be.set_backend("numpy")
+    yield
+    be.set_backend(original_backend)
+
+
+def test_on_axis_mtf_matches_diffraction_limit(numpy_backend):
+    """A perfect mirror follows (2/pi)(acos(v) - v sqrt(1 - v^2)), v = nu/nu_c.
+
+    The Huygens MTF is about 1 % high at every frequency because the PSF
+    window (image_size * pixel_pitch) misses about 1.1 % of the Airy energy,
+    which lowers the DC term. Hence the tolerance of 0.02.
+    """
+    mtf = ScalarHuygensMTF(
+        _perfect_parabola(), fields=[(0, 0)], num_rays=64, image_size=257
+    )
+    cutoff = 1 / (0.55e-3 * be.to_numpy(mtf._get_fno()))
+    v = np.linspace(0.05, 0.95, 19)
+    expected = 2 / np.pi * (np.arccos(v) - v * np.sqrt(1 - v**2))
+    for axis, freq in ((0, mtf.freq_tang[0]), (1, mtf.freq_sag[0])):
+        actual = np.interp(v * cutoff, be.to_numpy(freq), be.to_numpy(mtf.mtf[0][axis]))
+        assert_allclose(actual, expected, rtol=0, atol=0.02)
+
+
+def test_off_axis_tangential_mtf_matches_fft_mtf(numpy_backend):
+    """CookeTriplet full field: tangential frequency scale agrees with FFTMTF.
+
+    The frequency where the tangential MTF falls to 0.5 differs from FFTMTF by
+    1.1 % (8.2 % with the former FNO_on / FNO_off factor), and the largest
+    difference up to 60 cycles/mm is 0.031 (0.078 with the factor).
+    """
+    from optiland.mtf import FFTMTF
+    from optiland.samples.objectives import CookeTriplet
+
+    optic = CookeTriplet()
+    fft = FFTMTF(
+        optic, fields=[(0, 1.0)], wavelength=0.55, num_rays=128, grid_size=1024
+    )
+    huygens = ScalarHuygensMTF(
+        optic, fields=[(0, 1.0)], wavelength=0.55, num_rays=48, image_size=257
+    )
+    f_fft, m_fft = (be.to_numpy(a) for a in (fft.freq_tang[0], fft.mtf[0][0]))
+    f_huy, m_huy = (be.to_numpy(a) for a in (huygens.freq_tang[0], huygens.mtf[0][0]))
+
+    mtf50_fft = _first_crossing(f_fft, m_fft, 0.5)
+    mtf50_huy = _first_crossing(f_huy, m_huy, 0.5)
+    assert abs(mtf50_huy / mtf50_fft - 1) < 0.03
+
+    nu = np.linspace(0, 60, 61)
+    difference = np.interp(nu, f_huy, m_huy) - np.interp(nu, f_fft, m_fft)
+    assert np.max(np.abs(difference)) < 0.045
+
+
+def test_tangential_and_sagittal_steps_are_equal(set_test_backend):
+    """Both axes use the DFT step 1 / (image_size * pixel_pitch) off axis."""
+    from optiland.samples.objectives import CookeTriplet
+
+    mtf = ScalarHuygensMTF(CookeTriplet(), fields=[(0, 1.0)], image_size=16)
+    expected = 1 / (16 * mtf.psf_instances[0].pixel_pitch)
+    assert_allclose(mtf._get_mtf_units_tang(0), expected, rtol=1e-12, atol=0)
+    assert_allclose(mtf._get_mtf_units_sag(0), expected, rtol=1e-12, atol=0)

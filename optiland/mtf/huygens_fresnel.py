@@ -219,15 +219,13 @@ class ScalarHuygensMTF(BaseMTF):
         )
 
     def _get_mtf_units_tang(self, k):
-        """Tangential frequency step (cycles/mm) with image-plane correction.
+        """Tangential frequency step (cycles/mm).
 
-        The chief ray tilts in the tangential plane. Converting the per-field
-        working F/# (measured in the chief-ray frame) to the flat image plane
-        introduces a cos(θ_chief) ≈ FNO_on/FNO_off compression:
-
-            df_tang = df_per_field * (FNO_on / FNO_off)
-
-        For on-axis fields FNO_on == FNO_off and the correction is unity.
+        The Huygens PSF is sampled on the image surface at ``pixel_pitch``,
+        so the discrete Fourier transform of the PSF is already in
+        image-plane frequencies, with step ``1 / (image_size * pixel_pitch)``
+        along both axes. Unlike ``FFTMTF``, which maps pupil lags to image
+        frequencies, no chief-ray-frame correction applies.
 
         Args:
             k (int): Field index.
@@ -238,21 +236,13 @@ class ScalarHuygensMTF(BaseMTF):
         Raises:
             ValueError: If the PSF pixel pitch is zero or None.
         """
-        pixel_pitch_mm = self.psf_instances[k].pixel_pitch
-        if pixel_pitch_mm is None or pixel_pitch_mm == 0:
-            raise ValueError("Pixel pitch from HuygensPSF is invalid.")
-
-        on_axis_fno = self._get_fno()
-        off_axis_fno = self.FNO[k]
-
-        df_per_field = 1.0 / (self.image_size * pixel_pitch_mm)
-        return df_per_field * (on_axis_fno / off_axis_fno)
+        return self._get_mtf_units_sag(k)
 
     def _get_mtf_units_sag(self, k):
         """Sagittal frequency step (cycles/mm).
 
-        There is no chief-ray tilt in the sagittal plane, so the per-field
-        pixel-pitch-derived step is used directly without correction.
+        The step of the discrete Fourier transform of the image-plane PSF,
+        ``1 / (image_size * pixel_pitch)``, as for the tangential axis.
 
         Args:
             k (int): Field index.
