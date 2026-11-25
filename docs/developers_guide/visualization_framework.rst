@@ -112,6 +112,32 @@ The `OpticViewer3D` class includes an optional **dark mode** for 3D plots, offer
 .. note::
    The image in the :ref:`developers_guide` shows an example of the dark mode 3D visualization output for a lithographic lens system.
 
+Camera Presets and Headless PNG Export
+--------------------------------------
+
+Both ``OpticViewer3D`` and ``NSQViewer3D`` accept a ``camera`` argument on
+``view`` and ``save_image``. The presets are:
+
+- ``"default"`` — historical look (azimuth 150°, view-up along +y).
+- ``"side"`` — looks from +x with view-up +y, matching the 2D ``YZ`` layout.
+- ``"top"`` — looks from +y with view-up −x, matching the 2D ``XZ`` layout.
+- ``"front"`` — looks from −z (looking down +z) with view-up +y.
+- ``"iso"`` — looks from the ``(+1, +1, −1)`` direction with view-up +y.
+
+``save_image`` builds the same scene as ``view`` but never starts the VTK
+interactor, so it can run on headless machines, in notebooks, and in CI.
+The output size is ``figsize`` multiplied by the integer ``scale``. Pass
+``transparent=True`` for an RGBA PNG with a transparent background.
+
+.. code-block:: python
+
+   from optiland.samples.objectives import CookeTriplet
+   from optiland.visualization.system import OpticViewer3D
+
+   lens = CookeTriplet()
+   viewer = OpticViewer3D(lens)
+   viewer.save_image("triplet_iso.png", camera="iso", figsize=(1200, 800))
+
 How to Extend This
 ------------------
 

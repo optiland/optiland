@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import abc
 from abc import abstractmethod
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -213,11 +214,15 @@ class BaseViewer3D(BaseViewer, abc.ABC):
             renderer.SetBackground2(0.4, 0.5, 0.6)
         return renderer
 
+    _CAMERA_PRESETS = ("default", "side", "top", "front", "iso")
+
     def _make_window(
         self,
         renderer,
         figsize: tuple[int, int] = (1200, 800),
         title: str = "Optical System - 3D Viewer",
+        window=None,
+        interactor=None,
     ) -> tuple:
         """Create and configure VTK render window and interactor.
 
@@ -225,22 +230,133 @@ class BaseViewer3D(BaseViewer, abc.ABC):
             renderer: The renderer to attach to the window.
             figsize: (width, height) in pixels.
             title: Window title string.
+            window: Optional existing ``vtkRenderWindow`` to reuse.
+            interactor: Optional existing ``vtkRenderWindowInteractor`` to reuse.
 
         Returns:
             (render_window, interactor) tuple.
         """
         import vtk  # type: ignore[import]  # noqa: PLC0415
 
-        window = vtk.vtkRenderWindow()
+        if window is None:
+            window = vtk.vtkRenderWindow()
         window.AddRenderer(renderer)
         window.SetSize(*figsize)
         window.SetWindowName(title)
 
-        interactor = vtk.vtkRenderWindowInteractor()
+        if interactor is None:
+            interactor = vtk.vtkRenderWindowInteractor()
         interactor.SetRenderWindow(window)
         interactor.SetInteractorStyle(vtk.vtkInteractorStyleTrackballCamera())
 
         return window, interactor
+
+    def _apply_camera(self, renderer, camera: str = "default") -> None:
+        """Apply a named camera preset to *renderer*.
+
+        Args:
+            renderer: VTK renderer whose active camera is updated.
+            camera: Preset name. ``"default"`` preserves the historical
+                OpticViewer3D look (ResetCamera, then azimuth 150° with
+                view-up along +y). ``"side"`` looks from +x with view-up
+                +y (2D YZ layout). ``"top"`` looks from +y with view-up
+                -x (2D XZ layout). ``"front"`` looks from -z (down +z)
+                with view-up +y. ``"iso"`` looks from the (+1, +1, -1)
+                direction with view-up +y.
+
+        Raises:
+            ValueError: If *camera* is not a known preset.
+        """
+        cam = renderer.GetActiveCamera()
+        if camera == "default":
+            # Historical OpticViewer3D sequence — ResetCamera before azimuth.
+            cam.SetPosition(1, 0, 0)
+            cam.SetFocalPoint(0, 0, 0)
+            cam.SetViewUp(0, 1, 0)
+            renderer.ResetCamera()
+            cam.Elevation(0)
+            cam.Azimuth(150)
+            return
+
+        looks_from = {
+            "side": (1.0, 0.0, 0.0),
+            "top": (0.0, 1.0, 0.0),
+            "front": (0.0, 0.0, -1.0),
+            "iso": (1.0, 1.0, -1.0),
+        }
+        view_up = {
+            "side": (0.0, 1.0, 0.0),
+            "top": (-1.0, 0.0, 0.0),
+            "front": (0.0, 1.0, 0.0),
+            "iso": (0.0, 1.0, 0.0),
+        }
+        if camera not in looks_from:
+            valid = ", ".join(repr(name) for name in self._CAMERA_PRESETS)
+            raise ValueError(
+                f"Unknown camera preset {camera!r}. Valid presets: {valid}"
+            )
+        cam.SetPosition(*looks_from[camera])
+        cam.SetFocalPoint(0.0, 0.0, 0.0)
+        cam.SetViewUp(*view_up[camera])
+        renderer.ResetCamera()
+
+    def _save_png(
+        self,
+        window,
+        path: str | Path,
+        scale: int = 1,
+        transparent: bool = False,
+    ) -> Path:
+        """Write *window* to a PNG, rendering off-screen.
+
+        Args:
+            window: VTK render window to capture.
+            path: Destination file path.
+            scale: Integer magnification applied by
+                ``vtkWindowToImageFilter`` (output size is the window
+                size times *scale*).
+            transparent: If True, write an RGBA PNG with a transparent
+                background.
+
+        Returns:
+            The path the image was written to.
+
+        Raises:
+            OSError: If the PNG was not written (for example when the
+                parent directory does not exist).
+        """
+        import vtk  # type: ignore[import]  # noqa: PLC0415
+
+        path = Path(path)
+        window.SetOffScreenRendering(1)
+        if transparent:
+            window.SetAlphaBitPlanes(1)
+            renderer = window.GetRenderers().GetFirstRenderer()
+            if renderer is not None:
+                renderer.GradientBackgroundOff()
+                renderer.SetBackground(0.0, 0.0, 0.0)
+                renderer.SetBackgroundAlpha(0.0)
+        window.Render()
+
+        image_filter = vtk.vtkWindowToImageFilter()
+        image_filter.SetInput(window)
+        image_filter.SetScale(int(scale))
+        image_filter.ReadFrontBufferOff()
+        if transparent:
+            image_filter.SetInputBufferTypeToRGBA()
+        else:
+            image_filter.SetInputBufferTypeToRGB()
+        image_filter.Update()
+
+        writer = vtk.vtkPNGWriter()
+        writer.SetFileName(str(path))
+        writer.SetInputConnection(image_filter.GetOutputPort())
+        writer.Write()
+        # vtkPNGWriter fails silently (e.g. missing parent directory):
+        # it writes nothing and does not raise, so check the file exists.
+        if not path.is_file():
+            raise OSError(f"failed to write PNG to {path}")
+        return path
 
     @abstractmethod
     def view(
@@ -248,6 +364,7 @@ class BaseViewer3D(BaseViewer, abc.ABC):
         *,
         dark_mode: bool = False,
         figsize: tuple[int, int] = (1200, 800),
+        camera: str = "default",
         **kwargs,
     ) -> None:
         """Open an interactive 3D VTK window."""

@@ -12,12 +12,17 @@ re-worked by Manuel Fragata Mendes, june 2025
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import vtk
 
 from optiland.visualization.base import BaseViewer3D
 from optiland.visualization.coloring.scale import collect_scales
 from optiland.visualization.system.rays import Rays3D
 from optiland.visualization.system.system import OpticalSystem
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class OpticViewer3D(BaseViewer3D):
@@ -34,16 +39,21 @@ class OpticViewer3D(BaseViewer3D):
         iren: The vtkRenderWindowInteractor object for interaction.
 
     Methods:
-        See :meth:`view` for visualizing the optical system in 3D.
+        See :meth:`view` for visualizing the optical system in 3D and
+        :meth:`save_image` for off-screen PNG export.
 
     """
 
     def __init__(self, optic):
-        self.optic = optic
+        super().__init__(optic)
 
         self.rays = Rays3D(optic)
         self.system = OpticalSystem(optic, self.rays, projection="3d")
 
+        # Created here so existing callers and tests can patch ``ren_win`` and
+        # ``iren`` before ``view``. ``view`` and ``save_image`` configure them
+        # through ``_make_window`` and keep these attributes pointing at the
+        # window and interactor actually used.
         self.ren_win = vtk.vtkRenderWindow()
         self.iren = vtk.vtkRenderWindowInteractor()
 
@@ -59,6 +69,38 @@ class OpticViewer3D(BaseViewer3D):
             bar.SetPosition(1.0 - (slot + 1) * (width + margin) - 0.03, 0.15)
             renderer.AddViewProp(bar)
 
+    def _plot_scene(
+        self,
+        renderer,
+        fields="all",
+        wavelengths="primary",
+        num_rays=24,
+        distribution="ring",
+        reference=None,
+        hide_vignetted=False,
+        component_colorizer=None,
+        ray_colorizer=None,
+        show_colorbar=True,
+    ):
+        """Add lens, ray and colorbar actors to *renderer*."""
+        if ray_colorizer is not None:
+            ray_colorizer.prepare(self.optic)
+        self.rays.plot(
+            renderer,
+            fields=fields,
+            wavelengths=wavelengths,
+            num_rays=num_rays,
+            distribution=distribution,
+            reference=reference,
+            hide_vignetted=hide_vignetted,
+            _ray_colorizer=ray_colorizer,
+        )
+        self.system.plot(renderer, _component_colorizer=component_colorizer)
+        if show_colorbar:
+            self._add_scalar_bars(
+                renderer, collect_scales(component_colorizer, ray_colorizer)
+            )
+
     def view(
         self,
         fields="all",
@@ -70,6 +112,7 @@ class OpticViewer3D(BaseViewer3D):
         reference=None,
         hide_vignetted=False,
         *,
+        camera="default",
         component_colorizer=None,
         ray_colorizer=None,
         show_colorbar=True,
@@ -93,6 +136,9 @@ class OpticViewer3D(BaseViewer3D):
                 include "chief" and "marginal". Defaults to None.
             hide_vignetted (bool, optional): If True, rays that vignette at any
                 surface are not shown. Defaults to False.
+            camera (str, optional): Camera preset: ``"default"``, ``"side"``,
+                ``"top"``, ``"front"`` or ``"iso"``. Defaults to ``"default"``,
+                which keeps the historical azimuth-150° look.
             component_colorizer (ComponentColorizer, optional): Strategy that
                 colors lens elements, mirrors and surfaces. Defaults to None,
                 which keeps the theme colors.
@@ -103,16 +149,17 @@ class OpticViewer3D(BaseViewer3D):
 
         """
         renderer = self._make_renderer(dark_mode)
-        self.ren_win.AddRenderer(renderer)
-
-        self.iren.SetRenderWindow(self.ren_win)
-
-        style = vtk.vtkInteractorStyleTrackballCamera()
-        self.iren.SetInteractorStyle(style)
-
-        if ray_colorizer is not None:
-            ray_colorizer.prepare(self.optic)
-        self.rays.plot(
+        self.ren_win, self.iren = self._make_window(
+            renderer,
+            figsize,
+            "Optical System - 3D Viewer",
+            window=self.ren_win,
+            interactor=self.iren,
+        )
+        # The reused window may still be flagged for off-screen rendering
+        # by an earlier save_image(); view() is interactive, so turn it off.
+        self.ren_win.SetOffScreenRendering(0)
+        self._plot_scene(
             renderer,
             fields=fields,
             wavelengths=wavelengths,
@@ -120,24 +167,52 @@ class OpticViewer3D(BaseViewer3D):
             distribution=distribution,
             reference=reference,
             hide_vignetted=hide_vignetted,
-            _ray_colorizer=ray_colorizer,
+            component_colorizer=component_colorizer,
+            ray_colorizer=ray_colorizer,
+            show_colorbar=show_colorbar,
         )
-        self.system.plot(renderer, _component_colorizer=component_colorizer)
-        if show_colorbar:
-            self._add_scalar_bars(
-                renderer, collect_scales(component_colorizer, ray_colorizer)
-            )
 
-        self.ren_win.SetSize(*figsize)
-        self.ren_win.SetWindowName("Optical System - 3D Viewer")
         self.ren_win.Render()
-
-        renderer.GetActiveCamera().SetPosition(1, 0, 0)
-        renderer.GetActiveCamera().SetFocalPoint(0, 0, 0)
-        renderer.GetActiveCamera().SetViewUp(0, 1, 0)
-        renderer.ResetCamera()
-        renderer.GetActiveCamera().Elevation(0)
-        renderer.GetActiveCamera().Azimuth(150)
-
+        self._apply_camera(renderer, camera)
         self.ren_win.Render()
         self.iren.Start()
+
+    def save_image(
+        self,
+        path,
+        *,
+        camera="default",
+        figsize=(1200, 800),
+        dark_mode=False,
+        scale=1,
+        transparent=False,
+        **view_kwargs,
+    ) -> Path:
+        """Render the system off-screen and write a PNG.
+
+        Builds the same scene as :meth:`view` but never starts the
+        interactor, so it can run headlessly (docs, notebooks, CI).
+
+        Args:
+            path: Destination file path.
+            camera: Camera preset passed to :meth:`_apply_camera`.
+            figsize: Window size in pixels before *scale* is applied.
+            dark_mode: Use the dark gradient background if True.
+            scale: Integer magnification of the output image.
+            transparent: If True, write an RGBA PNG with a transparent
+                background.
+            **view_kwargs: Forwarded to the shared scene builder
+                (``fields``, ``wavelengths``, ``num_rays``, etc.).
+
+        Returns:
+            The path the image was written to.
+        """
+        renderer = self._make_renderer(dark_mode)
+        window, interactor = self._make_window(
+            renderer, figsize, "Optical System - 3D Viewer"
+        )
+        self.ren_win = window
+        self.iren = interactor
+        self._plot_scene(renderer, **view_kwargs)
+        self._apply_camera(renderer, camera)
+        return self._save_png(window, path, scale=scale, transparent=transparent)
