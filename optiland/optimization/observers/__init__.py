@@ -10,6 +10,7 @@ from .cancel import CancelCriterion, CancelToken
 from .checkpoint import CheckpointObserver
 from .console import ConsoleObserver
 from .history import HistoryObserver, find_history
+from .layout_recorder import LayoutRecorder, RecordedFrame
 
 __all__ = [
     "CancelCriterion",
@@ -17,6 +18,8 @@ __all__ = [
     "CheckpointObserver",
     "ConsoleObserver",
     "HistoryObserver",
+    "LayoutRecorder",
     "Observer",
+    "RecordedFrame",
     "find_history",
 ]
