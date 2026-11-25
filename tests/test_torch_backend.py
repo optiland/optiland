@@ -154,3 +154,33 @@ class TestMpsRefusesFloat64:
         cfg = self._config(monkeypatch, available=False)
         with pytest.raises(ValueError, match="MPS"):
             cfg.set_device("mps")
+
+
+@pytest.mark.parametrize(
+    ("precision", "expected_dtype"),
+    [
+        ("float32", torch.complex64),
+        ("float64", torch.complex128),
+    ],
+)
+def test_stack_and_cast_preserve_complex_precision(precision, expected_dtype):
+    be.set_backend("torch")
+    be.set_precision(precision)
+    z = torch.tensor([3.0 + 1.0j, 3.0 + 2.0j], dtype=expected_dtype)
+
+    casted = be.cast(z)
+    assert casted.dtype == expected_dtype
+    assert torch.equal(casted, z)
+
+    stacked = be.stack([z, z])
+    assert stacked.dtype == expected_dtype
+    assert torch.equal(stacked, torch.stack([z, z]))
+
+
+def test_cast_complex_non_tensor_inputs():
+    be.set_backend("torch")
+    be.set_precision("float32")
+    z_np = be.cast([1.0 + 2.0j, 3.0 + 4.0j])
+    assert z_np.dtype == torch.complex64
+    expected = torch.tensor([1.0 + 2.0j, 3.0 + 4.0j], dtype=torch.complex64)
+    assert torch.allclose(z_np, expected)

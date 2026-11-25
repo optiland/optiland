@@ -256,6 +256,27 @@ class TestBackendContract:
         result = be.stack([a, b])
         assert_allclose(result, np.array([[1.0, 2.0], [3.0, 4.0]]), atol=0)
 
+    def test_stack_complex(self, backend_name: str, set_test_backend: None) -> None:
+        z1 = be.to_complex(be.array([1.0, 2.0])) * 1j + 3.0
+        z2 = be.to_complex(be.array([4.0, 5.0])) * 1j + 6.0
+        result = be.stack([z1, z2])
+        expected = np.array([[3.0 + 1.0j, 3.0 + 2.0j], [6.0 + 4.0j, 6.0 + 5.0j]])
+        assert np.iscomplexobj(be.to_numpy(result))
+        assert_allclose(result, expected, atol=0)
+
+        result_axis1 = be.stack([z1, z2], axis=1)
+        assert_allclose(result_axis1, expected.T, atol=0)
+
+    def test_stack_mixed_real_and_complex(
+        self, backend_name: str, set_test_backend: None
+    ) -> None:
+        r = be.array([1.0, 2.0])
+        z = be.to_complex(be.array([3.0, 4.0])) * 1j + 5.0
+        result = be.stack([r, z])
+        expected = np.array([[1.0 + 0.0j, 2.0 + 0.0j], [5.0 + 3.0j, 5.0 + 4.0j]])
+        assert np.iscomplexobj(be.to_numpy(result))
+        assert_allclose(result, expected, atol=0)
+
     # ---- Linear algebra ----
 
     def test_matmul(self, backend_name: str, set_test_backend: None) -> None:

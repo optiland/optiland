@@ -28,15 +28,28 @@ class IndexingMixin:
     def cast(self, x: Any) -> Tensor:
         """Cast x to the current floating-point precision.
 
+        Complex inputs preserve their complex nature at the matching
+        precision (``complex64`` for ``float32``, ``complex128`` for
+        ``float64``).
+
         Args:
             x: Input data.
 
         Returns:
             Tensor: Cast tensor.
         """
+        real_dtype = self._dtype()
+        is_complex = (
+            x.is_complex() if isinstance(x, torch.Tensor) else np.iscomplexobj(x)
+        )
+        dtype = (
+            (torch.complex64 if real_dtype == torch.float32 else torch.complex128)
+            if is_complex
+            else real_dtype
+        )
         if not isinstance(x, torch.Tensor):
-            return torch.tensor(x, device=self._device(), dtype=self._dtype())
-        return x.to(device=self._device(), dtype=self._dtype())
+            return torch.tensor(x, device=self._device(), dtype=dtype)
+        return x.to(device=self._device(), dtype=dtype)
 
     def is_array_like(self, x: Any) -> bool:
         """Return True if x is a tensor, ndarray, list, or tuple.
