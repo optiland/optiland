@@ -42,6 +42,17 @@ You can launch the Optiland GUI in a couple of ways:
 
        python -m optiland_gui.run_gui
 
+Loading Gallery examples
+------------------------
+
+Selecting a built-in example from **Gallery** constructs and prepares it in a
+background worker. The current design remains visible until the example is
+ready. Use the file-operation status and cancel control to stop a pending load.
+If the design has unsaved changes, confirm that they may be discarded first.
+Edits made while the example is loading require a second confirmation before
+replacement. A failed or cancelled load leaves the current design intact.
+An accepted example becomes an editable, unsaved design without a file path.
+
 Main Interface Components
 -------------------------
 
