@@ -52,6 +52,71 @@ def pupil_frequency_steps(
         tuple[BEArray, BEArray]: The tangential (pupil Y) and sagittal
         (pupil X) frequency steps, in cycles/mm.
     """
+    projected, n_image = _projected_marginal_differences(optic, field, wavelength)
+    bandwidths = be.sqrt(be.sum(projected**2, axis=-1))
+    steps = n_image * bandwidths / ((num_rays - 1) * wavelength * 1e-3)
+    return steps[0], steps[1]
+
+
+def pupil_direction_matrix(
+    optic: Optic,
+    field: tuple[float, float],
+    wavelength: float,
+) -> BEArray:
+    """Linear map from normalized pupil coordinates to image-space directions.
+
+    Returns the 2x2 matrix ``A`` with ``n * (dL, dM) = A @ (Px, Py)``, where
+    ``(dL, dM)`` is the change of a ray's direction cosines relative to the
+    chief ray, projected onto the image surface's tangent plane at the chief
+    ray and expressed along the image surface's local x and y axes, and ``n``
+    is the image-space index. Each column is the secant over the full pupil
+    diameter (half the difference between the marginal rays at +1 and -1),
+    with its sign: the same affine approximation as `pupil_frequency_steps`,
+    whose steps are the column norms of ``A`` divided by
+    ``(num_rays - 1) / 2 * wavelength``.
+
+    The scalar diffraction field at image-plane offset ``r = (x, y)`` from
+    the chief ray is then ``sum_p g(p) exp(i k r . (A p))``, with
+    ``k = 2 pi / wavelength``. For fields on the x or y axis of a rotationally
+    symmetric system ``A`` is diagonal and the sum separates into one 1D
+    transform per axis. For other fields the off-diagonal terms couple the
+    axes.
+
+    Args:
+        optic (Optic): The optical system.
+        field (tuple[float, float]): Normalized field coordinates (Hx, Hy).
+        wavelength (float): The wavelength in micrometers.
+
+    Returns:
+        BEArray: The 2x2 matrix ``A``; rows are the image x and y directions,
+        columns are pupil X and pupil Y.
+    """
+    projected, n_image = _projected_marginal_differences(optic, field, wavelength)
+    half_y = projected[0] / 2  # pupil Y column
+    half_x = projected[1] / 2  # pupil X column
+    return n_image * be.stack(
+        [be.stack([half_x[0], half_y[0]]), be.stack([half_x[1], half_y[1]])]
+    )
+
+
+def _projected_marginal_differences(
+    optic: Optic,
+    field: tuple[float, float],
+    wavelength: float,
+) -> tuple[BEArray, BEArray]:
+    """Marginal-ray direction differences on the image tangent plane.
+
+    Args:
+        optic (Optic): The optical system.
+        field (tuple[float, float]): Normalized field coordinates (Hx, Hy).
+        wavelength (float): The wavelength in micrometers.
+
+    Returns:
+        tuple[BEArray, BEArray]: The differences ``d(+1) - d(-1)`` of the
+        local direction-cosine vectors for pupil Y (row 0) and pupil X
+        (row 1), projected onto the image surface's tangent plane at the chief
+        ray (shape ``(2, 3)``), and the image-space refractive index.
+    """
     rays = optic.trace_generic(
         *field,
         Px=be.array([0.0, 0.0, 0.0, 1.0, -1.0]),
@@ -71,7 +136,5 @@ def pupil_frequency_steps(
     )
     perpendicular = be.sum(differences * normal, axis=-1)
     projected = differences - perpendicular[:, None] * normal
-    bandwidths = be.sqrt(be.sum(projected**2, axis=-1))
     n_image = be.abs(optic.image_surface.material_post.n(wavelength))
-    steps = n_image * bandwidths / ((num_rays - 1) * wavelength * 1e-3)
-    return steps[0], steps[1]
+    return projected, n_image
