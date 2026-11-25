@@ -82,3 +82,87 @@ that is not one of the configurations. Use the generic JSON helpers to save to a
 
    save_obj_to_json(mc, "zoom.json")
    mc = load_obj_from_json(MultiConfiguration, "zoom.json")
+
+Analysing configurations side by side
+-------------------------------------
+
+:meth:`~optiland.multiconfig.multi_configuration.MultiConfiguration.analyze` runs one analysis on every configuration (or on a
+list of indices) and returns a :class:`optiland.multiconfig.analysis.MultiConfigAnalysis`.
+The positional and keyword arguments after the analysis class are passed to it, after
+the optic:
+
+.. code-block:: python
+
+    from optiland.analysis import SpotDiagram
+
+    spots = mc.analyze(SpotDiagram, num_rings=6)            # all configurations
+    spots.results[1].rms_spot_radius()                      # an ordinary SpotDiagram
+    figures = spots.view(show=False)                        # one figure per configuration
+
+Each result is an ordinary analysis bound to ``mc.configurations[i]``.
+``MultiConfigAnalysis.view(*args, show=True, **kwargs)`` calls each result's ``view``
+and returns their outputs as a list. The figures are not merged: analyses build their
+own layout and most clear a figure passed to them through ``fig_to_plot_on``, so one
+figure per configuration is the only layout that works for every analysis without
+changing their signatures. Each figure's ``suptitle`` is prefixed with
+``"Configuration i"``. ``show`` is passed as ``show=False`` to every analysis whose
+``view`` accepts it, and ``plt.show()`` is called once at the end when ``show`` is True.
+
+:meth:`~optiland.multiconfig.multi_configuration.MultiConfiguration.summary` returns a ``pandas.DataFrame`` with one column per
+configuration (``"Config 0"``, ...), the multi-configuration editor view. The first rows
+are always ``EFL``, ``F/#``, ``Image height`` (paraxial chief ray at the image, maximum
+field), ``Total track`` and ``EPD``. They are followed by every property whose *value*
+differs between configurations, whether or not a pickup links it: aperture type and
+value, field type and coordinates (``"Field 1 y"``), wavelengths (``"Wavelength 0
+(µm)"``) and, per surface, radius, conic (curved surfaces only), thickness, material,
+decenters and tilts (``"Surface 2 thickness"``). Surface indices are those of
+``optic.surfaces`` (0 is the object surface). A quantity that can not be computed for a
+configuration, such as a paraxial value of a folded system, is NaN rather than an error.
+The summary reads the current state and does not run the pickups; call
+``optic.updater.update()`` first if a configuration may be stale.
+
+Prescription of a multi-configuration system
+--------------------------------------------
+
+:class:`optiland.prescription.Prescription` describes one optic and raises for a
+``MultiConfiguration``. Use :class:`optiland.prescription.MultiConfigPrescription`
+instead; it has the same ``build()``, ``view()`` and ``save(path, renderer=None)`` and
+uses the same document model and renderers (console, plain text, PDF):
+
+.. code-block:: python
+
+    from optiland.prescription import MultiConfigPrescription
+
+    MultiConfigPrescription(mc).view()
+    MultiConfigPrescription(mc).save("zoom.txt")
+
+The default report has the system overview of configuration 0, a configuration table
+(the rows of ``mc.summary()``), the first-order properties of every configuration and
+the surface tables of configuration 0.
+
+Sections that need the whole system subclass
+:class:`optiland.prescription.BaseMultiConfigSection` and implement
+``build(multiconfig) -> Section``. Two are provided:
+:class:`optiland.prescription.ConfigurationTableSection` and
+:class:`optiland.prescription.PerConfigurationSection`, an adapter that renders any
+single-optic section once per configuration, prefixing its block titles with
+``"Configuration i"``. A plain single-optic section passed in ``sections`` is built on
+configuration 0, so custom reports mix both kinds:
+
+.. code-block:: python
+
+    from optiland.prescription import (
+        ConfigurationTableSection,
+        PerConfigurationSection,
+        SeidelAberrationSection,
+        SystemOverviewSection,
+    )
+
+    MultiConfigPrescription(
+        mc,
+        sections=[
+            SystemOverviewSection(),                            # configuration 0
+            ConfigurationTableSection(),
+            PerConfigurationSection(SeidelAberrationSection()),  # every configuration
+        ],
+    ).view()

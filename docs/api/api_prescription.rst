@@ -9,6 +9,7 @@ The prescription module allows exporting standard system data (overview, first-o
    :caption: Prescription Modules
 
    prescription.prescription
+   prescription.multiconfig
    prescription.document
    prescription.renderers.base
    prescription.renderers.console

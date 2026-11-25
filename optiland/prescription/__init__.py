@@ -5,6 +5,12 @@ Kramer Harrison, 2026
 
 from __future__ import annotations
 
+from optiland.prescription.multiconfig import (
+    BaseMultiConfigSection,
+    ConfigurationTableSection,
+    MultiConfigPrescription,
+    PerConfigurationSection,
+)
 from optiland.prescription.prescription import Prescription
 from optiland.prescription.renderers.base import BaseRenderer
 from optiland.prescription.sections.base import BaseSection
@@ -25,4 +31,8 @@ __all__ = [
     "SurfaceGeometryTableSection",
     "SurfaceMaterialTableSection",
     "SeidelAberrationSection",
+    "MultiConfigPrescription",
+    "BaseMultiConfigSection",
+    "PerConfigurationSection",
+    "ConfigurationTableSection",
 ]

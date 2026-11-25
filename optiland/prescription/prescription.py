@@ -5,10 +5,9 @@ Kramer Harrison, 2026
 
 from __future__ import annotations
 
-import pathlib
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from optiland.prescription._output import print_document, save_document, timestamp
 from optiland.prescription.document import Document
 from optiland.prescription.sections.first_order import FirstOrderSection
 from optiland.prescription.sections.seidel import SeidelAberrationSection
@@ -56,8 +55,9 @@ class Prescription:
         if isinstance(optic, MultiConfiguration):
             raise NotImplementedError(
                 "Prescription does not support MultiConfiguration objects. "
-                "Pass a single Optic instance.  Access individual configs via "
-                "multi_config.configurations[i] and generate a prescription for each."
+                "Use optiland.prescription.MultiConfigPrescription for a "
+                "multi-configuration report, or pass a single configuration "
+                "(multi_config.configurations[i])."
             )
         self._optic = optic
         self._sections: list[BaseSection] = (
@@ -71,15 +71,12 @@ class Prescription:
             Populated Document ready for a renderer to consume.
         """
         title = f"Optical Prescription — {self._optic.name or 'Unnamed System'}"
-        generated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
         sections = [s.build(self._optic) for s in self._sections]
-        return Document(title=title, generated_at=generated_at, sections=sections)
+        return Document(title=title, generated_at=timestamp(), sections=sections)
 
     def view(self) -> None:
         """Print the prescription to the console using ConsoleRenderer."""
-        from optiland.prescription.renderers.console import ConsoleRenderer
-
-        ConsoleRenderer().print(self.build())
+        print_document(self.build())
 
     def save(
         self,
@@ -95,19 +92,7 @@ class Prescription:
             renderer: Explicit renderer instance.  Overrides extension
                 inference.
         """
-        path = pathlib.Path(path)
-        if renderer is None:
-            if path.suffix.lower() == ".pdf":
-                from optiland.prescription.renderers.pdf import PDFRenderer
-
-                renderer = PDFRenderer()
-            else:
-                from optiland.prescription.renderers.plain_text import (
-                    PlainTextRenderer,
-                )
-
-                renderer = PlainTextRenderer()
-        renderer.write(self.build(), path)
+        save_document(self.build(), path, renderer)
 
     @staticmethod
     def _default_sections() -> list[BaseSection]:
