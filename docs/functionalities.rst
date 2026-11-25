@@ -56,7 +56,7 @@ Optimization and Tolerancing
 - **Operand-Based Merit Function Design**:
   Define custom merit functions using symbolic operands, easily extended with user-defined metrics.
 - **Tolerancing and Sensitivity Analysis**:
-  Perform Monte Carlo simulations and parametric sweeps to assess manufacturability and robustness.
+  Perform sensitivity, inverse sensitivity and seeded Monte Carlo analyses to assess manufacturability and robustness, with tolerances in drawing units (radius, fringes, irregularity, thickness, surface and element decenters and tilts, index and Abbe number), optimizer or quick-focus compensators, RSS estimates, yield and percentiles, and conversion to and from ISO 10110 drawings. See the :doc:`tolerancing_guide`.
 - **ISO 10110 Fabrication Drawings**:
   Generate manufacturing drawings (PDF, PNG, DXF) for each lens element, including surface form, centration, imperfection, coating and glass-quality annotations, directly from an ``Optic``.
 - **Categorical Variable Optimization (Glass Expert)**:

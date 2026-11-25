@@ -88,6 +88,13 @@ most.
       Building the merit function: the default merit, operands, bounds and
       hard constraints.
 
+   .. grid-item-card:: Tolerancing Guide
+      :link: tolerancing_guide
+      :link-type: doc
+
+      Tolerances and their units, compensators, sensitivity, inverse
+      sensitivity and Monte Carlo analyses, and ISO 10110 drawings.
+
    .. grid-item-card:: GUI Quickstart
       :link: gui_quickstart
       :link-type: doc
@@ -109,4 +116,5 @@ most.
    glossary
    optimization_guide
    optimization_merit_constraints
+   tolerancing_guide
    gui_quickstart

@@ -251,6 +251,10 @@ Tolerance a system
 
    * - How do I …
      - Where to look
+   * - run a complete tolerance study (tolerances, compensator, sensitivity,
+       Monte Carlo yield)?
+     - :doc:`Tutorial 6d <examples/Tutorial_6d_Complete_Tolerance_Study>`,
+       :doc:`tolerancing_guide`
    * - find which parameters my performance is most sensitive to?
      - :doc:`Tutorial 6a <examples/Tutorial_6a_Tolerancing_Sensitivity_Analysis>`,
        :doc:`gallery/tolerancing/sensitivity`
@@ -258,7 +262,15 @@ Tolerance a system
      - :doc:`Tutorial 6b <examples/Tutorial_6b_Monte_Carlo_Tolerancing_Analysis>`,
        :doc:`gallery/tolerancing/monte_carlo`
    * - add a compensator (e.g. refocus) to the analysis?
-     - :doc:`gallery/tolerancing/compensators`
+     - :doc:`gallery/tolerancing/compensators`,
+       :ref:`Tolerancing Guide: compensators <tolerancing_compensators>`
+   * - find the largest tolerances that keep my performance within a budget?
+     - :doc:`Tutorial 6d <examples/Tutorial_6d_Complete_Tolerance_Study>`
+       (inverse sensitivity)
+   * - apply my shop's standard tolerances to every surface?
+     - :ref:`Tolerancing Guide: tolerance tables <tolerancing_tables>`
+   * - turn ISO 10110 drawing tolerances into a tolerance analysis, or back?
+     - :ref:`Tolerancing Guide: ISO 10110 drawings <tolerancing_iso10110>`
    * - include surface roughness and scattering?
      - :doc:`Tutorial 6c <examples/Tutorial_6c_Roughness_Scattering_and_Extended_Sources>`
    * - produce ISO 10110 fabrication drawings (PDF or DXF) for my lenses?

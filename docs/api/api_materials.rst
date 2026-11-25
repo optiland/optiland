@@ -179,6 +179,25 @@ The wrapper also forwards the wrapped material's
 :attr:`~optiland.materials.base.BaseMaterial.thermal_expansion`, so a thermal
 analysis reads the CTE straight from it.
 
+Offset Materials
+----------------
+
+:class:`~optiland.materials.offset.OffsetMaterial` wraps another material and
+shifts its d-line index by ``delta_nd`` and its Abbe number by ``delta_vd``.
+The dispersion curve is scaled about the d line, so the relative partial
+dispersions are kept, and the wrapped material is not modified. It models
+melt-to-melt deviations of a glass and is what the ``"index"`` and ``"abbe"``
+tolerances apply (see :doc:`/tolerancing_guide`):
+
+.. code-block:: python
+
+   from optiland.materials import Material, OffsetMaterial
+
+   melt = OffsetMaterial(Material("N-BK7"), delta_nd=0.0005, delta_vd=-0.3)
+
+A non-dispersive material, such as an
+:class:`~optiland.materials.ideal.IdealMaterial`, accepts an index offset only.
+
 Evaluation and Caching
 ----------------------
 
@@ -234,5 +253,6 @@ lookup when an input or tracked parameter requires a fresh gradient graph.
    materials.material
    materials.material_spec
    materials.material_utils
+   materials.offset
    materials.catalog
    materials.registry
