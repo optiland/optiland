@@ -69,6 +69,36 @@ class MMDFTPSF(BasePSF):
         remove_tilt=False,
         **kwargs,
     ):
+        """Build pupil samples and compute the MMDFT PSF on a discrete image grid.
+
+        When both ``image_size`` and ``pixel_pitch`` are omitted, sampling
+        follows the same OpticStudio-like grid sizing used by the scalar FFT
+        PSF. Providing only one of them derives the other from working F/#.
+
+        Args:
+            optic (Optic): The optical system.
+            field (tuple): Field point (e.g. ``(Hx, Hy)``) at which to compute
+                the PSF.
+            wavelength (str | float): Wavelength in micrometers, or
+                ``'primary'``.
+            num_rays (int, optional): Pupil samples along one dimension.
+                Defaults to 128. Must be at least 32 when both image parameters
+                are omitted.
+            image_size (int, optional): Output image side length in pixels.
+                Defaults to a value derived from ``num_rays`` or
+                ``pixel_pitch``.
+            pixel_pitch (float, optional): Image-plane pixel size. Defaults to
+                a value derived from ``image_size`` or ``num_rays``.
+            strategy (str): Wavefront reference strategy. Defaults to
+                ``"chief_ray"``.
+            remove_tilt (bool): If True, remove tilt and piston from OPD.
+                Defaults to False.
+            **kwargs: Extra keyword arguments forwarded to the strategy.
+
+        Raises:
+            ValueError: If ``num_rays`` is too small when both ``image_size``
+                and ``pixel_pitch`` are omitted.
+        """
         if image_size is None and pixel_pitch is None:
             if num_rays < 32:
                 raise ValueError(

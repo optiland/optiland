@@ -98,6 +98,33 @@ class ScalarFFTPSF(BasePSF):
         remove_tilt=False,
         **kwargs,
     ):
+        """Build pupil samples and compute the scalar FFT PSF.
+
+        When ``grid_size`` is omitted, pupil sampling is scaled to emulate
+        OpticStudio FFT PSF behavior (``grid_size = num_rays * 2`` after
+        adjustment).
+
+        Args:
+            optic (Optic): The optical system.
+            field (tuple): Field point (e.g. ``(Hx, Hy)``) at which to compute
+                the PSF.
+            wavelength (str | float): Wavelength in micrometers, or
+                ``'primary'``.
+            num_rays (int, optional): Pupil samples along one dimension.
+                Defaults to 128. Must be at least 32 when ``grid_size`` is
+                omitted.
+            grid_size (int, optional): FFT grid size including zero-padding.
+                Defaults to a value derived from ``num_rays``.
+            strategy (str): Wavefront reference strategy. Defaults to
+                ``"chief_ray"``.
+            remove_tilt (bool): If True, remove tilt and piston from OPD.
+                Defaults to False.
+            **kwargs: Extra keyword arguments forwarded to the strategy.
+
+        Raises:
+            ValueError: If ``num_rays`` is too small when ``grid_size`` is
+                omitted, or if ``grid_size`` is smaller than ``num_rays``.
+        """
         if grid_size is None:
             if num_rays < 32:
                 raise ValueError(
@@ -319,6 +346,25 @@ class FFTPSF:
         remove_tilt=False,
         **kwargs,
     ):
+        """Return a vectorial or scalar FFT PSF for the optic's polarization.
+
+        Args:
+            optic (Optic): The optical system.
+            field (tuple): Field point at which to compute the PSF.
+            wavelength (str | float): Wavelength of light.
+            num_rays (int, optional): Pupil samples along one dimension.
+                Defaults to 128.
+            grid_size (int, optional): FFT grid size. Defaults to None.
+            strategy (str): Wavefront calculation strategy. Defaults to
+                ``"chief_ray"``.
+            remove_tilt (bool): If True, remove tilt from OPD. Defaults to
+                False.
+            **kwargs: Extra keyword arguments forwarded to the concrete PSF.
+
+        Returns:
+            VectorialFFTPSF | ScalarFFTPSF: ``VectorialFFTPSF`` when the optic
+            has a polarization state; otherwise ``ScalarFFTPSF``.
+        """
         if optic.polarization_state is not None:
             from optiland.psf.vectorial_fft import VectorialFFTPSF
 

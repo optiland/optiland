@@ -108,6 +108,33 @@ class ScalarHuygensPSF(BasePSF):
         normalization: float = None,
         **kwargs,
     ):
+        """Configure image sampling and compute the scalar Huygens PSF.
+
+        Chooses a Numba or Torch pupil-to-image summation strategy from the
+        active backend, then evaluates the PSF on the configured image grid.
+
+        Args:
+            optic (Optic): The optical system.
+            field (tuple): Field point (e.g. ``(Hx, Hy)``) at which to compute
+                the PSF.
+            wavelength (str | float): Wavelength in micrometers, or
+                ``'primary'``.
+            num_rays (int, optional): Pupil samples along one dimension.
+                Defaults to 128.
+            image_size (int, optional): Side length of the square image grid
+                in pixels. Defaults to 128.
+            strategy (str): Wavefront reference strategy. Defaults to
+                ``"chief_ray"``.
+            remove_tilt (bool): If True, remove tilt and piston from OPD.
+                Defaults to False.
+            oversample (float, optional): Oversampling relative to the optical
+                cutoff; mainly used for MTF. Defaults to None.
+            pixel_pitch (float, optional): Image-plane pixel pitch in mm. When
+                set, overrides automatic extent calculation. Defaults to None.
+            normalization (float, optional): Optional scale applied to the PSF
+                intensity. Defaults to None.
+            **kwargs: Extra keyword arguments forwarded to the strategy.
+        """
         super().__init__(
             optic=optic,
             field=field,
@@ -423,6 +450,32 @@ class HuygensPSF:
         normalization: float = None,
         **kwargs,
     ):
+        """Return a vectorial or scalar Huygens PSF for the optic's polarization.
+
+        Args:
+            optic (Optic): The optical system.
+            field (tuple): Field point at which to compute the PSF.
+            wavelength (str | float): Wavelength in micrometers.
+            num_rays (int, optional): Pupil samples along one dimension.
+                Defaults to 128.
+            image_size (int, optional): Image grid side length in pixels.
+                Defaults to 128.
+            strategy (str): Wavefront calculation strategy. Defaults to
+                ``"chief_ray"``.
+            remove_tilt (bool): If True, remove tilt from OPD. Defaults to
+                False.
+            oversample (float, optional): Oversampling ratio for MTF use.
+                Defaults to None.
+            pixel_pitch (float, optional): Pixel pitch in mm. Defaults to None.
+            normalization (float, optional): Optional PSF intensity scale.
+                Defaults to None.
+            **kwargs: Extra keyword arguments forwarded to the concrete PSF.
+
+        Returns:
+            VectorialHuygensPSF | ScalarHuygensPSF: ``VectorialHuygensPSF``
+            when the optic has a polarization state; otherwise
+            ``ScalarHuygensPSF``.
+        """
         if optic.polarization_state is not None:
             from optiland.psf.vectorial_huygens import VectorialHuygensPSF
 
