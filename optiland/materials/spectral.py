@@ -100,3 +100,56 @@ def interpolate_linear(
     if len(samples) == 1:
         return data[0] + wave * 0
     return be.interp(wave, samples, data)
+
+
+def interpolate_transmittance(
+    wavelength: Any, sample_wavelengths: Any, samples: Any
+) -> Any:
+    """Local quadratic through the three nearest samples, with stable low ties.
+
+    Interpolate transmission before Beer conversion. Newton divided differences
+    preserve transparent tables exactly, without clamping unphysical overshoot.
+    """
+    wave = checked_wavelengths(wavelength)
+    waves, values = be.asarray(sample_wavelengths), be.asarray(samples)
+    checked_wavelengths(wave, (waves[0], waves[-1]))
+    if be.any(waves[1:] <= waves[:-1]):
+        raise ValueError("Transmission wavelengths coincide in active precision")
+    # Three closest samples. Stable ties choose the shorter wavelength.
+    # Build selection by masks to retain arbitrary wavelength array shapes
+    # and differentiability on both backends.
+    distances = be.abs(wave[..., None] - waves)
+    chosen = []
+    for _ in range(3):
+        index = be.argmin(distances, axis=-1)
+        chosen.append(index)
+        distances = be.where(
+            be.arange(len(waves)) == index[..., None], be.inf, distances
+        )
+    # Newton's divided differences evaluate the same quadratic while
+    # preserving constant transmission exactly. Summing Lagrange weights
+    # can round a transparent table above one and falsely reject it.
+    x0, x1, x2 = (waves[index] for index in chosen)
+    y0, y1, y2 = (values[index] for index in chosen)
+    slope = (y1 - y0) / (x1 - x0)
+    curvature = ((y2 - y1) / (x2 - x1) - slope) / (x2 - x0)
+    result = y0 + (wave - x0) * (slope + (wave - x1) * curvature)
+    if not be.all(be.isfinite(result)) or be.any(result < 0) or be.any(result > 1):
+        raise ValueError("Unphysical interpolated transmission")
+    return result
+
+
+def transmission_to_extinction(
+    transmission: Any, wavelength_um: Any, thickness_mm: float
+) -> Any:
+    """Beer conversion using intensity transmission and a mm-to-µm factor."""
+    if be.any(transmission == 0):
+        raise ValueError("Zero transmission cannot be mapped to finite extinction")
+    return -be.log(transmission) * wavelength_um / (4 * be.pi * thickness_mm * 1000)
+
+
+def extinction_to_transmission(
+    extinction: Any, wavelength_um: Any, thickness_mm: float
+) -> Any:
+    """Intensity transmission over a distance in mm, without interface losses."""
+    return be.exp(-4 * be.pi * extinction * thickness_mm * 1000 / wavelength_um)

@@ -317,10 +317,11 @@ class OpticToOsloEncoder:
                 not isinstance(definition.dispersion, IndexTable)
                 or definition.extinction is not None
                 or material.bounds != "raise"
+                or definition.thermal is not None
             ):
                 raise NotImplementedError(
                     "OSLO writer supports only sampled n data without extinction "
-                    "and with bounds='raise'; "
+                    "or thermal data, and with bounds='raise'; "
                     "use native JSON"
                 )
             if any(n <= 0 for n in definition.dispersion.indices):
