@@ -64,6 +64,33 @@ def singlet_finite_object():
     return lens
 
 
+def _thickness_pickup_lens(source=1, target=3, scale=2.0):
+    """Six-surface lens with a pickup (gaps 1..4 are 4, 5, 7, 20 before it)."""
+    lens = Optic()
+    lens.surfaces.add(index=0, thickness=be.inf)
+    lens.surfaces.add(index=1, radius=50.0, thickness=4.0, is_stop=True)
+    lens.surfaces.add(index=2, radius=-80.0, thickness=5.0)
+    lens.surfaces.add(index=3, radius=60.0, thickness=7.0)
+    lens.surfaces.add(index=4, radius=-120.0, thickness=20.0)
+    lens.surfaces.add(index=5)
+    lens.pickups.add(
+        source_surface_idx=source,
+        attr_type="thickness",
+        target_surface_idx=target,
+        scale=scale,
+    )
+    lens.updater.update()
+    return lens
+
+
+def _gap(lens, index):
+    return float(be.to_numpy(lens.surfaces.get_thickness(index))[0])
+
+
+def _gaps(lens):
+    return [_gap(lens, i) for i in range(1, 5)]
+
+
 class TestOptic:
     @pytest.fixture(autouse=True)
     def setup(self):
@@ -610,6 +637,74 @@ class TestOptic:
         lens.updater.flip()
         assert lens.pickups.pickups[0].source_surface_idx == 2
         assert lens.pickups.pickups[0].target_surface_idx == 1
+
+    def test_flip_thickness_pickup_shapes(self, set_test_backend):
+        lens = _thickness_pickup_lens()
+        lens.updater.flip()
+        for surf in lens.surfaces:
+            assert be.to_numpy(surf.thickness).ndim == 0
+            assert be.to_numpy(surf.geometry.cs.z).ndim == 0
+
+    def test_thickness_pickup_keeps_gradient(self, set_test_backend):
+        if be.get_backend() != "torch":
+            pytest.skip("torch-only behavior")
+        import torch
+
+        lens = _thickness_pickup_lens()
+        g1 = torch.tensor(
+            4.0, dtype=getattr(torch, f"float{be.get_precision()}"), requires_grad=True
+        )
+        lens.updater.set_thickness(g1, 1)
+        lens.pickups.apply()
+        lens.surfaces[3].thickness.backward()
+        assert_allclose(g1.grad, 2.0)
+
+    def test_flip_thickness_pickup(self, set_test_backend):
+        lens = _thickness_pickup_lens()
+        assert_allclose(_gaps(lens), [4.0, 5.0, 8.0, 20.0])
+        lens.updater.flip()
+        gaps = _gaps(lens)
+        assert_allclose(gaps, [8.0, 5.0, 4.0, 20.0])
+        assert_allclose(gaps[0], 2.0 * gaps[2])
+
+    @pytest.mark.parametrize(
+        "source, target, new_source, new_target",
+        [(1, 3, 3, 1), (4, 1, 4, 3), (1, 4, 3, 4), (2, 0, 2, 0)],
+    )
+    def test_flip_thickness_pickup_indices(
+        self, set_test_backend, source, target, new_source, new_target
+    ):
+        lens = _thickness_pickup_lens(source=source, target=target)
+        lens.updater.flip()
+        pickup = lens.pickups.pickups[0]
+        assert pickup.source_surface_idx == new_source
+        assert pickup.target_surface_idx == new_target
+        assert_allclose(_gap(lens, new_target), 2.0 * _gap(lens, new_source))
+
+    def test_flip_thickness_pickup_twice(self, set_test_backend):
+        lens = _thickness_pickup_lens()
+        lens.updater.flip()
+        lens.updater.flip()
+        pickup = lens.pickups.pickups[0]
+        assert (pickup.source_surface_idx, pickup.target_surface_idx) == (1, 3)
+        assert_allclose(_gaps(lens), [4.0, 5.0, 8.0, 20.0])
+
+    def test_flip_mixed_pickups(self, set_test_backend):
+        lens = _thickness_pickup_lens()
+        lens.pickups.add(
+            source_surface_idx=1, attr_type="radius", target_surface_idx=3, scale=1.0
+        )
+        lens.updater.update()
+        lens.updater.flip()
+        thickness_pickup, radius_pickup = lens.pickups.pickups
+        assert (
+            thickness_pickup.source_surface_idx,
+            thickness_pickup.target_surface_idx,
+        ) == (3, 1)
+        assert (radius_pickup.source_surface_idx, radius_pickup.target_surface_idx) == (
+            4,
+            2,
+        )
 
     def test_remove_surface(self, set_test_backend):
         lens = singlet_infinite_object()

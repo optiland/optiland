@@ -13,6 +13,7 @@ Kramer Harrison, 2024
 
 from __future__ import annotations
 
+import optiland.backend as be
 from optiland.utils import get_attr_by_path, set_attr_by_path
 
 
@@ -210,7 +211,11 @@ class Pickup:
         if self.attr_type == "conic":
             return surface.geometry.k
         if self.attr_type == "thickness":
-            return self.source_optic.surfaces.get_thickness(self.source_surface_idx)
+            # get_thickness returns shape (1,); unwrap to a scalar (keeps the
+            # autograd graph) so the target thickness and downstream cs.z stay 0-d.
+            return be.ravel(
+                self.source_optic.surfaces.get_thickness(self.source_surface_idx)
+            )[0]
 
         # Generic path support
         try:
