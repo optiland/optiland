@@ -75,6 +75,13 @@ class MultiConfiguration:
         This ensures that, initially, both configurations are identical
         and controlled by the source's variables.
 
+        Pickups inherited from the source keep pointing at their real source
+        configurations (the other configurations are not duplicated by the
+        copy). An inherited pickup that drives the same surface attribute as
+        one of the new links to the source is dropped, so every attribute
+        has exactly one driver. Other inherited links, such as a material
+        link to configuration 0, are kept.
+
         Args:
             source_config_idx (int): The index of the configuration to copy.
                 Defaults to 0.
@@ -83,11 +90,25 @@ class MultiConfiguration:
             Optic: The new configuration instance.
         """
         source_optic = self.configurations[source_config_idx]
-        new_optic = copy.deepcopy(source_optic)
+        # Map every other configuration to itself, so inherited cross-config
+        # pickups keep their real source optic instead of a hidden copy.
+        memo = {id(c): c for c in self.configurations if c is not source_optic}
+        new_optic = copy.deepcopy(source_optic, memo)
         self.configurations.append(new_optic)
 
         # Link the new optic to the source optic
+        pickups = new_optic.pickups.pickups
+        num_inherited = len(pickups)
         self._link_configurations(source_optic, new_optic)
+
+        # Drop inherited pickups superseded by a new link (one driver each).
+        new_links = pickups[num_inherited:]
+        linked = {(p.target_surface_idx, p.attr_type) for p in new_links}
+        pickups[:] = [
+            p
+            for p in pickups[:num_inherited]
+            if (p.target_surface_idx, p.attr_type) not in linked
+        ] + new_links
 
         return new_optic
 
@@ -391,6 +412,126 @@ class MultiConfiguration:
     def current_config(self, index: int) -> Optic:
         """Returns the configuration at the given index."""
         return self.configurations[index]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert the multi-configuration system to a dictionary.
+
+        Each configuration is stored with :meth:`Optic.to_dict`. Pickups that
+        link one configuration to another are listed in ``"links"`` as
+        ``[config_index, pickup_index, source_config_index]``, because a
+        single optic's dictionary can not name another optic.
+
+        Returns:
+            dict[str, Any]: The dictionary representation, with keys
+            ``"version"``, ``"configurations"`` and ``"links"``.
+
+        Raises:
+            ValueError: If a pickup takes its value from an optic that is not
+                one of the configurations.
+        """
+        index_of = {id(optic): i for i, optic in enumerate(self.configurations)}
+        links: list[list[int]] = []
+        for config_idx, optic in enumerate(self.configurations):
+            for pickup_idx, pickup in enumerate(optic.pickups.pickups):
+                if pickup.source_optic is optic:
+                    continue
+                source_idx = index_of.get(id(pickup.source_optic))
+                if source_idx is None:
+                    raise ValueError(
+                        f"Pickup {pickup_idx} of configuration {config_idx} "
+                        f"(attr_type={pickup.attr_type!r}) takes its value from "
+                        "an optic that is not part of this MultiConfiguration; "
+                        "the link can not be saved."
+                    )
+                links.append([config_idx, pickup_idx, source_idx])
+
+        return {
+            "version": 1,
+            "configurations": [optic.to_dict() for optic in self.configurations],
+            "links": links,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> MultiConfiguration:
+        """Create a multi-configuration system from a dictionary.
+
+        Every configuration is rebuilt with :meth:`Optic.from_dict`. The
+        pickups listed in ``"links"`` are then restored with their source
+        configuration and applied, in configuration order.
+
+        Args:
+            data (dict[str, Any]): The dictionary created by :meth:`to_dict`.
+
+        Returns:
+            MultiConfiguration: The restored multi-configuration system.
+
+        Raises:
+            ValueError: If the version is not supported, there is no
+                configuration, or a link refers to a configuration or pickup
+                that does not exist.
+        """
+        from optiland.optic import Optic
+        from optiland.pickup import Pickup
+
+        version = data.get("version", 1)
+        if version != 1:
+            raise ValueError(
+                f"Unsupported MultiConfiguration data version: {version!r}."
+            )
+        config_data = data.get("configurations", [])
+        if not config_data:
+            raise ValueError("MultiConfiguration data has no configurations.")
+
+        num_configs = len(config_data)
+        links_by_config: list[dict[int, int]] = [{} for _ in range(num_configs)]
+        for config_idx, pickup_idx, source_idx in data.get("links", []):
+            if not (0 <= config_idx < num_configs and 0 <= source_idx < num_configs):
+                raise ValueError(
+                    f"Link {[config_idx, pickup_idx, source_idx]} refers to a "
+                    f"configuration outside 0..{num_configs - 1}."
+                )
+            num_pickups = len(config_data[config_idx]["pickups"])
+            if not 0 <= pickup_idx < num_pickups:
+                raise ValueError(
+                    f"Link {[config_idx, pickup_idx, source_idx]} refers to a "
+                    f"pickup outside 0..{num_pickups - 1} of configuration "
+                    f"{config_idx}."
+                )
+            links_by_config[config_idx][pickup_idx] = source_idx
+
+        # Build each optic without its cross-configuration pickups, so they
+        # are never applied as self-pickups while loading.
+        optics = []
+        for optic_data, links in zip(config_data, links_by_config, strict=True):
+            local = dict(optic_data)
+            local["pickups"] = [
+                p for i, p in enumerate(optic_data["pickups"]) if i not in links
+            ]
+            optics.append(Optic.from_dict(local))
+
+        # Put the linked pickups back at their original positions.
+        restored = []
+        for optic, optic_data, links in zip(
+            optics, config_data, links_by_config, strict=True
+        ):
+            local_pickups = iter(optic.pickups.pickups)
+            pickups = []
+            for i, pickup_data in enumerate(optic_data["pickups"]):
+                if i in links:
+                    pickup = Pickup.from_dict(optic, pickup_data)
+                    pickup.source_optic = optics[links[i]]
+                    pickups.append(pickup)
+                    restored.append(pickup)
+                else:
+                    pickups.append(next(local_pickups))
+            optic.pickups.pickups = pickups
+
+        for pickup in restored:
+            pickup.apply()
+
+        multiconfig = cls(optics[0])
+        multiconfig.configurations.extend(optics[1:])
+        return multiconfig
 
     @staticmethod
     def _config_title(base_title: str | None, index: int) -> str:
