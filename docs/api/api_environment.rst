@@ -7,11 +7,16 @@ temperature, pressure, humidity, and CO2 concentration on an optical system's
 performance, as opposed to the fixed reference-air assumption used elsewhere
 in the package.
 
-The main entry point is :func:`~optiland.environment.air_index.refractive_index_air`,
+The main entry point for air is :func:`~optiland.environment.air_index.refractive_index_air`,
 which dispatches to one of several well-established empirical models based on an
 :class:`~optiland.environment.conditions.EnvironmentalConditions` instance. Each
 model - Ciddor, Edlén, Birch & Downs, and Kohlrausch - is implemented in its own
 module under ``environment.models`` and can also be called directly.
+
+To evaluate a lens at another temperature, use
+:func:`~optiland.environment.thermal.optic_at_temperature`. It returns a deep
+copy whose glasses, radii, thicknesses and air gaps have been updated for the
+temperature change; the input optic is left unchanged.
 
 .. code-block:: python
 
@@ -45,6 +50,7 @@ settings to material evaluation automatically.
 
    environment.air_index
    environment.conditions
+   environment.thermal
 
 .. autosummary::
    :toctree: environment/
