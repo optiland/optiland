@@ -35,6 +35,22 @@ def _frequency_axis(size: int, spacing: float, like: BEArrayT):
     return ordered_indices / (size * spacing)
 
 
+def _direction_cosines(field: ScalarField[BEArrayT]):
+    """Return transverse direction cosines of the field's FFT frequency grid.
+
+    The cosines are taken in the field's medium, in FFT order and at transfer-phase
+    precision. Returns ``(ux, uy, ux**2 + uy**2)``, each of shape ``field.shape``.
+    """
+    ny, nx = field.shape
+    fx = _frequency_axis(nx, field.dx, field.data)
+    fy = _frequency_axis(ny, field.dy, field.data)
+    medium_wavelength = field.wavelength / field.refractive_index
+    ux, uy = be.meshgrid(fx * medium_wavelength, fy * medium_wavelength)
+    # Dimensionless squared wavevectors also avoid overflow from squaring a
+    # dimensional optical wavenumber in very small spatial units.
+    return ux, uy, ux * ux + uy * uy
+
+
 def _validate_distance(distance: float | ScalarOrArrayT) -> None:
     if isinstance(distance, Real):
         if not math.isfinite(float(distance)):
@@ -71,7 +87,8 @@ def angular_spectrum(
     The input and output use the same rectangular sampling grid. Consequently,
     the usual discrete-Fourier periodic-boundary assumption applies; callers
     should provide enough zero padding to prevent wraparound for expanding
-    fields.
+    fields. :func:`~optiland.physical_optics.wraparound_diagnostic` bounds the
+    wrapped power for a given field and distance.
 
     The longitudinal phase is evaluated as a uniform carrier plus the stable
     difference ``kz - k = -kt**2 / (kz + k)``. Transfer calculations use float64
@@ -114,15 +131,8 @@ def angular_spectrum(
     if not isinstance(distance, Real):
         distance = _phase_precision(distance, field.data)
 
-    ny, nx = field.shape
-    fx = _frequency_axis(nx, field.dx, field.data)
-    fy = _frequency_axis(ny, field.dy, field.data)
     wavenumber = 2 * be.pi * field.refractive_index / field.wavelength
-    medium_wavelength = field.wavelength / field.refractive_index
-    ux, uy = be.meshgrid(fx * medium_wavelength, fy * medium_wavelength)
-    # Dimensionless squared wavevectors also avoid overflow from squaring a
-    # dimensional optical wavenumber in very small spatial units.
-    transverse_squared = ux * ux + uy * uy
+    _, _, transverse_squared = _direction_cosines(field)
     longitudinal_squared = 1.0 - transverse_squared
     propagating = longitudinal_squared >= 0
     longitudinal = be.sqrt(be.clip(longitudinal_squared, 0.0, be.inf))
