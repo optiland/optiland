@@ -20,7 +20,10 @@ from optiland.visualization.themes import get_active_theme
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    import pandas as pd
+
     from optiland.materials.base import BaseMaterial
+    from optiland.multiconfig.analysis import MultiConfigAnalysis
     from optiland.optic import Optic
     from optiland.pickup import Pickup
 
@@ -532,6 +535,50 @@ class MultiConfiguration:
         multiconfig = cls(optics[0])
         multiconfig.configurations.extend(optics[1:])
         return multiconfig
+
+    def analyze(
+        self,
+        analysis_cls: Callable[..., Any],
+        *args: Any,
+        configurations: list[int] | Literal["all"] = "all",
+        **kwargs: Any,
+    ) -> MultiConfigAnalysis:
+        """Run one analysis on several configurations.
+
+        Calls ``analysis_cls(optic, *args, **kwargs)`` for each selected
+        configuration, e.g. ``mc.analyze(SpotDiagram, num_rings=6)``.
+
+        Args:
+            analysis_cls: The analysis class (or any callable taking the
+                optic as its first argument).
+            *args: Positional arguments passed after the optic.
+            configurations: The configuration indices to analyse, or "all".
+            **kwargs: Keyword arguments passed to ``analysis_cls``.
+
+        Returns:
+            MultiConfigAnalysis: The results, one per configuration.
+        """
+        from optiland.multiconfig.analysis import MultiConfigAnalysis
+
+        indices, _ = self._resolve_configs(configurations)
+        results = [
+            analysis_cls(self.configurations[i], *args, **kwargs) for i in indices
+        ]
+        return MultiConfigAnalysis(results, indices)
+
+    def summary(self) -> pd.DataFrame:
+        """Tabulate the configurations side by side.
+
+        One column per configuration: EFL, F/#, image height, total track and
+        EPD, then every property whose value differs between configurations.
+        See :func:`optiland.multiconfig.summary.configuration_summary`.
+
+        Returns:
+            pandas.DataFrame: The summary table.
+        """
+        from optiland.multiconfig.summary import configuration_summary
+
+        return configuration_summary(self)
 
     @staticmethod
     def _config_title(base_title: str | None, index: int) -> str:

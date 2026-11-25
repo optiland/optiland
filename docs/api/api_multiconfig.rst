@@ -8,3 +8,5 @@ The multi-configuration module allows for the definition of optical systems with
    :caption: Multi-Configuration Modules
 
    multiconfig.multi_configuration
+   multiconfig.analysis
+   multiconfig.summary
