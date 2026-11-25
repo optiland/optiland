@@ -47,6 +47,7 @@ Key Exports:
     birch_downs_refractive_index: Direct access to the modified Birch & Downs
         model.
     kohlrausch_refractive_index: Direct access to the Kohlrausch model.
+    optic_at_temperature: Deep copy of an optic at another temperature.
 """
 
 from __future__ import annotations
@@ -57,6 +58,7 @@ from .models.birch_downs import birch_downs_refractive_index
 from .models.ciddor import ciddor_refractive_index
 from .models.edlen import edlen_refractive_index
 from .models.kohlrausch import kohlrausch_refractive_index
+from .thermal import optic_at_temperature
 
 __all__ = [
     "EnvironmentalConditions",
@@ -65,4 +67,5 @@ __all__ = [
     "kohlrausch_refractive_index",
     "edlen_refractive_index",
     "birch_downs_refractive_index",
+    "optic_at_temperature",
 ]
