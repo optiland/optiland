@@ -52,3 +52,33 @@ When a value is set for a specific configuration index (other than 0), the frame
 2. Sets the new value directly on the `Optic` instance of that configuration.
 
 This allows for flexible definition of both shared and unique parameters.
+
+Saving and Loading
+------------------
+
+A single configuration's ``Optic.to_dict()`` can not record a pickup that takes its value
+from another optic, so it would load as an unlinked optic. Save the whole system instead:
+:meth:`~optiland.multiconfig.multi_configuration.MultiConfiguration.to_dict` stores every
+configuration with ``Optic.to_dict()`` and lists the cross-configuration pickups
+separately:
+
+.. code-block:: python
+
+   {
+       "version": 1,
+       "configurations": [optic.to_dict(), ...],
+       "links": [[config_index, pickup_index, source_config_index], ...],
+   }
+
+:meth:`~optiland.multiconfig.multi_configuration.MultiConfiguration.from_dict` rebuilds
+each configuration with ``Optic.from_dict()`` and then restores the source of every listed
+pickup, so linked parameters keep propagating after loading. ``to_dict`` raises a ``ValueError`` if a pickup takes its value from an optic
+that is not one of the configurations. Use the generic JSON helpers to save to a file:
+
+.. code-block:: python
+
+   from optiland.fileio import load_obj_from_json, save_obj_to_json
+   from optiland.multiconfig import MultiConfiguration
+
+   save_obj_to_json(mc, "zoom.json")
+   mc = load_obj_from_json(MultiConfiguration, "zoom.json")
