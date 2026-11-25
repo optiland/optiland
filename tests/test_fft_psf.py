@@ -9,10 +9,13 @@ import pytest
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
+import numpy as np
 import optiland.backend as be
-from optiland.psf import FFTPSF
+from optiland.mtf.fft import ScalarFFTMTF
+from optiland.psf import FFTPSF, HuygensPSF
 from optiland.psf.fft import calculate_grid_size
 from optiland.samples.objectives import CookeTriplet
+from optiland.utils import get_working_FNO
 
 from .utils import assert_allclose
 
@@ -202,8 +205,9 @@ def test_get_units_finite_obj(make_fftpsf):
     fftpsf = make_fftpsf(field=(0, 1), tweak_optic=tweak)
     image = be.zeros((128, 128))
     x, y = fftpsf._get_psf_units(image)
-    assert_allclose(x, 382.82764038)
-    assert_allclose(y, 382.82764038)
+    # Off-axis in y: the tangential (y) pitch is coarser than the sagittal.
+    assert_allclose(x, 369.12999618)
+    assert_allclose(y, 421.24612411)
 
 
 def test_psf_log_tick_formatter(make_fftpsf):
@@ -237,3 +241,100 @@ def test_large_threshold(make_fftpsf):
     assert min_y == 0
     assert max_x == 128
     assert max_y == 128
+
+
+def _isotropic_pitch(fftpsf):
+    """The former isotropic FFT PSF pitch, wavelength * FNO_w / Q, in µm."""
+    fno = be.to_numpy(fftpsf._get_working_FNO())
+    q = fftpsf.grid_size / (fftpsf.num_rays - 1)
+    return fftpsf.wavelengths[0].value * fno / q
+
+
+def test_pixel_pitch_on_axis_matches_working_fno(make_fftpsf):
+    fftpsf = make_fftpsf(field=(0, 0), num_rays=64, grid_size=256)
+    dx, dy, unit = fftpsf._get_pixel_pitch()
+    assert unit == "µm"
+    expected = _isotropic_pitch(fftpsf)
+    assert_allclose(dx, expected, rtol=1e-10)
+    assert_allclose(dy, expected, rtol=1e-10)
+
+
+def test_pixel_pitch_matches_fft_mtf_frequency_steps(make_fftpsf):
+    """PSF pitch along an axis is 1 / (grid_size * MTF step) along that axis."""
+    fftpsf = make_fftpsf(field=(0, 1), num_rays=64, grid_size=256)
+    dx, dy, _ = fftpsf._get_pixel_pitch()
+
+    mtf = ScalarFFTMTF(CookeTriplet(), fields=[(0, 1)], num_rays=64, grid_size=256)
+    step_tang = be.to_numpy(mtf.freq_tang[0][1])  # cycles/mm, pupil Y
+    step_sag = be.to_numpy(mtf.freq_sag[0][1])  # cycles/mm, pupil X
+    assert_allclose(dx, 1e3 / (256 * step_sag), rtol=1e-10)
+    assert_allclose(dy, 1e3 / (256 * step_tang), rtol=1e-10)
+
+    # The y field compresses the tangential (y) direction-cosine span, so the
+    # pitch grows along y and shrinks along x relative to the mean F/#.
+    iso = _isotropic_pitch(fftpsf)
+    assert dy > 1.05 * iso
+    assert dx < 0.98 * iso
+
+
+def test_pixel_pitch_follows_field_direction(make_fftpsf):
+    """A field along x changes the x pitch the way a field along y changes y."""
+    dx_y, dy_y, _ = make_fftpsf(field=(0, 1), num_rays=64)._get_pixel_pitch()
+    dx_x, dy_x, _ = make_fftpsf(field=(1, 0), num_rays=64)._get_pixel_pitch()
+    assert dy_y > dx_y
+    assert dx_x > dy_x
+    assert_allclose(dx_x, dy_y, rtol=1e-8)
+    assert_allclose(dy_x, dx_y, rtol=1e-8)
+
+
+def _fft_psf_on_huygens_grid(fftpsf, huygens, dx, dy):
+    """Sample an FFT PSF, with pitches dx, dy in µm, on a HuygensPSF grid.
+
+    The Huygens image points are `linspace(min, max, image_size)` in mm on
+    the (flat, untilted) image plane. The FFT PSF is centred, at pixel
+    ``n // 2``, on the chief-ray intercept.
+    """
+    from scipy.ndimage import map_coordinates
+
+    xmin, xmax, ymin, ymax = (
+        float(be.to_numpy(v)) for v in huygens._get_image_extent()
+    )
+    size = huygens.image_size
+    x, y = np.meshgrid(np.linspace(xmin, xmax, size), np.linspace(ymin, ymax, size))
+    chief = huygens.optic.trace_generic(*huygens.fields[0].coord, 0.0, 0.0, 0.55)
+    xc = float(be.to_numpy(chief.x).ravel()[0])
+    yc = float(be.to_numpy(chief.y).ravel()[0])
+    fft = np.asarray(be.to_numpy(fftpsf.psf), dtype=float)
+    center = fft.shape[0] // 2
+    rows = (y - yc) * 1e3 / dy + center
+    cols = (x - xc) * 1e3 / dx + center
+    return map_coordinates(fft, [rows, cols], order=3, mode="constant")
+
+
+def _relative_residual(reference, model):
+    """Least-squares residual of `model` scaled onto `reference`."""
+    gain = (model.ravel() @ reference.ravel()) / (model.ravel() @ model.ravel())
+    return np.sum((reference - gain * model) ** 2) / np.sum(reference**2)
+
+
+def test_off_axis_fft_psf_matches_huygens_psf(set_test_backend):
+    """The FFT PSF at its per-axis pitch matches the Huygens PSF off axis.
+
+    HuygensPSF evaluates the diffraction integral at physical image-plane
+    points, so it is an independent reference for the FFT PSF pitch.
+    Observed residuals (CookeTriplet, field (0, 1)): ~4e-4 with the per-axis
+    pitch, ~0.1 with the former isotropic pitch.
+    """
+    optic = CookeTriplet()
+    fftpsf = FFTPSF(optic, (0, 1), 0.55, num_rays=64, grid_size=512)
+    huygens = HuygensPSF(optic, (0, 1), 0.55, num_rays=64, image_size=33)
+    reference = np.asarray(be.to_numpy(huygens.psf), dtype=float)
+
+    dx, dy, _ = fftpsf._get_pixel_pitch()
+    per_axis = _fft_psf_on_huygens_grid(fftpsf, huygens, dx, dy)
+    assert _relative_residual(reference, per_axis) < 2e-3
+
+    fno = float(be.to_numpy(get_working_FNO(optic, (0, 1), 0.55)))
+    iso = 0.55 * fno * (fftpsf.num_rays - 1) / fftpsf.grid_size
+    isotropic = _fft_psf_on_huygens_grid(fftpsf, huygens, iso, iso)
+    assert _relative_residual(reference, isotropic) > 5e-2
