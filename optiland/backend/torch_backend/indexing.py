@@ -28,28 +28,15 @@ class IndexingMixin:
     def cast(self, x: Any) -> Tensor:
         """Cast x to the current floating-point precision.
 
-        Complex inputs preserve their complex nature at the matching
-        precision (``complex64`` for ``float32``, ``complex128`` for
-        ``float64``).
-
         Args:
             x: Input data.
 
         Returns:
             Tensor: Cast tensor.
         """
-        real_dtype = self._dtype()
-        is_complex = (
-            x.is_complex() if isinstance(x, torch.Tensor) else np.iscomplexobj(x)
-        )
-        dtype = (
-            (torch.complex64 if real_dtype == torch.float32 else torch.complex128)
-            if is_complex
-            else real_dtype
-        )
         if not isinstance(x, torch.Tensor):
-            return torch.tensor(x, device=self._device(), dtype=dtype)
-        return x.to(device=self._device(), dtype=dtype)
+            return torch.tensor(x, device=self._device(), dtype=self._dtype())
+        return x.to(device=self._device(), dtype=self._dtype())
 
     def is_array_like(self, x: Any) -> bool:
         """Return True if x is a tensor, ndarray, list, or tuple.
@@ -230,6 +217,10 @@ class IndexingMixin:
     def stack(self, xs: Sequence[Any], axis: int = 0) -> Tensor:
         """Join a sequence of tensors along a new axis.
 
+        Complex inputs preserve their complex nature at the active precision
+        (``complex64`` for ``float32``, ``complex128`` for ``float64``),
+        promoting real elements when mixed with complex ones.
+
         Args:
             xs: Sequence of tensors.
             axis: Axis along which to stack.
@@ -237,7 +228,21 @@ class IndexingMixin:
         Returns:
             Tensor: Stacked tensor.
         """
-        return torch.stack([self.cast(x) for x in xs], dim=axis)
+        real_dtype = self._dtype()
+        device = self._device()
+        complex_dtype = (
+            torch.complex64 if real_dtype == torch.float32 else torch.complex128
+        )
+        tensors = [
+            x.to(device=device)
+            if isinstance(x, torch.Tensor)
+            else torch.as_tensor(x, device=device)
+            for x in xs
+        ]
+        target_dtype = (
+            complex_dtype if any(t.is_complex() for t in tensors) else real_dtype
+        )
+        return torch.stack([t.to(dtype=target_dtype) for t in tensors], dim=axis)
 
     def concatenate(self, arrays: Sequence[Any], axis: int = 0) -> Tensor:
         """Join tensors along an existing axis.

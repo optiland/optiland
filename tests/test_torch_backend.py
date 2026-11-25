@@ -163,24 +163,31 @@ class TestMpsRefusesFloat64:
         ("float64", torch.complex128),
     ],
 )
-def test_stack_and_cast_preserve_complex_precision(precision, expected_dtype):
+def test_stack_preserves_complex_precision(precision, expected_dtype):
     be.set_backend("torch")
     be.set_precision(precision)
     z = torch.tensor([3.0 + 1.0j, 3.0 + 2.0j], dtype=expected_dtype)
-
-    casted = be.cast(z)
-    assert casted.dtype == expected_dtype
-    assert torch.equal(casted, z)
 
     stacked = be.stack([z, z])
     assert stacked.dtype == expected_dtype
     assert torch.equal(stacked, torch.stack([z, z]))
 
+    r = be.array([1.0, 2.0])
+    mixed = be.stack([r, z])
+    assert mixed.dtype == expected_dtype
 
-def test_cast_complex_non_tensor_inputs():
+    z_grad = z.clone().requires_grad_(True)
+    stacked_grad = be.stack([z_grad, z_grad])
+    assert stacked_grad.dtype == expected_dtype
+    assert stacked_grad.requires_grad
+
+
+def test_stack_complex_non_tensor_inputs():
     be.set_backend("torch")
     be.set_precision("float32")
-    z_np = be.cast([1.0 + 2.0j, 3.0 + 4.0j])
-    assert z_np.dtype == torch.complex64
-    expected = torch.tensor([1.0 + 2.0j, 3.0 + 4.0j], dtype=torch.complex64)
-    assert torch.allclose(z_np, expected)
+    stacked = be.stack([[1.0 + 2.0j, 3.0 + 4.0j], [5.0 + 6.0j, 7.0 + 8.0j]])
+    assert stacked.dtype == torch.complex64
+    expected = torch.tensor(
+        [[1.0 + 2.0j, 3.0 + 4.0j], [5.0 + 6.0j, 7.0 + 8.0j]], dtype=torch.complex64
+    )
+    assert torch.allclose(stacked, expected)
