@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import math
 import os
+from functools import lru_cache
 
 import yaml
 
@@ -23,6 +24,22 @@ from optiland.materials.spectral import (
     interpolate_linear,
     validate_bounds,
 )
+
+# RefractiveIndex.INFO files are immutable while Optiland is running, so a
+# parsed file can be reused by every Material that resolves to the same path.
+_YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+
+@lru_cache(maxsize=512)
+def _parse_material_file(path: str) -> dict:
+    """Parse one material YAML file, using libyaml when it is available."""
+    with open(path, encoding="utf-8") as stream:
+        return yaml.load(stream, Loader=_YAML_LOADER)
+
+
+def clear_material_file_cache() -> None:
+    """Forget parsed material files, for example after catalog files change."""
+    _parse_material_file.cache_clear()
 
 
 class MaterialFile(BaseMaterial):
@@ -384,8 +401,9 @@ class MaterialFile(BaseMaterial):
         # (e.g. the degree sign, em dashes). Decode explicitly as UTF-8 so the
         # read does not depend on the platform's default text encoding -- on
         # Windows that is cp1252/cp936 (GBK), which raises UnicodeDecodeError.
-        with open(self.filename, encoding="utf-8") as stream:
-            return yaml.safe_load(stream)
+        # Return a shallow copy so callers of this private helper cannot
+        # mutate the cached parse result for later Material instances.
+        return dict(_parse_material_file(self.filename))
 
     def _set_formula_type(self, formula_type):
         """Set the refractive index formula type."""
