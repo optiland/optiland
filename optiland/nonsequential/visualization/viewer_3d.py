@@ -181,13 +181,13 @@ class NSQViewer3D(BaseViewer3D):
 
     def save_image(
         self,
-        path,
+        path: str | Path,
         *,
-        camera="default",
-        figsize=(1200, 800),
-        dark_mode=False,
-        scale=1,
-        transparent=False,
+        camera: str = "default",
+        figsize: tuple[int, int] = (1200, 800),
+        dark_mode: bool = False,
+        scale: int = 1,
+        transparent: bool = False,
         **view_kwargs,
     ) -> Path:
         """Render the scene off-screen and write a PNG.

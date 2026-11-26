@@ -24,6 +24,10 @@ from optiland.visualization.system.system import OpticalSystem
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from optiland._types import DistributionType, Fields, ReferenceRay, Wavelengths
+    from optiland.visualization.coloring.components import ComponentColorizer
+    from optiland.visualization.coloring.rays import RayColorizer
+
 
 class OpticViewer3D(BaseViewer3D):
     """A class used to visualize optical systems in 3D.
@@ -72,16 +76,16 @@ class OpticViewer3D(BaseViewer3D):
     def _plot_scene(
         self,
         renderer,
-        fields="all",
-        wavelengths="primary",
-        num_rays=24,
-        distribution="ring",
-        reference=None,
-        hide_vignetted=False,
-        component_colorizer=None,
-        ray_colorizer=None,
-        show_colorbar=True,
-    ):
+        fields: Fields = "all",
+        wavelengths: Wavelengths = "primary",
+        num_rays: int = 24,
+        distribution: DistributionType = "ring",
+        reference: ReferenceRay | None = None,
+        hide_vignetted: bool = False,
+        component_colorizer: ComponentColorizer | None = None,
+        ray_colorizer: RayColorizer | None = None,
+        show_colorbar: bool = True,
+    ) -> None:
         """Add lens, ray and colorbar actors to *renderer*."""
         if ray_colorizer is not None:
             ray_colorizer.prepare(self.optic)
@@ -179,13 +183,13 @@ class OpticViewer3D(BaseViewer3D):
 
     def save_image(
         self,
-        path,
+        path: str | Path,
         *,
-        camera="default",
-        figsize=(1200, 800),
-        dark_mode=False,
-        scale=1,
-        transparent=False,
+        camera: str = "default",
+        figsize: tuple[int, int] = (1200, 800),
+        dark_mode: bool = False,
+        scale: int = 1,
+        transparent: bool = False,
         **view_kwargs,
     ) -> Path:
         """Render the system off-screen and write a PNG.
