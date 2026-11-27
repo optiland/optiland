@@ -154,3 +154,68 @@ class TestMpsRefusesFloat64:
         cfg = self._config(monkeypatch, available=False)
         with pytest.raises(ValueError, match="MPS"):
             cfg.set_device("mps")
+
+
+@pytest.mark.parametrize(
+    ("precision", "expected_dtype"),
+    [
+        ("float32", torch.complex64),
+        ("float64", torch.complex128),
+    ],
+)
+def test_stack_preserves_complex_precision(precision, expected_dtype):
+    be.set_backend("torch")
+    be.set_precision(precision)
+    z = torch.tensor([3.0 + 1.0j, 3.0 + 2.0j], dtype=expected_dtype)
+
+    stacked = be.stack([z, z])
+    assert stacked.dtype == expected_dtype
+    assert torch.equal(stacked, torch.stack([z, z]))
+
+    r = be.array([1.0, 2.0])
+    mixed = be.stack([r, z])
+    assert mixed.dtype == expected_dtype
+
+    z_grad = z.clone().requires_grad_(True)
+    stacked_grad = be.stack([z_grad, z_grad])
+    assert stacked_grad.dtype == expected_dtype
+    assert stacked_grad.requires_grad
+
+
+def test_stack_complex_non_tensor_inputs():
+    be.set_backend("torch")
+    be.set_precision("float32")
+    stacked = be.stack([[1.0 + 2.0j, 3.0 + 4.0j], [5.0 + 6.0j, 7.0 + 8.0j]])
+    assert stacked.dtype == torch.complex64
+    expected = torch.tensor(
+        [[1.0 + 2.0j, 3.0 + 4.0j], [5.0 + 6.0j, 7.0 + 8.0j]], dtype=torch.complex64
+    )
+    assert torch.allclose(stacked, expected)
+
+
+def test_stack_non_tensor_preserves_float64_precision():
+    import numpy as np
+
+    be.set_backend("torch")
+    be.set_precision("float64")
+
+    val_a = 1.0 + 1e-12
+    val_b = 2.0 - 1e-12
+    stacked_real = be.stack([val_a, val_b])
+    assert stacked_real.dtype == torch.float64
+    assert torch.equal(
+        stacked_real, torch.tensor([val_a, val_b], dtype=torch.float64)
+    )
+
+    z_a = (1.0 + 1e-12) + (2.0 - 1e-12) * 1j
+    z_b = (3.0 + 1e-12) + (4.0 - 1e-12) * 1j
+    stacked_complex = be.stack([[z_a], [z_b]])
+    assert stacked_complex.dtype == torch.complex128
+    assert torch.equal(
+        stacked_complex, torch.tensor([[z_a], [z_b]], dtype=torch.complex128)
+    )
+
+    np_complex = np.array([z_a], dtype=np.complex128)
+    be.set_precision("float32")
+    stacked_np_32 = be.stack([np_complex, [1.0]])
+    assert stacked_np_32.dtype == torch.complex64
