@@ -18,6 +18,19 @@ if TYPE_CHECKING:
     from torch import Tensor
 
 
+def _has_complex(x: Any) -> bool:
+    """Return True if x contains complex values."""
+    if isinstance(x, torch.Tensor):
+        return x.is_complex()
+    if isinstance(x, np.ndarray):
+        return bool(np.iscomplexobj(x))
+    if isinstance(x, complex | np.complexfloating):
+        return True
+    if isinstance(x, list | tuple):
+        return any(_has_complex(item) for item in x)
+    return False
+
+
 class IndexingMixin:
     """Array utilities, shape, and indexing operations."""
 
@@ -233,16 +246,20 @@ class IndexingMixin:
         complex_dtype = (
             torch.complex64 if real_dtype == torch.float32 else torch.complex128
         )
-        tensors = [
-            x.to(device=device)
-            if isinstance(x, torch.Tensor)
-            else torch.as_tensor(x, device=device)
-            for x in xs
-        ]
-        target_dtype = (
-            complex_dtype if any(t.is_complex() for t in tensors) else real_dtype
-        )
-        return torch.stack([t.to(dtype=target_dtype) for t in tensors], dim=axis)
+        target_dtype = complex_dtype if any(_has_complex(x) for x in xs) else real_dtype
+        tensors: list[Tensor] = []
+        for x in xs:
+            if isinstance(x, torch.Tensor):
+                tensors.append(x.to(device=device, dtype=target_dtype))
+            elif (
+                isinstance(x, list | tuple)
+                and len(x) > 0
+                and any(isinstance(v, torch.Tensor) for v in x)
+            ):
+                tensors.append(self.stack(x).to(device=device, dtype=target_dtype))
+            else:
+                tensors.append(torch.as_tensor(x, device=device, dtype=target_dtype))
+        return torch.stack(tensors, dim=axis)
 
     def concatenate(self, arrays: Sequence[Any], axis: int = 0) -> Tensor:
         """Join tensors along an existing axis.

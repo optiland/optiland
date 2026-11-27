@@ -191,3 +191,31 @@ def test_stack_complex_non_tensor_inputs():
         [[1.0 + 2.0j, 3.0 + 4.0j], [5.0 + 6.0j, 7.0 + 8.0j]], dtype=torch.complex64
     )
     assert torch.allclose(stacked, expected)
+
+
+def test_stack_non_tensor_preserves_float64_precision():
+    import numpy as np
+
+    be.set_backend("torch")
+    be.set_precision("float64")
+
+    val_a = 1.0 + 1e-12
+    val_b = 2.0 - 1e-12
+    stacked_real = be.stack([val_a, val_b])
+    assert stacked_real.dtype == torch.float64
+    assert torch.equal(
+        stacked_real, torch.tensor([val_a, val_b], dtype=torch.float64)
+    )
+
+    z_a = (1.0 + 1e-12) + (2.0 - 1e-12) * 1j
+    z_b = (3.0 + 1e-12) + (4.0 - 1e-12) * 1j
+    stacked_complex = be.stack([[z_a], [z_b]])
+    assert stacked_complex.dtype == torch.complex128
+    assert torch.equal(
+        stacked_complex, torch.tensor([[z_a], [z_b]], dtype=torch.complex128)
+    )
+
+    np_complex = np.array([z_a], dtype=np.complex128)
+    be.set_precision("float32")
+    stacked_np_32 = be.stack([np_complex, [1.0]])
+    assert stacked_np_32.dtype == torch.complex64
