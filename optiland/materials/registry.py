@@ -25,6 +25,7 @@ from optiland.materials._catalog_parsing import (
     _extract_wavelength_range,
 )
 from optiland.materials._material_matching import resolve_with_row
+from optiland.materials.material_file import clear_material_file_cache
 from optiland.materials.material_spec import MatchPolicy
 from optiland.materials.warnings import OptilandMaterialWarning
 
@@ -54,6 +55,7 @@ class MaterialRegistry:
         self._user_entries: list[dict] = []
         self._user_temp_files: list[str] = []
         self._combined_cache: pd.DataFrame | None = None
+        self._match_cache: dict = {}
 
     @classmethod
     def instance(cls) -> MaterialRegistry:
@@ -127,6 +129,7 @@ class MaterialRegistry:
         self._warn_if_shadow(name, catalog)
         self._user_entries.append(entry)
         self._combined_cache = None  # invalidate cache
+        self._match_cache.clear()
 
     def register_file(self, path: str | pathlib.Path) -> None:
         """Load a single refractiveindex.info-format YAML file.
@@ -163,6 +166,7 @@ class MaterialRegistry:
         self._warn_if_shadow(name, catalog)
         self._user_entries.append(entry)
         self._combined_cache = None
+        self._match_cache.clear()
 
     def load_catalog(self, directory: str | pathlib.Path) -> None:
         """Load all YAML files found in ``directory``.
@@ -196,6 +200,7 @@ class MaterialRegistry:
                 self._warn_if_shadow(row.get("name", ""), row.get("catalog_dir", ""))
             self._user_entries.extend(extra_df.to_dict("records"))
             self._combined_cache = None
+            self._match_cache.clear()
         else:
             for yml_file in sorted(d.glob("*.yml")):
                 try:
@@ -261,7 +266,18 @@ class MaterialRegistry:
             match_policy,
             min_wavelength,
             max_wavelength,
+            match_cache=self._match_cache,
         )
+
+    def clear_cache(self) -> None:
+        """Forget cached catalog scoring and parsed material files.
+
+        Call this after changing a catalog file on disk or when a long-lived
+        process needs to pick up newly registered materials from scratch.
+        """
+        self._combined_cache = None
+        self._match_cache.clear()
+        clear_material_file_cache()
 
     # ------------------------------------------------------------------
     # Discovery

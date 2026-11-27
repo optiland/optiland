@@ -31,12 +31,26 @@ def resolve_with_row(
     match_policy: MatchPolicy,
     min_wavelength: float | None,
     max_wavelength: float | None,
+    *,
+    match_cache: dict | None = None,
 ) -> tuple[str, dict]:
-    """Resolve a material against ``df`` and return ``(path, metadata_row_dict)``."""
-    df = _prefilter_by_catalog(df, catalog)
+    """Resolve a material against ``df`` and return ``(path, metadata_row_dict)``.
 
-    filtered_df = _find_matches(df, name, reference, min_wavelength, max_wavelength)
-    _raise_if_no_matches(filtered_df, name, catalog, reference, df)
+    ``match_cache`` may hold the scored candidate frames from earlier calls.
+    Only the filtering and scoring are cached; match-policy warnings are still
+    emitted on every call.
+    """
+    key = (id(df), name, catalog, reference, min_wavelength, max_wavelength)
+    if match_cache is not None and key in match_cache:
+        filtered_df, search_df = match_cache[key]
+    else:
+        search_df = _prefilter_by_catalog(df, catalog)
+        filtered_df = _find_matches(
+            search_df, name, reference, min_wavelength, max_wavelength
+        )
+        if match_cache is not None:
+            match_cache[key] = (filtered_df, search_df)
+    _raise_if_no_matches(filtered_df, name, catalog, reference, search_df)
 
     _apply_match_policy(filtered_df, name, catalog, match_policy)
 
